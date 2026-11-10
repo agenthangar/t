@@ -23,6 +23,7 @@ runs:
       shell: bash
       env:
         FZF_VERSION: ${{ inputs.fzf }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         version=$FZF_VERSION
@@ -40,9 +41,17 @@ runs:
         tag="$version"
         if [ "$version" = 0.74.5 ]; then tag="v$version"; fi
         url="https://github.com/junegunn/fzf/releases/download/${tag}"
-        curl -fsSL --retry 3 "$url/$asset" -o "$RUNNER_TEMP/$asset"
-        curl -fsSL --retry 3 "$url/fzf_${version}_checksums.txt" -o "$RUNNER_TEMP/fzf-checksums.txt"
-        expected=$(awk -v asset="$asset" '$2 == asset {print $1}' "$RUNNER_TEMP/fzf-checksums.txt")
+        download() {
+          local name="$1"
+          if ! curl -fsSL --retry 3 "$url/$name" -o "$RUNNER_TEMP/$name"; then
+            echo "Release URL unavailable; retrying the same asset through GitHub's API."
+            gh release download "$tag" --repo junegunn/fzf --pattern "$name" \
+              --dir "$RUNNER_TEMP" --clobber
+          fi
+        }
+        download "$asset"
+        download "fzf_${version}_checksums.txt"
+        expected=$(awk -v asset="$asset" '$2 == asset {print $1}' "$RUNNER_TEMP/fzf_${version}_checksums.txt")
         test -n "$expected"
         actual=$(shasum -a 256 "$RUNNER_TEMP/$asset" | awk '{print $1}')
         test "$actual" = "$expected"

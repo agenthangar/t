@@ -16,6 +16,47 @@ spec.loader.exec_module(playground)
 
 
 @pytest.fixture
+def demo_agent(tmp_path):
+    compiler = shutil.which("cc")
+    if not compiler:
+        pytest.skip("cc is required for the native playground agent")
+    binary = tmp_path / "claude"
+    subprocess.run([compiler, "-Wall", "-Wextra", "-Werror",
+                    str(ROOT / "scripts/playground/fake-claude.c"), "-o", str(binary)],
+                   check=True, capture_output=True)
+    return binary
+
+
+def test_demo_agent_exposes_native_identity_until_quit(demo_agent):
+    process = subprocess.Popen([str(demo_agent), "--session-id", "demo"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert "Playground Claude stub" in process.stdout.readline()
+        comm = subprocess.check_output(["ps", "-p", str(process.pid), "-o", "comm="],
+                                       text=True).strip()
+        assert Path(comm).name == "claude"
+        output, _ = process.communicate("hello\nquit\nignored\n", timeout=5)
+        assert output == "stub> hello\n"
+        assert process.returncode == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+
+def test_demo_agent_version(demo_agent):
+    assert subprocess.check_output([str(demo_agent), "--version"], text=True).strip() == \
+        "playground Claude stub 1.0"
+
+
+@pytest.mark.parametrize("command", ["auth", "status", "mcp", "login"])
+def test_demo_agent_refuses_authentication(demo_agent, command):
+    result = subprocess.run([str(demo_agent), command], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "no account or authentication" in result.stderr
+
+
+@pytest.fixture
 def source_repo(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()

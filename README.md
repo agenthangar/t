@@ -36,6 +36,12 @@ Supported workflows vary by agent; see the [support matrix](#agents).
   `t session move my-project 1 --host cloud` moves the session to a configured
   SSH host; `t session move my-project 1 --from cloud` brings it back. Use your
   own workstation or cloud VM with t and your agent installed.
+- **Continue through a connection loss.** For fresh Codex CLI sessions, choose
+  `t workflow` → Codex → your workflow → **Inference & routing** →
+  **On cloud connection failure** → **Ask which local model**. Selecting a ready
+  local model immediately continues the task locally; when connectivity returns,
+  choose whether to return to cloud. See [local recovery](docs/local-workers.md#when-the-internet-is-unavailable)
+  for checkpoint limits and setup.
 - **Take it on the go.** Connect to that host from your phone's SSH terminal.
   `t session list` shows the sessions, `t session read my-project 1 --dump`
   lets you scroll their output, and `t session open my-project 1` reconnects
@@ -126,7 +132,7 @@ Links-only updates do not edit shell startup files.
 For an older or incomplete installation, run:
 
 ```sh
-t doctor                    # read-only diagnostics; no config menu, Git fetch, or gh telemetry
+t doctor                    # read-only setup and launch-resource diagnostics
 t doctor --repair           # repair zsh startup and a missing ~/bin/t link
 # Then run the exact source command printed by repair, or open a new terminal.
 ```
@@ -139,6 +145,29 @@ manual review. It does not install agents, log in, change trust/permissions, or 
 tmux. Other diagnostic findings retain their suggested explicit actions. Startup
 inspection reads the rc file without executing user shell code; after loading it,
 `whence -w t` should report `t: function`.
+
+For fork/open failures on another host, run `t doctor` there immediately after
+the failure, or `t hosts run HOST t system diagnose`. Keep the exact launch error
+with the report. The **Launch resources** section shows PTY usage/limits, process
+limits, and recent macOS kernel PTY failure counts; unavailable evidence is
+labeled. It does not allocate test terminals, restart tmux, execute shell startup,
+fetch Git refs, or enable GitHub CLI telemetry. A normal snapshot cannot rule out
+an earlier transient failure. `--repair` fixes shell wiring, not kernel resources.
+
+Doctor also shows the latest five **Recent session attempts**, including recorded
+failures before an agent or pane log existed. Use `t doctor --recent 20` (or
+`t system diagnose --recent 20`) for more. Each receipt shows the operation,
+timestamp, agent, workspace, conversation identity, last stage, operation exit
+code and retained error when available. Completed launches do not prove the
+agent's later exit status; incomplete and log-only sessions stay explicitly unknown.
+The report includes up to eight diagnostic lines from the last 16 KiB of the
+associated log, with terminal controls and common credentials removed. Older
+attempts use saved excerpts so a later launch's errors are not attributed to them.
+The latest legacy session log can still be shown, labeled as shared evidence
+that may include earlier attempts.
+Missing, rotated, unsafe or older unbounded evidence is labeled. Errors that
+predate lifecycle recording cannot be recovered retrospectively. Doctor never
+creates diagnostic state or reads agent conversation transcripts.
 
 ```sh
 t agent install            # choose and install agent CLIs; review their vendor commands
@@ -163,7 +192,7 @@ automated compatibility tests.
 
 Both layouts work with CLI open/resume, navigation,
 and retained history. If both `t/12` and `t/t-12` exist, slot actions refuse to
-choose: inspect the two worktrees and use `t session history t 12` to select a
+choose: inspect the two worktrees and use `t resume t 12` to select a
 specific conversation. t never resolves this collision by moving either tree.
 
 Upgrade t's CLI and shell plugin together on each host before using labeled
@@ -181,10 +210,9 @@ worktrees and agent history should not be manually renamed to bridge hosts.
 worktree; `t open my-project` filters to that repo. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
 inactive CLI sessions remain visible. An explicit slot still opens directly.
 
-`t history 5` browses every saved conversation associated with slot 5 in the
-current repository. `t history t 5` and `t session history t 5` name the repository
-explicitly. With no arguments, history infers your current slot or lets you choose
-one. It retains inactive and live conversations, archived records, and records
+`t resume 5` browses every saved conversation associated with slot 5 in the
+current repository. `t resume t 5` and `t session resume t 5` name the repository
+explicitly. The slot browser uses retained conversation history internally. It retains inactive and live conversations, archived records, and records
 whose worktrees or transcripts have been removed. It always asks you to select a
 conversation before resuming, including when only one exists.
 
@@ -279,31 +307,25 @@ Terminal progress messages identify ownership checks, saved-candidate discovery,
 and metadata loading. Open/close session scans, session lists, history, and issue
 commands also report discovery stages. Redirected output and JSON remain quiet.
 
-`t open`, `t resume`, and `t kill` share the compact resume picker design:
-**Space/Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
-stays readable on the darker cyan focused row, without a colored block.
-In `t open`, press **k** to kill only the focused session, independently of
+`t open`, `t resume`, and `t kill` share the Air picker design:
+**Tab marks ✓ and Enter acts on the selection**. A plain green checkmark
+stays readable in its own gutter beside the pointer on the dark cyan focused row.
+All searchable pickers and inline menus share cyan headings, muted hints and
+spacing that adapts to terminal width and height. macOS shows native key labels
+such as `⌃F`, `⌃S`, `↩ Return`, `⎋ Esc` and `⇥ Tab`; other systems show Ctrl-F,
+Ctrl-S, Enter, Esc and Tab. The shortcuts below work on both.
+In `t open`, press **Ctrl-K** to kill only the focused session, independently of
 marks. This confirms that session and retains close safety checks. For example,
-run `t open --attached`, focus a session, and press **k**.
+run `t open --attached`, focus a session, and press **Ctrl-K**.
 The picker stays open and removes the closed row without rediscovering sessions.
 Search, filters, and marks on other rows are preserved; failed or canceled closes
 leave the row available.
-The open picker reserves **k** as an action key rather than query text.
-**Ctrl-F** opens the Filters picker. Choose State or a column, select its value,
-then choose Apply filters. **Ctrl-A** turns filtering off to show the whole
-snapshot; **Ctrl-L** turns it back on with your saved choices.
+Type full phrases to search, including spaces and the letter k. Tab marks rows; Ctrl-K closes the focused session. Session searches match literal phrases, ignoring case.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
-The settings picker includes attachment state for open, live sessions for resume,
-and attached/pending work for close. Columns include agent, host and repository;
-open also offers progress, interface, model, session, context and task, while close
-includes interface. Each value picker includes All to clear that column.
-Reset filters to defaults stages the original state and clears column choices.
-Enter chooses a setting; Esc in a value picker keeps that value, and Esc in the
-Filters picker discards all staged changes. Apply filters enables the saved choices.
-
-The main header shows one highlighted filter summary, with explicit ON/OFF text
-when color is unavailable. Narrow headers abbreviate Ctrl as `^` and show the
-selected column count; open Filters to see complete values. Filtering keeps your
+The header highlights active filters and sorting, with explicit ON/OFF text.
+Mac shortcuts use ⌃ and ⌥; other systems show Ctrl and Alt.
+Filtering keeps your
 search and removes hidden marks. Choices use the current snapshot without
 expanding repository scope or fetching new sessions.
 
@@ -315,16 +337,15 @@ not known to have landed); “not marked” is not proof that work is finished.
 The separate `✓` in the left selection gutter means you marked that row to open.
 
 Resume never invents a historical interface. Resume and close use the same
-Filters picker and on/off keys as open.
+inline filter shortcuts and on/off keys as open.
 Resume sorts by the last actual user turn, newest first; unknown times come last.
-Alt-T restores that sort, Alt-R sorts by repository, Alt-G by agent, Alt-O by
-host/origin, and Alt-V by session (numeric slots sort naturally, e.g. 2 before 10).
+Ctrl-Y cycles last turn, repository, agent, host/origin and session.
+Numeric slots sort naturally, e.g. 2 before 10.
 Text sorts ascend, then use newest turn and session identity to break ties.
-Filter settings, reset and on/off preserve the selected sort; Alt-T restores last-turn sorting.
-For example, `t resume --live` followed by Alt-R groups live and saved sessions by
+Filters, reset and on/off preserve the selected sort; Ctrl-Y cycles back to last-turn sorting.
+For example, `t resume --live` followed by Ctrl-Y groups live and saved sessions by
 repository. Live labels remain visible alongside their last-turn time.
-The open picker keeps session and task text prominent, without a last-turn
-column, details preview, or new-session shortcut. Start fresh explicitly with
+The open picker shows a LAST TURN column alongside session and task text. Narrow terminals shorten timestamps in local time; full timestamps remain searchable. There is no details preview or new-session shortcut. Start fresh explicitly with
 `t open api --new`. Resume and close retain **Ctrl-/** for full details.
 Search still matches the full task and metadata when a compact row shortens them.
 
@@ -337,7 +358,7 @@ and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 CLI opens use this terminal for the first selection and new tabs for the rest,
 falling back to new windows in Terminal when tabs cannot be created safely
 (including switching away during creation). Attach commands remain available
-if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Space/Tab and
+if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
@@ -386,6 +407,10 @@ local and reachable hosts. Saved resumes still check known owners and local
 launch locks; ownership on an unavailable host cannot be verified. A failed local
 ownership scan still stops the launch. To start a fresh conversation locally, use
 `t session open my-project --here --new --cli`.
+Codex tmux sessions in freshly allocated worktrees can start while other held
+Codex writers have unresolved workspace metadata. The lifecycle receipt retains
+those writer IDs; known same-workspace owners and reservations still block.
+Reused workspaces, saved resumes and transfers retain stricter writer checks.
 Remote ownership scans time out after 15 seconds rather than waiting indefinitely
 for a host's login shell.
 
@@ -450,7 +475,7 @@ then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
 `t session move` (also `t move`) opens a multi-selection picker of current local
-Claude and Codex CLI conversations, then a destination host picker. Space/Tab
+Claude and Codex CLI conversations, then a destination host picker. Tab
 marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
 to include registered remote sources, `--all` to browse every repository, or name
 `api` to scope selection. The current checkout scopes the default view; outside
@@ -486,7 +511,7 @@ t remote open mini api --new    # start fresh on mini
 t remote resume mini api        # choose saved history discovered on mini
 t remote resume mini --all       # all repositories, regardless of remote login directory
 t remote kill api 9             # discover slot 9's remote host and confirm before stopping a live agent
-t resume t 11                          # mark conversations with Space/Tab, then Enter
+t resume t 11                          # mark conversations with Tab, then Enter
 t session resume --all                  # local and remote-only repositories; clone only after selection
 t session move -r                      # choose current sessions, then their destination
 t session move api 2 -r                # discover the source, then choose its destination
@@ -555,10 +580,16 @@ model, and connect the worker to Codex through MCP. The lead keeps its conversat
 workers use isolated repository snapshots and return findings, patches, and test
 evidence. `t config local --show` is read-only. See [local workers](docs/local-workers.md)
 for setup, cancellation, limits, and automated setup examples. In **Workflow →
-Inference & routing → Local model**, downloaded artifacts offer **Verify readiness**
+Inference & routing → Local model**, downloaded artifacts offer **Test model**
 without downloading them again. Benchmarks and artifact/runtime details have
 separate views. `t config models install MODEL --yes` also reuses completed files
 and verifies inference; downloaded weights alone do not mean Ready.
+
+Shared local inference: `t config` → **Local worker & models** shows model usage,
+requests, provider setup, CLI help and desktop-app launch actions. Use
+`t config models runtime monitor --view cli` or `--view gui` to monitor the same
+runtime. See [shared model usage](docs/local-workers.md#shared-model-usage) for
+queueing, memory caching, cancellation and read-only status commands.
 
 | Command | Purpose |
 | --- | --- |
@@ -642,6 +673,8 @@ JSON, MCP, and remote scanner output stays free of progress animation.
 
 `ls` and `list` are interchangeable for `session`, `repo`, `cursor`, `hosts`,
 `issue`, and `workflow`. Root `t ls` and `t list` both list sessions.
+Session lists always print a read-only table, including in terminals with fzf.
+Use `t open` to select and open sessions. Pipe to `cat` for complete values.
 The old `t repos` family has been removed; use `t repo list`, `t repo locate`,
 `t repo cd`, and `t repo add`.
 
@@ -1187,8 +1220,10 @@ workflow, custom Markdown takes precedence over behavior preferences, which take
 precedence over generic model-stage guidance. `t` preserves Markdown as written;
 it does not try to interpret or detect conflicting prose.
 
-Use **Text instructions** inside a workflow to write ordinary headings,
-bullets and prose in your editor. No JSON is needed. The equivalent commands are:
+Use **Text instructions → Edit text instructions** inside a workflow to write
+ordinary headings, bullets and prose in your editor. Choose **Clear text instructions**
+on that same page to remove the text without opening an editor. No JSON is needed.
+The equivalent editing commands are:
 
 ```sh
 t workflow instructions edit careful
@@ -1204,6 +1239,13 @@ Choose **Clear text instructions** to stage their removal, then save. Saving an
 empty file in the text editor also clears them. Discarding menu changes restores
 the saved text; clearing instructions preserves the other workflow settings.
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+After merging a design-system draft, use **Frontend design → Design systems →
+your repository → Scan again**. This checks the current worktree, registered
+checkout and latest default branch from `origin`, without moving either checkout.
+Sources found outside the current worktree are labeled; select the source and save,
+then update your worktree before using the merged guidance there. Offline refresh
+keeps local results and reports that the default-branch scan was unavailable.
 
 The supplied public-repository issue-before-code rule is ordinary editable workflow
 Markdown. `t workflow list` shows whether the supplied text is included;

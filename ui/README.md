@@ -13,6 +13,25 @@ actions. Keep real agent sessions, repository files, configuration, and services
 untouched by prototype interactions. Make the preview easy to open locally and
 report browser or verification limitations accurately.
 
+Start with orientation: explain in plain language what the preview demonstrates,
+which user task it helps with, and what feedback is being requested. Begin at the
+real command or existing navigation entry point and let the user follow the path
+into the proposed screen. Show the command and navigation path, including where
+Back returns. Clearly label proposed entry points that do not exist yet.
+
+Do not drop the user into an unexplained internal screen. Provide a short guided
+example using a recognizable user task before offering scenario switches or
+advanced controls. Explain sample state and unfamiliar terms where they appear;
+keep prototype controls visually separate from the proposed product interface.
+The preview must make sense without the planning conversation: the user should
+be able to tell what they are looking at, how they got there, and what to try next.
+
+Show the complete parent menu in its real order and grouping. Do not replace
+`t config` or another entry point with a shortened excerpt, omit sibling actions,
+or add inert "existing setup" placeholders. Parent and sibling navigation must
+work with isolated sample state, including selection, editing, review, save,
+discard, and returning to the same focus. Simulate external effects explicitly.
+
 After design approval when required by the workflow or task, implement using the
 shared terminal components. A planning prototype does not verify the working CLI:
 prepare a separate worktree-scoped command preview with isolated sample settings
@@ -60,6 +79,15 @@ The repository source picker uses separate Default, Choose a source, Manage and
 Navigation groups. Use workflow default restores live inheritance; explicit paths
 and Off override it. Each candidate appears once, with evidence and a selection
 mark. Choose file or folder, Create design system, and Scan again are actions.
+Scan again explicitly refreshes the invoking worktree and registered checkout,
+then inspects the latest default-branch commit advertised by origin. It fetches
+objects without moving branches, changing FETCH_HEAD or writing checkout files.
+Discover candidates from a bounded snapshot without executing repository code or
+following symlinks. Deduplicate paths with the active worktree taking precedence;
+label candidates found only in the registered checkout or default branch. Selecting
+those paths stays staged and explains that the active worktree must be updated to
+use the guidance. Remote failures retain local candidates and show an unavailable
+warning. Ordinary browsing and read-only commands never fetch.
 Retain missing explicit paths with a visible error; never silently replace them.
 Repository source settings survive assignment changes and are tool-scoped.
 
@@ -83,8 +111,8 @@ discard pending settings first. Review the task, then start the existing guarded
 agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
 reference and evidence-backed design/preview guidance without overwriting existing
 content or duplicating workflow approval rules. Drafting does not publish changes
-or select a source. Review the actual diff in the agent session, then refresh
-discovery from the accepted worktree to select the resulting source.
+or select a source. Review the actual diff in the agent session, then use Scan again
+after merging to select the source, or select it locally from the accepted worktree.
 
 Development availability is scoped to the caller's t worktree. With a canonical
 Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
@@ -130,11 +158,25 @@ target-only selectors remain literal.
 Repository creation names, paths and delegated payloads remain literal. Read this
 guide and the inventory before adding or changing a command; update both when its behavior changes.
 
-The visual baseline is the Homebrew v0.4.2 release (`40aaea8`): cyan section
+The Air design applies to every searchable picker and inline menu: airy cyan section
 headings and current values, green primary/add actions, amber warnings/removal,
 two-space outer margins, a pointer and a dark cyan focus row with light text, and a footer
 showing the next action and keys. Focus and marks must remain distinguishable
-without color. Align labels on wide terminals and stack them below 60 columns.
+without color. Headings are cyan, hints muted, and focused text light on dark cyan.
+Keep the green checkmark in its own gutter beside the pointer, with spaces between
+status icons inside rows. Give controls and results a blank separating row when
+height permits. Session pickers list HOTKEYS above FILTERS, with readable shortcuts
+and bright underlined labels for the current filter On/Off state, resume sort, and
+merged-session toggle when enabled. Session lists highlight selected column filters
+and the current sort key. Plain output retains explicit state text.
+Use FILTERS only for actual filter controls; other pickers use their
+action or resource title. Reduce spacing, borders and margins on short screens
+before losing controls or focus, including wide 120×12 terminals.
+
+Display native Mac labels (`⌃T`, `⌃S`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) on macOS;
+other hosts use `Ctrl-T`, `Ctrl-S`, `Enter`, `Esc`, `Tab`. Compact headers use the short
+Mac symbols or `^T` on other systems. Only labels change: bindings remain the
+same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
 Let label columns use available width before truncating; never cap wide-terminal
 labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
@@ -173,11 +215,11 @@ the command name.
 
 | Type | Behavior and appearance |
 | --- | --- |
-| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t session list` and `t issue list` are examples. |
+| **List** | Print a scoped, aligned table immediately. Name its scope, label columns, and give a clear empty state. No picker, confirmation, or update prompt. `t issue list` is an example. |
 | **Detail/status** | Print labeled facts without changing state or prompting. Preserve raw text, paths, and streams when the command explicitly exposes them. |
 | **Single selection** | Use a searchable fzf picker or an inline `_RailUI` menu with one visibly focused row. Enter chooses exactly one item; Esc/Ctrl-C cancels. An explicit target bypasses selection. A paginated single picker uses Ctrl-F for the next page, Ctrl-B for the previous page, and Ctrl-R to refresh; those keys belong to pagination rather than the filtered picker's settings control. |
-| **Multi-selection** | Searchable pickers use Space/Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
-| **Filtered selection** | Show active filters and hidden count in the header. Session pickers use Ctrl-F for staged filter settings, Ctrl-A to turn filters off, and Ctrl-L to restore saved choices. State and column choices live in settings. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
+| **Multi-selection** | Space types into search. Searchable pickers use Tab to mark rows and Enter to accept the marks, or the focused row if none are marked. Inline checklists use Space to toggle and Enter to submit only checked items. Show marks and the Enter action independently of color. |
+| **Filtered selection** | Show active filters and hidden count in the header. Open, resume and close pickers use Ctrl-F to toggle filters, Ctrl-X to reset, and direct shortcuts to match the highlighted row. No nested filter screens. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Filtering retains the search and removes hidden marks. Issue pickers retain Ctrl-A show-all and Ctrl-F defaults. Ctrl-/ toggles full details when rows have previews. |
 | **Wizard/review** | Stage choices, then display the resulting changes before applying them. Config saves on Enter; install enters review and then runs on Enter; login runs the selected logins on its first Enter. Setup and repository creation keep their released `y` confirmation. Show the actual action in the footer. |
 | **Direct action/passthrough** | An explicit target acts without a needless picker. Retain ownership and worktree safety checks, confirmation before interrupting live work with an explicit target, and the delegated tool's input/output and exit status. |
 | **Machine output** | Preserve existing JSON, raw-value, and remote wire formats. Do not add presentation chrome, ANSI color, or prompts. The inventory identifies machine-facing modes; this does not imply universal JSON support. |
@@ -328,23 +370,39 @@ non-excluded named assignments; exclude inline copies and implicit global inheri
 from explicit repository counts. An enabled definition is not proof of assignment.
 The catalogue uses APPLIES TO instead of ambiguous STATUS on/off and ASSIGNED columns.
 Each workflow exposes an overall Workflow switch and an independent
-Use multiple models checkbox picker with a leading Use one model for all work
+Use multiple models checkbox picker with a leading Use lead model for all stages
 choice, then Planning, Implementation and Review. Use the shared empty_choice
 multi profile: the one-model row is an exclusive reset, separated by a blank
 rail row. It clears all stages; selecting any stage clears it, and clearing the
 last stage restores it. Translate the empty-key selection into no active stages.
-Space marks choices; Enter and q/Esc Back retain the selection as pending edits. Unchecked Planning/Review use the main model; Agent review before PR controls
+Space marks choices; Enter and q/Esc Back retain the selection as pending edits. Unchecked Planning/Review use the lead model; Agent review before PR controls
 whether the pre-PR review step runs. Unchecked Implementation uses
 per-tool session defaults, with default model/effort controls still available
 beside selected helpers. Selecting no stages enters single-model mode.
-Model catalogues come from the selected tool. The workflow row is Model;
+Model catalogues come from the selected tool. The workflow row is Lead model;
 its reset choice says Inherit default and shows the top-level tool model.
-Reasoning effort shows an explicit level or Inherit default with the known
+Lead reasoning effort shows an explicit level or Inherit default with the known
 top-level effort. Unset effort inherits top-level effort only when the model is
 also inherited; an explicit workflow model leaves effort to the native tool.
 Unknown native values say Tool setting; model catalogue metadata alone is not
 proof of the effective native configuration. Permissions shows the preset
 without repeating the selected tool name and opens its choices directly.
+
+Use Lead model consistently for the workflow's main conversation model: its
+selector title, review/save changes, read-only workflow summaries and inherited
+stage source labels. Use Lead session when describing the conversation or
+execution owner, and Lead reasoning effort for its effort control. The lead
+coordinates work and owns the result; it can also do implementation itself.
+Planning, Implementation and Review remain stage names; explicitly delegated
+models remain workers. Use lead model for all stages describes the stage reset
+without implying that separately configured local delegation is disabled.
+
+Lead is a role, not a provider or execution location. Retain Local model in
+Inference & routing and Cloud/Local where describing execution; Local only uses
+the selected local model as the lead. General tool model settings and model
+catalogues retain their unqualified Model labels unless selecting a workflow
+lead. This wording change does not rename JSON keys, commands or runtime APIs,
+change launch precedence, or switch any active session's model.
 Cursor uses model IDs with any supported parameters; do not expose a separate
 reasoning-effort flag or unsupported permission presets. Unavailable model
 catalogues retain inheritance and custom model entry without invented choices.
@@ -575,7 +633,9 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
-Clear text instructions appears when text is present and stages its removal in the
+Text instructions opens a page with Edit text instructions, Clear text instructions
+and Back. Clear is available on that page even when empty (Already empty is a no-op);
+the parent shortcut also appears when text is present. Removal stays in the
 same save transaction. Empty editor contents clear text too. Cancellation/discard
 preserves saved instructions, and clearing leaves other workflow settings intact.
 The issue-before-code rule is seeded once as editable Markdown in schema v3.
@@ -677,7 +737,7 @@ dev sessions   ● attached/loaded · ✓ active context · ↻ still in progres
 
   reattach: t open <repo> <slot>
 
-Enter open/Esc · Space/Tab ✓
+Enter open/Esc · Tab ✓
 Ctrl-F filters · Ctrl-A off · Ctrl-L on
 Filters ON: unattached · 2 hidden
   SESSION  WORKING ON
@@ -687,22 +747,23 @@ Filters ON: unattached · 2 hidden
 The rows above illustrate hierarchy and controls, not a fixed column schema.
 List commands print normally; picker headers and marks appear only for selection.
 
-The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F opens the shared single-picker Filters settings. Choose State for attached,
-unattached or all attachment states, or choose a column for searchable exact values.
-Open includes agent, progress, interface, model, host, repo, session, context and task;
-resume includes agent, host/origin and repo; close includes agent, interface, host
-and repo. Resume State includes saved-only/live; close State independently includes
-attached and pending work. An explicit All choice clears one column.
-Reset filters to defaults stages the original state and clears column choices.
-Apply filters commits staged choices and enables them; Esc discards settings changes.
-Esc in a nested value/state picker keeps its existing choice.
+The open picker browses local and registered remote hosts by default; `--local`
+limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
+Fresh sessions and explicit targets retain their existing location routing.
+Session lists (`t ls` / `t session list`) also include remote hosts by default;
+`-l`/`--local` lists only this machine. Repository scope and `--all` are independent
+of host scope. Session lists always print a read-only table, including in terminals.
 
-Ctrl-A turns filters off without changing saved choices; Ctrl-L restores those
-choices. Both are idempotent. Opening settings while off retains the saved values.
+Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
+
+The open picker hides attached CLI and loaded desktop sessions by default.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+
+Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
+Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
 The compatibility --attached flag starts with filtering off and defaults retained.
 There is no new-session shortcut or details preview in open; use `t open --new`.
-Press `k` to kill only the focused session, independently of multi-selection marks.
+Press `Ctrl-K` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
 and ownership safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
@@ -738,15 +799,15 @@ Lists, discovery and canceled selections never create checkpoints.
 
 Resume never invents a historical UI. Resume uses actual user-turn timestamps,
 newest first by default, with unknown times last; live rows have no artificial priority.
-Alt-T selects last turn, Alt-R repository, Alt-G agent, Alt-O host/origin, and
-Alt-V session (natural numeric order). Text modes ascend with newest turn and
+Ctrl-Y cycles last turn, repository, agent, host/origin, and session
+(natural numeric order). Ctrl-S toggles the selected sort. Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
-and preserve query and identities. Filter settings, reset and on/off preserve sorting.
-Compact headers use M for Alt and ^ for Ctrl. Resume disables fzf relevance sorting
+and preserve query and identities. Filters, reset and on/off preserve sorting.
+Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
 Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
-recorded), UNKNOWN, or MIXED. Alt-M toggles hiding MERGED rows and advertises the
+recorded), UNKNOWN, or MIXED. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
 Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
 For histories with multiple associated PRs, all must be explicitly merged before
@@ -754,7 +815,7 @@ the row is hidden; mixed or unknown states remain visible. Live rows without
 structured PR metadata stay UNKNOWN. A merged PR does not imply completed work.
 The toggle enables filtering, preserves query and sort, and removes hidden marks.
 Ctrl-A disables it with other filters; Ctrl-L restores it. Reset clears it.
-For example, run `t session resume --all`, then Alt-M to hide merged PR histories.
+For example, run `t session resume --all`, then Ctrl-D to hide merged PR histories.
 Every column value comes from raw metadata,
 not truncated display text. The progress value exactly follows the ↻ marker:
 work continued after a merged PR; its absence is not completion evidence.
@@ -765,7 +826,7 @@ Query and visible selection identity survive supported reloads; hidden marks
 are removed. Old fzf clears marks on filter actions. These remain filtered/multi
 modes, not new commands or discovery operations. Every shortcut and a focused
 row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
-full-height view, including nested value pickers. Narrow headers use ^ for Ctrl
+full-height view, including nested value pickers. Narrow headers use ⌃ on macOS and ^ elsewhere for Ctrl
 and show the selected column count; full values are available in Filters. One cyan
 summary highlights enabled constraints, with explicit ON/OFF text in monochrome.
 Clip plain text before adding ANSI color. Filter metadata comes from the same
@@ -796,9 +857,9 @@ include retry guidance without a traceback or success descriptor.
 | Surface | Implementation | Responsibility |
 | --- | --- | --- |
 | Inline menus and reviews | `Style` and `_RailUI` in `bin/t` | Layout, scrolling, focus, page, footer, cooked prompt, terminal restoration |
-| Searchable selection | `_t_fzf_single`, `_t_fzf_multi`, `_t_fzf_filtered`, and `_t_fzf_paginated` in `ui/fzf.sh` | Theme, marks, header controls, filtering or pagination, preview, cancellation |
+| Searchable selection | `_t_fzf_single`, `_t_fzf_multi`, `_t_fzf_filtered`, and `_t_fzf_paginated` in `ui/fzf.sh` | Air theme and platform key labels, marks, header controls, filtering or pagination, preview, cancellation |
 
-Source `ui/fzf.sh` and select the profile matching the command mode. Callers
+Set `T_HOME` to the package root, source `ui/fzf.sh`, and select the profile matching the command mode. Callers
 provide row data, action text, and previews; they must not replace required
 bindings, marks, or legends. The profiles preserve `FZF_DEFAULT_OPTS`, while
 scoping the cyan/green theme to `t` pickers. All terminal state changes must
@@ -872,7 +933,7 @@ automatic update prompts.
 `session move` and its `move` alias use the shared multi-selection picker of current
 local CLI owners; `-r`/`--remote` adds registered remote sources. `remote move` is
 a compatibility route with remote sources included. Selection always opens without
-an exact target, including inside an agent. Space/Tab marks sessions; Enter accepts
+an exact target, including inside an agent. Tab marks sessions; Enter accepts
 marks or the focused row. Include attached and detached owners and exclude
 desktop reservations, saved history and unknown IDs. Select sessions first, then
 select one destination; explicitly named destinations skip the second picker.
@@ -905,11 +966,11 @@ slot does not hide saved work: inactive selections receive a safely allocated
 workspace when their original workspace cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
 A plain explicit slot (`t session resume api 2`, including `t resume api 2`
-and the inferred-repository `t resume 2`) runs `t session history api 2`.
+and the inferred-repository `t resume 2`) opens the internal saved-conversation picker.
 It uses the shared paginated multi-picker over retained conversation identities,
 including all recorded slot associations. Even one result requires selection;
 cancellation returns 130 without launching. Empty history never creates a session.
-Without a terminal it lists history without launching. Space/Tab marks conversations on the current page; Enter accepts marks or focus.
+Without a terminal it lists history without launching. Tab marks conversations on the current page; Enter accepts marks or focus.
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
@@ -993,8 +1054,7 @@ negotiate layout support before stopping the source; see the compatibility rules
 in the main README. These are path changes within existing command modes.
 
 The inventory's `display_schemas` are machine-readable definitions for the
-information shared by `t session list` (`t ls`) and `t session history`
-(`t history`). Each command binds its `display_schema`; history extends
+information shared by `t session list` (`t ls`) and the saved-conversation picker behind `t session resume`. Each command binds its `display_schema`; history extends
 `session_information` with recorded PR evidence and historical details. CLI lint
 checks these definitions and their safety policies. Behavior tests check actual
 renderer projections, table output, details, and JSON against the definitions.
@@ -1025,7 +1085,7 @@ uses an actual user prompt, excluding tool results and injected metadata.
 Assistant output, transcript mtime, and index activity never substitute for a
 turn start. The optional ninth rich-row field, `last_turn_started_at`, carries
 an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
-protocol remain valid. This remains a read-only list mode. History's DATE
+protocol remain valid. The table remains read-only. History's DATE
 continues to describe retained activity.
 
 `t session list` overrides the shared table's narrow layout: first clip WORKING ON
@@ -1033,7 +1093,7 @@ to the available space, then omit UI and MODEL if the other columns cannot fit.
 Compact rows show S (the same status marks without spaces), HOST for remote lists,
 SESSION (SLOT at the smallest width), TASK, and LAST TURN. Shorten timestamps to
 local `MM-DD HH:MM`, or `HH:MM` when necessary. Count Unicode display columns and
-mark clipped values with an ellipsis. Lists stay read-only and never open a picker.
+mark clipped values with an ellipsis. Without a usable terminal or fzf, lists stay read-only.
 Redirected output retains all columns and complete values: `t ls | cat` or
 `t ls -r | cat`. For example, at 32 columns a remote row can look like:
 
@@ -1041,6 +1101,12 @@ Redirected output retains all columns and complete values: `t ls | cat` or
   S   HOST SLOT   TASK LAST TURN
   ●✓↻ mini api-17 Fix… 09:41
 ```
+
+`t session list` (`t ls`, `t list`) always prints the scoped, read-only session table.
+It never opens a picker or offers an automatic update prompt, even with a usable
+terminal and fzf available. Remote hosts are included by default; `--local`
+restricts discovery. Empty results print the existing empty state. Use
+`t session open` for interactive selection.
 
 The filtered multi-selection mode of `t session open` prioritizes session identity
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
@@ -1079,7 +1145,7 @@ association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
 default at 70 or more columns and 22 or more rows, in a bottom preview occupying
 35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
-paginated multi-picker: Space/Tab marks exact conversations, Enter accepts marks
+paginated multi-picker: Tab marks exact conversations, Enter accepts marks
 or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
 or refresh. Slot and revision choices remain single-selection.
 Ctrl-F/Ctrl-B changes pages, and Ctrl-R explicitly refreshes metadata. Search runs
@@ -1135,13 +1201,14 @@ an equivalent compatibility entry point. Installation migrates standard legacy
 hook commands while preserving custom commands and options. This is an external
 SessionStart hook, not a new public `t` command or interactive mode.
 
-## Changes since the visual baseline
+## Changes since the v0.4.2 visual baseline
 
 Review these behavior changes when applying the v0.4.2 standard. Later changes
 should be added here with their disposition before becoming a precedent.
 
 | Change | Disposition |
 | --- | --- |
+| Shared Air design ([#219](https://github.com/agenthangar/t/issues/219)) | Apply cyan sections, muted hints, explicit focus, separate green check gutters and platform key labels across all fzf profiles and inline flows. |
 | Batch `open`, `kill`, and issue starts ([#68](https://github.com/agenthangar/t/pull/68), [#93](https://github.com/agenthangar/t/pull/93)) | Retain multi-selection and one-live-owner checks. |
 | Richer rows, interface/model columns, and detail previews ([#85](https://github.com/agenthangar/t/pull/85)) | Retain within the baseline spacing and focus design. |
 | Reversible filters and dedicated keys ([#94](https://github.com/agenthangar/t/pull/94), [#102](https://github.com/agenthangar/t/pull/102)) | Adopt the filter controls above. |
@@ -1151,7 +1218,7 @@ should be added here with their disposition before becoming a precedent.
 | Read-only issue table ([#108](https://github.com/agenthangar/t/pull/108)) | Apply the list contract. |
 | Open GitHub issues in the browser ([#118](https://github.com/agenthangar/t/issues/118)) | Explicit IDs or URLs act directly; omitted IDs use the shared filtered multi picker. |
 | Noun/verb help, added command groups, and speed submenu ([#101](https://github.com/agenthangar/t/pull/101)) | Retain and classify each mode in the inventory. |
-| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Space/Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
+| Paginated history selection ([#113](https://github.com/agenthangar/t/pull/113)) | Treat as multi-selection with Tab marks, Ctrl-F next, Ctrl-B previous, and Ctrl-R refresh; do not apply the filtered picker's Ctrl-F defaults binding. |
 | Conversation context sharing ([#112](https://github.com/agenthangar/t/pull/112), [#122](https://github.com/agenthangar/t/issues/122)) | Bare `t share` in a terminal is a source, recipient, context, and launch review wizard; after review it enters the new session. A known source and agent-only `--to` can launch without a terminal and leave the new session detached; `--json` returns the result without prompting or entering. An exact destination with `--file` still sends directly. `targets` and `inbox` are read-only lists; `read` is detail or raw attachment output. Cancellation leaves sessions and inboxes untouched. |
 
 ## Verification
@@ -1177,6 +1244,30 @@ Missing shell setup is a preselected row in `t agent install`, including when no
 agent changes are needed. It appears in the review and `-y` plan; deselection,
 status, dry-run, cancellation, and noninteractive plans do not modify it.
 
+The same read-only detail mode includes launch resources: PTY counts/limits,
+aggregate user process count, limits of the diagnostic process (not assumed to
+be the tmux server's), and bounded recent macOS kernel PTY failure counts.
+Show unavailable evidence explicitly; never print raw process arguments or kernel
+logs. Explain that a normal snapshot cannot rule out a transient earlier error.
+No diagnostic allocates test PTYs, retries an agent launch, or restarts tmux.
+Fresh/resumed launches stop their verified placeholder and wait for both process
+exit and a dead pane before respawning without force, retaining first-output logs.
+
+The same detail mode reports five recent lifecycle attempts by default;
+`--recent N` accepts 1–20. Include recorded failures before pane creation, stages,
+operation exit codes, timestamps and bounded diagnostic log excerpts. A completed
+launch does not imply the agent later exited successfully. Incomplete receipts
+and log-only sessions have unknown outcomes. Use per-attempt log boundaries and
+saved excerpts for older attempts; label missing/rotated/unbounded evidence.
+The newest legacy session may show a shared log tail, explicitly uncorrelated
+with that attempt when no boundary was recorded.
+Read at most the newest 100 candidate files per directory from a capped scan,
+128 KiB per receipt, and 16 KiB/eight diagnostic lines per displayed log. Report
+scan limits and unreadable/malformed records. Strip terminal controls and common
+credentials. Do not read transcripts or create state during diagnosis. Shell
+effects preserve bounded failure stderr in private lifecycle receipts; interactive
+attachment retains its terminal. This extends the existing read-only detail mode.
+
 ## Progress enforcement
 
 Run `python3 scripts/lint_progress.py` alongside CLI lint. CI requires every
@@ -1186,7 +1277,7 @@ terminal, streamed installers provide their own output, and background/protocol
 workers remain quiet. The inventory also protects shared shell scanner and
 resume progress seams. Add coverage when introducing another slow shell phase.
 
-For example, `t issue list`, `t history --refresh`, and `t system update --check`
+For example, `t issue list`, `t session resume`, and `t system update --check`
 show a delayed wheel during quiet discovery in a terminal; their redirected
 output stays clean. Spinners clear before results, errors, or selection.
 
@@ -1285,8 +1376,8 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **On cloud connection failure** stages Pause and retry (default) or
-Continue locally with selected model. Only new native CLI launches opt into the
+task budget. **On cloud connection failure** stages Pause and retry (default), Ask which local
+model, or Continue locally with selected model. Only new native CLI launches opt into the
 owned runtime supervisor; the native client supplies progress and approvals.
 The transition displays the connection-failure reason, exact provider/model and
 private checkpoint path, then stays local. It never downloads weights or treats
@@ -1297,7 +1388,8 @@ launch modes, not new public command families. These are staged workflow choices
 Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
 and inspectable; disabled Use/Install actions explain why and never execute.
 Benchmark suite selection is explicit; missing scores and speed are not invented.
-Show benchmark sources/harnesses and measured speed only in model details.
+Every model list follows the model comparison summary contract below; do not hide
+all benchmark context in model details.
 Installation and measurement are explicit immediate actions with model selection;
 model download review precedes installation. `t config models show` is read-only;
 `install` and `measure` are direct explicit-artifact actions. `--download-only`
@@ -1311,6 +1403,20 @@ configuration and hotspot setup modes. The standalone executable loads only its
 own runtime, without dotfiles, user startup files or session registration.
 The optional zsh adapter shares that runtime and preserves shell-local activity
 thresholds and application mappings. Loading either adapter never starts a hold.
+The adapter selects its source on each invocation, including the first call in
+`cd worktree && nosleep`, matching `t` without waiting for a prompt refresh.
+It reloads the runtime on each invocation so uncommitted edits are available.
+Standalone and shell entry points retain normal machine configuration across
+worktrees; manual previews do not override `XDG_CONFIG_HOME`.
+
+The Battery protection settings section stages an enable switch and **Exit below**
+integer percentage (1–100). Defaults are off and 20%. It is independent of activity
+and internet checks, with the same review/save/cancel transaction. Read-only
+defaults show the policy without probing power state. Runtime status distinguishes
+battery, AC, no battery and unknown readings. A valid below-cutoff reading on
+battery exits via normal cleanup even with checks disabled or the lid open;
+exact-cutoff, AC and unknown readings continue. Startup checks happen before a
+sleep hold is taken; subsequent checks run approximately every 10 seconds.
 
 `t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
 returning to the hub afterward. Save or discard hub edits before opening the
@@ -1331,6 +1437,21 @@ and Keychain identifiers remain compatible. Installation does not grant sudo or
 start monitoring. Runtime monitoring and hotspot joins require macOS; help and
 configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
 
+Session lifecycle actions share native ownership checks and verified launch readiness.
+Moves reserve their destination and validate both stores before stopping the source,
+then checkpoint work, verify copied bytes and wait for the exact destination owner.
+Reused workspaces, saved resumes and transfers retain unidentified-writer refusals.
+When allocation proves a newly created worktree and its device/inode still match,
+unresolved sibling locks are recorded in the operation receipt rather than
+blocking every workspace. Known same-workspace
+writers, tmux/foreground owners, reservations and unsafe ownership stores still
+block a new launch. No existing writer is stopped or released by this check.
+Failed transfers retain receipts and use `t resume REPO SLOT` for reconciliation;
+they never restart an ambiguous source.
+`session history`, `remote session history` and `history` remain hidden compatibility
+routes for the internal saved-conversation implementation, excluded from menus and
+completion. Public instructions use `session resume`.
+
 ### Local inference activity
 
 In an owned tmux pane, local lead and worker launches add a compact
@@ -1350,13 +1471,58 @@ Development preview: `python3 scripts/preview_local_status.py` from this
 worktree in a terminal. It uses an isolated tmux server, sample activity and
 temporary HOME/state; it never calls a model or edits real configuration.
 
+### Model comparison summaries
+
+Any page showing a list of models includes succinct, high-level detail and
+benchmarks for each model. This applies to native/cloud agent selectors, workflow
+stage selectors, local catalogues, setup and usage/monitoring lists. Preserve
+existing fields, actions and navigation. Use the shared RailUI/table patterns.
+
+Keep each entry compact: model identity, a short evidence-backed description or
+capability summary, relevant availability, and a named benchmark with its score.
+Use a compact table like `t ls`: one physical row per model and the same column
+positions for every row. Include model identity, size, provider, memory fit,
+readiness and benchmark score where available. Put capability/precision in the
+model cell or a consistent column; do not add indented metadata lines per model.
+Use a nonselectable column header and one shared legend: selected marker, memory
+fit, verification state and benchmark provenance. Align headers, model labels,
+legend and actions to the same text origin after the focus gutter. Reserve
+cyan for headings, focus and meaningful values rather than coloring all metadata.
+Show an unavailable score as an em dash with one shared explanation; avoid
+repeating a full Benchmark unavailable paragraph under every model. Inheritance
+is one compact control with the resolved default when known, not a duplicate
+model card. Separate model choices from management actions with shared sections.
+Keep sample-data labels and prototype explanations outside the simulated terminal.
+For local models retain precision, memory fit and readiness; include size/context
+when available. Show measured speed only when observed, with units. Use explicit
+Benchmark unavailable and Speed not measured states rather than zero or invented
+scores, descriptions or performance claims. An unavailable catalogue must retain
+saved/custom model choices and explain which metadata is missing.
+
+Keep suite/version and evaluation provenance visible in the list, using a shared
+heading or legend when identical across rows. Label publisher/base-model results
+separately from evaluations of the exact local artifact. Different suites,
+harnesses, quantizations and hardware are not a common ranking; mark differences
+and do not silently sort them as comparable. Details expose sources, dates,
+methodology and measurement conditions without making users open each model to
+see its basic comparison. Opening a list never triggers inference or measurement.
+
+At narrow widths, keep rows on one line as `t ls` does: shorten model text and
+column labels, then omit lower-priority size/provider columns consistently.
+Keep benchmark context, memory fit and availability legible at narrow widths;
+full values remain available on selection. Never vary columns between model rows;
+use the shared viewport to retain focused selection and navigation. Planning
+previews cover cloud and local lists, missing scores, unavailable metadata,
+different evaluation methods and narrow terminal sizes with labeled sample data.
+
 ### Workflow model overview
 
 The existing local-model single-selection mode opens a compact RailUI overview
 with model identity, readiness, file size, memory fit, context and the next action.
 Use shared nonselectable context rows and the shared viewport; keep the focused
-action and footer visible at 80×24, 44×20 and 32×12. Benchmarks and Artifact &
-runtime are separate read-only views; sources/methodology remains accessible.
+action and footer visible at 80×24, 44×20 and 32×12. Include the same concise
+benchmark summary shown in model lists. Benchmarks and Artifact & runtime provide
+separate read-only detail views; sources/methodology remains accessible.
 Wrap detail text within the rail, including URLs and revisions. Back retains focus.
 
 Downloaded models offer Verify readiness with a review of file reuse and context.
@@ -1368,3 +1534,35 @@ old verification evidence. Special memory-mapped artifacts may be checked when
 the publisher's resident estimate and minimum RAM fit; fit remains unknown until
 verified. Runtime guardrails are never bypassed. These extend existing wizard,
 single-selection, detail and install action modes; no new public command.
+
+### Prompted connection recovery
+
+The existing native Codex inference launch has an `on_cloud_failure=ask`
+conditional mode: RailUI single selection for local recovery, passthrough for
+native work, and single selection/review for explicit cloud return. Selecting a
+ready local model is the continuation action and dismisses the picker directly;
+never insert a model-details or confirmation screen. Show provider, readiness
+and Memory fit ✓/✕/?; disabled choices explain why they cannot run. Pause/Esc
+retains the cloud runtime and suppresses repeat offers for the current turn.
+A failed local start keeps recovery choices visible with the error and retained
+checkpoint. Choices are session-scoped and never save workflow changes.
+
+Cloud reachability must be stable before the return offer, which appears only at
+a safe turn boundary. Never interrupt a tool or pending approval. Stay local/Esc
+dismisses that offer; cloud return uses a review and updated bounded checkpoint.
+Capture and restore only the verified owning tmux pane without nesting alternate
+screen buffers. Outside tmux, report that prompted recovery is unavailable and
+retain the native cloud session. Preserve exactly one writer through every exit.
+Nonterminal Ask launches preserve native cloud behavior without a picker.
+
+In Ask mode, correlated fresh-start `account/read`/`thread/start` transport errors
+and the native routing-discovery bootstrap failure use the same ready-model
+selection after verified runtime shutdown. Show Retry cloud and Cancel startup
+instead of offering to pause a conversation that does not exist. Selection starts
+locally immediately with the original text prompt or an empty conversation.
+Incomplete startup input disables local selection. Preserve Pause passthrough;
+routing-discovery failure alone never authorizes automatic local fallback.
+
+Development preview: `python3 scripts/preview_connection_recovery.py` uses the
+shared RailUI with labeled sample data, no services, and no real configuration.
+Add `--startup` to simulate a bootstrap failure and cloud retry.

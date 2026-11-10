@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from native_agent_fixture import write_native_agent
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -738,7 +739,7 @@ def test_real_isolated_launch_quotes_brief_and_reserves_tree(tmp_path, agent):
     (bindir / 'tmux').write_text('#!/bin/sh\nexec ' + shlex.join([tmux, '-S', socket, '-f', '/dev/null']) + ' "$@"\n')
     (bindir / 'gh').write_text('#!/bin/sh\nexit 1\n')
     record = home / 'agent.json'
-    (bindir / agent).write_text('#!' + sys.executable + '\nimport json, pathlib, sys, time\n' +
+    write_native_agent(bindir / agent, '#!' + sys.executable + '\nimport json, pathlib, sys, time\n' +
         f'pathlib.Path({str(record)!r}).write_text(json.dumps(sys.argv[1:]))\ntime.sleep(30)\n')
     for file in bindir.iterdir(): file.chmod(0o755)
     # Ubuntu's system zshrc can prompt about shared completion permissions

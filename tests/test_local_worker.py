@@ -9,7 +9,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from conftest import load_script
+from conftest import load_script, ManagedClientFixture
 
 
 @pytest.fixture
@@ -18,7 +18,15 @@ def worker(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
-    return load_script(Path(__file__).parents[1] / 'libexec/t_local_worker.py', 'local_worker_test')
+    module = load_script(Path(__file__).parents[1] / 'libexec/t_local_worker.py', 'local_worker_test')
+    real = module.inference
+    def inference():
+        result = real()
+        helper = result['helper']
+        result['helper'] = lambda name: {'Client': ManagedClientFixture} if name == 't_local_manager' else helper(name)
+        return result
+    monkeypatch.setattr(module, 'inference', inference)
+    return module
 
 
 @pytest.fixture
@@ -117,7 +125,7 @@ def test_start_validation(worker, args):
     with pytest.raises(ValueError): worker.Worker().start(args)
 
 
-def test_task_lifecycle_and_exclusivity(worker, repo, monkeypatch):
+def test_task_lifecycle_and_concurrent_acceptance(worker, repo, monkeypatch):
     manager = worker.Worker()
     args = {'workspace': str(repo), 'assignment': 'inspect', 'mode': 'patch'}
     with pytest.raises(ValueError, match='disabled'): manager.start(args)
@@ -127,15 +135,18 @@ def test_task_lifecycle_and_exclusivity(worker, repo, monkeypatch):
     def server(*args): yield 'http://127.0.0.1:1234', {}
     monkeypatch.setattr(worker, 'ollama_server', server)
     monkeypatch.setattr(worker, 'check_model', lambda *a: None)
-    monkeypatch.setattr(worker, 'request', lambda *a: {'models': [{'name': 'gpt-oss:20b', 'digest': 'fixture-digest'}]})
-    def run(job, base, model, timeout, cancel, *args):
+    def run(job, base, model, timeout, cancel, *args, progress=None):
+        progress()
         started.set()
         assert cancel.wait(10)
         return 'cancelled'
     monkeypatch.setattr(worker, 'run_worker', run)
     task = manager.start(args)
     assert started.wait(10)
-    with pytest.raises(ValueError, match='already running'): manager.start(args)
+    second = manager.start(args)
+    assert second['task_id'] != task['task_id']
+    # Both accepted tasks own immutable snapshots before either starts inference.
+    assert (Path(second['workspace']) / 'file.py').read_text() == 'before\n'
     ident = {'task_id': task['task_id']}
     assert manager.call('task_status', ident)['status'] == 'running'
     assert manager.call('cancel_task', ident)['status'] == 'cancelling'
@@ -152,9 +163,10 @@ def test_failure_releases_lease(worker, repo, monkeypatch):
     worker.save_settings({'enabled': True, 'model': 'gpt-oss:20b'})
     monkeypatch.setattr(worker, 'snapshot', lambda *a: (_ for _ in ()).throw(ValueError('snapshot failed')))
     manager = worker.Worker()
-    task = manager.call('start_task', {'workspace': str(repo), 'assignment': 'inspect'})
+    with pytest.raises(ValueError, match='snapshot failed'):
+        manager.call('start_task', {'workspace': str(repo), 'assignment': 'inspect'})
+    assert not manager.tasks
     manager.close()
-    assert manager.call('task_status', {'task_id': task['task_id']})['error'] == 'snapshot failed'
     with worker.reservation(): pass
 
 
@@ -311,24 +323,71 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
         yield 'http://127.0.0.1:1234','owned-alias',{'revision':'a'*40,'runtime':{'contextLength':context}}
     status=worker.inference()['helper']('t_local_status')
     local={'leased_runtime':lambda chosen:None,'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
-           'helper':lambda n:status if n=='t_local_status' else {'hardware':lambda:{}},'runtime':runtime}
+           'policy':worker.inference()['policy'],
+           'helper':lambda n:status if n=='t_local_status' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'hardware':lambda:{}},'runtime':runtime}
     monkeypatch.setattr(worker,'inference',lambda:local)
-    monkeypatch.setattr(worker,'run_worker',lambda *a:observed.append(a[3:]) or 'completed')
+    monkeypatch.setattr(worker,'run_worker',lambda *a,**k:observed.append(a[3:]) or 'completed')
     manager=worker.Worker();args={'workspace':str(repo),'assignment':'inspect','timeout_seconds':300,'routing_reason':'bounded fixture'}
     task=manager.start(args)
     for thread in manager.threads:thread.join(2)
     result=manager.call('task_status',{'task_id':task['task_id']})
     assert result['status']=='completed' and result['identity_verified']
     assert result['context_tokens']==8192 and result['revision']=='a'*40
-    assert observed[1][0]==60 and observed[1][-2:]==('lmstudio',8192)
+    assert observed[0][0]==300 and observed[0][-2:]==('lmstudio',8192)
     manager.close()
     for mode in ('disabled','local-only'):
         routing['mode']=mode
         with pytest.raises(ValueError):manager.start(args)
     for key in ('parent_session_id','routing_reason'):
         with pytest.raises(ValueError):manager.start(dict(args,**{key:5}))
-    routing['mode']='automatic';local['report']=lambda *a:{'fit':False,'reason':'does not fit'}
+    routing['mode']='automatic'
+    class Unavailable(ManagedClientFixture):
+        def __enter__(self): raise ValueError('does not fit')
+    local['helper'] = lambda n:status if n=='t_local_status' else {'Client':Unavailable}
     failed=manager.start(args)
     for thread in manager.threads:thread.join(2)
     assert manager.call('task_status',{'task_id':failed['task_id']})['error']=='does not fit'
     manager.close()
+
+
+@pytest.mark.parametrize('activity,expected', [('silent','inactivity_timed_out'), ('heartbeat','inactivity_timed_out'),
+                                              ('generation','timed_out'), ('tool','timed_out'), ('queue','completed')])
+def test_inactivity_is_observed_work_and_never_extends_task(worker, tmp_path, monkeypatch, activity, expected):
+    job=tmp_path/'job';job.mkdir();(job/'workspace').mkdir()
+    (job/'assignment.json').write_text(json.dumps(dict(mode='investigate', assignment='inspect', inactivity_timeout_seconds=4)))
+    clock=[0]
+    class Process:
+        returncode=0
+        def poll(self):
+            clock[0]+=1
+            if activity=='tool':
+                with (job/'events.jsonl').open('a') as out:
+                    out.write('not json\n'+json.dumps({'item':{'type':'command_execution','status':'in_progress'}})+'\n')
+            return 0 if clock[0]>=8 else None
+    monkeypatch.setattr(worker.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(worker.subprocess,'Popen',lambda *a,**k:Process())
+    monkeypatch.setattr(worker,'stop',lambda proc:None)
+    monkeypatch.setattr(worker,'executable',lambda name:'/bin/true')
+    def progress():
+        if activity=='generation':progress.generation_events=clock[0]
+        return min(clock[0],5) if activity=='queue' else 0
+    cancel=SimpleNamespace(is_set=lambda:False,wait=lambda delay:None)
+    assert worker.run_worker(job,'http://127.0.0.1:9','model',5,cancel,progress=progress)==expected
+    manager = worker.Worker()
+    manager.tasks['finished'] = ({'status': expected}, threading.Event())
+    assert manager.call('cancel_task', {'task_id': 'finished'})['status'] == expected
+
+
+@pytest.mark.parametrize('requested,expected', [(None,900),(60,60),(1800,1200)])
+def test_task_limits_inherit_default_and_cap_explicit(worker, repo, monkeypatch, requested, expected):
+    worker.save_settings({'enabled':True,'model':'test'})
+    original=worker.inference
+    def inference():
+        module=original();module['effective']=lambda path:dict(module['policy'](),max_timeout_seconds=1200)
+        return module
+    monkeypatch.setattr(worker,'inference',inference)
+    monkeypatch.setattr(worker.threading.Thread,'start',lambda self:None)
+    args={'workspace':str(repo),'assignment':'inspect'}
+    if requested is not None:args['timeout_seconds']=requested
+    task=worker.Worker().start(args)
+    assert task['timeout_seconds']==expected and task['inactivity_timeout_seconds']==300

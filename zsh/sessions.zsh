@@ -1629,16 +1629,11 @@ _dev_kill_one() {
   # NOT `local path`: in zsh `path` is the array tied to $PATH, and a plain local
   # keeps the tie but starts EMPTY — so every command below (the kill itself) was
   # "command not found". Pinned by test_zshrc_never_declares_a_tied_special_….
-  local wt; wt=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
-  _dev_history_record "$(_dev_session_sid "$session")" "$agent" "$wt" close
-  local _kerr
-  if _kerr=$(tmux kill-session -t "=$session:" 2>&1); then echo "Killed $session"
-  else echo "t kill: tmux kill-session $session failed${_kerr:+: $_kerr}" >&2; return 1; fi
-  # A slot's dev server is detached from its tmux session and would outlive it,
-  # serving the old code on the slot's port. Only a per-session worktree is swept
-  # this way — a shared tree's processes belong to everyone.
-  [[ -n $DEV_WORKTREE_ROOT && -n $wt && $wt == $DEV_WORKTREE_ROOT/* ]] \
-    && _dev_stop_rooted "$wt"
+  local wt sid
+  wt=$(tmux display-message -p -t "=$session:" '#{session_path}') || return 1
+  sid=$(_dev_session_sid "$session")
+  _t_lifecycle_run close "$session" "$wt" "$sid" "$agent" || return $?
+  print -r -- "Killed $session"
   return 0
 }
 
@@ -2168,12 +2163,12 @@ _dev_with_launch_locks() {
 _dev_launch_preflight() {
   local session=$1 dir=${2:A} sid=$3 name owner_path rows rc host row_sid row_cwd row_name
   if [[ -z $sid ]] && _dev_legacy_workspace_reserved "$dir"; then
-    print -u2 -- 't: this workspace has a retired integration reservation; use t session history to resume its exact saved conversation safely'
+    print -u2 -- 't: this workspace has a retired integration reservation; use t session resume to resume its exact saved conversation safely'
     return 1
   fi
   local history_reservation="${dir:h}/.${dir:t}.history-reservation"
   if [[ -f $history_reservation && $(<$history_reservation) != ${T_HISTORY_TOKEN:-} ]]; then
-    print -u2 -- 't: history workspace launch is reserved; retry after preparation completes'; return 1
+    print -u2 -- 't: workspace launch is reserved; retry after preparation completes'; return 1
   fi
   while IFS='|' read -r name owner_path; do
     [[ -n $name ]] || continue
@@ -2236,12 +2231,54 @@ _dev_foreground_new() {
   _dev_launch_preflight "dev-foreground-new" "$dir" ''
 }
 
+# Stop only our newly created placeholder and wait for its PTY to be released.
+# A force-respawn closes the master and immediately allocates another PTY while
+# the old child is still exiting. On macOS that can fail with ENXIO even below
+# the PTY limit. Keep the dead pane until normal respawn is safe.
+_dev_stop_session_placeholder() {
+  local session=$1 identity pane pid command_line dead old_remain current attempt
+  identity=$(tmux display-message -p -t "=$session:" '#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_dead}') || return 1
+  IFS='|' read -r pane pid command_line dead <<< "$identity"
+  [[ $pane == \%<-> && $pid == <-> && $pid -gt 1 && $command_line == 'sleep 86400' && $dead == 0 ]] || {
+    print -u2 't: launch placeholder changed; no replacement started'; return 1
+  }
+  old_remain=$(tmux show-options -A -p -v -t "$pane" remain-on-exit) || return 1
+  tmux set-option -p -t "$pane" remain-on-exit on || return 1
+  current=$(tmux display-message -p -t "$pane" '#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_dead}') || return 1
+  [[ $current == "$identity" ]] || { print -u2 't: launch placeholder changed; no replacement started'; return 1; }
+  kill -TERM "$pid" 2>/dev/null || {
+    print -u2 't: could not stop launch placeholder; run t doctor on this host'; return 1
+  }
+  for attempt in {1..100}; do
+    if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
+       { ! kill -0 "$pid" 2>/dev/null || _t_pid_is_zombie "$pid"; }; then
+      # Return the immutable pane and its original policy to the launcher.
+      print -r -- "$pane|$old_remain"
+      return 0
+    fi
+    sleep 0.05
+  done
+  print -u2 't: launch placeholder did not exit; no replacement started. Run t doctor on this host.'
+  return 1
+}
+
 # Called only after a new pane has been claimed and configured. respawn retains
-# pipe-pane logging, so even the first agent output is captured. Disable macOS
-# shell-session save/restore only in this child, leaving the caller untouched.
+# logging, so even the first agent output is captured. Never force-replace a
+# running process, and never retry a failed fork on a potentially broken pane.
 _dev_start_session_command() {
-  tmux respawn-pane -k -t "=$1:" env SHELL_SESSIONS_DISABLE=1 \
-    zsh -lic "setopt no_monitor no_notify; $2"
+  local stopped pane old_remain
+  stopped=$(_dev_stop_session_placeholder "$1") || return 1
+  IFS='|' read -r pane old_remain <<< "$stopped"
+  # A normal pane exit closes its pipe, and pipe-pane refuses dead panes.
+  # Queue respawn and logging in ONE tmux command sequence: both synchronous
+  # commands complete before tmux returns to reading the new PTY's output.
+  tmux respawn-pane -t "$pane" env SHELL_SESSIONS_DISABLE=1 \
+    zsh -lic "setopt no_monitor no_notify; $2" \; \
+    pipe-pane -t "$pane" -o "cat >> ${(q)3}" \; \
+    set-option -p -t "$pane" remain-on-exit "$old_remain" || {
+    print -u2 't: tmux could not launch the agent; keep the error above and run t doctor on this host'
+    return 1
+  }
 }
 
 _dev_new_session() {
@@ -2249,11 +2286,14 @@ _dev_new_session() {
 }
 
 _dev_new_session_claimed() {
+  _t_lifecycle_run new "$@"
+}
+
+_dev_new_session_effect() {
   local session="$1" dir="$2" branch="${3:-$DEV_BRANCH}" skip_prepare="${4:-}" agent="${5:-claude}"
   if [[ -z $7 ]] && (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
-  _dev_launch_preflight "$session" "$dir" '' || return 1
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   local sid; sid="$(uuidgen | tr 'A-Z' 'a-z')"
@@ -2265,9 +2305,11 @@ _dev_new_session_claimed() {
   # client is active, so it fits the phone on attach. (latest is tmux's default,
   # but we set it explicitly so it holds on machines with a different default.)
   # The trailing colon keeps dots in repo names out of tmux window/pane parsing.
-  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || {
+    print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
+    return 1
+  }
   tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
-  tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Which agent occupies the slot, for every later reader (_dev_agent_of_session). Only
   # claude takes a pre-assigned id; a codex slot is stamped by its SessionStart hook once
   # codex has minted one (there is no `codex --session-id`).
@@ -2289,43 +2331,45 @@ _dev_new_session_claimed() {
     local clear_identity='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_RESUME_ID CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_SESSION_ID CURSOR_AGENT T_ISSUE_TOKEN; '
     prep="${clear_identity}${prep}"
   fi
-  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" || { tmux kill-session -t "=$session:"; return 1; }
+  # A failed barrier may mean the pane changed. Retain it for inspection rather
+  # than killing whatever now occupies the session name.
+  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" "$logfile" || return 1
   _dev_launch_startup_check "$session" "$logfile" || return 1
-  [[ $agent == claude ]] && _dev_history_record "$sid" "$agent" "$dir" launch
-  _dev_recovery_watch "$session"
 }
 
 # Resolve an exact owner. Fresh launches may need time to publish their identity;
 # never accept the prewritten tmux stamp alone or follow a recycled session name.
 _t_history_owner() {
   local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
-  local wait_ready=$5 current
+  local wait_ready=$5 current owner_pid
   local -F SECONDS=0
-  tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't history: selected owner exited; reopen history'; return 1; }
+  tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't resume: selected owner exited; rerun t resume'; return 1; }
   local identity
   identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
   immutable=${identity%%|*}; actual_dir=${identity#*|}
-  [[ $immutable == \$<-> ]] || { print -u2 't history: could not verify selected owner identity'; return 1; }
+  [[ $immutable == \$<-> ]] || { print -u2 't resume: could not verify selected owner identity'; return 1; }
   while true; do
+    _DEV_PS_AT=0
+    [[ $wait_ready != wait ]] || owner_pid=$(_dev_session_claude_pid "$session")
     actual_agent=$(_dev_agent_of_session "$session")
     actual_sid=$(_dev_session_sid "$session")
     current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
-      print -u2 't history: selected owner exited; reopen history'; return 1
+      print -u2 't resume: selected owner exited; rerun t resume'; return 1
     }
     [[ $current == $identity && ${actual_dir:A} == $dir && $actual_agent == $agent &&
-       ( -z $actual_sid || $actual_sid == $sid ) ]] || {
-      print -u2 't history: selected owner changed; reopen history'; return 1
+       ( -z $sid || -z $actual_sid || $actual_sid == $sid ) ]] || {
+      print -u2 't resume: selected owner changed; rerun t resume'; return 1
     }
     if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
-      print -u2 -- "t history: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
+      print -u2 -- "t resume: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
       return 1
     fi
-    [[ -n $actual_sid ]] && { print -r -- "$immutable"; return 0; }
+    [[ -n $actual_sid && ( $wait_ready != wait || -n $owner_pid ) ]] && { print -r -- "$immutable"; return 0; }
     [[ $wait_ready == wait ]] || {
-      print -u2 't history: selected owner changed; reopen history'; return 1
+      print -u2 't resume: selected owner changed; rerun t resume'; return 1
     }
     if (( SECONDS >= 15 )); then
-      print -u2 -- "t history: resumed conversation identity is not ready; inspect it with: t open ${label%-*} ${label##*-}"
+      print -u2 -- "t resume: resumed conversation identity is not ready; inspect it with: t open ${label%-*} ${label##*-}"
       return 1
     fi
     sleep 0.25
@@ -2792,16 +2836,19 @@ _t_dev() {
     # a slot whose tmux died but whose worktree lingers is reused in place (work
     # preserved). On failure (or a per-repo opt-out) fall back to the shared tree +
     # the in-pane branch dance.
-    local skip_prepare=
+    local skip_prepare= new_workspace=
     if _dev_worktree_enabled "$repo"; then
-      local _wt; _wt="$(_dev_worktree_create "$repo" "$slot")"
+      local -a created_worktree
+      created_worktree=("${(@f)$(_dev_worktree_create "$repo" "$slot" '' new-launch)}")
+      local _wt=${created_worktree[1]}
+      new_workspace=${created_worktree[2]}
       if [[ -n $_wt ]]; then dir="$_wt"; skip_prepare=1
       else _dev_worktree_refuse "$repo" "$slot"; return 1; fi
     fi
     _dev_agent_check "$agent" || return 1
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
-    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
+    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" '' '' '' "$new_workspace" || return 1
     _t_session_attach "$session" "$agent" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1

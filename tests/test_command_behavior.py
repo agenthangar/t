@@ -480,7 +480,7 @@ def test_session_list_default_includes_other_repositories(
 
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
     monkeypatch.setattr(t_mod, 'zsh_capture', scan)
-    flags = ['-r'] if remote else []
+    flags = [] if remote else ['--local']
     for scope in ([], ['--all']):
         assert t_mod.main([*command, *scope, *flags]) == 0
         output = capsys.readouterr().out

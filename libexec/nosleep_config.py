@@ -34,6 +34,8 @@ DEFAULTS = {
     "hotspot_ssid": "",
     "hotspot_after": 300,
     "hotspot_timeout": 30,
+    "battery_protection": False,
+    "battery_below": 20,
 }
 LABELS = {
     "dim": "Display when lid closes",
@@ -46,6 +48,8 @@ LABELS = {
     "every": "Check interval",
     "retries": "Retries",
     "backoff": "Retry delay",
+    "battery_protection": "Battery protection",
+    "battery_below": "Exit below",
     "hotspot": "Hotspot fallback",
     "hotspot_ssid": "Hotspot Wi-Fi name",
     "hotspot_after": "Hotspot outage delay",
@@ -73,7 +77,7 @@ def validate(data):
         raise ValueError("unknown setting: " + ", ".join(sorted(unknown)))
     result = DEFAULTS.copy()
     result.update(data)
-    for key in ("dim", "display_on", "lock", "forever", "agent", "internet", "hotspot"):
+    for key in ("dim", "display_on", "lock", "forever", "agent", "internet", "hotspot", "battery_protection"):
         if type(result[key]) is not bool:
             raise ValueError(f"{key} must be true or false")
     requirement = result["requirement"]
@@ -82,7 +86,8 @@ def validate(data):
         raise ValueError("requirement must be all, none, or a positive integer")
     limits = {"grace": (0, None), "every": (1, None),
               "retries": (0, 10), "backoff": (1, 300),
-              "hotspot_after": (0, 2147483647), "hotspot_timeout": (1, 300)}
+              "hotspot_after": (0, 2147483647), "hotspot_timeout": (1, 300),
+              "battery_below": (1, 100)}
     for key, (minimum, maximum) in limits.items():
         value = result[key]
         if type(value) is not int or value < minimum or (maximum is not None and value > maximum):
@@ -180,6 +185,9 @@ def describe(values):
         f"  Grace     {values['grace']}s before retrying",
         f"  Retries   {values['retries']}",
         f"  Backoff   {values['backoff']}s, doubles to 300s",
+        "", "Battery protection",
+        f"  Enabled   {_choice('battery_protection', values)}",
+        f"  Below     {_choice('battery_below', values)}",
         "", "Hotspot fallback",
         f"  Hotspot   {_choice('hotspot', values)}",
         f"  Wi-Fi     {values['hotspot_ssid'] or 'Not configured; run nosleep hotspot setup'}",
@@ -345,6 +353,10 @@ def _choice(name, values):
         return str(value) + (" (run until Ctrl-C)" if value == "none" else "")
     if name in ("agent", "internet"):
         return ("on" if value else "off") + (" (inactive while monitoring disabled)" if not monitoring(values) else "")
+    if name == "battery_protection":
+        return "on" if value else "off"
+    if name == "battery_below":
+        return f"{value}%" + (" on battery" if values["battery_protection"] else " (inactive)")
     if name == "hotspot":
         return ("on" if value else "off") + (" (inactive)" if not monitoring(values) or not values["internet"] else "")
     if name == "hotspot_ssid":
@@ -384,6 +396,7 @@ def menu(values):
             inactive = not monitoring(edited)
             sections = {"dim": "ON CLOSE", "forever": "CHECKS",
                         "grace": "CHECK SETTINGS" + (" (inactive)" if inactive else ""),
+                        "battery_protection": "BATTERY PROTECTION",
                         "hotspot": "HOTSPOT FALLBACK",
                         "defaults": "FINISH"}
             ui.frame("Local settings", body, selected, pending, flash=flash, sections=sections)
@@ -402,7 +415,7 @@ def menu(values):
                 mode = display_mode(edited)
                 edited["display_on"] = mode != "Dim"
                 edited["dim"] = mode == "On"
-            elif name in ("lock", "forever", "agent", "internet"):
+            elif name in ("lock", "forever", "agent", "internet", "battery_protection"):
                 edited[name] = not edited[name]
             elif name == "requirement":
                 choices = ("all", "none", 1, 2)

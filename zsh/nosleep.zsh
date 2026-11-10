@@ -145,6 +145,10 @@ source "$_NOSLEEP_ROOT/zsh/nosleep-fallback.zsh"
 #   -r, --retries N     Retry limit, 0–10 (default 3)
 #   -b, --backoff SECS  Retry delay; doubles to 300 seconds (default 30)
 #
+# BATTERY PROTECTION
+#   nosleep config     Optional battery cutoff, including with --forever
+#                      Off by default; exit below 20% on battery when enabled
+#
 # HOTSPOT FALLBACK
 #   --hotspot MODE     on | off
 #   -h, --help          Show help
@@ -163,6 +167,15 @@ source "$_NOSLEEP_ROOT/zsh/nosleep-fallback.zsh"
 #   -C / --no-checks skips checks; -F / --no-forever resumes selected checks.
 #   Modes take separate or =values; numeric settings allow attached values.
 nosleep() {
+  # Like the binary, select and load current code on every invocation, including
+  # cd && nosleep and uncommitted edits. Preserve shell-local tuning and config.
+  if (( $+functions[_t_reload_if_moved] )) && [[ -z ${_NOSLEEP_SOURCE_SELECTED:-} ]]; then
+    _t_reload_if_moved || return $?
+    local _NOSLEEP_SOURCE_SELECTED=1
+    source "$_NOSLEEP_ROOT/zsh/nosleep.zsh" || return $?
+    nosleep "$@"
+    return $?
+  fi
   [[ "$1" == config ]] && { shift; _nosleep_config "$@"; return $?; }
   if [[ "$1" == hotspot ]]; then
     [[ $# == 2 && $2 == setup ]] || { print -u2 -- 'usage: nosleep hotspot setup'; return 2; }
@@ -173,6 +186,7 @@ nosleep() {
   local forever=0 display_on=0 dim=0 dim_requested=0 lock=1 grace=900 every=30 retries=3 backoff=30 defaults setting value
   local agent=1 internet=1 monitoring=1 requirement=all required_count=0 enabled_count=0
   local hotspot=0 hotspot_ssid='' hotspot_after=300 hotspot_timeout=30
+  local battery_protection=0 battery_below=20
   defaults=$(_nosleep_config --values) || return $?
   for setting in ${(f)defaults}; do
     value=${setting#*=}
@@ -192,6 +206,8 @@ nosleep() {
       hotspot_ssid) hotspot_ssid=$value ;;
       hotspot_after) hotspot_after=$value ;;
       hotspot_timeout) hotspot_timeout=$value ;;
+      battery_protection) battery_protection=$value ;;
+      battery_below) battery_below=$value ;;
     esac
   done
   # Expand short-option groups before parsing. Value-taking options consume the
@@ -367,6 +383,16 @@ nosleep() {
     return 1
   fi
 
+  local battery_power=unknown battery_level=-1 battery_text='Not checked (protection off)' battery_next_check=0
+  if (( battery_protection )); then
+    _nosleep_battery_update
+    battery_next_check=$(( EPOCHSECONDS + 10 ))
+    if [[ $battery_power == battery ]] && (( battery_level < battery_below )); then
+      print -r -- "nosleep: battery ${battery_level}% is below ${battery_below}%; sleep hold not started"
+      return 0
+    fi
+  fi
+
   # Teardown is idempotent: it runs from the INT trap, the EXIT trap (zsh scopes a
   # function's EXIT trap to the function, so it fires on every return path), and
   # the let-go branch below — whichever gets there first does the work. Its state
@@ -445,6 +471,17 @@ nosleep() {
     # Teardown has already run; never re-arm power assertions on the next tick.
     (( _NOSLEEP_DONE )) && return 130
     now=$EPOCHSECONDS
+    if (( battery_protection && now >= battery_next_check )); then
+      _nosleep_battery_update
+      battery_next_check=$(( EPOCHSECONDS + 10 ))
+      show_snapshot=1
+      if [[ $battery_power == battery ]] && (( battery_level < battery_below )); then
+        _nosleep_status_clear
+        print -r -- "nosleep: battery ${battery_level}% is below ${battery_below}%; releasing sleep hold"
+        _nosleep_restore
+        return 0
+      fi
+    fi
     lid_shut=0
     _nosleep_lid_shut && lid_shut=1
     if (( lid_shut != lid_shut_was )); then
@@ -721,6 +758,7 @@ _nosleep_status() {
     sleep_text='Not prevented'
     notice_text='Sleep protection unavailable · closing may allow sleep'
   fi
+  (( battery_protection && sleep_held )) && sleep_text='Prevented · battery cutoff active'
   rows=('nosleep'
         ''
         'Live status'
@@ -729,6 +767,8 @@ _nosleep_status() {
         "  Internet  $network_text"
         "  Next      $next_text")
   styles=("$heading_style" 0 '1;36' "$sleep_style" "$agent_style" "$network_style" "$next_style")
+  rows+=("  Battery   $battery_text")
+  styles+=(36)
   local hotspot_text='Off' hotspot_style=2
   if (( hotspot )); then
     hotspot_style=0
@@ -773,6 +813,13 @@ _nosleep_status() {
   config_values=('' "$display_text" "$lock_text" '' '' "$monitoring_text" "$requirement_text" '' ''
                  "$every_text" "$grace_text" "$retries_text" "$backoff_text")
   config_styles=('1;36' 0 0 0 '1;36' 0 0 0 '1;36' 0 0 0 0)
+  local battery_policy=Off battery_cutoff="${battery_below}% (inactive)"
+  if (( battery_protection )); then
+    battery_policy=On battery_cutoff="${battery_below}% on battery"
+  fi
+  config_labels+=('' 'Battery protection' Enabled 'Below')
+  config_values+=('' '' "$battery_policy" "$battery_cutoff")
+  config_styles+=(0 '1;36' 0 0)
   rows+=('')
   styles+=(0)
   for (( item = 1; item <= ${#config_labels}; ++item )); do
@@ -922,6 +969,46 @@ _nosleep_undim() {
 # The flag is what keeps a CLOSED lid from sleeping the Mac; caffeinate alone holds
 # only idle sleep. It is global state that any nosleep's restore clears.
 _nosleep_pmset_held() { pmset -g 2>/dev/null | grep -qE '^ *SleepDisabled[[:space:]]+1'; }
+
+# Read only the internal battery, never an attached UPS. Malformed or failed
+# observations clear the previous reading so stale charge cannot trigger an exit.
+_nosleep_battery_read() {
+  reply=(unknown '')
+  local sample line power=unknown level=101 found=0 percent
+  local -a lines
+  sample=$(LC_ALL=C pmset -g batt 2>/dev/null) || return 0
+  lines=("${(@f)sample}")
+  case $lines[1] in
+    "Now drawing from 'Battery Power'") power=battery ;;
+    "Now drawing from 'AC Power'") power=ac ;;
+    *) return 0 ;;
+  esac
+  for line in "${lines[@]}"; do
+    [[ $line == *InternalBattery-* ]] || continue
+    found=1
+    [[ $line =~ 'InternalBattery-[0-9]+[[:space:]].*[[:space:]]([0-9]{1,3})%;' ]] || return 0
+    percent=$(( 10#$match[1] ))
+    (( percent <= 100 )) || return 0
+    (( percent < level )) && level=$percent
+  done
+  if (( found )); then
+    reply=("$power" "$level")
+  else
+    reply=(none '')
+  fi
+}
+
+_nosleep_battery_update() {
+  local -a reply
+  _nosleep_battery_read
+  battery_power=$reply[1] battery_level=${reply[2]:--1}
+  case $battery_power in
+    battery) battery_text="${battery_level}% · on battery" ;;
+    ac) battery_text="${battery_level}% · AC power" ;;
+    none) battery_text='No battery' ;;
+    *) battery_text='Unknown · reading unavailable' ;;
+  esac
+}
 # _nosleep_online — true when an HTTPS exchange with either agent provider completes.
 # Any HTTP status counts (no -f): a 404 proves the network path; only DNS/connect/
 # TLS failures — the outages that actually stop tokens burning — return nonzero.

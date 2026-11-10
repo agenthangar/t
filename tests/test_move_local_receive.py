@@ -1,4 +1,8 @@
-"""Local move destinations exercise the real receive engine with isolated hosts."""
+"""Local destination routing passes exact source identity to the shared engine.
+
+Transfer failure ordering is covered by test_lifecycle_engine and the real
+two-host public command tests in test_lifecycle_transfer_e2e.
+"""
 import json
 
 import pytest
@@ -34,6 +38,7 @@ _dev_worktree_beam_sync() { print -u2 SYNC; [[ $FAIL != sync ]]; }
 _dev_slot_for_cwd() { print 'api 2'; }
 _dev_resume_session() { print -u2 "START $3"; }
 tmux() { [[ $1 != attach-session ]] || print ATTACH; }
+_t_lifecycle_move() { print -r -- "MOVE ${(j:|:)@}"; }
 '''
 
 
@@ -43,30 +48,19 @@ def test_selected_remote_conversation_lands_locally(zsh, tmp_path, flags):
     result = zsh(RECEIVE + f't session move api 2 {flags}; print rc=$?', _tty=True, **env)
     text = output(result)
     assert 'rc=0' in text, text
-    assert 'STOP remote-id' in text and 'TRANSCRIPT remote-id' in text and 'START remote-id' in text
+    assert 'MOVE user@alpha||' in text and '|remote-id|claude|api|2|' in text
     assert 'unrelated' not in text
-    assert ('ATTACH' in text) == (not flags)
+    assert text.split('MOVE ', 1)[1].splitlines()[0].endswith('|1' if flags else '|')
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
     assert len(logs) == 1 and 'local\tthis machine' in logs[0]['rows']
     assert any('current host: alpha' in arg for arg in logs[0]['args'])
-
-
-@pytest.mark.parametrize('failure', ['stale', 'stop', 'push', 'transcript', 'land', 'sync'])
-def test_receive_failures_never_start_local_owner(zsh, failure):
-    result = zsh(RECEIVE + 't session move api 2 --host local --detach; print rc=$?', FAIL=failure)
-    text = output(result)
-    assert 'rc=1' in text and 'START ' not in text and 'ATTACH' not in text, text
-    if failure == 'stale':
-        assert 'STOP ' not in text and 'selected session changed or closed' in text
-    if failure in ('stale', 'stop', 'push'):
-        assert 'TRANSCRIPT ' not in text
 
 
 @pytest.mark.parametrize('target', ['api 2', '--session remote-id'])
 def test_explicit_source_and_local_destination_use_receive(zsh, target):
     result = zsh(RECEIVE + f't session move {target} --from alpha --host local --detach; print rc=$?')
     text = output(result)
-    assert 'rc=0' in text and 'START remote-id' in text, text
+    assert 'rc=0' in text and 'MOVE user@alpha||' in text and '|remote-id|claude|' in text, text
 
 
 @pytest.mark.parametrize('changed', ['id', 'cwd', 'label', 'agent'])

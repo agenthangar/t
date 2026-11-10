@@ -8,12 +8,13 @@ import subprocess
 import sys
 
 from t_session_details import clip_columns, display_width, enrich, format_last_turn
+from t_picker_theme import key_labels, paint
 
-FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'UI'),
+FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
 
 OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
-               'interface': ('Ctrl-D', 'UI'), 'model': ('Ctrl-B', 'model'),
+               'interface': ('Ctrl-D', 'interface'), 'model': ('Ctrl-B', 'model'),
                'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo'),
                'session': ('Ctrl-V', 'session'), 'context': ('Ctrl-E', 'context'),
                'task': ('Ctrl-W', 'task')}
@@ -40,7 +41,9 @@ def metadata(source, profile):
             host, _, _, slot, state = fields[:5]
             repo = slot.partition(':')[0] if ':' in slot else slot.rpartition('-')[0] or slot
             result[(host, slot, state)] = dict(agent=fields[7] if len(fields) > 7 else 'claude',
-                interface='desktop' if state == 'app' else 'cli', host=host, repo=repo)
+                interface='desktop' if state == 'app' else 'cli', host=host, repo=repo, session=slot)
+            if profile in ('list', 'open'):
+                result[(host, slot, state)].update(session=slot, turn=fields[9] if len(fields) > 9 else '-')
             if profile == 'open':
                 result[(host, slot, state)].update(
                     model=fields[8] if len(fields) > 8 and fields[8] not in ('', '-') else 'unknown',
@@ -133,39 +136,92 @@ def state_label(profile, mask):
         'pending included' if mask & 2 else 'clean only')
 
 
-def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False):
-    compact = width <= 40
-    key = lambda text: text.replace('Ctrl-', '^').replace('Alt-', 'M-') if compact else text
-    controls = ['Enter/Esc' if compact and profile == 'resume' else f'Enter {profile}/Esc', 'Space/Tab ✓']
-    if profile == 'open':
-        controls[0] = 'Enter/k kill/Esc' if compact else 'Enter open/k kill/Esc'
-    if profile != 'open':
-        controls.append('Ctrl-/' if compact and profile == 'resume' else 'Ctrl-/ details')
-    lines = pack([key(control) for control in controls], width)
-    lines += pack([key(control) for control in
-                   ['Ctrl-F filters', 'Ctrl-A off', 'Ctrl-L on']], width)
+def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False, sort_enabled=True):
+    if profile == 'list':
+        return list_header(filters, hidden, columns, width, sort, color)
+    compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    key = lambda text: key_labels(text, compact=compact)
+    style = lambda text, role='hint': paint(text, role) if color else text
+    def keys(parts, selected=()):
+        active = {key(part) for part in selected}
+        return [' · '.join(style(part, 'active' if part in active else 'action') for part in line.split(' · '))
+                for line in pack([key(part) for part in parts], width)]
+    lines = [] if compact else [style('HOTKEYS', 'heading')]
+    lines += keys(['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓', 'Ctrl-K kill' if profile == 'open' else 'Ctrl-/'])
+    if not compact:
+        lines += ['']
+    lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle', 'Ctrl-X reset'], ['Filters ON'] if enabled else [])
+    controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for name, (shortcut, label) in FACETS.items()
+                                  if profile != 'resume' or name != 'interface']
+    active = [f'{FACETS[name][0]} {FACETS[name][1]}' for name, value in filters.items()
+              if enabled and value is not None and name in FACETS]
+    state_active = enabled and mask != (3 if profile == 'kill' else 1)
+    if state_active:
+        active.append('Ctrl-T state')
     if profile == 'resume':
-        lines += pack([key(f'{shortcut} {"turn" if compact and label == "last turn" else label}')
-                       for shortcut, label in RESUME_SORTS.values()], width)
-        merged_control = key('Alt-M ') + (
-            ('+' if enabled and hide_merged else '-') + 'merged' if compact
-            else 'show merged' if enabled and hide_merged else 'hide merged')
-        sort_control = 'Sort: ' + RESUME_SORTS[sort][1]
-        lines += [clip_columns(sort_control + ' ' + merged_control, width)] if compact else pack([sort_control, merged_control], width)
-    active = [f'{name}={value}' for name, value in filters.items() if value is not None]
-    summary = 'Filters ' + ('ON' if enabled else 'OFF')
-    if enabled:
-        summary += ': ' + (' · '.join(active) + ' · ' if active else '') + state_label(profile, mask)
-    else:
-        summary += ' · saved choices kept'
+        controls.append('Ctrl-D merged')
+        if enabled and hide_merged:
+            active.append('Ctrl-D merged')
+    lines += keys(controls, active)
+    summary = ', '.join(f'{name}={value}' for name, value in filters.items() if value is not None)
+    summary = state_label(profile, mask) + (' · ' + summary if summary else '')
+    if compact:
+        summary = key('Ctrl-T ') + summary
     suffix = f' · {hidden} hidden'
-    if compact and active and enabled:
-        summary = f'Filters ON +{len(active)}'
-    # Clip plain text first: ANSI escapes must never count toward terminal width.
-    summary = clip_columns(summary, width - display_width(suffix)) + suffix
-    lines.append(('\x1b[1;36m' + summary + '\x1b[0m') if color and enabled else summary)
+    summary = clip_columns(summary if enabled else 'Saved filters paused', width - display_width(suffix))
+    lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
+                 + style(suffix, 'heading' if enabled else 'hint'))
+    if not compact:
+        lines += [style('Match highlighted row; repeat key to clear'), '']
+    sorts = {name: ('turn' if compact and name == 'turn' else label)
+             for name, (_, label) in RESUME_SORTS.items() if (profile in ('resume', 'open') or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
+    label = ('turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]) if sort_enabled else 'OFF'
+    lines += keys(['Sort: ' + label, 'Ctrl-S toggle'], ['Sort: ' + label] if sort_enabled else [])
+    lines += keys((['Ctrl-Y next'] if compact else ['Ctrl-Y next'] + list(sorts.values())),
+                  [sorts[sort]] if sort_enabled and sort in sorts and not compact else [])
+    if not compact:
+        lines += ['']
     if columns:
-        lines.append(clip_columns(columns, width))
+        lines.append(style(clip_columns(columns, width)))
+    return '\n'.join(lines) + '\n'
+
+
+def list_header(filters, hidden, columns, width, sort, color=False):
+    compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    key = lambda text: key_labels(text, compact=compact)
+    style = lambda text, role='hint': paint(text, role) if color else text
+    actions = ['Enter/Esc' if compact else 'Enter open/Esc', 'Tab✓' if compact else 'Tab ✓', 'Ctrl-/' if compact else 'Ctrl-/ details']
+    facets = [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
+    controls = ['Ctrl-A all', 'Ctrl-F reset'] + facets
+    sorts = {name: f'{shortcut} {"turn" if compact and label == "last turn" else label}'
+             for name, (shortcut, label) in RESUME_SORTS.items()}
+    active = [f'{name}={value}' for name, value in filters.items() if value is not None]
+    selected = {key(sorts[sort])}
+    selected.update(key(f'{FACETS[name][0]} {FACETS[name][1]}')
+                    for name, value in filters.items() if value is not None)
+    if not active:
+        selected.add(key('Ctrl-A all'))
+    def keys(parts):
+        return [' · '.join(style(part, 'heading' if part in ('FILTERS', 'SORT') else 'active' if part in selected else 'action')
+                           for part in line.split(' · '))
+                for line in pack([key(part) for part in parts], width)]
+    lines = [] if compact else [style('HOTKEYS', 'heading')]
+    lines += keys(actions)
+    if not compact:
+        lines += ['', style('FILTERS', 'heading')]
+    lines += keys((['FILTERS'] if compact else []) + controls)
+    suffix = f' · {hidden} hidden'
+    summary = ' · '.join(active) if active else '0 filters'
+    lines.append(style(clip_columns(summary, width - display_width(suffix)) + suffix, 'heading'))
+    if not compact:
+        lines += ['', style('SORT', 'heading')]
+    lines += keys((['SORT'] if compact else []) + list(sorts.values()))
+    label = 'turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]
+    lines.append(style('Sort: ' + label, 'heading'))
+    if not compact:
+        lines.append('')
+    if columns:
+        lines.append(style(clip_columns(columns, width)))
     return '\n'.join(lines) + '\n'
 
 
@@ -236,7 +292,7 @@ def pick_value(directory, name, records, current):
     return (values[int(result.stdout.split('\t', 1)[0])],)
 
 
-def render(directory, profile, action, width, columns='', facet=None):
+def render(directory, profile, action, width, columns='', facet=None, identity=()):
     directory = Path(directory)
     records = metadata((directory / 'source').read_text(), profile)
     names = list(OPEN_FACETS) if profile == 'open' else [
@@ -246,28 +302,51 @@ def render(directory, profile, action, width, columns='', facet=None):
     mask_file = directory / 'show-all'
     mask = int(mask_file.read_text().strip() or 0) if mask_file.exists() else 0
     sort_file = directory / 'sort'
-    sort = sort_file.read_text().strip() if sort_file.exists() else 'turn'
+    sort = sort_file.read_text().strip() if sort_file.exists() else ('turn' if profile in ('resume', 'list', 'open') else 'session')
+    sort_enabled_file = directory / 'sort-enabled'
+    sort_enabled = sort_enabled_file.read_text() == '1' if sort_enabled_file.exists() else profile in ('resume', 'list', 'open')
     enabled_file = directory / 'filters-enabled'
     enabled = enabled_file.read_text() == '1' if enabled_file.exists() else True
     merged_file = directory / 'hide-merged'
     hide_merged = merged_file.exists() and merged_file.read_text() == '1'
     maximum = 3 if profile == 'kill' else 1
-    if action in ('off', 'on'):
+    if action == 'toggle-filters':
+        enabled = not enabled
+    elif action == 'toggle-sort':
+        sort_enabled = not sort_enabled
+    elif action == 'next-sort':
+        modes = [name for name in RESUME_SORTS if profile in ('resume', 'list', 'open') or name != 'turn']
+        sort = modes[(modes.index(sort) + 1) % len(modes)]
+        sort_enabled = True
+    elif action == 'state':
+        mask = (mask + 1) % (3 if profile == 'open' else maximum + 1)
+        enabled = True
+    elif action.startswith('match-') and action[6:] in names:
+        name = action[6:]
+        if filters[name] is not None:
+            filters[name] = None
+        elif tuple(identity) in records:
+            filters[name] = records[tuple(identity)].get(name, 'unknown')
+        enabled = True
+    elif action in ('off', 'on'):
         enabled = action == 'on'
     elif action == 'settings':
         chosen = settings(directory, profile, records, mask, filters, hide_merged)
         if chosen is not None:
             mask, filters, hide_merged = chosen
             enabled = True
-    elif action in ('all', 'default'):
+    elif action in ('all', 'default', 'reset-filters'):
         mask = maximum if action == 'all' else 0
         filters = dict.fromkeys(names)
         hide_merged = False
+        if action == 'reset-filters':
+            enabled = True
     elif profile == 'resume' and action == 'merged':
         hide_merged = not (enabled and hide_merged)
         enabled = True
-    elif profile == 'resume' and action.startswith('sort-') and action[5:] in RESUME_SORTS:
+    elif action.startswith('sort-') and action[5:] in RESUME_SORTS:
         sort = action[5:]
+        sort_enabled = True
     elif action == 'first' and profile == 'open':
         mask = 2  # Attached-only; repeated presses are idempotent.
     elif action == 'unattached' and profile == 'open':
@@ -279,8 +358,16 @@ def render(directory, profile, action, width, columns='', facet=None):
     elif action in ('first', 'second'):
         mask ^= 1 if action == 'first' else 2
     elif action in names:
-        values = [None] + sorted({record.get(action, 'unknown') for record in records.values()})
-        filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
+        if profile == 'list':
+            if filters[action] is not None:
+                filters[action] = None
+            else:
+                chosen = pick_value(directory, action, records, None)
+                if chosen is not None:
+                    filters[action] = chosen[0]
+        else:
+            values = [None] + sorted({record.get(action, 'unknown') for record in records.values()})
+            filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
     elif action != 'current':
         raise ValueError('unknown picker filter: ' + action)
     if mask > (2 if profile == 'open' else maximum):
@@ -293,14 +380,18 @@ def render(directory, profile, action, width, columns='', facet=None):
     else:
         rows = (directory / f'rows-{mask}').read_text().splitlines()
     selected = choose(rows, records, filters) if enabled else rows
-    if profile == 'resume':
-        if enabled and hide_merged:
+    if profile in ('resume', 'list'):
+        if profile == 'resume' and enabled and hide_merged:
             selected = [row for row in selected if records.get(tuple(row.split('\t')[:3]), {}).get('pr') != 'MERGED']
         if action == 'default':
             sort = 'turn'
-        selected = sort_resume(selected, records, sort)
-        sort_file.write_text(sort)
+        if sort_enabled:
+            selected = sort_resume(selected, records, sort)
         merged_file.write_text('1' if hide_merged else '0')
+    if profile not in ('resume', 'list') and sort_enabled:
+        selected = sort_resume(selected, records, sort)
+    sort_file.write_text(sort)
+    sort_enabled_file.write_text('1' if sort_enabled else '0')
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
     warning = ''
@@ -312,7 +403,7 @@ def render(directory, profile, action, width, columns='', facet=None):
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
             warning = clip_columns(summary, width) + '\n'
     controls = header(profile, mask, filters, total - len(selected), columns, width,
-                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged)
+                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled)
     (directory / 'current-header').write_text(warning + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
@@ -327,4 +418,4 @@ if __name__ == '__main__':
         sys.exit(0)
     render(os.environ['T_PICKER_VIEWS'], os.environ['T_PICKER_SESSION_FILTERS'], sys.argv[1],
            int(os.environ['T_PICKER_HEADER_WIDTH']), os.environ.get('T_PICKER_COLUMNS', ''),
-           sys.argv[2] if len(sys.argv) > 2 else None)
+           sys.argv[2] if len(sys.argv) > 2 else None, sys.argv[3:6])

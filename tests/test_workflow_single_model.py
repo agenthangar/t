@@ -110,7 +110,8 @@ def test_permission_list_and_save_review_show_tool_labels(workflow, t_mod, monke
 
 
 @pytest.mark.parametrize('scope', ['named', 'repository'])
-def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod, scope):
+@pytest.mark.parametrize('submenu', [False, True])
+def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod, scope, submenu):
     document = workflow.defaults()
     policy = workflow.select_stages(document['workflows']['standard'], ['review'])
     policy.update(instructions='Custom instructions to remove.', behaviors={'pr_merge': 'on_request'},
@@ -119,7 +120,7 @@ def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod,
     cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
     initial = copy.deepcopy(document)
     target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
-    ui = InspectMenu(['clear_instructions', 'back'])
+    ui = InspectMenu((['instructions', 'clear'] if submenu else ['clear_instructions']) + ['back'])
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), **target)
     actual = (cfg._workflow_document['workflows']['standard'] if scope == 'named' else
               workflow.effective(cfg._workflow_document, '/repo'))
@@ -136,6 +137,20 @@ def test_clear_text_instructions_is_staged_and_preserves_policy(workflow, t_mod,
     assert not workflow.config_path().exists()
 
 
+@pytest.mark.parametrize('action', ['back', None, 'clear'])
+def test_text_instruction_menu_empty_or_cancel_is_noop(workflow, t_mod, action):
+    document = workflow.defaults()
+    document['workflows']['standard']['instructions'] = ''
+    cfg = SimpleNamespace(repos={'api': '/repo'}, _workflow_document=document)
+    initial = copy.deepcopy(document)
+    ui = InspectMenu(['instructions', action, 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, vars(workflow), repository='/repo')
+    assert cfg._workflow_document == initial
+    assert ui.views[1][2]['values']['clear'] == 'Already empty'
+    assert ui.views[-1][1][ui.views[-1][2]['default']][0] == 'instructions'
+    assert not workflow.config_path().exists()
+
+
 @pytest.mark.parametrize('scope', ['named', 'repository'])
 @pytest.mark.parametrize('cancelled', [False, True])
 def test_text_editor_cancel_or_unchanged_keeps_instructions(workflow, t_mod, monkeypatch, scope, cancelled):
@@ -144,7 +159,7 @@ def test_text_editor_cancel_or_unchanged_keeps_instructions(workflow, t_mod, mon
     initial = copy.deepcopy(document)
     monkeypatch.setattr(workflow, 'edit_instructions', lambda *args: (130 if cancelled else 0, document))
     target = {'name': 'standard'} if scope == 'named' else {'repository': '/repo'}
-    t_mod._workflow_policy_menu(Menu(['instructions', 'back']), cfg, vars(workflow), **target)
+    t_mod._workflow_policy_menu(Menu(['instructions', 'edit', 'back']), cfg, vars(workflow), **target)
     assert cfg._workflow_document == initial
     assert not workflow.config_path().exists()
 
@@ -734,21 +749,21 @@ def test_implementation_worker_and_main_session_display_separate_efforts(workflo
     policy['implementation'] = {'model': 'implementation-model', 'effort': effort}
     document = workflow.update(document, policy, name='standard')
     rows = t_mod._workflow_model_rows(vars(workflow), policy)
-    assert rows == [('Planning', 'implementation-model', 'Medium', 'Main model'),
+    assert rows == [('Planning', 'implementation-model', 'Medium', 'Lead model'),
                     ('Implementation', 'implementation-model', label, 'Worker'),
-                    ('Review', 'implementation-model', 'Medium', 'Main model')]
+                    ('Review', 'implementation-model', 'Medium', 'Lead model')]
     t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global',
         'workflow_name': 'standard', 'excluded': False, 'workflow': policy,
         'propagation': {'runtime': 'pending'}})
     output = capsys.readouterr().out
     review = '\n'.join(t_mod._workflow_review(document))
     for text in (output, review):
-        assert 'Main session: implementation-model · Medium' in text
+        assert 'Lead model: implementation-model · Medium' in text
         assert label in text
         assert 'starts' not in text
     policy['implementation']['effort'] = 'high'
     fixed_rows = t_mod._workflow_model_rows(vars(workflow), policy)
-    assert fixed_rows[1] == ('Implementation', 'implementation-model', 'High', 'Main session')
+    assert fixed_rows[1] == ('Implementation', 'implementation-model', 'High', 'Lead session')
 
 
 @pytest.mark.parametrize('scope', ['named', 'repository'])
@@ -766,7 +781,7 @@ def test_stage_checkboxes_select_independent_helpers(workflow, t_mod, scope, sel
     assert workflow.model_stages(policy) == selected
     picker = ui.views[1]
     assert picker[0] == 'Use multiple models'
-    assert picker[1] == [('', 'Use one model for all work'), ('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review'), ('__default__', 'Use default · Planning, Implementation, Review')]
+    assert picker[1] == [('', 'Use lead model for all stages'), ('planning', 'Planning'), ('implementation', 'Implementation'), ('review', 'Review'), ('__default__', 'Use default · Planning, Implementation, Review')]
     assert {key: picker[2][key] for key in ('multi', 'marked', 'empty_choice')} == {'multi': True, 'marked': {1, 2, 3}, 'empty_choice': ''}
     assert callable(picker[2]['on_back']) and picker[2]['back_label'] == 'keep & back'
     rows = dict(ui.views[-1][1])
@@ -895,8 +910,8 @@ def test_deselected_main_stage_never_displays_retained_main_model(workflow, t_mo
     rows = t_mod._workflow_model_rows(vars(workflow), policy)
     expected_model = 'session-main' if defaults else 'Agent default'
     expected_effort = 'High' if defaults else 'Session default'
-    assert rows[1] == ('Implementation', expected_model, expected_effort, 'Main model')
-    assert rows[2] == ('Review', expected_model, expected_effort, 'Main model')
+    assert rows[1] == ('Implementation', expected_model, expected_effort, 'Lead model')
+    assert rows[2] == ('Review', expected_model, expected_effort, 'Lead model')
     assert rows[0][3] == 'Worker'
     t_mod._workflow_print(vars(workflow), {'scope': 'global', 'source': 'global',
         'workflow_name': 'standard', 'excluded': False, 'workflow': policy,
@@ -926,15 +941,15 @@ def test_partial_stage_list_and_review_use_main_values(workflow, t_mod, monkeypa
     output = capsys.readouterr().out
     assert inherited + '-private' not in output
     assert selected[0] + '-private' in output
-    assert 'Main model' in output and 'Main session: main-active · Medium' in output
+    assert 'Lead model' in output and 'Lead model: main-active · Medium' in output
     assert 'starts Medium' not in output
     for scope in [document, workflow.update(workflow.defaults(), policy, '/repo')]:
         review = '\n'.join(t_mod._workflow_review(scope))
         if scope is not document:
             review = review.split('Repository /repo:', 1)[1]
         assert inherited + '-private' not in review
-        assert inherited.title() + ': main-active · Medium · Main model' in review
-        assert 'Main session: main-active · Medium' in review
+        assert inherited.title() + ': main-active · Medium · Lead model' in review
+        assert 'Lead model: main-active · Medium' in review
         assert 'starts Medium' not in review
 
 
@@ -1013,7 +1028,7 @@ def test_session_default_choices_show_top_level_inheritance_without_writes(workf
     model_label = 'Inherit default · ' + ('account-model' if configured else 'Tool setting')
     effort_label = 'Inherit default · ' + ('High' if configured else 'Tool setting')
     assert ui.views[0][2]['values']['main_model'] == model_label
-    assert dict(ui.views[0][1])['main_model'] == 'Model'
+    assert dict(ui.views[0][1])['main_model'] == 'Lead model'
     assert ui.views[0][2]['values']['main_effort'] == effort_label
     assert ui.views[1][1][0] == ('', model_label)
     assert ui.views[3][1][0] == ('', effort_label)

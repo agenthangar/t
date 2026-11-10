@@ -79,7 +79,19 @@ def run_shell(tmp_path, code):
                XDG_CONFIG_HOME=str(tmp_path / "config"),
                XDG_STATE_HOME=str(tmp_path / "state"))
     env.pop("TMUX", None)
-    return subprocess.run(["zsh", "-f", "-c", f"source {shlex.quote(str(ROOT / 'zsh/agent.zsh'))}\nsource {shlex.quote(str(ROOT / 'zsh/resume.zsh'))}\n" + code],
+    # These tests isolate pane replacement safety; native lifecycle integration
+    # is exercised by test_lifecycle_transfer_e2e.py.
+    setup = "".join(f"source {shlex.quote(str(ROOT / 'zsh' / name))}\n"
+                    for name in ("agent.zsh", "resume.zsh", "lifecycle.zsh"))
+    setup += '''
+_t_lifecycle_run() {
+  [[ $1 == replace ]] || return 91
+  shift
+  _t_lifecycle_effect replace-preflight "$@" || return $?
+  _t_lifecycle_effect replace "$@"
+}
+'''
+    return subprocess.run(["zsh", "-f", "-c", setup + code],
                           env=env, capture_output=True, text=True, timeout=20)
 
 

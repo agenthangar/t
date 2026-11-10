@@ -197,7 +197,7 @@ def test_picker_refresh_custom_and_offline(models,monkeypatch):
         @contextmanager
         def suspended(self):yield
         def notice(self,value):self.notices.append(value)
-        def choose(self,*args):return self.choices.pop(0)
+        def choose(self,*args,**kwargs):return self.choices.pop(0)
     dialog=Dialog();dialog.choices=['refresh','qwen3:8b']
     assert m.choose(dialog)=='qwen3:8b' and len(calls)==2
     assert 'Eval: qwen3-8b-thinking' in dialog.notices[-1]

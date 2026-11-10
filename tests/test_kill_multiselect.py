@@ -369,6 +369,13 @@ def test_bare_kill_opens_picker_but_explicit_all_keeps_existing_path(zsh):
 def test_picker_enter_stops_live_agents_without_reading_confirmation(zsh):
     log = _picker_stub(zsh)
     code = PICKER_MOCK + '''
+      tmux() {
+        if [[ $1 == display-message && ${@[-1]} == '#{session_id}' ]]; then
+          print -r -- '$123'
+        else
+          command tmux "$@"
+        fi
+      }
       _dev_session_rows() { print -r -- "$FAKE_DETAILS"; }
       _dev_session_has_claude() { return 0; }
       _dev_agent_at_welcome() { return 1; }
@@ -384,7 +391,7 @@ def test_picker_enter_stops_live_agents_without_reading_confirmation(zsh):
     assert result.returncode == 0, result.stdout
     assert 'Killed dev-api-1' in result.stdout
     assert '[y/N]' not in result.stdout and 'state=' not in result.stdout
-    assert 'kill-session -t =dev-api-1:' in zsh.log.read_text()
+    assert 'kill-session -t $123:' in zsh.log.read_text()
 
 
 def test_picker_enter_authorizes_foreground_selection(zsh):

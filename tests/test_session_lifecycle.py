@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import pty
 import runpy
+import select
 import shlex
 import shutil
 import sqlite3
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 
 import pytest
 
@@ -118,7 +120,8 @@ int main(int argc, char **argv) {
     f = fopen(registry, "w");
     if (f) { fprintf(f, "%s\t%s\n", sid, cwd); fclose(f); }
   }
-  sleep(60);
+  const char *seconds = getenv("T_TEST_AGENT_SECONDS");
+  sleep(seconds ? atoi(seconds) : 60);
   return 0;
 }
 ''')
@@ -156,21 +159,27 @@ def _shell_tty(base, env, script):
                                    stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         slave = -1
-        try:
-            process.wait(timeout=25)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
-            pytest.fail("isolated remote command did not exit")
+        # Drain while the command runs: a progress rail can fill the PTY buffer
+        # and block the child if the parent waits for exit before reading.
         chunks = []
+        deadline = time.monotonic() + 25
         while True:
-            try:
-                chunk = os.read(master, 65536)
-            except OSError:
+            if select.select([master], [], [], 0.1)[0]:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            if time.monotonic() >= deadline:
+                process.kill()
+                process.wait(timeout=5)
+                pytest.fail("isolated remote command did not exit: " +
+                            b"".join(chunks).decode(errors="replace"))
+            if process.poll() is not None and not select.select([master], [], [], 0)[0]:
                 break
-            if not chunk:
-                break
-            chunks.append(chunk)
+        process.wait(timeout=5)
         return subprocess.CompletedProcess(argv, process.returncode,
                                            b"".join(chunks).decode(errors="replace"), "")
     finally:
@@ -187,6 +196,70 @@ def _until(predicate, *, seconds=5):
             return value
         time.sleep(0.03)
     pytest.fail("isolated agent did not reach expected state")
+
+
+@contextmanager
+def _unindexed_writers(base, env, sids=UNINDEXED):
+    """A backend holds real locks without publishing thread metadata."""
+    folder = base / "codex" / "thread-writer-locks"
+    folder.mkdir(exist_ok=True)
+    paths = [folder / (sid + ".lock") for sid in sids]
+    process = subprocess.Popen([sys.executable, "-c", """
+import fcntl, sys
+handles = [open(path, 'w') for path in sys.argv[1:]]
+for handle in handles:
+    fcntl.flock(handle, fcntl.LOCK_EX)
+print('ready', flush=True)
+sys.stdin.read()
+""", *map(str, paths)], env=env, cwd=base, stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert select.select([process.stdout], [], [], 5)[0]
+        assert process.stdout.readline().strip() == 'ready'
+        yield paths
+        assert process.poll() is None  # Launching must never stop the other backend.
+    finally:
+        process.communicate('', timeout=5)
+
+
+@pytest.mark.parametrize('conflict', [False, True])
+@pytest.mark.parametrize('reused', [False, True])
+def test_public_new_scopes_unindexed_writers(lifecycle, conflict, reused):
+    base, env = lifecycle
+    worktree = base / 'worktrees' / 'repo' / 'repo-1'
+    env['T_TEST_FRESH_SID'] = SID
+    if reused:
+        result = _run(['git', '-C', str(base / 'repo'), 'worktree', 'add', '-b',
+                       'dev/repo-1', str(worktree), 'origin/main'], env=env, cwd=base)
+        assert result.returncode == 0, result.stderr
+        (worktree / 'keep.txt').write_text('uncommitted work')
+    if conflict:
+        with sqlite3.connect(base / 'codex' / 'state_5.sqlite') as db:
+            db.execute('create table threads (id text, cwd text)')
+            db.execute('insert into threads values (?, ?)', (UNINDEXED[1], str(worktree)))
+    with _unindexed_writers(base, env) as paths:
+        inodes = [path.stat().st_ino for path in paths]
+        target = '1' if reused else '--new'
+        result = _shell(base, env, f't open repo {target} --codex --cli')
+        assert [path.stat().st_ino for path in paths] == inodes
+        operations = list((base / 'state' / 't' / 'lifecycle' / 'operations').glob('*.json'))
+        assert len(operations) == 1
+        receipt = json.loads(operations[0].read_text())
+        if conflict or reused:
+            assert result.returncode != 0
+            message = ('another Codex conversation owns this workspace' if conflict else
+                       'could not be matched to its worktree')
+            assert message in result.stderr
+            assert not (base / 'agents.log').exists()
+            assert receipt['pending'] == 'ownership'
+            if reused:
+                assert (worktree / 'keep.txt').read_text() == 'uncommitted work'
+        else:
+            assert result.returncode == 0, result.stderr or result.stdout
+            launches = _until(lambda: (base / 'agents.log').read_text().splitlines())
+            assert len(launches) == 1 and str(worktree) in launches[0]
+            assert receipt['phase'] == 'complete'
+            assert receipt['receipts']['ownership']['unresolved_writers'] == sorted(UNINDEXED)
 
 
 @pytest.mark.parametrize("leaf", ["1", "repo-1"])
@@ -245,6 +318,51 @@ def test_concurrent_alias_opens_keep_one_worktree_owner(lifecycle):
     assert len(rows) == 1 and rows[0].endswith(":" + str(worktree)), (results, rows)
     attached = _shell(base, env, "t session open alias 1 --cli")
     assert attached.returncode == 0, attached.stderr
+    assert log.read_text().splitlines() == launches
+
+
+@pytest.mark.parametrize("agent", ["codex", "claude"])
+def test_public_list_keeps_live_owner_and_worktree_unchanged(lifecycle, agent):
+    base, env = lifecycle
+    opened = _shell(base, env, "t session open repo 1 --" + agent)
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    log = base / "agents.log"
+    launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
+    worktree = base / "worktrees/repo/repo-1"
+    marker = worktree / "unfinished.txt"
+    marker.write_text("keep these edits\n")
+    before = _run(["git", "-C", str(worktree), "status", "--porcelain"], env=env, cwd=base)
+    listed = _shell(base, env, "t session list repo")
+    assert listed.returncode == 0, listed.stderr or listed.stdout
+    assert "repo-1" in listed.stdout
+    assert log.read_text().splitlines() == launches
+    assert marker.read_text() == "keep these edits\n"
+    after = _run(["git", "-C", str(worktree), "status", "--porcelain"], env=env, cwd=base)
+    assert before.returncode == after.returncode == 0
+    assert before.stdout == after.stdout
+    alive = _run([str(base / "bin/tmux"), "has-session", "-t", "=dev-repo-1:"], env=env, cwd=base)
+    assert alive.returncode == 0, alive.stderr
+
+
+@pytest.mark.parametrize("agent", ["codex", "claude"])
+def test_public_close_stops_owner_and_preserves_uncommitted_work(lifecycle, agent):
+    base, env = lifecycle
+    opened = _shell(base, env, "t session open repo 1 --" + agent)
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    log = base / "agents.log"
+    launches = _until(lambda: log.read_text().splitlines() if log.exists() else None)
+    worktree = base / "worktrees/repo/repo-1"
+    marker = worktree / "unfinished.txt"
+    marker.write_text("keep these edits\n")
+    head = _run(["git", "-C", str(worktree), "rev-parse", "HEAD"], env=env, cwd=base)
+    closed = _shell(base, env, "t session close repo 1 -y")
+    assert closed.returncode == 0, closed.stderr or closed.stdout
+    alive = _run([str(base / "bin/tmux"), "has-session", "-t", "=dev-repo-1:"], env=env, cwd=base)
+    assert alive.returncode != 0
+    assert marker.read_text() == "keep these edits\n"
+    assert (worktree / ".git").exists()
+    after = _run(["git", "-C", str(worktree), "rev-parse", "HEAD"], env=env, cwd=base)
+    assert head.returncode == after.returncode == 0 and head.stdout == after.stdout
     assert log.read_text().splitlines() == launches
 
 
@@ -326,6 +444,16 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     assert listed.returncode == 0, listed.stderr
     assert "1 conversations" in listed.stdout
     assert not (base / "agents.log").exists()
+    if agent == 'codex' and not swept:
+        original = transcript.read_bytes()
+        for sids, message in (((SID,), 'writer lock is held'),
+                              (UNINDEXED, 'could not be matched to its worktree')):
+            with _unindexed_writers(base, env, sids):
+                blocked = _shell(base, env, 't session resume repo 1 --cli')
+                assert blocked.returncode != 0
+                assert message in blocked.stderr
+                assert not (base / 'agents.log').exists()
+                assert transcript.read_bytes() == original
     resumed = _shell(base, env, "t session resume repo 1 --cli")
     assert resumed.returncode == 0, resumed.stderr
     log = base / "agents.log"

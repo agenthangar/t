@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
-from conftest import load_script
+from conftest import load_script, ManagedClientFixture
 
 
 @pytest.fixture
@@ -108,8 +108,11 @@ def test_runtime_lease(local,monkeypatch):
         assert base=='http://127.0.0.1:1234' and alias.startswith('t-local-')
     assert [c[0] for c in calls]==['ls','load','ps','unload']
     calls.clear()
-    with m.provider_runtime(m.policy({'mode':'local-only'})):
-        assert '--ttl' not in next(c for c in calls if c[0]=='load')
+    original_helper = m.helper
+    monkeypatch.setattr(m, 'helper', lambda n: {'Client': ManagedClientFixture} if n == 't_local_manager' else original_helper(n))
+    with m.provider_runtime(m.policy({'mode':'local-only'})) as (base, model, info):
+        assert base.endswith('/client-token') and model == m.DEFAULT_MODEL
+        assert not calls  # Managed runtime does not load directly.
     calls.clear()
     monkeypatch.setattr(m,'request',lambda *a,**k:(_ for _ in ()).throw(OSError()))
     with pytest.raises(RuntimeError):
@@ -131,8 +134,8 @@ def test_install_verify_and_measure(local,monkeypatch):
     def download(cmd,**kw):Path(cmd[cmd.index('-o')+1]).write_bytes(payload)
     monkeypatch.setattr(m.subprocess,'run',download)
     @contextmanager
-    def runtime(*a):yield 'http://fixture','alias',m.receipt(name)
-    monkeypatch.setattr(m,'runtime',runtime)
+    def runtime(*a,**kw):yield 'http://fixture','alias',m.receipt(name)
+    monkeypatch.setattr(m,'managed_runtime',runtime)
     assert m.install(name,True)['downloaded']
     assert not m.receipt(name).get('verified_context')
     assert m.install(name)['ready']
@@ -149,7 +152,8 @@ def test_install_verify_and_measure(local,monkeypatch):
 def test_commands(local,t_mod,monkeypatch,capsys):
     m=local;row=dict(m.artifact(m.DEFAULT_MODEL),provider='lmstudio',benchmark=None,fit=True,installed=False,reason='estimated fit')
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row], 'hardware':hardware(), 'context_tokens':32768})
-    monkeypatch.setattr(m,'helper',lambda n:{'reservation':nullcontext,'refresh':lambda:None})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'reservation':nullcontext,'refresh':lambda:None})
     monkeypatch.setattr(m,'install',lambda *a:{'downloaded':True})
     monkeypatch.setattr(m,'measure',lambda *a:{'median':10})
     for action in ('list','refresh','show','install','measure'):
@@ -177,16 +181,26 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     workflow=m.helper('t_workflow')
     toml=m.helper('t_toml')
     status=m.helper('t_local_status')
-    monkeypatch.setattr(m,'helper',lambda n: status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
+    monkeypatch.setattr(m,'helper',lambda n: status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
     @contextmanager
-    def runtime(*a):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
+    def runtime(*a,**kw):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
     monkeypatch.setattr(m,'runtime',runtime)
+    def popen(argv, **kw):
+        calls.append((argv,kw))
+        return SimpleNamespace(poll=lambda:0, returncode=0)
+    monkeypatch.setattr(m.subprocess, 'Popen', popen)
     assert m.lead(['codex','--model','cloud','-c','model_provider="openai"','--enable','fast_mode','--profile=x','-c','sandbox_mode="read-only"','hi'])==0
     argv,kwargs=calls[-1]
     assert 'cloud' not in argv and 'model_provider="openai"' not in argv
-    assert argv[argv.index('--model')+1]=='local-alias'
+    assert argv[argv.index('--model')+1]==m.DEFAULT_MODEL
     assert 'OPENAI_API_KEY' not in kwargs['env']
     assert 'mcp_servers={}' in argv and 'features.multi_agent=false' in argv
+    def runner(argv, env):
+        assert 'OPENAI_API_KEY' not in env and '--oss' in argv
+        assert env['CODEX_OSS_BASE_URL'] == 'http://127.0.0.1:1234/client-token/v1'
+        assert env['OLLAMA_HOST'] == 'http://127.0.0.1:1234/client-token'
+        return {'action': 'cloud'}
+    assert m.lead(['codex', '--', 'task'], runner=runner) == {'action': 'cloud'}
     monkeypatch.setattr(m,'effective',lambda cwd: (_ for _ in ()).throw(ValueError('bad policy')))
     count=len(calls)
     with pytest.raises(ValueError):m.lead(['codex'])
@@ -237,21 +251,21 @@ def test_ollama_measurement_and_provider_identity(local,monkeypatch,tmp_path):
     m=local
     @contextmanager
     def server(*a):yield 'http://127.0.0.1:12345',{'HOME':str(tmp_path)}
-    w={'ollama_server':server,'executable':lambda n:'/fake/'+n,'check_model':lambda *a:{'capabilities':['tools']},'state_root':lambda:tmp_path}
+    w={'reservation':nullcontext,'ollama_server':server,'executable':lambda n:'/fake/'+n,'check_model':lambda *a:{'capabilities':['tools']},'state_root':lambda:tmp_path}
     monkeypatch.setattr(m,'helper',lambda n:w if n=='t_local_worker' else {'hardware':hardware})
     calls=[];monkeypatch.setattr(m.subprocess,'run',lambda argv,**k:calls.append(argv))
-    monkeypatch.setattr(m,'request',lambda *a,**k:{'eval_count':20,'eval_duration':10**9})
+    @contextmanager
+    def managed(*a, **kw): yield 'http://127.0.0.1:12345', 'qwen:8b', {}
+    monkeypatch.setattr(m, 'managed_runtime', managed)
+    monkeypatch.setattr(m,'request',lambda *a,**k:{'response':'OK','eval_count':20,'eval_duration':10**9})
     assert m.ollama_action('qwen:8b','install')['ready']
     assert calls[0][-2:]==['pull','qwen:8b']
     assert m.ollama_action('qwen:8b','measure')['median']==20
     monkeypatch.setattr(m,'request',lambda *a,**k:{})
     with pytest.raises(ValueError,match='decode'):m.ollama_action('qwen:8b','measure')
     chosen=m.policy({'provider':'ollama','model':'qwen:8b'})
-    monkeypatch.setattr(m,'request',lambda *a,**k:{'models':[{'name':'qwen:8b','digest':'sha256:fixture'}]})
-    with m.provider_runtime(chosen) as (_,name,info):assert name=='qwen:8b' and info['revision']=='sha256:fixture'
-    monkeypatch.setattr(m,'request',lambda *a,**k:{'models':[]})
-    with pytest.raises(ValueError,match='digest'):
-        with m.provider_runtime(chosen):pass
+    with m.provider_runtime(chosen) as (base,name,info):
+        assert name=='qwen:8b' and base=='http://127.0.0.1:12345'
 
 
 def test_download_validation_and_runtime_tools(local,monkeypatch,tmp_path):
@@ -359,10 +373,14 @@ def test_runtime_rejects_ambiguous_or_wrong_artifact(local,monkeypatch):
 def test_picker_install_measure_and_unavailable(local,monkeypatch):
     m=local;row=dict(m.artifact(m.DEFAULT_MODEL),provider='lmstudio',fit=True,installed=True,ready=True,benchmark=None,reason='fit',disk_fit=True)
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row]})
-    monkeypatch.setattr(m,'helper',lambda n:{'reservation':nullcontext})
+    def run_action(ui, operation, model):
+        try: operation(None)
+        except ValueError: pass
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'status':lambda:{'models':[]}} if n=='t_local_manager' else {'run_model_action':run_action})
     calls=[]
-    monkeypatch.setattr(m,'install',lambda *a:calls.append(a) or {})
-    monkeypatch.setattr(m,'measure',lambda *a:calls.append(a) or {})
+    monkeypatch.setattr(m,'install',lambda *a,**k:calls.append(a) or {})
+    monkeypatch.setattr(m,'measure',lambda *a,**k:calls.append(a) or {})
     class UI:
         def __init__(self,choices):self.choices=iter(choices)
         def pick(self,*a,**k):return next(self.choices)
@@ -376,7 +394,7 @@ def test_picker_install_measure_and_unavailable(local,monkeypatch):
     assert len(calls)==3
     assert m.select_model(UI([m.DEFAULT_MODEL,'use']))=={'model':m.DEFAULT_MODEL,'provider':'lmstudio'}
     assert m.select_model(UI([m.DEFAULT_MODEL,'install','no','back','__back'])) is None
-    monkeypatch.setattr(m,'measure',lambda *a:(_ for _ in ()).throw(ValueError('unavailable')))
+    monkeypatch.setattr(m,'measure',lambda *a,**k:(_ for _ in ()).throw(ValueError('unavailable')))
     assert m.select_model(UI([m.DEFAULT_MODEL,'measure','back','__back'])) is None
     row.update(fit=None,ready=False,disk_fit=False)
     assert m.select_model(UI([m.DEFAULT_MODEL,'back','__back'])) is None
@@ -410,9 +428,12 @@ def test_outage_policy_and_routing(local,monkeypatch):
     monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7})
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'local'})==7
     assert calls[0][2]=='/repo'
+    assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'ask'})==7
+    assert m.policy({'on_cloud_failure':'ask'})['on_cloud_failure']=='ask'
     class UI:
         def __init__(self,choices):self.choices=iter(choices)
         def pick(self,*a,**kw):return next(self.choices)
+    assert m.workflow_menu(UI(['on_cloud_failure','ask','back']))['on_cloud_failure']=='ask'
     assert m.workflow_menu(UI(['on_cloud_failure','local','back']))['on_cloud_failure']=='local'
     assert m.workflow_menu(UI(['on_cloud_failure','local','mode','disabled','back']))['on_cloud_failure']=='pause'
 
@@ -433,7 +454,7 @@ def test_exact_workspace_trust_only(local,tmp_path):
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
 def test_outage_picker_narrow(local,t_mod,width,height):
     from test_tui import make_ui
-    ui=make_ui(t_mod,['j','j','enter','j','j','enter','q'],width,height)
+    ui=make_ui(t_mod,['j','j','enter','j','j','j','enter','q'],width,height)
     assert local.workflow_menu(ui)['on_cloud_failure']=='local'
     assert any('Pause and retry' in ''.join(frame) for frame in ui.frames)
 
@@ -453,15 +474,15 @@ def test_special_runtime_verification_evidence(local, monkeypatch):
     monkeypatch.setattr(m, 'lms', lambda: '/fake/lms')
     calls = []
     @contextmanager
-    def runtime(*args):
+    def runtime(*args,**kwargs):
         calls.append(args)
         yield 'http://fixture', 'alias', m.receipt(name)
-    monkeypatch.setattr(m, 'runtime', runtime)
+    monkeypatch.setattr(m, 'managed_runtime', runtime)
     monkeypatch.setattr(m, 'request', lambda *a, **k: {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': 'OK'}]}]})
     before = m.report(row, machine)
     assert before['fit'] is None and before['verification_allowed'] and not before['ready']
     assert m.install(name)['ready']
-    assert calls == [(name, 32768)]
+    assert calls == [(name, 'lmstudio', 32768, 'verification')]
     assert m.report(row, machine)['ready']
     assert not m.report(row, machine, 65536)['ready']
     assert not m.report(row, dict(machine, accelerator='Apple other'))['ready']
@@ -472,19 +493,19 @@ def test_special_runtime_verification_evidence(local, monkeypatch):
     monkeypatch.setattr(m, 'request', lambda *a, **k: {'output': [{'type': 'reasoning'}]})
     with pytest.raises(ValueError, match='no output text'):
         m.install(name)
-    assert not m.report(row, machine)['ready']
-    assert not m.receipt(name).get('verified_context')
-    assert m.model_status(m.report(row, machine)) == 'Verification failed'
+    assert m.report(row, machine)['ready']
+    assert m.receipt(name)['verified_context'] == 32768
+    assert m.receipt(name).get('verification_error')
     assert (directory / 'weights.safetensors').read_bytes() == b'123'
-    # Cancellation invalidates old evidence, without deleting files.
+    # Retrying or cancelling does not discard successful proof for unchanged files/context.
     @contextmanager
-    def interrupted(*args):
+    def interrupted(*args,**kwargs):
         raise KeyboardInterrupt
         yield
-    monkeypatch.setattr(m, 'runtime', interrupted)
+    monkeypatch.setattr(m, 'managed_runtime', interrupted)
     with pytest.raises(KeyboardInterrupt):
         m.install(name)
-    assert not m.receipt(name).get('verified_context')
+    assert m.receipt(name)['verified_context'] == 32768
 
 
 def test_special_runtime_exact_lease_and_failure_cleanup(local, monkeypatch):
@@ -515,7 +536,7 @@ def test_model_overview_navigation_and_provenance(local, t_mod, monkeypatch, wid
     ui = make_ui(t_mod, ['q'], width, height)
     assert m.model_menu(ui, row, 32768) is None
     frame = '\n'.join(ui.frames[0])
-    assert 'Install and verify' in frame
+    assert 'Install and test' in frame
     assert 'https://' not in frame and 'Publisher' not in frame
     for captured in ui.frames:
         assert sum(t_mod._term_rows(line, width) for line in captured) <= height
@@ -554,3 +575,150 @@ def test_model_command_error_is_actionable(t_mod, monkeypatch, capsys):
     error = capsys.readouterr().err
     assert error.startswith('t config models: Model loading')
     assert 'Traceback' not in error
+
+
+def test_download_cancel_and_artifact_lock(local,monkeypatch):
+    import threading
+    m=local;cancel=threading.Event();cancel.set()
+    with pytest.raises(ValueError,match='cancelled'):m.download_command(['fake'],cancel)
+    with pytest.raises(ValueError,match='cancelled'):
+        with m.managed_runtime(m.DEFAULT_MODEL,'lmstudio',cancel=cancel):pass
+    cancel.clear();calls=[]
+    class Process:
+        returncode=None
+        def poll(self):return self.returncode
+        def terminate(self):calls.append('terminate');self.returncode=-15
+        def wait(self,**kw):return self.returncode
+    proc=Process()
+    monkeypatch.setattr(m.subprocess,'Popen',lambda *a,**kw:proc)
+    monkeypatch.setattr(cancel,'wait',lambda t:True)
+    with pytest.raises(ValueError,match='cancelled'):m.download_command(['fake'],cancel)
+    assert calls==['terminate']
+    proc.returncode=1
+    with pytest.raises(ValueError,match='failed'):m.download_command(['fake'],cancel)
+    proc.returncode=0;m.download_command(['fake'],cancel)
+    directory=m.model_directory(m.DEFAULT_MODEL);directory.mkdir(parents=True)
+    with (directory/'.t-install.lock').open('a') as lock:
+        m.fcntl.flock(lock,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)
+        with pytest.raises(ValueError,match='in progress'):m.install(m.DEFAULT_MODEL)
+
+
+def test_model_actions_use_exact_instance_and_report_launch_failures(local,monkeypatch):
+    m=local;row=m.report(m.artifact(m.DEFAULT_MODEL),hardware());row.update(ready=True,installed=True)
+    calls=[];failure=[False]
+    def rpc(action,**kw):
+        if failure[0]:raise ValueError('still active')
+        calls.append((action,kw))
+    def open_app(provider):
+        if failure[0]:raise ValueError('missing app')
+        calls.append(('app',provider))
+    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[{'model':row['model'],'alias':'exact-instance','owned':True}]},'rpc':rpc} if n=='t_local_manager' else {'open_desktop':open_app} if n=='t_local_apps' else {'provider_menu':lambda ui,provider:calls.append(('guide',provider))})
+    class UI:
+        def __init__(self,choices):self.choices=iter(choices);self.pages=[]
+        def pick(self,*a,**kw):return next(self.choices)
+        def page(self,title,body,**kw):self.pages.append(title);return 'q'
+    ui=UI(['guide','app','unload','back']);m.model_menu(ui,row,32768)
+    assert ('release',{'alias':'exact-instance'}) in calls and 'Desktop app opened' in ui.pages
+    failure[0]=True;ui=UI(['app','unload','back']);m.model_menu(ui,row,32768)
+    assert ui.pages==['Could not open desktop app','Unload unavailable']
+
+
+def test_ollama_readiness_requires_matching_proof(local,monkeypatch):
+    m=local;name='qwen:8b';revision='sha256:fixture'
+    monkeypatch.setattr(m,'ollama_revision',lambda name:revision)
+    legacy={'hardware':hardware,'report':lambda:{'models':[{'model':name,'bytes':4,'fit':True,'score':None,'reason':'fit'}], 'benchmark':{}},'missing_bytes':lambda *a:0}
+    monkeypatch.setattr(m,'helper',lambda name:legacy)
+    path=m.measurement_path(name).with_suffix('.ready.json');path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'revision':revision,'context_tokens':32768,'hardware':hardware()}))
+    assert m.catalogue()['models'][-1]['ready']
+    assert not m.catalogue(context=65536)['models'][-1]['ready']
+    revision='changed';assert not m.catalogue()['models'][-1]['ready']
+
+
+def test_managed_runtime_lost_lease_never_claims_success(local,monkeypatch):
+    class Failed(ManagedClientFixture):
+        def __init__(self,*a,**kw):super().__init__(*a,**kw);self.error='manager connection lost'
+    monkeypatch.setattr(local,'helper',lambda name:{'Client':Failed})
+    with pytest.raises(ValueError,match='connection lost'):
+        with local.managed_runtime(local.DEFAULT_MODEL,'lmstudio'):pass
+
+
+def test_download_cancellation_kills_unresponsive_process(local,monkeypatch):
+    import threading
+    calls=[];cancel=threading.Event();monkeypatch.setattr(cancel,'wait',lambda t:True)
+    class Process:
+        returncode=None
+        def poll(self):return self.returncode
+        def terminate(self):calls.append('terminate')
+        def kill(self):calls.append('kill');self.returncode=-9
+        def wait(self,**kw):
+            if kw:raise local.subprocess.TimeoutExpired('curl',5)
+            calls.append('wait')
+    monkeypatch.setattr(local.subprocess,'Popen',lambda *a,**kw:Process())
+    with pytest.raises(ValueError,match='cancelled'):local.download_command(['curl'],cancel)
+    assert calls==['terminate','kill','wait']
+
+
+@pytest.mark.parametrize('unresponsive', [False, True])
+def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_path, unresponsive):
+    m = local
+    calls = []
+    worker = m.helper('t_local_worker')
+    modules = {name: m.helper(name) for name in ('t_local_status', 't_workflow', 't_toml')}
+    class LostLease(ManagedClientFixture):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.error = 'Shared manager connection lost'
+    modules.update(t_local_models={'hardware': hardware}, t_local_manager={'Client': LostLease},
+                   t_local_worker={'state_root': lambda: tmp_path, 'environment': worker['environment']})
+    monkeypatch.setattr(m, 'helper', lambda name: modules[name])
+    class Process:
+        returncode = None
+        def poll(self): return self.returncode
+        def terminate(self):
+            calls.append('terminate')
+            if not unresponsive: self.returncode = -15
+        def wait(self, **kwargs):
+            if kwargs:
+                assert kwargs['timeout'] == 5
+                raise m.subprocess.TimeoutExpired('codex', 5)
+            calls.append('reaped')
+        def kill(self):
+            calls.append('kill')
+            self.returncode = -9
+    monkeypatch.setattr(m.subprocess, 'Popen', lambda *args, **kwargs: Process())
+    chosen = m.policy({'mode': 'local-only'})
+    with pytest.raises(ValueError, match='manager connection lost'):
+        m.lead(['codex', '--', 'task'], chosen=chosen)
+    assert 'terminate' in calls
+    assert ('kill' in calls) == unresponsive
+    assert ('reaped' in calls) == unresponsive
+    # A recovery callback cannot report a successful handoff after losing its lease.
+    with pytest.raises(ValueError, match='manager connection lost'):
+        m.lead(['codex', '--', 'task'], chosen=chosen, runner=lambda *args, **kwargs: 0)
+
+
+def test_time_limits_defaults_validation_and_scoped_reset(local):
+    m=local
+    assert [m.DEFAULT[k] for k in m.TIME_LIMITS] == [900,1800,300,300]
+    for key in m.TIME_LIMITS:
+        for value in (True,0,1801,'300'):
+            with pytest.raises(ValueError):m.policy({key:value})
+    with pytest.raises(ValueError,match='Maximum'):m.policy({'timeout_seconds':900,'max_timeout_seconds':300})
+    class UI:
+        def __init__(self,choices):self.choices=iter(choices);self.views=[]
+        def pick(self,title,rows,**kwargs):self.views.append((title,rows,kwargs));return next(self.choices)
+    chosen=m.policy({'mode':'automatic','context_tokens':8192,'timeout_seconds':300})
+    ui=UI(['reset_time','back'])
+    result=m.workflow_menu(ui,chosen)
+    assert result['mode']=='automatic' and result['context_tokens']==8192 and result['timeout_seconds']==900
+    assert dict(ui.views[0][1])['timeout_seconds']=='Default task limit'
+    assert ui.views[0][2]['sections']['timeout_seconds']=='Time limits'
+    ui=UI(['max_timeout_seconds','300','inactivity_timeout_seconds','60','queue_timeout_seconds','','back'])
+    result=m.workflow_menu(ui)
+    assert result['max_timeout_seconds']==1800 and result['inactivity_timeout_seconds']==60
+    assert result['queue_timeout_seconds']==300 and '300' in ui.views[1][2]['disabled']
+    ui=UI(['timeout_seconds','','back'])
+    result=m.workflow_menu(ui,{'timeout_seconds':60,'max_timeout_seconds':300})
+    assert result['timeout_seconds']==60 and '' in ui.views[1][2]['disabled']
+    assert m.duration(10)=='10 sec'

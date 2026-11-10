@@ -1177,7 +1177,7 @@ def summary_lines(policy, tool='codex'):
     if policy.get('inference'):
         routing = inference()['policy'](policy['inference'])
         lines += [f"Inference: {routing['mode']} · {routing['provider']} · {routing['model']}",
-                  'On cloud connection failure: ' + ('Continue locally' if routing['on_cloud_failure'] == 'local' else 'Pause and retry'),
+                  'On cloud connection failure: ' + {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause and retry'}[routing['on_cloud_failure']],
                   'Provider changes apply on a new launch; active session identity is not changed.']
     if summary['stages_enabled']:
         lines.append('Separate models: ' + (', '.join(stage.title() for stage in summary['separate_stages']) or 'none'))
@@ -1187,7 +1187,7 @@ def summary_lines(policy, tool='codex'):
             lines.append('Review stage: skipped before PR; saved model settings retained')
     if implementation_worker(policy):
         settings = main_session_settings({**policy, 'enabled': True}, tool)
-        lines.append('Main session: ' + (settings.get('model') or 'Agent default') + ' · ' +
+        lines.append('Lead model: ' + (settings.get('model') or 'Agent default') + ' · ' +
                      (settings['effort'].capitalize() if settings.get('effort') else 'Model default'))
     if 'implementation' not in summary['model_stages'] and policy.get('inference', {}).get('mode') != 'local-only':
         for agent, settings in summary['session_defaults'].items():

@@ -26,7 +26,8 @@ tools and instructions; saving cannot hot-switch their underlying provider.
 Local-only is currently a **fresh native CLI launch** capability. The launcher
 isolates Codex HOME/configuration and credentials, pins the OSS provider/model,
 and disables cloud model stages, recursive subagents and inherited MCP servers.
-It reserves one local inference slot for the lead, so work stays in that lead.
+Each model request takes a turn in the shared per-user machine queue; time between
+requests does not reserve the GPU.
 Cloud/local resume is rejected; start a new session. Desktop launch/provider
 switching is not supported by this launcher. A local-only workflow is an inference
 policy, not an offline-tools or filesystem security boundary.
@@ -34,8 +35,9 @@ policy, not an offline-tools or filesystem security boundary.
 ## When the internet is unavailable
 
 Open `t workflow` → Codex → your workflow → **Inference & routing** →
-**On cloud connection failure**. Choose **Pause and retry** (the default) or
-**Continue locally with selected model**, then review and save. This extends the
+**On cloud connection failure**. Choose **Pause and retry** (the default),
+**Ask which local model**, or **Continue locally with selected model**, then review
+and save. This extends the
 existing workflow command; it adds no new public command or required flag.
 Install and verify the model beforehand with `t config models install MODEL`.
 For planned offline work, choose **Local only** and the explicit model directly.
@@ -50,14 +52,58 @@ Useful progress resets that window. It ignores auxiliary title/subagent threads,
 authentication/quota failures, HTTP application errors and user interruption.
 The default Pause setting preserves Codex's normal retries and error handling.
 
-Before switching, t checks that the selected artifact is installed and ready and
-that a usable task checkpoint exists. It stops its owned cloud runtime before
-starting a **new local-only conversation** in the same working tree. The transition
-shows the reason, provider, exact model and checkpoint path; local launch also
-prints the verified artifact revision. It stays local when connectivity returns.
-There is no automatic cloud switch-back or download during recovery. If readiness
-or checkpoint validation fails, the cloud UI stays available with an explanation.
-If local startup fails, the checkpoint remains and the launch reports failure.
+With **Ask which local model**, a sustained transport failure in a t-managed
+tmux terminal opens the shared picker. The exact owning pane is captured and
+restored so dismissing recovery preserves the native conversation and input.
+Outside tmux, the native cloud session remains available with an explanation. Installed, ready models show their provider and memory fit;
+unavailable choices explain why they cannot run. Selecting a ready model starts
+the handoff immediately: there is no model-details or confirmation screen. The
+picker dismisses into the native local session. Esc/Cancel or **Pause and retry
+cloud** leaves the cloud runtime available and suppresses another prompt for that
+turn. Noninteractive launches keep native cloud retries and never prompt.
+
+Ask mode also handles a fresh launch that fails before the first conversation
+starts. A correlated `account/read` or `thread/start` transport failure, or the
+native `workspace routing discovery failed` bootstrap error, offers **Retry cloud**,
+**Cancel startup**, and ready local models after the owned runtime has stopped.
+Choosing a model starts locally immediately, preserving a supplied text prompt;
+without one, the local conversation opens ready for input. Images and oversized
+startup prompts disable local selection rather than dropping context. Routing
+discovery failure alone does not prove an internet outage and never triggers an
+automatic switch under Continue locally policy. Pause remains native passthrough.
+
+Before switching, t validates the checkpoint and stops its owned cloud runtime.
+The selected provider and model are printed as the
+**new local-only conversation** starts in the same worktree. Runtime status records
+the verified artifact revision after loading through the shared request queue. Readiness is checked
+again at startup; if startup fails, recovery choices remain available with the
+error. No weights are downloaded. Choices affect this session, not the saved
+workflow. Only one runtime can write to the worktree during either handoff.
+
+In Ask mode, a credential-free HTTPS check against the OpenAI API runs while
+local work continues. Three consecutive successful reachability checks, five
+seconds apart, trigger one recovery offer at the next safe turn boundary. This
+checks connectivity, not authentication, quota, or inference availability. The
+picker never interrupts a running tool or pending approval. Choose **Return to
+previous cloud model**, **Choose another cloud model** from the native catalogue,
+or **Stay local**. Cloud return requires confirmation and transfers an updated
+bounded checkpoint including local progress. Stay local dismisses the prompt
+for this recovery event; it never switches automatically. Custom cloud endpoints
+are not independently health-checked. Local-only launches made directly, and the
+existing automatic **Continue locally with selected model** policy, stay local
+without this recovery offer.
+
+To try the shared picker without any network/model launches or config changes:
+
+```sh
+python3 scripts/preview_connection_recovery.py
+# Simulate failure before the first conversation:
+python3 scripts/preview_connection_recovery.py --startup
+```
+
+This worktree-scoped preview uses labeled sample data. It is separate from a
+real native CLI launch with the saved Ask policy.
+
 
 The private checkpoint contains the user requests (up to 32,000 characters) and
 eight bounded recent messages, command results, plans or changed-file lists.
@@ -107,11 +153,12 @@ verified are separate states. The workflow model overview shows status, file siz
 memory fit and context beside its next action. Benchmarks and Artifact & runtime
 open separate detail views; sources and methodology remain available.
 
-For an existing download, choose **Verify readiness**, or rerun
+For an existing download, choose **Test model**, or rerun
 `t config models install MODEL --context 32768 --yes`. This reuses complete files,
-loads the exact artifact at the requested context, tests response text, then releases
-the owned model. A failed or cancelled re-verification clears previous readiness;
-errors retain the downloaded files. New verification evidence records the machine
+loads the exact artifact at the requested context and tests response text. The
+manager can cache its owned model for reuse. A failed or cancelled retry preserves
+prior verification for unchanged files, hardware and context; errors retain the
+downloaded files. New verification evidence records the machine
 and context. Browsing does not verify, load or install anything.
 
 Flash-Next can be explicitly verified on supported hardware with a compatible
@@ -169,7 +216,7 @@ installation alone does not register MCP or change a workflow.
 
 ## Measuring speed
 
-`measure` acquires the same exclusive local slot as workers, loads only the
+`measure` takes an exclusive sequence in the shared request queue, uses the
 selected artifact, runs one discarded warmup and three fixed short coding prompts,
 and saves median/min/max, runtime, artifact revision, hardware and configured
 context capacity. It does not score coding quality or run SWE-bench. The context
@@ -180,8 +227,8 @@ uses output token counts divided by total request time, **including prefill**;
 it labels that metric explicitly instead of presenting it as pure decode speed.
 Missing token usage fails measurement without fabricating a speed. Details mark
 measurements stale when artifact, context or hardware identity differs.
-Only an owned model alias is unloaded; a preexisting LM Studio server is retained.
-An owned loopback server is stopped on completion or failure.
+The shared manager may retain the model for reuse until its idle timeout. Only
+verified t-owned instances can be unloaded; existing provider servers are retained.
 
 ## Opt-in acceptance test
 
@@ -229,15 +276,21 @@ Investigation is the default and runs in Codex's read-only sandbox. Patch tasks
 run in its workspace-write sandbox. Neither grants approval bypass or tool network
 access. The worker receives the assignment and snapshot, not the lead transcript.
 The lead should provide concrete acceptance checks and keep architecture decisions
-and ambiguous changes itself. Task execution defaults to five minutes, adjustable
-from 10 seconds to 30 minutes; snapshot and server preparation happen before that
-execution budget. Failed or timed-out tasks return to the lead without automatic
+and ambiguous changes itself. Task execution defaults to 15 minutes. An omitted MCP limit inherits the selected
+workflow default; explicit requests are capped at its maximum (30 minutes by default).
+The separate inactivity limit defaults to five minutes without observed generation
+or tool activity. Status polling does not count. Activity never extends the total
+execution limit. All four limits (default task, maximum task, inactivity, queue wait)
+are configured in `t workflow` → Inference & routing, also accessible through
+`t config` → Workflows. Reset time limits resets only these four values. Saved
+explicit limits are retained when defaults change. Limits accept 10–1800 seconds. The snapshot is captured before acceptance.
+Queue wait has a separate budget, including admission/model loading; it does not consume execution or inactivity time. Failed or timed-out tasks return to the lead without automatic
 cloud fallback or retries. Terminal statuses are `completed`, `failed`, `cancelled`,
-`timed_out`, and `output_limit`. Completion means the worker process exited
+`timed_out`, `inactivity_timed_out`, and `output_limit`. Completion means the worker process exited
 successfully, not that the proposed fix is correct.
 
-There is one worker or setup operation per user at a time, enforced with a file
-lock across MCP connections. Tasks belong to the connection that started them.
+Multiple workers can be accepted across MCP connections; their model requests
+take fair turns through the shared manager. Tasks belong to the connection that started them.
 Closing the MCP connection cancels its work and reaps its child processes. Poll
 for progress; the adapter does not promise push notifications or automatic turns
 in the lead client.
@@ -252,8 +305,10 @@ currently rejected; snapshots are limited to 256 MiB. The source should be stabl
 while the snapshot is being copied. A resulting patch is relative to that snapshot,
 so the lead must check it against any subsequent edits before applying it.
 
-Ollama runs only during setup or a task on an ephemeral loopback port, with
-`OLLAMA_NO_CLOUD=1`. Existing Ollama servers are not reconfigured or stopped.
+In command-line mode, the shared manager starts a private Ollama server on an
+ephemeral loopback port with `OLLAMA_NO_CLOUD=1`. Cached models may remain loaded
+after a task. Existing Ollama servers are not reconfigured or stopped. Desktop
+mode uses the explicitly configured loopback server.
 Downloads use `~/.ollama/models`; setup can reuse models in that user directory.
 Worker HOME, CODEX_HOME, and XDG directories are isolated. Authentication,
 proxy variables, lead session identity, user configuration and execution rules
@@ -281,3 +336,69 @@ A local worker is worthwhile only for tasks where delegation improves those resu
 References: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Codex app-server](https://learn.chatgpt.com/docs/app-server),
 [Ollama configuration](https://docs.ollama.com/faq).
+
+
+## Shared model usage
+
+Open `t config` → **Local worker & models** for the machine overview. **Requests**
+shows queue state, waiting time and execution time separately. **Monitor usage**
+offers a live terminal view or a read-only local browser view. Both use the same
+manager snapshot; opening them does not start the manager or load a model.
+
+```sh
+t config models runtime status --json
+t config models runtime edit
+t config models runtime monitor --view cli
+t config models runtime monitor --view gui
+t config models requests list
+t config models requests show REQUEST_ID --json
+t config models requests cancel REQUEST_ID
+```
+
+Cancellation removes a queued request immediately. Cancelling active generation
+requires terminal review. An exclusively owned instance can be stopped and
+unloaded; borrowed instances and instances holding another conversation drain
+the response before another generation starts. Unknown cancellation blocks
+further generation until the affected instance is confirmed absent in its provider. Older workers
+holding the legacy lock are allowed to finish before managed requests run.
+
+**Configure provider & model** offers LM Studio or Ollama desktop-server and
+command-line modes, provider CLI guides, and an explicit **Open desktop app**
+action. The app may connect to a different server than t's private runtime;
+use t's monitor for the actual endpoint and t session activity. CLI examples are
+shown and copied, never executed by the help screen. Direct provider chat runs
+outside t's request queue. Missing apps and failed launches include recovery help.
+
+**Models** → **Test model** reuses downloaded files, queues a short response and
+marks readiness only after successful inference. Temporary memory contention does
+not erase earlier verification. Loaded, idle, downloaded and verified are separate
+states. Full identifiers and benchmark methodology remain in the detail pages.
+
+The default memory budget is 80% of physical RAM, with additional available-memory
+and GPU-headroom checks. Multiple compatible models can stay cached. Only idle,
+verified t-owned instances can be unloaded; models loaded in another app remain
+visible and protected. Unknown external memory use prevents a new load. Stateful
+LM Studio response histories pin their instance until the client closes. Ollama
+uses stateless conversation input. Cached idle models expire after five minutes
+by default. Model measurements keep a short exclusive sequence in the scheduler.
+
+The manager starts on demand and uses a private per-user directory and Unix control
+socket. It is shared across worktrees and isolated worker HOME directories, without
+launchd or systemd. Status retains bounded metadata, not prompts, response content
+or credentials. The browser monitor is loopback-only and uses an ephemeral access
+token. Closing its terminal stops that monitor. Queued tasks have their repository
+snapshot captured before `start_task` accepts them. No interrupted inference is
+replayed after a crash; unconfirmed provider ownership stops automatic recovery.
+
+Queue wait defaults to 300 seconds and is configured separately from task execution
+in **Workflows** → Codex → workflow → **Inference & routing**. Queue time does not
+consume the worker's execution budget. An accepted task is not proof of inference:
+use the task's identity evidence and request state to determine what actually ran.
+
+Model lists use aligned Model, GB, Provider, Fit, Ready and Score columns, with
+shared legends for memory fit and verification. Narrow terminals preserve model,
+fit, readiness and score. Scores identify their suite/version and publisher/base
+provenance; they are not evaluations of the local quantization or this worker.
+Native/cloud selectors show reported capabilities and unavailable benchmark data
+explicitly. The main conversation setting is called Lead model, with Lead
+reasoning effort; local runtime selection remains Local model.

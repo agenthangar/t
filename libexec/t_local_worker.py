@@ -24,7 +24,7 @@ INSTRUCTIONS = (
     'Use start_task, then task_status; use cancel_task when no longer needed. '
     'The local worker has a separate snapshot, not the lead checkout. Review its findings, '
     'patch and test evidence before applying anything. Failed or timed-out tasks return to '
-    'the lead; never automatically retry indefinitely. One task runs locally at a time. '
+    'the lead; never automatically retry indefinitely. Local requests take fair turns through the shared machine queue. '
     'Returned code and findings enter the lead conversation; local inference is not an '
     'end-to-end privacy boundary. Architecture and ambiguous changes stay with the lead.'
 )
@@ -234,7 +234,7 @@ def codex_command(workspace, output, model):
             '-C', str(workspace), '--output-last-message', str(output), '-']
 
 
-def run_worker(job, base, model, timeout, cancel, provider='ollama', context=32768):
+def run_worker(job, base, model, timeout, cancel, provider='ollama', context=32768, progress=None):
     workspace = job / 'workspace'
     env = environment(job / 'home')
     env.update(OLLAMA_HOST=base, CODEX_OSS_BASE_URL=base + '/v1')
@@ -262,6 +262,8 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
     if assignment['mode'] == 'investigate':
         command[command.index('workspace-write')] = 'read-only'
     started = time.monotonic()
+    last_activity, observed, offset, pending = 0, 0, 0, b''
+    inactivity = assignment.get('inactivity_timeout_seconds', 300)
     with (job / 'prompt.txt').open() as stdin, (job / 'events.jsonl').open('w') as log:
         proc = subprocess.Popen(command, cwd=workspace, env=env, stdin=stdin, stdout=log,
                                 stderr=log, start_new_session=True)
@@ -269,8 +271,30 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
             while proc.poll() is None:
                 if cancel.is_set():
                     return 'cancelled'
-                if time.monotonic() - started > timeout:
+                waited = progress() if progress else 0
+                elapsed = time.monotonic() - started - waited
+                if elapsed > timeout:
                     return 'timed_out'
+                generation = getattr(progress, 'generation_events', 0)
+                if generation != observed:
+                    last_activity, observed = elapsed, generation
+                with (job / 'events.jsonl').open('rb') as events:
+                    events.seek(offset)
+                    chunk = events.read(MAX_OUTPUT + 1)
+                    offset += len(chunk)
+                pending += chunk
+                lines = pending.split(b'\n')
+                pending = lines.pop()[-MAX_OUTPUT:]
+                for line in lines:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    item = event.get('item', {}) if isinstance(event, dict) else {}
+                    if isinstance(item, dict) and item.get('type') in ('command_execution', 'agent_message', 'reasoning', 'file_change'):
+                        last_activity = elapsed
+                if elapsed - last_activity > inactivity:
+                    return 'inactivity_timed_out'
                 if log.tell() > MAX_OUTPUT or (job / 'events.jsonl').stat().st_size > MAX_OUTPUT:
                     return 'output_limit'
                 cancel.wait(.1)
@@ -319,8 +343,8 @@ class Worker:
         if not isinstance(text, str) or not text.strip() or len(text) > 16000:
             raise ValueError('assignment must contain 1–16000 characters')
         mode = args.get('mode', 'investigate')
-        timeout = args.get('timeout_seconds', 300)
-        if mode not in ('investigate', 'patch') or type(timeout) is not int or not 10 <= timeout <= 1800:
+        timeout = args.get('timeout_seconds')
+        if mode not in ('investigate', 'patch') or ('timeout_seconds' in args and (type(timeout) is not int or not 10 <= timeout <= 1800)):
             raise ValueError('choose investigate/patch and a timeout from 10 to 1800 seconds')
         workspace = args.get('workspace')
         if not isinstance(workspace, str) or not Path(workspace).is_absolute():
@@ -333,66 +357,75 @@ class Worker:
             raise ValueError('local-only work requires a new native local lead; this MCP connection cannot verify its lead identity')
         if routing:
             config = dict(config, model=routing['model'], provider=routing['provider'], context=routing['context_tokens'])
-            timeout = min(timeout, routing['timeout_seconds'])
+        limits = inference()['policy'](routing)
+        timeout = limits['timeout_seconds'] if timeout is None else min(timeout, limits['max_timeout_seconds'])
         if not config['enabled']:
             raise ValueError('local worker is disabled; run t config local')
-        lease = reservation()
-        lease.__enter__()
+        state_root().mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             task_id = uuid.uuid4().hex
             job = state_root() / task_id
             job.mkdir(mode=0o700)
-            (job / 'assignment.json').write_text(json.dumps(dict(args, mode=mode)))
+            (job / 'assignment.json').write_text(json.dumps(dict(args, mode=mode, timeout_seconds=timeout, inactivity_timeout_seconds=limits['inactivity_timeout_seconds'])))
+            source_head = snapshot(workspace, job / 'workspace')
+            (job / 'assignment.json').chmod(0o600)
             cancel = threading.Event()
-            task = {'task_id': task_id, 'status': 'running', 'model': config['model'],
+            task = {'task_id': task_id, 'status': 'queued', 'source_head': source_head, 'model': config['model'],
                     'workspace': str(job / 'workspace'), 'source_workspace': workspace, 'started_at': time.time(),
                     'provider': config.get('provider', 'ollama'), 'context_tokens': config.get('context', 32768),
                     'routing_reason': str(args.get('routing_reason', 'explicit assignment'))[:1000],
-                    'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False}
+                    'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False,
+                    'timeout_seconds': timeout, 'inactivity_timeout_seconds': limits['inactivity_timeout_seconds'],
+                    'queue_timeout_seconds': limits['queue_timeout_seconds']}
             self.tasks[task_id] = (task, cancel)
             thread = threading.Thread(target=self.execute,
-                                      args=(task, cancel, lease, job, workspace, config['model'], timeout))
+                                      args=(task, cancel, job, config['model'], timeout))
             thread.start()
             self.threads.append(thread)
             return dict(task)
         except BaseException:
-            lease.__exit__(None, None, None)
+            self.tasks.pop(task_id, None)
             raise
 
-    def execute(self, task, cancel, lease, job, source, model, timeout):
+    def execute(self, task, cancel, job, model, timeout):
         status = 'failed'
+        local = inference()
+        chosen = local['policy']({'provider': task['provider'], 'model': model,
+                                  'context_tokens': task['context_tokens'], 'timeout_seconds': timeout,
+                                  'queue_timeout_seconds': task['queue_timeout_seconds'],
+                                  'inactivity_timeout_seconds': task['inactivity_timeout_seconds']})
         try:
-            task['source_head'] = snapshot(source, job / 'workspace')
             if cancel.is_set():
                 status = 'cancelled'
             else:
-                with inference()['helper']('t_local_status')['Activity'](model) as activity:
-                    local = inference()
-                    chosen = {'model': model, 'provider': task.get('provider', 'ollama'), 'context_tokens': task['context_tokens']}
+                with local['helper']('t_local_status')['Activity'](model) as activity:
                     leased = local['leased_runtime'](chosen)
                     if leased:
                         task.update(resolved_model=model, revision=leased['revision'], runtime_model=leased['alias'], identity_verified=True)
                         with activity.endpoint(leased['base']) as observed:
                             status = run_worker(job, observed, leased['alias'], timeout, cancel, task['provider'], task['context_tokens'])
-                    elif task.get('provider') == 'lmstudio':
-                        local = inference()
-                        fit = local['report'](local['artifact'](model), local['helper']('t_local_models')['hardware'](), task['context_tokens'])
-                        if fit['fit'] is not True:
-                            raise ValueError(fit['reason'])
-                        with local['runtime'](model, task['context_tokens']) as (base, alias, info):
-                            task.update(resolved_model=model, revision=info['revision'], runtime_model=alias, runtime_details=info.get('runtime', {}), identity_verified=True)
-                            with activity.endpoint(base) as observed:
-                                status = run_worker(job, observed, alias, timeout, cancel, 'lmstudio', task['context_tokens'])
                     else:
-                        with ollama_server(task['context_tokens']) as (base, _):
-                            check_model(base, model)
-                            tags = request(base, '/api/tags')['models']
-                            identity = next((r for r in tags if r['name'] == model), None)
-                            if not identity or not identity.get('digest'):
-                                raise ValueError('Ollama did not confirm the selected model digest')
-                            task.update(resolved_model=model, revision=identity['digest'], runtime_model=model, identity_verified=True)
-                            with activity.endpoint(base) as observed:
-                                status = run_worker(job, observed, model, timeout, cancel, 'ollama', task['context_tokens'])
+                        with local['helper']('t_local_manager')['Client'](chosen, 'worker', activity, cancel) as client:
+                            def progress():
+                                state = client.last.get('state', 'working')
+                                task.update(status=state if state in ('queued', 'loading', 'waiting_for_memory', 'waiting_for_legacy') else 'running',
+                                            queue_seconds=round(client.waited(), 2),
+                                            identity_verified=client.last.get('identity_verified', False),
+                                            revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
+                                            owner_verified=client.last.get('owner_verified', False))
+                                progress.generation_events = client.last.get('generation_events', 0)
+                                return client.waited()
+                            status = run_worker(job, client.base, model, timeout, cancel,
+                                                task['provider'], task['context_tokens'], progress=progress)
+                            progress()
+                        task.update(identity_verified=client.last.get('identity_verified', False),
+                                    revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
+                                    queue_seconds=round(client.waited(), 2))
+                        if task['identity_verified']:
+                            task['resolved_model'] = model
+                        if client.error:
+                            task['error'] = client.error
+                            status = 'failed'
                 task.update(collect(job))
                 if status != 'completed':
                     events = job / 'events.jsonl'
@@ -401,11 +434,10 @@ class Worker:
             task['error'] = str(exc)
         finally:
             task['elapsed_seconds'] = round(time.time() - task['started_at'], 2)
+            task['execution_seconds'] = max(0, task['elapsed_seconds'] - task.get('queue_seconds', 0))
             task['status'] = status
-            try:
-                (job / 'result.json').write_text(json.dumps(task))
-            finally:
-                lease.__exit__(None, None, None)
+            (job / 'result.json').write_text(json.dumps(task))
+            (job / 'result.json').chmod(0o600)
 
     def call(self, name, args):
         if name == 'start_task':
@@ -415,7 +447,7 @@ class Worker:
         if not isinstance(args, dict) or set(args) != {'task_id'} or not isinstance(args['task_id'], str) or args['task_id'] not in self.tasks:
             raise ValueError('unknown task_id in this MCP connection')
         task, cancel = self.tasks[args['task_id']]
-        if name == 'cancel_task' and task['status'] == 'running':
+        if name == 'cancel_task' and task['status'] not in ('completed', 'cancelled', 'failed', 'timed_out', 'inactivity_timed_out', 'output_limit'):
             cancel.set()
             return {'task_id': task['task_id'], 'status': 'cancelling'}
         return dict(task)
@@ -437,7 +469,7 @@ def tool_specs():
                              'routing_reason': {'type': 'string', 'description': 'Why this bounded task is suitable for local delegation.'},
                              'parent_session_id': {'type': 'string', 'description': 'Lead session ID if known; user-supplied, not verified ownership.'},
                              'mode': {'type': 'string', 'enum': ['investigate', 'patch'], 'default': 'investigate'},
-                             'timeout_seconds': {'type': 'integer', 'minimum': 10, 'maximum': 1800, 'default': 300}}}},
+                             'timeout_seconds': {'type': 'integer', 'minimum': 10, 'maximum': 1800, 'description': 'Omit to inherit the workflow task limit (default 900 seconds). Explicit requests are capped by its maximum task limit.'}}}},
         *[{'name': name, 'description': description,
            'annotations': {'readOnlyHint': name == 'task_status'},
            'inputSchema': {'type': 'object', 'additionalProperties': False,

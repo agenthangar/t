@@ -37,31 +37,17 @@ _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 _t_resume_on_host() {
   local host="$1" sid="$2" wt="$3" agent="$4" mode="$5"
   local target="${REMOTE_HOSTS[$host]:-$host}"
-  command -v rsync >/dev/null 2>&1 || { echo "t resume --host: rsync not found" >&2; return 1; }
-  local TB_TRANSFER_REF
-  TB_TRANSFER_REF=$(_dev_worktree_beam_prepare "$wt") || return $?
-  if [[ -n $TB_TRANSFER_REF ]]; then
-    ssh "$target" "zsh -lic '(( \${+functions[_dev_worktree_transfer_ref_valid]} ))'" || {
-      print -u2 't session move: update t on the destination to receive transfer snapshots'; return 1
-    }
+  local repo slot detach= output
+  IFS=$'\t' read -r repo slot < <(_dev_repo_of_dir "$wt")
+  [[ -n $repo && -n $slot ]] || { print -u2 't resume: saved source has no managed worktree'; return 1; }
+  [[ $mode != detach ]] || detach=1
+  if [[ -n $detach ]]; then
+    output=$(_t_lifecycle_run restore '' "$target" "$wt" "$sid" "$agent" "$repo" "$slot" 1) || return $?
+    print -r -- "${output##*$'\n'}"
+  else
+    [[ $mode != fg ]] || detach=fg
+    _t_lifecycle_run restore '' "$target" "$wt" "$sid" "$agent" "$repo" "$slot" "$detach"
   fi
-  _dev_worktree_beam_push "$wt" "$host" >&2 || {
-    local push_rc=$?
-    (( push_rc == 130 )) && return 130
-    echo "t resume --host: could not commit/push $wt; conversation was not resumed on $host" >&2
-    return $push_rc
-  }
-  _tbeam_sync_transcript "$wt" "$target" "$agent" "$sid" >&2 || return $?
-  local env="TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)wt} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_RESUME_ALLOW_UNAVAILABLE=1"
-  case $mode in
-    fg)     ssh -t "$target" "$env TB_MODE=fg zsh -lic _tbeam_land" ;;
-    attach) ssh -t "$target" "$env TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land" ;;
-    *)      local out rc=0
-            out=$(ssh -o BatchMode=yes "$target" "$env TB_MODE=tmux zsh -lic _tbeam_land" 2>&1) || rc=$?
-            print -r -- "${out##*$'\n'}"
-            (( rc == 0 )) || return $rc
-            [[ ${out##*$'\n'} == dev-* ]] ;;
-  esac
 }
 
 _t_resume_history_candidates() {
@@ -196,6 +182,16 @@ _t_resume() {
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
+  if [[ -n $repo && $slot == <-> ]]; then
+    local recovery recovery_rc=0
+    recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$repo" "$slot") || recovery_rc=$?
+    if (( recovery_rc == 0 )); then
+      eval "$recovery"
+      return $?
+    elif (( recovery_rc != 3 )); then
+      return $recovery_rc
+    fi
+  fi
   # The scan targets: one named/inferred repo, or (all-repos mode) every
   # worktree-enabled repo deduped by canonical dir — `dot` and `dotfiles` key one
   # dir, so it is scanned once under its canonical alias (_dev_repo_of_dir's
@@ -793,7 +789,7 @@ _t_resume() {
       repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; mp_loc="${f[7]:-}"; mp_agent="${f[10]:-claude}"
       (( mp_index++ )); mp_remaining=$(( $#picks - mp_index ))
       mp_identity="$repo slot $slot · $mp_agent $sid"
-      mp_retry="t session history ${(q)repo} ${(q)slot}"
+      mp_retry="t session resume ${(q)repo} ${(q)slot}"
       if [[ $mp_loc == fg:* ]]; then
         mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'"${f[8]}")
         mp_live_cmd="t open ${(q)f[8]} --cli"
@@ -1039,7 +1035,7 @@ _t_resume() {
   }
 
   if [[ -n $no_tmux ]]; then
-    _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" || return $?
+    _dev_with_launch_locks "$cwd" "$sid" _dev_foreground_resume_preflight "$sid" "$cwd" "$agent" || return $?
     cd "$cwd" || return 1
     eval "$(_dev_agent_resume_cmd "$agent" "$sid")"
     return $?
@@ -1658,8 +1654,7 @@ _t_restart_slot() {
         # kill -0 still succeeds, but a verified Z state cannot run an agent.
         # An unknown or unreadable process state keeps the pane reserved.
         # No -k: tmux must refuse if anything is still running in this pane.
-        tmux respawn-pane -t "$pane" -c "$dir" "zsh -lic ${(q)launch}" || return 1
-        tmux set-option -p -t "$pane" remain-on-exit "$old_remain"
+        _t_lifecycle_run replace "$session" "$dir" "$sid" "$agent" "$pane" "$launch" "$old_remain"
         return $?
       fi
       sleep 0.05
@@ -1678,23 +1673,29 @@ _dev_resume_session() {
 }
 
 _dev_foreground_resume_preflight() {
-  _dev_launch_preflight "dev-foreground-$1" "$2" "$1"
+  _dev_launch_preflight "dev-foreground-$1" "$2" "$1" || return $?
+  python3 "$T_HOME/libexec/t_lifecycle.py" preflight "${3:-claude}" "$1" "$2"
 }
 
 _dev_resume_session_claimed() {
+  _t_lifecycle_run resume "$@"
+}
+
+_dev_resume_session_effect() {
   local session="$1" dir="$2" sid="$3" agent="${4:-claude}"
   if (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
-  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
   _dev_auto_trust "$dir"
   local logfile="$HOME/.tmux-logs/${session}.log"
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || return 1
+  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || {
+    print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
+    return 1
+  }
   tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
-  tmux pipe-pane -t "=$session:" -o "cat >> $logfile" || { tmux kill-session -t "=$session:"; return 1; }
   # Record the resumed id on the session so `tpop` can pull the exact same
   # conversation back to the foreground (it also falls back to the dir's newest
   # transcript, but this is the precise signal when we know it).
@@ -1705,13 +1706,10 @@ _dev_resume_session_claimed() {
   if [[ $5 == history && $agent == codex ]]; then
     resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
-  _dev_start_session_command "$session" "$resume_command" || { tmux kill-session -t "=$session:"; return 1; }
+  # Preserve a changed or failed pane for inspection; do not kill by a mutable
+  # session name after the placeholder guard refused it.
+  _dev_start_session_command "$session" "$resume_command" "$logfile" || return 1
   _dev_launch_startup_check "$session" "$logfile" || return 1
-  if [[ $5 == history ]]; then
-    _t_history_owner "${session#dev-}" "$sid" "$dir" "$agent" wait >/dev/null || return $?
-  fi
-  _dev_history_record "$sid" "$agent" "$dir" resume
-  _dev_recovery_watch "$session"
 }
 
 # _dev_slot_for_cwd <cwd> — map a transcript's working dir to a dev session slot.
@@ -1954,13 +1952,10 @@ _t_push() {
       echo "→ Type /exit (or Ctrl-D) and you'll drop into $session automatically."
     fi
   else
-    # Inside Claude without the wrapper (older shell): can't defer, so spawn now
-    # and warn — exit immediately, two live copies of one session diverge.
-    if [[ -z $existing ]]; then
-      _dev_resume_session "$session" "$cwd" "$sid" "$agent" || return 1
-    fi
-    echo "$attach_hint"
-    echo "(Exit this foreground Claude NOW — two live copies of one session diverge.)"
+    # Without the wrapper there is no safe post-exit launch continuation.
+    # Leave the current owner running and let a plain terminal perform the move.
+    print -u2 't push: exit this agent first, then run t session resume from a plain terminal'
+    return 1
   fi
 }
 
@@ -2049,17 +2044,12 @@ _t_pop() {
     echo "You're inside $session right now — run tpop from a different terminal."; return 1
   fi
 
-  # Resume id: the precise CLAUDE_RESUME_ID stamped on the session (by
-  # _dev_new_session/_dev_resume_session, or the t-session-start SessionStart
-  # hook for any other launch path), else the dir's newest transcript. The
-  # newest-fallback is only for pre-hook sessions and is ambiguous when several
-  # slots share one repo dir (it returns whichever sibling wrote last); the hook
-  # is what makes targeting a specific slot reliable.
+  # Use the selected owner's verified identity; a newest-transcript fallback
+  # could resume a sibling conversation after closing this one.
   local dir sid agent
   dir=$(tmux display-message -p -t "=$session:" '#{session_path}')
   agent=$(_dev_agent_of_session "$session")
-  sid=$(tmux show-environment -t "=$session" CLAUDE_RESUME_ID 2>/dev/null | cut -d= -f2)
-  [[ -n $sid ]] || sid=$(_dev_agent_newest_sid "$agent" "$dir")   # newest conversation in the dir, per agent
+  sid=$(_dev_session_sid "$session" "$dir")
   [[ -n $sid ]] || { echo "Couldn't find a session id for $session ($dir)."; return 1; }
 
   echo "Popping $session → foreground ($(_dev_agent_resume_cmd "$agent" "${sid[1,8]}…") in $dir)"
@@ -2070,15 +2060,8 @@ _t_pop() {
   # the copy you aren't driving looks frozen. kill-session only sends SIGHUP, so
   # the old claude needs a beat to trap it, flush, and exit — racing it here was
   # the "popped session stops updating" bug.
-  local pane_pid cpid
-  pane_pid=$(tmux list-panes -t "=$session:" -F '#{pane_pid}' 2>/dev/null | head -1)
-  [[ -n $pane_pid ]] && cpid=$(pgrep -P "$pane_pid" 2>/dev/null | head -1)   # claude = pane shell's child
-  tmux kill-session -t "=$session:"
-  if [[ -n $cpid ]]; then
-    _t_wait_for_exit "$cpid"
-    kill -0 "$cpid" 2>/dev/null && \
-      echo "warning: $session's $agent ($cpid) didn't exit; resuming anyway — transcript may interleave." >&2
-  fi
+  _t_lifecycle_run close "$session" "$dir" "$sid" "$agent" || return $?
+  _dev_with_launch_locks "$dir" "$sid" _dev_foreground_resume_preflight "$sid" "$dir" "$agent" || return $?
   cd "$dir" || return 1
   eval "$(_dev_agent_resume_cmd "$agent" "$sid")"
 }
@@ -2182,16 +2165,32 @@ PY
 # while _dev_pull, which already resolved the authoritative id via _dev_session_rows,
 # resumes locally — leaving two live owners on the same transcript.
 _tbeam_kill_owner() {
-  local sid="$TB_SID" s slot_sid
+  local sid="$TB_SID" s slot_sid immutable
   [[ -n $sid ]] || return 1
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
+    immutable=$(tmux display-message -p -t "=$s:" '#{session_id}') || return 2
+    [[ $immutable == \$<-> ]] || return 2
     slot_sid=$(_dev_session_sid "$s")
     if [[ "$slot_sid" == "$sid" ]]; then
-      local source_dir source_agent
+      local source_dir source_agent pid
       source_dir=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
       source_agent=$(_dev_agent_of_session "$s")
-      _dev_history_record "$sid" "$source_agent" "$source_dir" handoff
-      tmux kill-session -t "=$s:" 2>/dev/null && { print -r -- "$s"; return 0; }
+      [[ -z ${TB_CWD:-} || ${source_dir:A} == ${TB_CWD:A} ]] || return 2
+      [[ -z ${TB_AGENT:-} || $source_agent == $TB_AGENT ]] || return 2
+      pid=$(_dev_session_claude_pid "$s")
+      [[ -z $pid ]] || { _dev_agent_is_service "$pid" && return 2; }
+      [[ $(tmux display-message -p -t "=$s:" '#{session_id}') == "$immutable" ]] || {
+        print -u2 't move: source owner changed; nothing was stopped'; return 2
+      }
+      if tmux kill-session -t "$immutable:" 2>/dev/null; then
+        if [[ -n $pid ]]; then
+          _t_wait_for_exit "$pid"
+          if kill -0 "$pid" 2>/dev/null && ! _t_pid_is_zombie "$pid"; then
+            print -u2 't move: source did not exit; no destination started'; return 2
+          fi
+        fi
+        print -r -- "$s"; return 0
+      fi
       print -u2 -- "tbeam: could not stop $s; destination was not started"
       return 2
     fi
@@ -2205,57 +2204,7 @@ _tbeam_kill_owner() {
 # would move only the stale file and silently lose completed turns. Read both DBs
 # without modifying them; older installs without these tables retain legacy beam.
 _dev_codex_rollout_integrity() {
-  local sid=${1:-${TB_SID:-}}
-  [[ -n $sid ]] || { print -u2 -- 'tbeam: missing Codex thread id for rollout check'; return 1; }
-  python3 - "${CODEX_HOME:-$HOME/.codex}" "$sid" <<'PY'
-import sqlite3
-import sys
-from pathlib import Path
-
-home, sid = Path(sys.argv[1]), sys.argv[2]
-
-
-def read_one(db_path, query):
-    if not db_path.is_file():
-        return None
-    try:
-        with sqlite3.connect(db_path.resolve().as_uri() + '?mode=ro', uri=True, timeout=0.5) as db:
-            return db.execute(query, (sid,)).fetchone()
-    except sqlite3.OperationalError as exc:
-        message = str(exc).lower()
-        if 'no such table' in message or (
-            db_path.name == 'state_5.sqlite' and 'no such column: history_mode' in message
-        ):
-            return None
-        raise
-
-
-try:
-    thread = read_one(home / 'state_5.sqlite',
-                      'select rollout_path, history_mode from threads where id=?')
-    if thread is None or thread[1] != 'paginated':
-        sys.exit(0)
-    checkpoint = read_one(home / 'thread_history_1.sqlite',
-                          'select next_rollout_byte_offset from thread_history_projection_state where thread_id=?')
-    if checkpoint is None:
-        sys.exit(0)
-    offset = checkpoint[0]
-    if not isinstance(offset, int) or offset < 0:
-        raise ValueError('invalid SQLite rollout checkpoint')
-    if not thread[0]:
-        raise ValueError('missing paginated rollout path')
-    rollout = Path(thread[0])
-    if not rollout.is_absolute():
-        rollout = home / rollout
-    size = rollout.stat().st_size
-    if size < offset:
-        print(f'tbeam: Codex rollout is {size} bytes, behind its SQLite checkpoint at {offset}; '
-              'keep the source here and restore the matching rollout before beaming', file=sys.stderr)
-        sys.exit(1)
-except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
-    print(f'tbeam: could not verify paginated Codex rollout: {exc}', file=sys.stderr)
-    sys.exit(1)
-PY
+  python3 "$T_HOME/libexec/t_codex_store.py" integrity "${CODEX_HOME:-$HOME/.codex}" "${1:-${TB_SID:-}}"
 }
 
 # _tbeam_land — runs ON the destination host. It's defined in the shared dotfiles
@@ -2292,7 +2241,7 @@ _tbeam_land() {
   fi
   cd "$land" 2>/dev/null || { echo "tbeam: $land not found on ${HOST:-this host}" >&2; return 1; }
   if [[ "$TB_MODE" == fg ]]; then                # owns this ssh TTY; dies with it
-    _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" || return $?
+    _dev_with_launch_locks "$land" "$TB_SID" _dev_foreground_resume_preflight "$TB_SID" "$land" "$agent" || return $?
     local executable; executable=$(_dev_agent_executable "$agent" binary) || {
       print -u2 -r -- "t: '$agent' is not installed here — run: t agent install $agent"
       return 127
@@ -2638,122 +2587,15 @@ _t_beam() {
     done
     [[ -n $matched ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
   fi
-  [[ $agent != codex ]] || _dev_codex_rollout_integrity "$sid" || return 1
-  [[ $sid == "$self_sid" && -n $self_sid ]] && self_move=1
-  [[ -n $self_sid ]] && detach=1                    # no TTY in an agent's tool subprocess to ssh -t into
-  [[ -z $fg || -z $detach ]] || { print -u2 "tbeam: --fg needs a terminal; cannot combine with --detach or run inside an agent"; return 1; }
-  [[ -t 0 && -t 1 || -n $detach ]] || { print -u2 'tbeam: nonterminal moves require --detach'; return 1; }
-  # Resume-through-sync for the picker is handled on the FAR side: _tbeam_land materializes
-  # a missing per-session worktree from its branch before resuming. Don't rebuild it here —
-  # the send path only needs the cwd as a path string (for the transcript rsync + TB_CWD),
-  # and creating a local worktree would leave a stray checkout behind on a move. For the
-  # same reason, only require the cwd to pre-exist on the host for NON-worktree paths;
-  # worktree paths (under $DEV_WORKTREE_ROOT) are materialized by _tbeam_land.
-  if [[ -z $DEV_WORKTREE_ROOT || $cwd != $DEV_WORKTREE_ROOT/*/* ]]; then
-    if ! ssh "$host" "test -d ${(q)cwd}" 2>/dev/null; then
-      echo "tbeam: $cwd doesn't exist on $host — clone/sync the repo there first." >&2
-      return 1
-    fi
-  else
-    _dev_worktree_remote_accept "$host" "$cwd" || return 1
-  fi
+  [[ -n $self_sid ]] && detach=1
+  [[ -z $fg || -z $detach ]] || { print -u2 't move: --fg requires a terminal'; return 1; }
+  [[ -t 0 && -t 1 || -n $detach ]] || { print -u2 't move: nonterminal moves require --detach'; return 1; }
+  local source_repo source_slot
+  IFS=$'\t' read -r source_repo source_slot < <(_dev_repo_of_dir "$cwd")
+  [[ -n $source_repo && -n $source_slot ]] || { print -u2 't move: source has no managed workspace'; return 1; }
+  [[ -z $fg ]] || detach=fg
+  _t_lifecycle_move '' "$host" "$cwd" "$sid" "$agent" "$source_repo" "$source_slot" "$detach"
 
-  local TB_TRANSFER_REF
-  TB_TRANSFER_REF=$(_dev_worktree_beam_prepare "$cwd") || return $?
-  if [[ -n $TB_TRANSFER_REF ]]; then
-    ssh "$host" "zsh -lic '(( \${+functions[_dev_worktree_transfer_ref_valid]} ))'" || {
-      print -u2 't session move: update t on the destination to receive transfer snapshots; source was not stopped'; return 1
-    }
-  fi
-  echo "⟳ Beaming ${sid[1,8]}… ($cwd) → $host"
-  # It's a MOVE, not a copy: stop the origin BEFORE snapshotting code + transcript,
-  # so a still-live claude can't keep editing files in the worktree (the push below
-  # would miss those edits) or appending to the transcript (the sync below would
-  # miss the tail) between the snapshot and the move — leaving the destination to
-  # resume with stale code despite a newer transcript. Two cases for "the origin":
-  #   • a LOCAL dev slot (picker mode, or an -s id that's live in a slot) — kill it
-  #     now, before the blocking ssh -t branches below take over the terminal. We
-  #     aren't attached to it, so this is safe. (self_move excludes the case where
-  #     that slot is the very claude we're running inside.)
-  #   • THIS foreground claude (self_move — a current-session move) — can't
-  #     kill-session it; instead we SIGTERM it at the very end (see the detached
-  #     branch), mirroring tpush's auto-exit. No race here either: claude is
-  #     blocked executing this very command, so it can't edit files mid-beam.
-  if [[ -z $self_move ]]; then
-    local killed stop_rc; killed=$(TB_SID=$sid _tbeam_kill_owner); stop_rc=$?
-    (( stop_rc < 2 )) || return 1
-    if [[ $killed == dev-* ]]; then
-      echo "✂ Stopped the local copy ($killed) — moved to $host"
-    else
-      # No dev slot owned the id — a FOREGROUND claude (the `<repo>:<id>` rows in
-      # `t ls`) might. Stop it too, so beaming a foreground session is a real MOVE
-      # and not two live owners: claude takes no transcript lock, so two resumers of
-      # one id diverge (the invariant tpush/tpop/_dev_adopt_fg protect). SIGTERM the
-      # pid via the registry, then wait for it to exit before $host takes over.
-      local fgpid; fgpid=$(_dev_pid_for_sid "$sid")
-      if [[ -n $fgpid ]]; then
-        kill -TERM "$fgpid" 2>/dev/null
-        _t_wait_for_exit "$fgpid"
-        if kill -0 "$fgpid" 2>/dev/null; then
-          # A surviving writer must never race the destination resume.
-          echo "tbeam: local foreground copy (pid $fgpid) did not exit; destination was not started." >&2
-          return 1
-        else
-          echo "✂ Stopped the local foreground copy (pid $fgpid) — moved to $host"
-        fi
-      fi
-    fi
-  fi
-  if ! _dev_worktree_beam_push "$cwd" "$host"; then   # carry uncommitted worktree edits ahead of the move
-    echo "tbeam: could not commit/push $cwd; destination was not started" >&2
-    return 1
-  fi
-  _tbeam_sync_transcript "$cwd" "$host" "$agent" "$sid" || return 1
-
-  # Foreground mode: resume straight in the ssh session (needs a real terminal).
-  if [[ -n $fg ]]; then
-    [[ -z $detach ]] || { echo "tbeam: -f needs a terminal; can't combine with -d / inside Claude." >&2; return 1; }
-    ssh -t "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=fg zsh -lic _tbeam_land"
-    return
-  fi
-
-  # tmux mode + auto-attach: -t lets _tbeam_land exec us into the landed session.
-  if [[ -z $detach ]]; then
-    ssh -t "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux TB_ATTACH=1 zsh -lic _tbeam_land"
-    return
-  fi
-
-  # tmux mode, detached: capture the landed session name, print an attach hint.
-  local session=
-  local landing_output landing_rc
-  landing_output=$(ssh "$host" "TB_TRANSFER_REF=${(q)TB_TRANSFER_REF} TB_CWD=${(q)cwd} TB_SID=${(q)sid} TB_AGENT=${(q)agent} TB_MODE=tmux zsh -lic _tbeam_land"); landing_rc=$?
-  session=${landing_output##*$'\n'}
-  (( landing_rc == 0 )) && [[ $session == dev-?*-<-> ]] || { echo "tbeam: landing on $host failed." >&2; return 1; }
-  echo "✓ Running on $host as $session"
-  local rest=${session#dev-} repo slot
-  slot=${rest##*-}; repo=${rest%-*}
-  if [[ -n "${DEV_REPOS[$repo]}" ]]; then
-    echo "  Attach: t session open $repo $slot --host $host    (or pull it back: t session move $repo $slot --from $host)"
-  else
-    echo "  Attach: ssh $host -t \"zsh -lic 'tmux attach -t $session'\""
-  fi
-
-  # current-session move (self_move): the origin is THIS foreground claude, so the
-  # kill-block up top skipped it. Now that the session is live on $host, exit here
-  # so the id keeps one owner — mirrors tpush's auto-exit: SIGTERM the controlling
-  # claude (it flushes and quits in ~2s; transcript is appended live, so only the
-  # in-flight turn is lost). The hints above are already flushed. If the process
-  # can't be found, fall back to asking for a manual /exit. (An explicit -s id that
-  # isn't our own session is NOT self_move, so we never kill the wrong claude.)
-  if [[ -n $self_move ]]; then
-    local cpid; cpid=$(_tpush_claude_pid)
-    if [[ -n $cpid ]]; then
-      echo "Moved to $host — exiting this copy so it has one owner."
-      kill -TERM "$cpid"
-    else
-      echo "→ This session now lives on $host. Type /exit here so two copies don't diverge."
-    fi
-  fi
 }
 
 # (on removed — `t on <host> [cmd…]` is reimplemented natively in bin/t, with the

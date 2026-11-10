@@ -1,6 +1,18 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_offline.py:terminal_snapshot:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Two bounded read-only tmux queries capture the exact owning pane while the native frontend is suspended. They must not repaint a spinner over the screen being preserved."
+    },
+    "libexec/t_offline.py:cloud_reachable:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "A bounded credential-free HTTPS probe runs in the recovery monitor thread while the native local UI owns the terminal; it must not repaint over the active conversation."
+    },
+    "libexec/t_offline.py:recover:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "Nonterminal Ask mode preserves the native cloud CLI input, output and retry behavior without an interactive picker or spinner."
+    },
     "bin/t:_workflow_hub_repository:subprocess.run": {
       "kind": "protocol",
       "reason": "A local Git common-directory probe, bounded to half a second, resolves the initial repository scope before the workflow picker without prompting or repainting the terminal."
@@ -285,14 +297,6 @@
       "kind": "phase",
       "reason": "Bounded public metadata requests run inside the refresh spinner, including its parallel fetch workers."
     },
-    "libexec/t_local_inference.py:install:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "curl streams download progress on stderr; installation is explicitly requested."
-    },
-    "libexec/t_local_inference.py:ollama_action:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "Ollama pull owns and streams download progress for the explicitly selected artifact."
-    },
     "libexec/t_local_inference.py:lead:subprocess.call": {
       "kind": "passthrough",
       "reason": "The native Codex CLI owns the terminal for the entire session."
@@ -356,6 +360,102 @@
     "libexec/t_remote.py:peer:subprocess.call": {
       "kind": "passthrough",
       "reason": "The validated peer command owns its normal progress and terminal; its output is preserved for the controller."
+    },
+    "libexec/t_lifecycle.py:claim:time.sleep": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:wait_released:time.sleep": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:main:subprocess.Popen": {
+      "kind": "protocol",
+      "reason": "Private lifecycle protocol worker; stdout contains framed requests and stderr reports failures. The calling shell owns progress and terminal interaction."
+    },
+    "libexec/t_lifecycle.py:verify_ready:time.sleep": {
+      "kind": "protocol",
+      "reason": "Bounded native-writer readiness probe inside the lifecycle protocol worker; shell controller owns progress."
+    },
+    "libexec/t_local_status.py:tmux:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_local_status.py:ancestry:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
+    },
+    "libexec/t_local_apps.py:open_desktop:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts the explicitly selected desktop app asynchronously; the RailUI reports the result."
+    },
+    "libexec/t_local_apps.py:open_desktop:subprocess.run": {
+      "kind": "phase",
+      "reason": "The explicit Open desktop app action waits at most 15 seconds for LaunchServices and reports launch failure in the same menu."
+    },
+    "libexec/t_local_inference.py:lead:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "The native local agent owns the terminal and displays its streaming output."
+    },
+    "libexec/t_local_inference.py:lead:time.sleep": {
+      "kind": "passthrough",
+      "reason": "Polls the native interactive agent while it owns terminal output; stops it if its manager lease fails."
+    },
+    "libexec/t_local_manager.py:process_identity:subprocess.check_output": {
+      "kind": "protocol",
+      "reason": "Bounded two-second process ownership probe runs in the private coordinator protocol without terminal output."
+    },
+    "libexec/t_local_manager.py:ensure:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts the per-user coordinator detached; queued action UI reports startup."
+    },
+    "libexec/t_local_manager.py:ensure:time.sleep": {
+      "kind": "protocol",
+      "reason": "Bounded eight-second startup handshake runs beneath MCP and native-launch protocols."
+    },
+    "libexec/t_local_runtime.py:available_memory:subprocess.check_output": {
+      "kind": "background",
+      "reason": "Bounded memory probe runs inside the coordinator; request status reports memory admission."
+    },
+    "libexec/t_local_runtime.py:gpu_available:subprocess.check_output": {
+      "kind": "background",
+      "reason": "Bounded GPU memory probe runs inside the coordinator; request status reports memory admission."
+    },
+    "libexec/t_local_runtime.py:Providers.endpoint:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts a private provider in the background; clients see Loading through the manager."
+    },
+    "libexec/t_local_runtime.py:Providers.endpoint:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded private-provider startup probe runs in the manager while clients display Loading."
+    },
+    "libexec/t_local_runtime_ui.py:copy_command:subprocess.run": {
+      "kind": "phase",
+      "reason": "Explicit Copy command action invokes the local clipboard tool with a five-second timeout."
+    },
+    "libexec/t_local_runtime_ui.py:monitor_cli:select.select": {
+      "kind": "passthrough",
+      "reason": "The terminal monitor renders live state every second while waiting for navigation keys."
+    },
+    "libexec/t_local_inference.py:download_command:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Direct downloads stream curl or Ollama progress to the terminal."
+    },
+    "libexec/t_local_inference.py:download_command:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
+    },
+    "libexec/t_local_inference.py:install:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "curl streams download progress on stderr; installation is explicitly requested."
+    },
+    "libexec/t_local_inference.py:ollama_action:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Ollama pull owns and streams download progress for the explicitly selected artifact."
     },
     "libexec/t_eval.py:create_run:subprocess.run": {
       "kind": "protocol",
@@ -421,14 +521,6 @@
       "kind": "background",
       "reason": "Detached evaluation preparation records the sandbox policy download phase in its durable journal before bounded network access."
     },
-    "libexec/t_local_status.py:tmux:subprocess.run": {
-      "kind": "protocol",
-      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
-    },
-    "libexec/t_local_status.py:ancestry:subprocess.run": {
-      "kind": "protocol",
-      "reason": "Bounded ownership and pane metadata probes feed the quiet tmux statusline; no terminal output or picker."
-    },
     "libexec/t_eval_engine.py:workflow_python:urllib.request.urlopen": {
       "kind": "background",
       "reason": "Detached evaluation preparation checkpoints the pinned workflow interpreter download before bounded network access."
@@ -450,15 +542,21 @@
       "required": [
         "_t_with_progress \"Finding saved conversations\" _codex_candidate_snapshot",
         "_t_with_progress \"Loading conversation metadata\" _transcript_meta_batch",
-        "_t_with_progress \"Finding saved conversations across hosts\" _t_resume_history_candidates",
-        "_t_wait_for_exit \"$cpid\"",
-        "_t_wait_for_exit \"$fgpid\""
+        "_t_with_progress \"Finding saved conversations across hosts\" _t_resume_history_candidates"
       ]
     },
     {
       "file": "zsh/worktree.zsh",
       "required": [
         "_t_with_progress 'Preparing session worktree' _dev_worktree_create_impl"
+      ]
+    },
+    {
+      "file": "zsh/lifecycle.zsh",
+      "required": [
+        "_t_with_progress \"Verifying conversation lifecycle\" _t_lifecycle_run_impl",
+        "_t_wait_for_exit \"$pid\"",
+        "_t_wait_for_exit \"$fgpid\""
       ]
     }
   ]

@@ -83,6 +83,39 @@ def test_new_worktree_uses_published_default_and_preserves_dirty_checkout(tmp_pa
     assert f"origin/{branch}" in guidance.stderr
 
 
+@pytest.mark.parametrize('state', ['fresh', 'reused', 'debris', 'restored', 'failed'])
+def test_new_launch_provenance_only_attests_successful_fresh_allocation(tmp_path, repository, state):
+    repo = repository('main')
+    wt = tmp_path / 'home/work trees/repo/repo-1'
+    setup = ''
+    if state == 'reused':
+        assert run(tmp_path, repo, '_dev_worktree_create api 1').returncode == 0
+    elif state == 'debris':
+        wt.mkdir(parents=True)
+        (wt / 'keep.txt').write_text('leftover work')
+    elif state == 'restored':
+        git(repo, 'branch', 'dev/repo-1')
+        setup = '_dev_branch_merged() { return 1; }; '
+    elif state == 'failed':
+        # A competing creator can leave a .git entry despite our add failing.
+        setup = ('git() { if [[ $3 == worktree && $4 == add ]]; then '
+                 f'mkdir -p {shlex.quote(str(wt))}; touch {shlex.quote(str(wt / ".git"))}; '
+                 'return 1; else command git "$@"; fi; }; ')
+    result = run(tmp_path, repo, setup + "_dev_worktree_create api 1 '' new-launch")
+    if state == 'failed':
+        assert result.returncode != 0
+        assert not result.stdout.strip()
+    else:
+        assert result.returncode == 0, result.stderr
+        expected = [str(wt)]
+        if state == 'fresh':
+            info = wt.stat()
+            expected.append(f'{info.st_dev}:{info.st_ino}')
+        assert result.stdout.splitlines() == expected
+        if state == 'debris':
+            assert next(wt.parent.glob('repo-1.debris-*/keep.txt')).read_text() == 'leftover work'
+
+
 @pytest.mark.parametrize("lingering", [False, True])
 def test_missing_default_never_deletes_a_lingering_branch(tmp_path, repository, lingering):
     repo = repository("release/stable")

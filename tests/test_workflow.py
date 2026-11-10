@@ -787,14 +787,14 @@ def test_workflow_named_menu_and_instructions_staging(workflow, t_mod, monkeypat
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
     cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')})
     monkeypatch.setattr(w.subprocess, 'call', lambda argv: Path(argv[-1]).write_text('# Notes\n') and 0)
-    ui = Menu(['add', 'instructions', 'back', 'manage', 'name:careful', 'back',
+    ui = Menu(['add', 'instructions', 'edit', 'back', 'manage', 'name:careful', 'back',
                'choose', 'name:careful', 'back'], inputs=['careful'])
     t_mod._config_workflow_tool(ui, cfg)
     assert cfg._workflow_document['default'] == 'careful'
     assert cfg._workflow_document['workflows']['careful']['instructions'] == '# Notes\n'
     assert not w.config_path().exists()
     assert '# Notes' in '\n'.join(t_mod._workflow_review(cfg._workflow_document))
-    ui = Menu(['instructions', 'back'])
+    ui = Menu(['instructions', 'edit', 'back'])
     t_mod._workflow_policy_menu(ui, cfg, vars(w), repository=cfg.repos['api'])
     assert not cfg._workflow_document['repositories']  # same text does not create an override
     ui = Menu(['add', 'choose', None, 'manage', 'back', 'back'], inputs=['bad name'])
@@ -1108,7 +1108,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
             continue  # Completed context messages are scrollback, not interactive frames.
         assert sum(t_mod._term_rows(line, width) for line in frame) <= height
         assert any('▸' in line for line in frame)
-        assert any('enter' in line.lower() for line in frame)
+        assert any(ui.labels('enter') in line for line in frame)
         assert all(t_mod._vis_len(line) <= width for line in frame)
 
 
@@ -1256,6 +1256,6 @@ def test_workflow_print_precedence_and_reasoning(workflow, t_mod, monkeypatch, c
     assert 'Design approval' not in text and 'Preview timing: Automatically when ready' in text
     assert 'Implement before approval: No' in text
     assert 'Agent selects by task' in text and 'One level below' not in text
-    assert 'Implementation' in text and 'Main session: gpt-6.1-sol · Medium' in text
+    assert 'Implementation' in text and 'Lead model: gpt-6.1-sol · Medium' in text
     assert 'starts Medium' not in text
     assert 'one-level-lower' not in text and 'Test runners:' in text and 'Propagation:' in text

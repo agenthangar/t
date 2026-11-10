@@ -27,7 +27,8 @@ def test_shell_app_flag_fails_before_discovery(zsh, verb):
 @pytest.mark.parametrize('setting', ['', 'DEV_HANDOFF[codex]=native; ', '_T_HANDOFF_CODEX=native; '])
 def test_codex_remote_resume_reaches_guarded_transfer(zsh, setting):
     result = zsh(setting + '''
-      _dev_worktree_beam_push() { print -u2 GUARDED_TRANSFER; return 42; }
+      _dev_repo_of_dir() { printf "api\t2\n"; }
+      _t_lifecycle_run() { print -u2 GUARDED_TRANSFER; return 42; }
       _tbeam_sync_transcript() { print -u2 UNEXPECTED_COPY; }
       _t_resume_on_host mini selected /workspace codex detach
     ''')
@@ -52,7 +53,7 @@ def test_legacy_workspace_cannot_start_fresh(zsh):
       _dev_launch_preflight dev-api-2 /workspace ''
     ''')
     assert result.returncode == 1
-    assert 't session history' in result.stderr
+    assert 't session resume' in result.stderr
     assert not zsh.log.exists() or not zsh.log.read_text()
 
 

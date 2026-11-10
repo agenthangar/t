@@ -295,13 +295,12 @@ _codex_db() { print -r -- "${CODEX_HOME:-$HOME/.codex}/state_5.sqlite" }
 _codex_threads() {
   local db; db=$(_codex_db)
   [[ -r $db ]] || return 0
-  python3 - "$db" "$1" "$2" "$3" <<'PY' 2>/dev/null
-import os, sqlite3, sys
+  python3 - "$db" "$1" "$2" "$3" "$T_HOME" <<'PY'
+import os, sqlite3, sys, runpy
 db, mode, arg, option = sys.argv[1:5]
+read_rows = runpy.run_path(os.path.join(sys.argv[5], "libexec/t_codex_store.py"))["rows"]
 include_archived = mode == 'cwd' and option == '--include-archived'
 try:
-    c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
-    c.execute('pragma busy_timeout=500')
     columns = ("id, rollout_path, cwd, coalesce(nullif(name,''), title, ''), updated_at"
                + (", archived" if include_archived else ""))
     q = ("select " + columns + " from threads where "
@@ -313,12 +312,13 @@ try:
     # lookup stays unfiltered (a beam by id is deliberate).
     sub = "instr(source, '\"subagent\"')=0 and "
     if mode == 'cwd':
-        rows = c.execute(q + sub + "cwd=? order by updated_at desc", (arg,)).fetchall()
+        rows = read_rows(db, q + sub + "cwd=? order by updated_at desc", (arg,), initialize_sidecars=False)
     elif mode == 'prefix':
-        rows = c.execute(q + sub + "cwd like ? order by updated_at desc", (arg.replace('%', '') + '%',)).fetchall()
+        rows = read_rows(db, q + sub + "cwd like ? order by updated_at desc", (arg.replace('%', '') + '%',), initialize_sidecars=False)
     else:
-        rows = c.execute(q + "id=? order by updated_at desc", (arg,)).fetchall()
-except Exception:
+        rows = read_rows(db, q + "id=? order by updated_at desc", (arg,))
+except (OSError, sqlite3.Error) as error:
+    print(f"t: Codex index unavailable: {error}", file=sys.stderr)
     rows = []
 for r in rows:
     if include_archived:
@@ -342,14 +342,14 @@ _codex_live_transcript() {
   [[ -n $1 && $2 == <-> ]] || return 0
   db=$(_codex_db); [[ -r $db ]] || return 0
   start=$(LC_ALL=C ps -o lstart= -p "$2" 2>/dev/null) || return 0
-  python3 - "$db" "$1" "$start" <<'PY' 2>/dev/null
-import datetime, os, sqlite3, sys
+  python3 - "$db" "$1" "$start" "$T_HOME" <<'PY' 2>/dev/null
+import datetime, os, runpy, sqlite3, sys
 try:
     start = datetime.datetime.strptime(sys.argv[3].strip(), '%a %b %d %H:%M:%S %Y').timestamp()
-    c = sqlite3.connect('file:%s?mode=ro' % sys.argv[1], uri=True, timeout=0.5)
-    rows = c.execute("select rollout_path from threads where archived=0 and cwd=? "
+    read = runpy.run_path(sys.argv[-1] + '/libexec/t_codex_store.py')['rows']
+    rows = read(sys.argv[1], "select rollout_path from threads where archived=0 and cwd=? "
                      "and updated_at>=? and instr(source, '\"subagent\"')=0 "
-                     "and trim(first_user_message)<>'' limit 2", (sys.argv[2], start)).fetchall()
+                     "and trim(first_user_message)<>'' limit 2", (sys.argv[2], start), initialize_sidecars=False)
     if len(rows) == 1 and os.path.isfile(rows[0][0]):
         print(rows[0][0])
 except (OSError, ValueError, sqlite3.Error):
@@ -370,10 +370,10 @@ _codex_pane_sid() {
   pane_title=$(tmux display-message -p -t "=$session:" '#{pane_title}' 2>/dev/null)
   [[ -n $pane_title ]] || return 0
   pane_text=$(tmux capture-pane -p -t "=$session:" 2>/dev/null)
-  python3 - "$db" "$dir" "$start" "$pane_title" "$pane_text" <<'PY' 2>/dev/null
-import datetime, json, os, re, sqlite3, sys
+  python3 - "$db" "$dir" "$start" "$pane_title" "$pane_text" "$T_HOME" <<'PY' 2>/dev/null
+import datetime, json, os, re, runpy, sqlite3, sys
 try:
-    db, cwd, started, pane_title, pane = sys.argv[1:]
+    db, cwd, started, pane_title, pane = sys.argv[1:6]
     start = datetime.datetime.strptime(started.strip(), '%a %b %d %H:%M:%S %Y').timestamp()
     name, sep, folder = pane_title.rpartition(' | ')
     if not sep or not name or folder != os.path.basename(cwd):
@@ -393,10 +393,10 @@ try:
     footer = footers[-1]
     if len(footer) < 3 or os.path.expanduser(footer[1]) != cwd or footer[2] != name:
         sys.exit(0)
-    c = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=0.5)
-    rows = c.execute("select id,rollout_path,updated_at,archived,first_user_message from threads "
+    read = runpy.run_path(sys.argv[-1] + '/libexec/t_codex_store.py')['rows']
+    rows = read(db, "select id,rollout_path,updated_at,archived,first_user_message from threads "
                      "where cwd=? and name=? and instr(source, '\"subagent\"')=0 limit 2",
-                     (cwd, name)).fetchall()
+                     (cwd, name), initialize_sidecars=False)
     # Check uniqueness BEFORE recency: an older namesake is still ambiguous.
     if len(rows) != 1:
         sys.exit(0)
@@ -454,12 +454,13 @@ _dev_agent_transcript() {
 _codex_sid_in_cwd() {
   local sid="$1" cwd="$2" tx="$3"
   [[ -n $cwd && -f $tx ]] || return 1
-  python3 - "$(_codex_db)" "$sid" "$cwd" "$tx" <<'PYCODE' 2>/dev/null
-import json, sqlite3, sys
+  python3 - "$(_codex_db)" "$sid" "$cwd" "$tx" "$T_HOME" <<'PYCODE' 2>/dev/null
+import json, runpy, sqlite3, sys
 row = None
 try:
-    with sqlite3.connect('file:%s?mode=ro' % sys.argv[1], uri=True, timeout=0.5) as c:
-        row = c.execute("select cwd from threads where id=?", (sys.argv[2],)).fetchone()
+    read = runpy.run_path(sys.argv[-1] + '/libexec/t_codex_store.py')['rows']
+    rows = read(sys.argv[1], "select cwd from threads where id=?", (sys.argv[2],), initialize_sidecars=False)
+    row = rows[0] if rows else None
 except sqlite3.Error:
     pass
 if row is not None:

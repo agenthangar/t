@@ -300,7 +300,7 @@ def test_completion_actions_match_python_command_registry(tmp_path, t_mod):
     for group, line in zip(groups, lines):
         assert "actions=( " in line and line.endswith(" )"), (group, line)
         offered = set(line.partition("actions=( ")[2].removesuffix(" )").split())
-        assert offered == set(t_mod.COMMAND_GROUPS[group]) | ({"ls"} if "list" in t_mod.COMMAND_GROUPS[group] else set()), (group, offered)
+        assert offered == (set(t_mod.COMMAND_GROUPS[group]) - ({"history"} if group == "session" else set())) | ({"ls"} if "list" in t_mod.COMMAND_GROUPS[group] else set()), (group, offered)
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")

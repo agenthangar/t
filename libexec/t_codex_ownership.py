@@ -256,26 +256,7 @@ def _unknown_writer_message(sid, pids):
             "allow any shared backend to release the writer, then retry resume")
 
 
-def _index_rows(db, query, parameters):
-    """Read an existing index, allowing SQLite to initialize missing WAL files.
-
-    Apple's SQLite can reject a read-only WAL connection after its sidecars
-    have been removed. Retry only CANTOPEN with an existing-file connection;
-    query_only still forbids SQL writes and SQLite retains its normal locking.
-    Never use immutable=1 for an index another Codex process may update.
-    """
-    uri = "file:" + quote(db, safe="/")
-    try:
-        with closing(sqlite3.connect(uri + "?mode=ro", uri=True, timeout=0.5)) as connection:
-            return connection.execute(query, parameters).fetchall()
-    except sqlite3.OperationalError as exc:
-        code = getattr(exc, "sqlite_errorcode", None)
-        if not (code is not None and code & 255 == sqlite3.SQLITE_CANTOPEN
-                or code is None and str(exc) == "unable to open database file"):
-            raise
-    with closing(sqlite3.connect(uri + "?mode=rw", uri=True, timeout=0.5)) as connection:
-        connection.execute("PRAGMA query_only=ON")
-        return connection.execute(query, parameters).fetchall()
+_index_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))["rows"]
 
 
 def _thread_cwds(codex_home, sid, *, for_close=False):
