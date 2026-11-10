@@ -787,14 +787,14 @@ def test_workflow_named_menu_and_instructions_staging(workflow, t_mod, monkeypat
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(w))
     cfg = SimpleNamespace(repos={'api': str(tmp_path / 'api')})
     monkeypatch.setattr(w.subprocess, 'call', lambda argv: Path(argv[-1]).write_text('# Notes\n') and 0)
-    ui = Menu(['add', 'instructions', 'back', 'manage', 'name:careful', 'back',
+    ui = Menu(['add', 'instructions', 'edit', 'back', 'manage', 'name:careful', 'back',
                'choose', 'name:careful', 'back'], inputs=['careful'])
     t_mod._config_workflow_tool(ui, cfg)
     assert cfg._workflow_document['default'] == 'careful'
     assert cfg._workflow_document['workflows']['careful']['instructions'] == '# Notes\n'
     assert not w.config_path().exists()
     assert '# Notes' in '\n'.join(t_mod._workflow_review(cfg._workflow_document))
-    ui = Menu(['instructions', 'back'])
+    ui = Menu(['instructions', 'edit', 'back'])
     t_mod._workflow_policy_menu(ui, cfg, vars(w), repository=cfg.repos['api'])
     assert not cfg._workflow_document['repositories']  # same text does not create an override
     ui = Menu(['add', 'choose', None, 'manage', 'back', 'back'], inputs=['bad name'])

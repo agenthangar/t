@@ -79,6 +79,15 @@ The repository source picker uses separate Default, Choose a source, Manage and
 Navigation groups. Use workflow default restores live inheritance; explicit paths
 and Off override it. Each candidate appears once, with evidence and a selection
 mark. Choose file or folder, Create design system, and Scan again are actions.
+Scan again explicitly refreshes the invoking worktree and registered checkout,
+then inspects the latest default-branch commit advertised by origin. It fetches
+objects without moving branches, changing FETCH_HEAD or writing checkout files.
+Discover candidates from a bounded snapshot without executing repository code or
+following symlinks. Deduplicate paths with the active worktree taking precedence;
+label candidates found only in the registered checkout or default branch. Selecting
+those paths stays staged and explains that the active worktree must be updated to
+use the guidance. Remote failures retain local candidates and show an unavailable
+warning. Ordinary browsing and read-only commands never fetch.
 Retain missing explicit paths with a visible error; never silently replace them.
 Repository source settings survive assignment changes and are tool-scoped.
 
@@ -102,8 +111,8 @@ discard pending settings first. Review the task, then start the existing guarded
 agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
 reference and evidence-backed design/preview guidance without overwriting existing
 content or duplicating workflow approval rules. Drafting does not publish changes
-or select a source. Review the actual diff in the agent session, then refresh
-discovery from the accepted worktree to select the resulting source.
+or select a source. Review the actual diff in the agent session, then use Scan again
+after merging to select the source, or select it locally from the accepted worktree.
 
 Development availability is scoped to the caller's t worktree. With a canonical
 Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
@@ -616,7 +625,9 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
-Clear text instructions appears when text is present and stages its removal in the
+Text instructions opens a page with Edit text instructions, Clear text instructions
+and Back. Clear is available on that page even when empty (Already empty is a no-op);
+the parent shortcut also appears when text is present. Removal stays in the
 same save transaction. Empty editor contents clear text too. Cancellation/discard
 preserves saved instructions, and clearing leaves other workflow settings intact.
 The issue-before-code rule is seeded once as editable Markdown in schema v3.

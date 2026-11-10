@@ -1212,8 +1212,10 @@ workflow, custom Markdown takes precedence over behavior preferences, which take
 precedence over generic model-stage guidance. `t` preserves Markdown as written;
 it does not try to interpret or detect conflicting prose.
 
-Use **Text instructions** inside a workflow to write ordinary headings,
-bullets and prose in your editor. No JSON is needed. The equivalent commands are:
+Use **Text instructions → Edit text instructions** inside a workflow to write
+ordinary headings, bullets and prose in your editor. Choose **Clear text instructions**
+on that same page to remove the text without opening an editor. No JSON is needed.
+The equivalent editing commands are:
 
 ```sh
 t workflow instructions edit careful
@@ -1229,6 +1231,13 @@ Choose **Clear text instructions** to stage their removal, then save. Saving an
 empty file in the text editor also clears them. Discarding menu changes restores
 the saved text; clearing instructions preserves the other workflow settings.
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+After merging a design-system draft, use **Frontend design → Design systems →
+your repository → Scan again**. This checks the current worktree, registered
+checkout and latest default branch from `origin`, without moving either checkout.
+Sources found outside the current worktree are labeled; select the source and save,
+then update your worktree before using the merged guidance there. Offline refresh
+keeps local results and reports that the default-branch scan was unavailable.
 
 The supplied public-repository issue-before-code rule is ordinary editable workflow
 Markdown. `t workflow list` shows whether the supplied text is included;
