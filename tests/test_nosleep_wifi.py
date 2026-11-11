@@ -112,11 +112,12 @@ def test_native_requests_are_private_bounded_and_cleaned(wifi, monkeypatch, mode
     binary = app / 'Contents/MacOS/NosleepWiFi'
     binary.parent.mkdir(parents=True)
     binary.touch()
+    (app / 'Contents/source.sha256').write_text(wifi.hashlib.sha256(wifi.SOURCE.read_bytes()).hexdigest())
     monkeypatch.setattr(wifi, 'build_helper', lambda: app)
     requests = []
     class Runner:
         def __init__(self, timeout):
-            assert timeout == (125 if mode == 'authorize' else 12)
+            assert timeout == (155 if mode == 'authorize' else 45)
         def run(self, argv):
             assert argv[:4] == ['/usr/bin/open', '-n', '-g', '-W']
             request = Path(argv[-1])
@@ -135,4 +136,93 @@ def test_native_requests_are_private_bounded_and_cleaned(wifi, monkeypatch, mode
     else:
         result = wifi.observe(authorize=mode == 'authorize')
         assert result['state'] == ('unknown' if mode in ('error', 'malformed') else 'ok')
+        assert result['reason'] == {'error': 'launch_failed', 'malformed': 'invalid_response'}.get(mode, '')
     assert requests and not requests[0].exists()
+
+
+def test_connected_network_survives_empty_or_failed_scan(wifi):
+    data = wifi.normalize({'state': 'unknown', 'current': 'Connected Wi-Fi', 'networks': []})
+    assert data['networks'] == []
+    assert data['current'] == 'Connected Wi-Fi'
+    assert wifi.availability(data, 'Connected Wi-Fi') == 'Connected'
+    assert wifi.availability(data, 'Phone hotspot') == 'Unknown'
+
+
+@pytest.mark.parametrize('stamp', [None, 'old-source'])
+def test_old_helper_requires_explicit_setup_instead_of_running_stale_code(wifi, monkeypatch, stamp):
+    monkeypatch.setattr(wifi.sys, 'platform', 'darwin')
+    app = wifi.helper_path()
+    binary = app / 'Contents/MacOS/NosleepWiFi'
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    if stamp:
+        (app / 'Contents/source.sha256').write_text(stamp)
+    monkeypatch.setattr(wifi, 'build_helper', lambda: pytest.fail('read-only observation must not build'))
+    assert wifi.observe()['state'] == 'setup'
+
+
+def test_scan_timeout_keeps_association_and_its_original_age(wifi, monkeypatch):
+    monkeypatch.setattr(wifi.time, 'time', lambda: 1030)
+    data = wifi.normalize({'state': 'unknown', 'reason': 'scan_timeout',
+                          'current': 'Connected Wi-Fi', 'observed_at': 1000})
+    assert data['networks'] == []
+    assert wifi.message(data) == 'Wi-Fi scan timed out after 30s; retry'
+    assert wifi.availability(data, 'Connected Wi-Fi') == 'Connected'
+    assert wifi.availability(data, 'Different Wi-Fi') == 'Unknown'
+    assert wifi.availability(data, 'Connected Wi-Fi', now=1046) == 'Unknown (observation expired)'
+
+
+@pytest.mark.parametrize('reason', ['scan_timeout', 'access_timeout', 'empty_scan',
+                                  'scan_failed', 'launch_failed', 'invalid_response'])
+def test_discovery_failures_explain_the_cause_without_claiming_absence(wifi, reason):
+    data = wifi.normalize({'state': 'unknown', 'reason': reason})
+    assert wifi.message(data) == wifi.REASONS[reason]
+    assert wifi.availability(data, 'Phone') == 'Unknown'
+    assert wifi.message(wifi.normalize({'state': 'permission', 'reason': reason})) == wifi.MESSAGES['permission']
+
+
+@pytest.mark.parametrize('value', [None, [], 'private native details', 42])
+def test_unrecognized_diagnostics_are_not_displayed(wifi, value):
+    data = wifi.normalize({'state': 'unknown', 'reason': value})
+    assert data['reason'] == ''
+    assert wifi.message(data) == wifi.MESSAGES['unknown']
+
+
+@pytest.mark.parametrize('value', [None, 'private', float('nan'), float('inf'), True, 2000])
+def test_native_observation_timestamp_cannot_extend_freshness(wifi, monkeypatch, value):
+    monkeypatch.setattr(wifi.time, 'time', lambda: 1000)
+    data = wifi.normalize({'state': 'unknown', 'observed_at': value})
+    assert data['observed_at'] == 1000
+
+
+def test_progress_tracks_permission_then_scan_and_deduplicates_ticks(wifi, monkeypatch):
+    monkeypatch.setattr(wifi.sys, 'platform', 'darwin')
+    app = wifi.helper_path()
+    binary = app / 'Contents/MacOS/NosleepWiFi'
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    (app / 'Contents/source.sha256').write_text(wifi.hashlib.sha256(wifi.SOURCE.read_bytes()).hexdigest())
+    monkeypatch.setattr(wifi, 'build_helper', lambda: app)
+    now = [0]
+    monkeypatch.setattr(wifi.time, 'monotonic', lambda: now[0])
+    events, requests, finished = [], [], []
+    class Runner:
+        def __init__(self, timeout): pass
+        def run(self, argv, *, on_wait):
+            request = Path(argv[-1])
+            requests.append(request)
+            on_wait()  # Native app has not started yet.
+            for body in ('invalid', '[]', '{"phase":"private untrusted text"}',
+                         '{"phase":"permission"}', '{"phase":"scanning"}'):
+                (request / 'progress.json').write_text(body)
+                on_wait()
+                on_wait()
+            now[0] = 12.3
+            on_wait()
+            (request / 'response.json').write_text('{"state":"ok", "networks":[{"ssid":"Phone"}]}')
+        def finish(self): finished.append(True)
+    monkeypatch.setattr(wifi, 'Runner', Runner)
+    result = wifi.observe(authorize=True, progress=lambda *args: events.append(args))
+    assert events == [('preparing', 0), ('checking', 0), ('permission', 0), ('scanning', 0), ('scanning', 12)]
+    assert result['state'] == 'ok' and result['networks'][0]['ssid'] == 'Phone'
+    assert finished == [True] and not requests[0].exists()

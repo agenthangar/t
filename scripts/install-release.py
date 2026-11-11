@@ -50,6 +50,7 @@ REQUIRED = (
 NOSLEEP_ASSETS = ("bin/nosleep", "zsh/nosleep.zsh", "zsh/nosleep-fallback.zsh",
                   "libexec/nosleep_config.py", "libexec/nosleep_hotspot.py")
 NOSLEEP_WIFI_ASSETS = ("libexec/nosleep_wifi.py", "libexec/nosleep_wifi.swift")
+NOSLEEP_CREDENTIAL_ASSETS = ("libexec/nosleep_credentials.py", "libexec/nosleep_credentials.swift")
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_MEMBER = 32 * 1024 * 1024
 
@@ -99,6 +100,11 @@ def validate_tree(root, expected_version=None):
         for name in (*NOSLEEP_ASSETS, *NOSLEEP_WIFI_ASSETS):
             if not (root / name).is_file() or (root / name).is_symlink():
                 raise ValueError("release is missing a regular nosleep discovery file: " + name)
+    # Older releases remain installable; a credential helper must ship complete.
+    if any((root / name).exists() or (root / name).is_symlink() for name in NOSLEEP_CREDENTIAL_ASSETS):
+        for name in (*NOSLEEP_ASSETS, *NOSLEEP_WIFI_ASSETS, *NOSLEEP_CREDENTIAL_ASSETS):
+            if not (root / name).is_file() or (root / name).is_symlink():
+                raise ValueError("release is missing a regular nosleep credential file: " + name)
     # Releases before the neutral hook name remain installable.
     hook = root / "bin/t-session-start"
     if hook.exists() or hook.is_symlink():

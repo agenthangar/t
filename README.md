@@ -587,6 +587,8 @@ host aliases may attach to the existing owner. Desktop resume remains local.
 ### Configuration and tools
 
 For local coding delegation, open **t config → Local worker & models** or run
+`t config local` to see the current delegation state, provider and configured model.
+The model picker starts on that configured worker. To change it, run
 `t config local`. Review installation of Codex/Ollama, select and download a local
 model, and connect the worker to Codex through MCP. The lead keeps its conversation;
 workers use isolated repository snapshots and return findings, patches, and test
@@ -1149,6 +1151,34 @@ inherited value. Resets stay pending until **Save changes**. A page reset clears
 only that page and its nested settings. **Reset workflow to defaults** restores
 the selected tool's built-in policy while keeping the workflow's name, repository
 assignments and per-repository design sources.
+
+Choose **Inference & routing → Local model** to compare available benchmark scores
+and readiness in one screen. Enter selects a ready model directly. Downloaded
+models offer **Verify & use**; missing models offer **Download, verify & use** with
+an explicit review. Preparation failure or cancellation keeps the current model.
+The benchmark header keys show provenance for the focused model; **m** opens
+optional verification, measurement and artifact tools. Scores are publisher
+original-model results, not measurements of the local quantization. Unreported
+scores appear as **—**. Model choices stay pending until Save.
+
+In **Inference & routing → Cloud connection failure**, choose **Retry cloud for**
+(default **Up to 5 minutes**) and **Then → Pause** or **Continue locally**.
+Native retries can finish sooner; reconnecting resets the retry window. Local
+fallback shows the selected model and its readiness. Open **Readiness → Verify
+readiness** to verify downloaded files without downloading them again. A failed
+check keeps the files and displays its reason. Configuration changes remain staged;
+verification is an explicit machine action. Fresh native CLI sessions support the
+retry limit; unsupported launch modes report native retry behavior for Pause and
+reject automatic local fallback. Local continuation starts a separate session
+from a bounded checkpoint after stopping the cloud runtime.
+
+Inside a named workflow, open **Repositories → Assign repositories…** to assign
+one or several registered repositories. Space marks repositories; Enter stages
+the selected assignments. The page separates repositories using this workflow
+from other repositories and distinguishes explicit assignments, global inheritance,
+custom settings and disabled workflows. Select a repository to use this workflow,
+restore its global default, choose another workflow, disable workflows, or inspect
+its **Design system**. Assignments and design sources share the normal Save review.
 
 To inspect a repository's design source directly, open `t workflow`, choose its
 agent, then **Repository assignments → your repository → Design system**.
