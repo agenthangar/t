@@ -721,6 +721,9 @@ _dev_session_summary() {
 _dev_fg_rows() {
   setopt local_options null_glob
   local reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions"
+  # Populate in this shell before command substitutions: snapshots made inside
+  # each session's PID lookup would otherwise be discarded after every lookup.
+  _dev_ps_snapshot
   # claude pids already owned by a dev-* tmux slot — exclude (listed as slots already).
   local -A inslot; local s p
   for s in ${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^dev-')"}; do
@@ -759,6 +762,12 @@ _dev_fg_rows() {
     [[ -n $cwd ]] || cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)   # Linux: no lsof needed
     [[ -n $cwd ]] || cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
     [[ -n $cwd ]] || continue
+    # Launch preflight consumes only identity and cwd. Do not locate transcripts,
+    # read titles, or resolve display labels for unrelated foreground owners.
+    if [[ $1 == --ownership ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${sid:--}" "$cwd" - attached unknown - "$agent"
+      continue
+    fi
     repo=$(_dev_repo_of_dir "$cwd" 2>/dev/null); repo=${repo%%$'\t'*}   # worktree-aware
     [[ -n $repo ]] || repo=${cwd:t}                                     # fall back to basename
     # Label is "<repo>:<short-sid>" — the short Claude session id makes each
@@ -1452,6 +1461,27 @@ _dev_rows_all() {
   _t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl "$@"
 }
 
+# Current hosts have no live desktop integration, but retain old worktree
+# reservation markers. Fresh allocation needs only those markers, not a session
+# inventory. This body can also run on already-installed hosts with the retired
+# integration guard, so a local upgrade does not require a simultaneous peer upgrade.
+_dev_slot_reservation_rows() {
+  setopt local_options null_glob
+  local base=$1 repo wt slot
+  local -A seen
+  for repo in ${(k)DEV_REPOS}; do
+    [[ ${DEV_REPOS[$repo]:t} == "$base" && -z ${seen[${DEV_REPOS[$repo]}]:-} ]] || continue
+    seen[${DEV_REPOS[$repo]}]=1
+    for wt in "$DEV_WORKTREE_ROOT/$base"/*(N/); do
+      slot=$(_dev_worktree_slot "$base" "${wt:t}") || continue
+      [[ -e $wt/.git ]] || continue
+      _dev_legacy_workspace_reserved "$wt" || continue
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' - "$wt" "$repo-$slot" app unknown reserved codex
+    done
+  done
+  return 0
+}
+
 _dev_rows_all_impl() {
   # Remote aggregate queries enumerate this host only. Lifecycle workers do not
   # set this marker and retain their cross-host ownership checks.
@@ -1473,12 +1503,22 @@ _dev_rows_all_impl() {
   local -a scan_pids
   {
   ( local scan_rc=0
-    _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null || scan_rc=$?
+    # Fresh allocation's caller checks local worktrees and owners itself. There
+    # is no local display inventory to collect for a remote reservation query.
+    if [[ ${1:-} == --reservations ]]; then : > "$tmpd/.local"
+    else _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null || scan_rc=$?; fi
     print -r -- $scan_rc > "$tmpd/.local.rc" ) &
   scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
   [[ ${1:-} == --repo ]] && scan=$(_dev_repo_rows_command "$2" "$3")
+  if [[ ${1:-} == --reservations ]]; then
+    # Old peers with the active integration must still report their live app
+    # reservations. Do not send them an unknown option that they might ignore.
+    scan='if (( ${+functions[_dev_legacy_workspace_reserved]} && ${+functions[_dev_worktree_slot]} )); then '
+    scan+="_t_slot_reservations() { ${functions[_dev_slot_reservation_rows]}"$'\n'"}; _t_slot_reservations ${(q)2}; "
+    scan+='else _dev_session_rows; fi'
+  fi
   remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
@@ -2203,7 +2243,7 @@ _dev_launch_preflight() {
       print -u2 -- "t: a foreground agent already owns $dir (${fg_sid:-unknown conversation})"
       return 1
     fi
-  done < <(_dev_fg_rows 2>/dev/null)
+  done < <(_dev_fg_rows --ownership 2>/dev/null)
   [[ -n $sid ]] || return 0
   local -a scan_args
   # Only the explicit resume flow tolerates unavailable hosts. Fresh launches,
@@ -2719,7 +2759,8 @@ _t_dev() {
   # the final desktop guard. Keep explicit numbered opens on their strict path.
   local _T_OPEN_REMOTE_ROWS_READY= _T_OPEN_REMOTE_ROWS_ROWS= _T_OPEN_REMOTE_ROWS_RC=0
   if [[ -z $slot || $slot == new ]] && (( ${#REMOTE_HOSTS} )); then
-    _T_OPEN_REMOTE_ROWS_ROWS=$(_dev_rows_all); _T_OPEN_REMOTE_ROWS_RC=$?
+    _T_OPEN_REMOTE_ROWS_ROWS=$(_dev_rows_all --reservations "${dir:t}"); _T_OPEN_REMOTE_ROWS_RC=$?
+    (( _T_OPEN_REMOTE_ROWS_RC == 130 )) && return 130
     _T_OPEN_REMOTE_ROWS_READY=1
   fi
 
