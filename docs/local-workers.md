@@ -230,6 +230,39 @@ measurements stale when artifact, context or hardware identity differs.
 The shared manager may retain the model for reuse until its idle timeout. Only
 verified t-owned instances can be unloaded; existing provider servers are retained.
 
+## Interactive offline terminal (macOS)
+
+For a normal prompt where you can try offline recovery yourself, open a new
+Terminal tab or window and run this from the repository:
+
+```sh
+python3 scripts/offline_shell.py
+```
+
+Then run your usual command, for example `t open t --new -l`. The launcher blocks
+external connections for its shell and descendants, including panes on its
+private tmux server. Localhost and Unix sockets remain available for installed
+local models. Other terminals and system network settings are untouched. The
+shell uses your normal configuration and filesystem permissions; preexisting
+local services, including LM Studio, remain outside the network restriction.
+
+Type `exit` to return to your online shell. This also closes the launcher's
+private tmux sessions. It never kills the normal tmux server. The restriction
+cannot be lifted inside a running sandboxed process; this is an offline-start
+test, not a live connectivity-toggle test.
+
+To check network denial and private-tmux isolation without opening an interactive
+shell or running a model:
+
+```sh
+python3 scripts/offline_shell.py --check
+```
+
+The checks are bounded and report failures directly. No model download or
+inference is required. Choose **Ask which local model** in the workflow to test
+the recovery picker; `-l` itself selects the local machine, not local inference.
+Use the separate headless acceptance test below for an automated model task.
+
 ## Opt-in acceptance test
 
 After installing the 27B artifact, run:
