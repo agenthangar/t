@@ -20,6 +20,22 @@ def make_ui(t, keys, width=80, height=24):
     return ui
 
 
+@pytest.mark.parametrize('width,height', [(80,24),(44,20),(32,12)])
+def test_picker_refresh_finishes_without_key_and_retains_focus(t_mod,monkeypatch,width,height):
+    ui=make_ui(t_mod,['down'],width,height)
+    calls=[];polls=iter(([True],[],[]))
+    monkeypatch.setattr(t_mod.select,'select',lambda *a:(next(polls),[],[]))
+    context=[]
+    def refresh():
+        calls.append(True);context[:]=['Progress '+str(len(calls))]
+        return len(calls)==4
+    assert ui.pick('Model test',[('refresh','Refresh progress'),('cancel','Cancel this test')],context=context,refresh=refresh)=='__done__'
+    assert len(ui.frames)==3
+    assert all(sum(t_mod._term_rows(line,width) for line in frame)<=height for frame in ui.frames)
+    # The last two timed repaints retain the selection moved by the first key.
+    assert ui.frames[1]==[line.replace('Progress 3','Progress 2') for line in ui.frames[2]]
+
+
 @pytest.mark.parametrize('width', [80, 160, 240])
 @pytest.mark.parametrize('selected', [False, True])
 def test_shared_row_uses_available_width_for_full_labels(t_mod, width, selected):
