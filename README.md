@@ -1075,10 +1075,16 @@ t workflow delete quick --replacement careful  # move its assignments, then dele
 The compatibility route `t config workflow quick` also opens the named editor.
 Use `--tool codex`, `--tool claude`, or `--tool cursor` to select its catalogue;
 otherwise the account tool is used. Existing verb names take precedence; use
-`open NAME` for a workflow named like a verb. **Delete workflow** in the editor
-stages removal until Save. A default or assigned workflow requires a replacement
+`open NAME` for a workflow named like a verb. In `t workflow` (or `t config` →
+**Workflows**), select a tool, highlight a workflow and press **d** to delete it.
+The footer shows **d delete**; other rows ignore the key. Both this shortcut and
+**Delete workflow** in the editor ask for confirmation, with **Keep workflow**
+selected by default. Esc cancels and returns to the highlighted workflow.
+Confirming stages removal until review and Save; discarding changes retains it.
+A default or assigned workflow requires a replacement before confirmation
 (including excluded assignments, whose exclusion is retained); the last workflow
-cannot be deleted. `t workflow delete NAME` deletes an unassigned definition.
+cannot be deleted. The direct command `t workflow delete NAME` deletes an
+unassigned definition without the editor's confirmation or staged save.
 
 Repository settings open one workflow selector: **Inherit global**, the named
 workflows, or **Disabled**. Selecting a named workflow applies that definition;
