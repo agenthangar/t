@@ -555,6 +555,18 @@ def test_failed_git_setup_retries_at_same_head(t_mod, monkeypatch, local_checkou
     assert capfd.readouterr().out == "t: updated\nt: up to date\n"
 
 
+def test_explicit_repair_clears_pending_setup(t_mod, monkeypatch, local_checkout):
+    main, home = local_checkout
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    pending = t_mod._t_update_pending(str(main))
+    pending.parent.mkdir(parents=True)
+    pending.touch()
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
+    assert not pending.exists()
+    monkeypatch.setattr(t_mod, "_t_relink", lambda *a, **k: pytest.fail("already repaired"))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+
+
 def test_current_release_skips_updater_but_relink_still_repairs(t_mod, tmp_path, monkeypatch, capsys):
     root = _release_tree(tmp_path)
     (root / "scripts/install-release.py").write_text("raise AssertionError('must not reinstall')")

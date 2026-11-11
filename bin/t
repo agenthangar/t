@@ -7770,6 +7770,8 @@ def _t_relink(root, dev=False, quiet=False):
     else:
         env.pop("T_LINK_DEV", None)
     p = subprocess.run([inst], env=env)
+    if p.returncode == 0 and not dev:
+        _t_update_pending(root).unlink(missing_ok=True)
     return p.returncode
 
 
