@@ -114,6 +114,7 @@ jobs:
         if: always()
         with:
           name: shard-${{ matrix.shard }}
+          overwrite: true
           path: artifacts/
           include-hidden-files: true
           if-no-files-found: error
@@ -139,6 +140,7 @@ jobs:
         if: always()
         with:
           name: fzf-legacy
+          overwrite: true
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
@@ -165,6 +167,7 @@ jobs:
         if: always()
         with:
           name: combined
+          overwrite: true
           path: combined/
           include-hidden-files: true
           if-no-files-found: error
@@ -195,6 +198,7 @@ jobs:
         if: always()
         with:
           name: reference
+          overwrite: true
           path: artifacts/
           include-hidden-files: true
           if-no-files-found: error
@@ -243,6 +247,7 @@ jobs:
         if: always()
         with:
           name: macos-${{ matrix.fzf }}
+          overwrite: true
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
@@ -320,6 +325,7 @@ jobs:
         if: always()
         with:
           name: smoke-${{ matrix.shard }}
+          overwrite: true
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
@@ -346,6 +352,7 @@ jobs:
         if: needs.scope.outputs.full == 'true'
         with:
           name: release-validation
+          overwrite: true
           path: validation/validation.json
           if-no-files-found: error
           retention-days: 14
