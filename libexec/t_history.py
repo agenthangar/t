@@ -36,6 +36,10 @@ display_width = _DISPLAY['display_width']
 clip_columns = _DISPLAY['clip_columns']
 wrap_columns = _DISPLAY['wrap_columns']
 recorded_model = _DISPLAY['recorded_model']
+_SORT = runpy.run_path(str(Path(__file__).with_name('t_session_sort.py')))
+SORT_MODES = tuple(_SORT['RESUME_SORTS'])
+_THEME = runpy.run_path(str(Path(__file__).with_name('t_picker_theme.py')))
+
 AGENT_GLYPHS = {'codex': '⬡', 'claude': '✱', 'slot': '·', 'revision': '·'}
 
 SID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,199}\Z')
@@ -500,7 +504,7 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
     return record
 
 
-def page_rows(rows, query='', limit=50, page=1):
+def page_rows(rows, query='', limit=50, page=1, sort='turn', sort_enabled=True):
     if limit < 1 or page < 1:
         raise HistoryError('--limit and --page must be positive integers')
     phrase = clean(query).casefold()
@@ -514,7 +518,16 @@ def page_rows(rows, query='', limit=50, page=1):
         else:
             yield str(value).casefold()
     matches = [row for row in rows if not phrase or any(phrase in text for text in values(row))]
-    matches.sort(key=lambda row: (-row.get('updated', 0), row['agent'], row['sid']))
+    if sort_enabled:
+        def key(row):
+            identity = (row['repo'], row['agent'], row['sid'])
+            if sort == 'updated':  # Internal slot/revision choices retain their order.
+                return -row.get('updated', 0), identity
+            display = row.get('display') or history_display(row)
+            value = display['slot'] if sort == 'session' else row['repo'] if sort == 'repo' else display.get(sort, 'unknown')
+            primary = () if sort == 'turn' else _SORT['natural'](value)
+            return primary, -_SORT['turn_epoch'](row.get('last_turn', '-')), identity
+        matches.sort(key=key)
     return matches[(page - 1) * limit:page * limit], len(matches)
 
 
@@ -563,12 +576,16 @@ def pr_summary(refs, compact=False):
     return ' '.join(parts)
 
 
-def picker_columns(width):
+def picker_columns(width, last_turn=True):
+    if not last_turn:
+        if width >= 60:
+            return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7)]
+        return [('ST', 2), ('U', 1), ('MODEL', 9), ('#', 2)] if width >= 32 else [('S', 1), ('A', 1), ('#', 2)]
     if width >= 60:
-        return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7)]
+        return [('ST', 3), ('UI', 2), ('MODEL', 24 if width >= 100 else 13), ('HOST', 10 if width >= 100 else 5), ('SESSION', 12 if width >= 100 else 7), ('LAST TURN', 16 if width >= 100 else 11)]
     if width >= 32:
-        return [('ST', 2), ('U', 1), ('MODEL', 9), ('#', 2)]
-    return [('S', 1), ('A', 1), ('#', 2)]
+        return [('ST', 2), ('#', 3), ('LAST TURN', 11)]
+    return [('S', 1), ('#', 2), ('TURN', 5)]
 
 
 def compact_model(model, width):
@@ -591,15 +608,21 @@ def format_row(row, width=80):
     if re.search(r'#\d+ merged, still in progress', display['summary']):
         status += '↻'
     ui = {'cli': '›', 'desktop': '▣', 'foreground': '›', 'unknown': '?'}[display['interface']]
-    values = [status, ui, glyph + ' ' + display['model'], display['host'], display['slot']]
-    columns = picker_columns(width)
+    turn = _DISPLAY['format_last_turn'](row.get('last_turn'))
+    turn = turn[:16] if width >= 100 else turn[5:16] if width >= 32 else turn[5:10]
+    turn = turn or '-'
+    values = [status, ui, glyph + ' ' + display['model'], display['host'], display['slot'], turn]
+    show_turn = row['agent'] in ('codex', 'claude')
+    columns = picker_columns(width, show_turn)
     if width < 60:
         slot = display['slot'].rsplit('-', 1)[-1]
-        values = [status, ui, glyph + ' ' + display['model'], slot] if width >= 32 else [status[:1], glyph, slot]
-    if width >= 32:
+        values = ([status if width >= 32 else status[:1], slot, turn] if show_turn else
+                  [status, ui, glyph + ' ' + display['model'], slot] if width >= 32 else [status[:1], glyph, slot])
+    if width >= 60 or (not show_turn and width >= 32):
         values[2] = glyph + ' ' + compact_model(display['model'], columns[2][1] - 2)
-    prefix = ' '.join(clip_columns(value, cap) + ' ' * (cap - display_width(clip_columns(value, cap))) for value, (_, cap) in zip(values, columns))
-    remaining = max(1, width - display_width(prefix) - 1)
+    gap = '  ' if width >= 60 else ' '
+    prefix = gap.join(clip_columns(value, cap) + ' ' * (cap - display_width(clip_columns(value, cap))) for value, (_, cap) in zip(values, columns))
+    remaining = max(1, width - display_width(prefix) - len(gap))
     prs = pr_summary(row.get('prs', []), compact=True)
     title = display['summary']
     if prs and remaining >= 24:
@@ -612,18 +635,25 @@ def format_row(row, width=80):
         summary = clip_columns(title, max(1, remaining - len(hint))) + hint if remaining >= 17 else clip_columns(title, remaining)
     else:
         summary = clip_columns(title, remaining)
-    return prefix + ' ' + summary
+    return prefix + gap + summary
 
 
-def picker_header(rows, query, limit, page, width=80):
-    _, total = page_rows(rows, query, limit, page)
+def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, height=None):
+    _, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     pages = max(1, (total + limit - 1) // limit)
     page_label = f'Page {page} · {total} conversations · {limit} per page' if width >= 60 else f'Page {page}/{pages} · {total} conversations'
-    columns = picker_columns(width)
-    heading = ' '.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + ' WORKING ON'
-    lines = [clip_columns(page_label, width), clip_columns(heading, width)]
-    if width >= 60:
-        lines.insert(1, 'PR: O open · M merged · C closed · ? unknown')
+    columns = picker_columns(width, sort != 'updated')
+    gap = '  ' if width >= 60 else ' '
+    heading = gap.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + gap + 'WORKING ON'
+    compact = width <= 40 or int(height or os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    lines = [clip_columns(page_label, width)]
+    if sort != 'updated':
+        if not compact:
+            lines.append('')
+        lines += _THEME['sort_rows'](sort, width, sort_enabled, compact)
+    if not compact:
+        lines.append('')
+    lines.append(clip_columns(heading, width))
     return '\n'.join(lines) + '\n'
 
 
@@ -633,9 +663,10 @@ def history_table(rows, api, alias=''):
         display = history_display(row, alias)
         base = _DISPLAY['session_cells'](display, AGENT_GLYPHS.get(display['agent'], '?'), remote=True)
         date = datetime.datetime.fromtimestamp(row.get('updated', 0)).strftime('%Y-%m-%d')
+        turn = _DISPLAY['format_last_turn'](row.get('last_turn'))
         branches = ', '.join(dict.fromkeys(a.get('branch') for a in row.get('associations', []) if a.get('branch'))) or 'unknown'
-        cells.append([*base, date, branches, pr_summary(row.get('prs', [])) or 'none recorded', row['sid']])
-    return api['_table_lines'](('STATUS', 'UI', 'MODEL', 'HOST', 'SESSION', 'WORKING ON', 'DATE', 'BRANCH', 'PRS', 'ID'), cells)
+        cells.append([*base, turn, date, branches, pr_summary(row.get('prs', [])) or 'none recorded', row['sid']])
+    return api['_table_lines'](('STATUS', 'UI', 'MODEL', 'HOST', 'SESSION', 'WORKING ON', 'LAST TURN', 'DATE', 'BRANCH', 'PRS', 'ID'), cells)
 
 
 def details(row, alias='', width=None, compact=False):
@@ -646,6 +677,7 @@ def details(row, alias='', width=None, compact=False):
               f'Status: {display["status"]} · Context: {display["context"]}',
               f'UI: {display["interface"]} · Model: {model}',
               f'Host: {display["host"]} · Session: {display["slot"]}',
+              f'Last turn: {_DISPLAY["format_last_turn"](row.get("last_turn"))}',
               f'Date: {date} · PRs: {pr_summary(row.get("prs", [])) or "none recorded"}',
               f'ID: {row["sid"]}', f'Repository: {row["repo"]}', f'Title: {row.get("title") or "Untitled conversation"}',
               f'Model evidence: {row.get("model_source") or "unknown"}',
@@ -1249,31 +1281,34 @@ class HistoryCommand:
             private_write(snapshot, rows)
             terminal = shutil.get_terminal_size((80, 24))
             width = max(12, terminal.columns - (16 if terminal.columns > 60 else 12))
-            private_write(state, dict(page=page, query=query, limit=limit, width=width))
+            sortable = all(row['agent'] in ('codex', 'claude') for row in rows)
+            sort, sort_enabled = getattr(self, 'picker_sort', ('turn', True)) if sortable else ('updated', True)
+            private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')
-            _, total = page_rows(rows, query, limit, page)
-            header.write_text(picker_header(rows, query, limit, page, width))
+            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines))
             rows_file = state.with_suffix('.rows')
-            rows_file.write_text(picker_rows(rows, query, limit, page, width))
+            rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled))
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
                     'history ' + alias + '> ', *(['multi'] if multi else [])],
                     stdout=subprocess.PIPE, text=True,
-                    env={**{k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}, 'T_HOME': str(self.root)})
+                    env={**{k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}, 'T_HOME': str(self.root), 'T_PICKER_HISTORY_SORT': '1' if sortable else ''})
             if result.returncode in (1, 130):
                 return None, 'cancel', query
             if result.returncode:
                 raise HistoryError('history picker unavailable; install fzf')
             lines = result.stdout.splitlines()
             query, key = lines[:2] if len(lines) >= 2 else ('', '')
+            settings = json.loads(state.read_text())
+            if sortable:
+                self.picker_sort = settings.get('sort', 'turn'), settings.get('sort_enabled', True)
             if key == 'ctrl-r':
                 return None, key, query
             if len(lines) < 3:
                 return None, 'cancel', query
-            settings = json.loads(state.read_text())
-            matching, _ = page_rows(rows, query, limit, settings['page'])
+            matching, _ = page_rows(rows, query, limit, settings['page'], settings.get('sort', 'turn'), settings.get('sort_enabled', True))
             if settings['query'] != query:
                 return None, 'retry', query
             selected, identities = [], set()
@@ -1793,8 +1828,8 @@ class HistoryCommand:
         return 0
 
 
-def picker_rows(rows, query, limit, page, width=80):
-    selected, total = page_rows(rows, query, limit, page)
+def picker_rows(rows, query, limit, page, width=80, sort='turn', sort_enabled=True):
+    selected, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     indices = {json.dumps([row['repo'], row['agent'], row['sid']]): i for i, row in enumerate(rows)}
     return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{format_row(row, width)}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
 
@@ -1809,15 +1844,25 @@ def picker(argv):
         return
     if settings['query'] != value:
         settings.update(query=value, page=1)
-    _, total = page_rows(rows, value, settings['limit'], 1)
+    sort = settings.get('sort', 'turn')
+    sort_enabled = settings.get('sort_enabled', True)
+    if action == 'toggle-sort' and sort in SORT_MODES:
+        sort_enabled = not sort_enabled
+        settings['page'] = 1
+    elif action == 'next-sort' and sort in SORT_MODES:
+        sort = SORT_MODES[(SORT_MODES.index(sort) + 1) % len(SORT_MODES)]
+        sort_enabled = True
+        settings['page'] = 1
+    settings.update(sort=sort, sort_enabled=sort_enabled)
+    _, total = page_rows(rows, value, settings['limit'], 1, sort, sort_enabled)
     maximum = max(1, (total + settings['limit'] - 1) // settings['limit'])
     if action == 'next':
         settings['page'] = min(maximum, settings['page'] + 1)
     elif action == 'previous':
         settings['page'] = max(1, settings['page'] - 1)
     private_write(state, settings)
-    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80)))
-    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80))
+    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled))
+    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled)
     Path(state).with_suffix('.rows').write_text(output)
     print(output, end='')
 

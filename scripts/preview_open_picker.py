@@ -57,19 +57,42 @@ def main(argv=None):
         env = dict(os.environ, HOME=temp, XDG_CONFIG_HOME=temp, XDG_CACHE_HOME=temp,
                    T_HOME=str(ROOT), COLUMNS=str(shutil.get_terminal_size().columns),
                    T_PICKER_SESSION_FILTERS='open', T_PICKER_SOURCE_ROWS=source)
-        if args.profile in ('single', 'multi', 'issues', 'history'):
+        if args.profile == 'history':
+            # Exercise the actual history picker with no discovery or launch path.
+            script = """import json, os, runpy
+from pathlib import Path
+from types import SimpleNamespace
+root = Path(os.environ['T_HOME'])
+history = runpy.run_path(str(root / 'libexec/t_history.py'))
+records = []
+for index, line in enumerate(os.environ['T_PICKER_SOURCE_ROWS'].splitlines()):
+    host, sid, cwd, slot, state, context, task, agent, model, turn = line.split('\\t')
+    records.append(dict(repo='demo/api', sid='fixture-' + sid, agent=agent,
+        title=task, summary=task, model=model, interface='cli', last_turn=turn,
+        updated=index, associations=[dict(workspace='/demo/api/2', slot='2', host=host)],
+        sources=[], prs=[], mentions=[]))
+app = history['HistoryCommand'](SimpleNamespace(repos={}, hosts={}), {'_t_source_root': lambda: str(root)})
+try:
+    while True:
+        selected, key, query = app.pick(records, 'api 2 · SAMPLE ONLY', limit=3, query=locals().get('query', ''), multi=True)
+        if key != 'ctrl-r':
+            break
+    print(json.dumps({'sample_selection': [row['sid'] for row in selected or []], 'action': key, 'launched': False}))
+finally:
+    app.store.close()
+"""
+            env.update(XDG_STATE_HOME=temp, XDG_DATA_HOME=temp, CODEX_HOME=temp,
+                       T_RECOVERY_DISABLE='1')
+            return subprocess.run([sys.executable, '-c', script], env=env, check=False).returncode
+        if args.profile in ('single', 'multi', 'issues'):
             rows = 'a\tFix login · 界面 navigation\nb\tImprove repository discovery\nc\tDocument remote hosts\n'
             (directory / 'all').write_text(rows)
             env.pop('T_PICKER_SOURCE_ROWS', None)
             env.pop('T_PICKER_SESSION_FILTERS', None)
             if args.profile in ('single', 'multi'):
                 script = '. "$T_HOME/ui/fzf.sh"; _t_fzf_' + args.profile + ' "choose" "Synthetic fixture · no actions" --delimiter="$(printf \"\\t\")" --with-nth=2 < "$HOME/all"'
-            elif args.profile == 'issues':
-                script = '. "$T_HOME/ui/fzf.sh"; _t_fzf_filtered "$(cat "$HOME/all")" "$(cat "$HOME/all")" "open issue" "Open issues" "Fixture repository" "" --with-nth=2'
             else:
-                (directory / 'page').write_text('Page 1 of 2 · 3 conversations\n')
-                (directory / 'helper').write_text('#!/bin/sh\ncase $1 in next) echo "Page 2 of 2 · 3 conversations" > "$HOME/page";; previous) echo "Page 1 of 2 · 3 conversations" > "$HOME/page";; esac\n')
-                script = """. "$T_HOME/ui/fzf.sh"; _t_fzf_paginated "$HOME/page" "$HOME/all" 'sh "$HOME/helper"' 'printf "Full synthetic conversation details\\n"' "" "history > " """
+                script = '. "$T_HOME/ui/fzf.sh"; _t_fzf_filtered "$(cat "$HOME/all")" "$(cat "$HOME/all")" "open issue" "Open issues" "Fixture repository" "" --with-nth=2'
             return subprocess.run(['sh', '-c', script], env=env, check=False).returncode
         result = subprocess.run([sys.executable, str(ROOT / 'bin/t'), '__session-picker-rows',
                                  '--remote', '--compact', '--header', '--last-turn'], input=source,
