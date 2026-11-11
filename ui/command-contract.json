@@ -2424,9 +2424,14 @@
             "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
             "tests/test_config.py::test_config_group_navigation_retains_focus",
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
-            "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows"
+            "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows",
+            "tests/test_config.py::test_config_local_save_continues_and_rebases",
+            "tests/test_config.py::test_config_local_discard_or_back_preserves_transaction_rules",
+            "tests/test_config.py::test_config_local_failed_save_retains_edits_and_retries",
+            "tests/test_config.py::test_config_local_post_save_failure_keeps_saved_baseline",
+            "tests/test_config.py::test_config_local_continuation_uses_shared_narrow_viewport"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines. Pending edits before Local worker & models offer reviewed save-and-continue, discard-and-continue, or Back; retryable save errors preserve edits, successful continuation refreshes the baseline and return focus, and post-save failures retain completed saves."
         },
         "host_add": {
           "argv": [
