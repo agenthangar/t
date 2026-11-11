@@ -93,13 +93,14 @@ fi
 [[ -n $agent ]] || agent=claude
 
 # Durable associations survive transcript moves and removed/recycled worktrees.
-# Hook execution is best effort and records only local Git evidence.
+# Capture local Git evidence now; cache waits and transcript/history indexing
+# run detached so they cannot hold up the identity stamps or agent prompt.
 history_helper="${T_HOME:+$T_HOME/libexec/t_history.py}"
 if [[ -z $history_helper ]]; then
   history_helper=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parent.parent / "libexec/t_history.py")' "$0" 2>/dev/null) || history_helper=""
 fi
 if [[ -f $history_helper ]]; then
-  python3 "$history_helper" record "$sid" "$agent" "$cwd" "$tx" launch >/dev/null 2>&1 || true
+  python3 "$history_helper" record-deferred "$sid" "$agent" "$cwd" "$tx" launch >/dev/null 2>&1 || true
 fi
 
 # Freeze usage attribution at launch; reporting must never use today's policy

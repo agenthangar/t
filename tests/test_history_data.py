@@ -537,6 +537,83 @@ def test_record_association_captures_git_evidence_and_store_is_private(history, 
     history.record_association('not-github', 'codex', str(workspace))
 
 
+def test_deferred_history_freezes_launch_evidence_before_optional_io(history, tmp_path, monkeypatch):
+    workspace = tmp_path / 'repo/repo-19'
+    workspace.mkdir(parents=True)
+    tip = ['a' * 40]
+    def git(argv, **kwargs):
+        return ('https://github.com/org/repo.git' if argv[-1] == 'origin' else
+                tip[0] if argv[-1] == 'HEAD' else 'dev/repo-19')
+    monkeypatch.setattr(history, 'run', git)
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *a: pytest.fail('foreground cache I/O'))
+    monkeypatch.setenv('COV_CORE_SOURCE', 'measured-parent')
+    calls = []
+    monkeypatch.setattr(history.subprocess, 'Popen', lambda *a, **kw: calls.append((a, kw)))
+    history.defer_association('captured', 'codex', str(workspace), '', 'launch', 'cli')
+    (argv,), options = calls.pop()
+    value = json.loads(argv[-1])
+    assert argv[-2] == 'publish-record'
+    assert options['start_new_session'] and options['close_fds'] and options['cwd'] == '/'
+    assert all(options[key] == subprocess.DEVNULL for key in ('stdin', 'stdout', 'stderr'))
+    assert not any(key.startswith('COV_CORE_') for key in options['env'])
+    assert not (Path(os.environ['XDG_STATE_HOME']) / 't/history/v1/history.sqlite3').exists()
+    tip[0] = 'b' * 40
+    workspace.rmdir()  # Publication must not reread a recycled workspace.
+    history.publish_association(value)
+    store = history.Store()
+    try:
+        record, = store.records()
+        assert record['associations'][0]['commit'] == 'a' * 40
+        assert record['associations'][0]['workspace'] == str(workspace)
+        assert record['associations'][0]['observed'] == value['updated']
+    finally:
+        store.close()
+    history.defer_association('../invalid', 'codex', str(workspace))
+    assert not calls
+
+
+def test_deferred_history_returns_while_database_is_locked(history, tmp_path, monkeypatch):
+    import time
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    for args in (['init', '-q'], ['config', 'user.name', 'Fixture'],
+                 ['config', 'user.email', 'fixture@example.invalid'],
+                 ['commit', '-q', '--allow-empty', '-m', 'fixture']):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+    expected = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+    store = history.Store()
+    store.db.execute('BEGIN EXCLUSIVE')
+    children = []
+    popen = subprocess.Popen
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+    monkeypatch.setattr(history.subprocess, 'Popen', spawn)
+    try:
+        started = time.monotonic()
+        history.defer_association('locked', 'codex', str(repo))
+        elapsed = time.monotonic() - started
+        # The old synchronous write waits up to 15 s for this lock. This check
+        # allows slow CI ample time but requires the parent to leave it held.
+        assert elapsed < 5
+        worker = children[-1]
+        assert worker.poll() is None
+        subprocess.run(['git', '-C', str(repo), 'commit', '-q', '--allow-empty', '-m', 'after launch'],
+                       check=True, capture_output=True)
+        store.db.rollback()
+        assert worker.wait(timeout=10) == 0
+        row, = store.records()
+        assert row['associations'][0]['commit'] == expected
+    finally:
+        store.db.rollback()
+        store.close()
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait()
+
+
 def test_identity_local_repo_fallback_and_owners_shell_contract(history, app, monkeypatch):
     calls = []
     app.identity = history.HistoryCommand.identity.__get__(app)
@@ -657,6 +734,31 @@ def test_store_partial_source_metadata_preserves_freshness_and_size(store):
     assert retained['updated'] == 100
     assert retained['size'] == 200
     assert retained['available'] is False
+    # A delayed launch cannot roll back newer discovery metadata.
+    merged = store.merge(conversation(sources=[dict(source, updated=50, size=20)]))
+    assert merged['sources'] == [retained]
+
+
+def test_concurrent_history_publication_retains_every_launch(history):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    gate = threading.Barrier(8)
+    def publish(index):
+        store = history.Store()
+        try:
+            gate.wait(timeout=10)
+            store.merge(conversation(associations=[dict(workspace='/work', host='local',
+                                                       commit=str(index), observed=index)]))
+        finally:
+            store.close()
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        list(workers.map(publish, range(8)))
+    store = history.Store()
+    try:
+        row, = store.records()
+        assert {a['commit'] for a in row['associations']} == {str(i) for i in range(8)}
+    finally:
+        store.close()
 
 
 def test_codex_index_discovery_preserves_freshness_of_newest_exact_source(history, app):

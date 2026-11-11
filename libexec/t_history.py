@@ -161,6 +161,13 @@ class Store:
 
     def merge(self, record):
         validate(record)
+        # Hook and lifecycle workers may publish concurrently. Reserve the
+        # writer before reading so one launch cannot overwrite another's facts.
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            return self._merge(record)
+
+    def _merge(self, record):
         key = json.dumps([record['repo'], record['agent'], record['sid']])
         existing = self.db.execute('select record from conversations where key=?', (key,)).fetchone()
         old = json.loads(existing[0]) if existing else {}
@@ -184,12 +191,17 @@ class Store:
             unique = {}
             for value in values:
                 identity = key_for(value)
-                unique[identity] = {**unique.get(identity, {}), **value} if field == 'sources' else value
+                previous = unique.get(identity, {})
+                if field == 'sources':
+                    older = ('updated' in value and 'updated' in previous
+                             and timestamp(value['updated']) < timestamp(previous['updated']))
+                    unique[identity] = {**value, **previous} if older else {**previous, **value}
+                else:
+                    unique[identity] = value
             merged[field] = list(unique.values())
         merged['last_turn'] = max(old.get('last_turn', '-'), record.get('last_turn', '-'))
         merged['updated'] = max(old.get('updated', 0), record.get('updated', 0))
         self.db.execute('insert or replace into conversations values (?,?)', (key, json.dumps(merged)))
-        self.db.commit()
         return merged
 
     def scan(self, path, agent, *, metadata_only=False):
@@ -1810,10 +1822,8 @@ def picker(argv):
     print(output, end='')
 
 
-def record_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):
-    """Hook and lifecycle seam: capture immutable revision evidence when it occurs."""
-    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
-        _CACHE_REQUEST('event', {'targets': ['local']})
+def capture_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):
+    """Capture launch evidence locally before an agent can change the checkout."""
     if not SID.fullmatch(sid) or agent not in ('claude', 'codex'):
         return
     remote = run(['git', '-C', workspace, 'remote', 'get-url', 'origin'], optional=True).strip()
@@ -1823,23 +1833,56 @@ def record_association(sid, agent, workspace, transcript_path='', event='launch'
         if not common:
             return
         repo = 'local:' + str(Path(common).parent.resolve())
+    commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
+    branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
+    leaf = Path(workspace).name.removeprefix(Path(workspace).parent.name + '-')
+    slot = leaf if re.fullmatch(r'[0-9]+', leaf) else ''
+    observed = time.time()
+    value = dict(repo=repo, agent=agent, sid=sid, interface=interface,
+                 interface_updated=observed, updated=observed,
+                 associations=[dict(workspace=workspace, slot=slot, host='local', branch=branch,
+                                    commit=commit, generation=generation(workspace), evidence=event,
+                                    observed=observed)])
+    if transcript_path:
+        value['sources'] = [dict(host='local', path=transcript_path, updated=observed)]
+    return value
+
+
+def publish_association(value):
+    """Persist captured evidence; transcript enrichment never rereads launch Git state."""
+    validate(value)
+    transcript_path = next((source['path'] for source in value.get('sources', [])
+                            if source.get('host') == 'local'), '')
     store = Store()
     try:
-        saved = store.scan(Path(transcript_path), agent) if transcript_path and Path(transcript_path).is_file() else None
-        if saved and saved['sid'] != sid:
+        saved = store.scan(Path(transcript_path), value['agent']) if transcript_path and Path(transcript_path).is_file() else None
+        if saved and saved['sid'] != value['sid']:
             return
-        commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
-        branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
-        leaf = Path(workspace).name.removeprefix(Path(workspace).parent.name + '-')
-        slot = leaf if re.fullmatch(r'[0-9]+', leaf) else ''
-        value = dict(repo=repo, agent=agent, sid=sid, interface=interface, interface_updated=time.time(), updated=time.time(), associations=[dict(workspace=workspace, slot=slot, host='local', branch=branch, commit=commit, generation=generation(workspace), evidence=event, observed=time.time())])
         if saved:
             value.update({key: saved[key] for key in ('title', 'summary', 'summary_source', 'model', 'model_source', 'model_updated', 'summary_updated') if key in saved})
-        if transcript_path:
-            value['sources'] = [dict(host='local', path=transcript_path, updated=timestamp(time.time()))]
         store.merge(value)
     finally:
         store.close()
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        _CACHE_REQUEST('event', {'targets': ['local']})
+
+
+def record_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):
+    """Synchronous seam for explicit history and transfer operations."""
+    value = capture_association(sid, agent, workspace, transcript_path, event, interface)
+    if value:
+        publish_association(value)
+
+
+def defer_association(*args):
+    """Keep cache waits, transcript scans and history DB contention off startup."""
+    value = capture_association(*args)
+    if not value:
+        return
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'publish-record', json.dumps(value)],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True, close_fds=True, cwd='/',
+                     env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
 
 
 def main(argv):
@@ -1847,6 +1890,10 @@ def main(argv):
         picker(argv[1:])
     elif argv[0] == 'record':
         record_association(*argv[1:])
+    elif argv[0] == 'record-deferred':
+        defer_association(*argv[1:])
+    elif argv[0] == 'publish-record':
+        publish_association(json.loads(argv[1]))
 
 
 if __name__ == '__main__':
