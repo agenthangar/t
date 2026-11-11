@@ -13051,10 +13051,10 @@ SELECTION
   Press k to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
-  Use --new to start a new session. The first CLI opens here, others use tabs;
-  Remote pickers add HOST. --fg opens one.
-  Extra tabs stay in the originating window. If Terminal cannot safely create
-  a tab, it opens a new window. Commands never target an existing tab.
+  Use --new to start a new session. One selection opens here; multiple
+  selections each open in a new window, including the first. Remote pickers
+  add HOST. --fg opens one. Failed windows report exact attach commands.
+  Commands target only newly created windows; the invoking terminal stays free.
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.

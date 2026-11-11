@@ -361,10 +361,12 @@ requires a clean worktree and proof that its commits have landed; open/unknown
 PRs and uncertain work stay hidden until Ctrl-P or Ctrl-A. `t resume --live`
 and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
-CLI opens use this terminal for the first selection and new tabs for the rest,
-falling back to new windows in Terminal when tabs cannot be created safely
-(including switching away during creation). Attach commands remain available
-if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Tab and
+With `t open`, one selection opens in this terminal. Mark several sessions with
+Tab and press Enter to open every selection, including the first, in its own new
+window in Terminal or iTerm2. The invoking terminal stays free. If window creation
+is unavailable or fails, each unopened selection prints its exact attach command
+and the batch returns a failure status. Commands never target an existing window.
+`--fg` opens one session. In `t kill`, mark sessions with Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
