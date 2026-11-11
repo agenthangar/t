@@ -113,7 +113,7 @@ _dev_remote_resolve() {
   elif [[ -t 0 ]] && command -v fzf >/dev/null 2>&1; then
     local picked
     local -a picker=(_t_fzf_single open 'Live remote sessions')
-    [[ -n $multi ]] && picker=(_t_fzf_multi 'open: here + extra tabs' 'Live remote sessions')
+    [[ -n $multi ]] && picker=(_t_fzf_multi 'open: multiple in new windows' 'Live remote sessions')
     picked=$(print -r -- "$match" | awk -F'\t' '{printf "%s\t%s\t%s/%-12s %s\n", $1, $4, $1, $4, $7}' \
           | "${picker[@]}" --delimiter=$'\t' --with-nth=3 --no-hscroll \
                 --prompt="t open remote ${repo:-pick} > ") || return $?
@@ -221,18 +221,17 @@ _dev_remote() {
   _dev_open_picks "$res" "$fg"
 }
 
-# Open resolved host/repo/slot rows without ever resuming another owner. Launch
-# extra tabs before the first blocking attach; preserve the exact selected host.
+# Open resolved host/repo/slot rows without ever resuming another owner. Multiple
+# selections each get a new window; preserve the exact selected host.
 _dev_open_picks() {
   local -a picks fields
   picks=("${(@f)1}")
-  local fg="${2:-}" pick cmd i=0
+  local fg="${2:-}" pick cmd rc=0
   if (( $#picks > 1 )) && [[ -n $fg ]]; then
     print -u2 -- 't open --fg opens ONE session inline — select a single row.'
     return 1
   fi
   for pick in "${picks[@]}"; do
-    (( ++i ))
     fields=("${(@ps:\t:)pick}")
     cmd="t open ${(q)fields[2]} ${(q)fields[3]} --cli"
     if [[ $fields[1] == local ]]; then
@@ -240,10 +239,12 @@ _dev_open_picks() {
     else
       cmd+=" --host ${(q)fields[1]}"
     fi
-    if (( i > 1 )); then
-      _dev_open_tab "$cmd" || print -r -- "Attach with: $cmd"
+    if (( $#picks > 1 )); then
+      _dev_open_window "$cmd" || { print -r -- "Attach with: $cmd"; rc=1; }
     fi
   done
+  (( $#picks > 1 )) && return $rc
+  (( $#picks )) || return 0
   fields=("${(@ps:\t:)picks[1]}")
   if [[ $fields[1] == local ]]; then
     if [[ -n $TMUX ]]; then
@@ -692,6 +693,38 @@ _t_plan() {
   else
     less "$plan"
   fi
+}
+
+# _dev_open_window <cmd…> — each multi-open selection gets its own GUI window.
+# Never depend on focus or send commands to an existing window. Single opens in
+# the new windows follow the ordinary ownership and local/remote attach paths.
+_dev_open_window() {
+  local cmd="$*" tp=${TERM_PROGRAM:-}
+  [[ -z ${SSH_CONNECTION:-} ]] || return 1
+  if [[ -n ${TMUX:-} && ( -z $tp || $tp == tmux ) ]]; then
+    tp=$(tmux show-environment -g TERM_PROGRAM 2>/dev/null); tp=${tp#TERM_PROGRAM=}
+  fi
+  # iTerm's command replaces its profile login shell. Keep the normal t setup,
+  # while binding the command to window creation rather than a focused session.
+  [[ $tp == iTerm.app ]] && cmd="/bin/zsh -lic ${(qq)cmd}"
+  cmd=${cmd//\\/\\\\}; cmd=${cmd//\"/\\\"}
+  case $tp in
+    Apple_Terminal)
+      osascript >/dev/null <<EOS || return 1
+tell application "Terminal"
+  do script "$cmd"
+end tell
+EOS
+      ;;
+    iTerm.app)
+      osascript >/dev/null <<EOS || return 1
+tell application "iTerm2"
+  create window with default profile command "$cmd"
+end tell
+EOS
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 # _dev_open_tab <cmd…> — open an extra session in the originating GUI window.
