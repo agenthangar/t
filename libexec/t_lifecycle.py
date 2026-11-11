@@ -833,11 +833,13 @@ def _discovery_changed(targets):
     if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
         return
     try:
-        subprocess.run([sys.executable, str(ROOT / 'bin/t'), '__cache-event',
-                        *[target or 'local' for target in targets]],
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=3)
-    except (OSError, subprocess.TimeoutExpired):
+        subprocess.Popen([sys.executable, str(ROOT / 'bin/t'), '__cache-event',
+                          *[target or 'local' for target in targets]],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True,
+                         cwd='/', env={k: v for k, v in os.environ.items()
+                                       if not k.startswith('COV_CORE_')})
+    except OSError:
         pass  # Discovery cannot roll back a completed lifecycle operation.
 
 

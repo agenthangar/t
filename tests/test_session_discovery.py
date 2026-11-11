@@ -35,6 +35,9 @@ def test_config_and_requested_fields_pass_through_single_api(adapter, monkeypatc
     assert calls[-1][1]['hosts'][0]['target'] == 'user@mini'
     adapter.event(['user@mini'], row='verified')
     assert calls[-1] == ('event', {'targets': ['user@mini'], 'event': 'changed', 'row': 'verified'})
+    monkeypatch.setitem(adapter._CACHE, 'invalidate', lambda targets: calls.append(('invalidate', targets)))
+    adapter.invalidate(['user@mini'])
+    assert calls[-1] == ('invalidate', ['user@mini'])
 
 
 def test_rows_candidates_and_freshness_are_pure(adapter):
@@ -217,6 +220,7 @@ def test_cli_adapters_use_cache_and_targeted_events(adapter, t_mod, monkeypatch,
     events = []
     helper = {'discover': lambda *a, **kw: data, 'announce': lambda v: None,
               'rows': adapter.rows, 'candidates': adapter.candidates,
+              'invalidate': lambda *a, **kw: events.append((a, kw)),
               'event': lambda *a, **kw: events.append((a, kw))}
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: helper)
     monkeypatch.setattr(t_mod, 'Config', lambda: cfg)

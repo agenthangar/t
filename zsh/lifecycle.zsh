@@ -83,7 +83,10 @@ _t_lifecycle_effect() {
       [[ -n $sid ]] || sid=$(_dev_session_sid "$session")
       [[ $event != new ]] || event=launch
       [[ $event != replace ]] || event=resume
-      if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 && -n $session ]]; then
+      # Launch history invalidates discovery after its detached publication. Do
+      # not wait for cache overlays here or enqueue a launch row that could be
+      # delivered after this slot closes. Close/handoff retain their direct rows.
+      if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 && -n $session && $event != (launch|resume) ]]; then
         python3 "$T_HOME/bin/t" __cache-record "$event" "$sid" "$agent" "$dir" "${session#dev-}" >/dev/null 2>&1 || true
       fi
       _dev_history_record "$sid" "$agent" "$dir" "$event"
