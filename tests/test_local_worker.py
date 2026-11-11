@@ -362,7 +362,7 @@ def test_inactivity_is_observed_work_and_never_extends_task(worker, tmp_path, mo
             clock[0]+=1
             if activity=='tool':
                 with (job/'events.jsonl').open('a') as out:
-                    out.write('not json\n'+json.dumps({'item':{'type':'command_execution','status':'in_progress'}})+'\n')
+                    out.write('not json\n'+json.dumps({'item':{'type':'command_execution','status':'completed'}})+'\n')
             return 0 if clock[0]>=8 else None
     monkeypatch.setattr(worker.time,'monotonic',lambda:clock[0])
     monkeypatch.setattr(worker.subprocess,'Popen',lambda *a,**k:Process())
@@ -373,6 +373,7 @@ def test_inactivity_is_observed_work_and_never_extends_task(worker, tmp_path, mo
         return min(clock[0],5) if activity=='queue' else 0
     cancel=SimpleNamespace(is_set=lambda:False,wait=lambda delay:None)
     assert worker.run_worker(job,'http://127.0.0.1:9','model',5,cancel,progress=progress)==expected
+    if activity == 'tool': assert progress.observed['completed_commands'] > 0
     manager = worker.Worker()
     manager.tasks['finished'] = ({'status': expected}, threading.Event())
     assert manager.call('cancel_task', {'task_id': 'finished'})['status'] == expected
@@ -437,15 +438,19 @@ def test_availability_tool_exposes_limits_without_snapshot(worker, repo, monkeyp
     with pytest.raises(ValueError): manager.call('check_availability', {})
 
 
-@pytest.mark.parametrize('outcome,reason', [('busy', 'busy'), ('timed_out', 'queue_timeout'), ('failed', 'failed')])
-def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monkeypatch, outcome, reason):
+@pytest.mark.parametrize('outcome,phase,expected_status,reason', [
+    ('busy', None, 'busy', 'busy'), ('timed_out', 'queue', 'failed', 'queue_timeout'),
+    ('timed_out', 'execution', 'timed_out', 'execution_timeout'),
+    ('failed', None, 'failed', 'failed'), (None, None, 'failed', 'failed')])
+def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monkeypatch, outcome, phase, expected_status, reason):
     worker.save_settings({'enabled': True, 'model': 'test'})
     original = worker.inference
     class Contended(ManagedClientFixture):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.last.update(outcome=outcome, failure_reason='shared runtime blocked', queue_seconds=2,
-                             loading_seconds=3, wait_seconds=5, request_ids=['request-1'])
+                             loading_seconds=3, wait_seconds=5, request_ids=['request-1'], timeout_phase=phase)
+            if outcome is None: self.error = 'Runtime connection lost'
         def waited(self): return 5
     def inference():
         local = original(); helper = local['helper']
@@ -463,9 +468,43 @@ def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monke
     for thread in manager.threads: thread.join(3)
     result = manager.call('wait_task', {'task_id': task['task_id'], 'timeout_seconds': 1})
     # wait_task returns the durable terminal task directly.
-    assert result['status'] == ('busy' if outcome == 'busy' else 'failed')
+    assert result['status'] == expected_status
     assert result['failure_reason'] == reason and result['partial_patch_available']
     assert '+partial' in result['patch'] and result['completed_commands'] == 1
     assert result['queue_seconds'] == 2 and result['loading_seconds'] == 3
+    if outcome is None: assert result['error'] == 'Runtime connection lost'
     assert (repo / 'file.py').read_text() == 'before\n'
     manager.close()
+
+
+@pytest.mark.parametrize('failure', ['cancel', 'startup'])
+def test_admitted_lease_is_released_before_worker_start(worker, repo, monkeypatch, failure):
+    worker.save_settings({'enabled': True, 'model': 'test'})
+    original = worker.inference
+    clients = []
+    class Admitted(ManagedClientFixture):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            clients.append(self)
+    def inference():
+        local = original(); helper = local['helper']
+        local['effective'] = lambda path: local['policy']({'mode': 'automatic'})
+        local['helper'] = lambda name: {'Client': Admitted, 'availability': lambda: {'state': 'available'}} if name == 't_local_manager' else helper(name)
+        return local
+    monkeypatch.setattr(worker, 'inference', inference)
+    monkeypatch.setattr(worker.threading.Thread, 'start', lambda self: None)
+    monkeypatch.setattr(worker, 'run_worker', lambda *a, **kw: pytest.fail('cancelled admission launched worker'))
+    manager = worker.Worker()
+    if failure == 'startup':
+        monkeypatch.setattr(worker, 'usage_status', lambda *a: (_ for _ in ()).throw(OSError('receipt unavailable')))
+        with pytest.raises(OSError, match='receipt unavailable'):
+            manager.start({'workspace': str(repo), 'assignment': 'inspect'})
+        assert not manager.tasks
+    else:
+        receipt = manager.start({'workspace': str(repo), 'assignment': 'inspect'})
+        task, cancel = manager.tasks[receipt['task_id']]
+        cancel.set()
+        manager.execute(task, cancel, worker.state_root()/task['task_id'], task['model'], task['timeout_seconds'], clients[0])
+        assert task['status'] == 'cancelled'
+    assert clients[0].closed.is_set()
+    assert (repo/'file.py').read_text() == 'before\n'

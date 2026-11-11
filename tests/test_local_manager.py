@@ -336,6 +336,54 @@ def test_release_wait_rpc_is_capped_by_remaining_deadline(manager, monkeypatch):
     assert len(calls) == 1
 
 
+def test_stopped_manager_with_unrecovered_instances_is_unknown(manager, monkeypatch):
+    monkeypatch.setattr(manager, 'status', lambda: {'manager': 'stopped'})
+    manager.write_json(manager.root()/'leases.json', {'instances': [{'alias': 'old-owner'}]})
+    assert manager.availability()['state'] == 'unknown'
+    assert 'recovery' in manager.availability()['reason']
+
+
+def test_upgrade_wait_cannot_replace_a_manager_that_has_not_stopped(manager, monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(manager.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(manager.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0]+seconds))
+    calls = []
+    def rpc(action):
+        calls.append(action)
+        return {'protocol': 2, 'clients': []}
+    monkeypatch.setattr(manager, 'rpc', rpc)
+    monkeypatch.setattr(manager.subprocess, 'Popen', lambda *a, **k: pytest.fail('replaced live manager'))
+    with pytest.raises(ValueError, match='still shutting down'):
+        manager.ensure()
+    assert calls.count('shutdown') == 1 and 8 <= clock[0] < 8.2
+
+
+def test_maintenance_reports_execution_deadline_without_cancelling_other_client(manager, monkeypatch):
+    engine = manager.Engine(Providers)
+    lease = register(engine)
+    job = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    other = register(engine, model='other')
+    queued = engine.submit(engine.clients[other['id']], '/v1/responses', {}, handler())
+    job.update(state='running', started=10, execution_started=20)
+    engine.active = job
+    monkeypatch.setattr(manager.time, 'time', lambda: 400)
+    class Once:
+        calls = 0
+        def wait(self, seconds):
+            self.calls += 1
+            return self.calls > 1
+        def set(self): pass
+    engine.stopping = Once()
+    engine.maintain()
+    assert job['cancel'].is_set() and job['timeout_phase'] == 'execution'
+    assert not queued['cancel'].is_set()
+    engine.finish(job, 'cancelled')
+    assert job['state'] == 'timed_out'
+    assert engine.client_status(engine.clients[lease['id']])['timeout_phase'] == 'execution'
+    engine.active = None
+    engine.close()
+
+
 @pytest.mark.parametrize('kind,stopped', [('worker', True), ('session', False)])
 def test_worker_busy_heartbeat_does_not_change_native_sessions(manager, monkeypatch, kind, stopped):
     client = manager.Client(chosen(), kind)
