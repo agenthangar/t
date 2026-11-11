@@ -403,6 +403,10 @@ For opening sessions, `t session open --help` shows a concise reference with
 examples; `t help session open` adds session targeting, defaults, and remote
 behavior. Start a fresh Codex session in the current repo with
 `t open --codex --new` (`codex` without `--` is a repository name).
+Session-cache refresh and history indexing run in the background. Startup still
+prepares the worktree, checks ownership, and captures launch settings and revision
+evidence before returning control. It never changes an active checkout in the
+background.
 
 Opening and resuming serialize local tmux launches for the same worktree and
 conversation, including repository aliases. Foreground launches recheck ownership

@@ -37,6 +37,75 @@ def engine(cache):
     return memory, now, jobs, saves
 
 
+def test_invalidation_detaches_without_cache_io_or_stale_live_rows(cache, monkeypatch):
+    calls = []
+    monkeypatch.setenv('COV_CORE_SOURCE', 'measured-parent')
+    monkeypatch.setattr(cache, 'request', lambda *a: pytest.fail('foreground cache request'))
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **kw: calls.append((a, kw)))
+    cache.invalidate(['local', 'remote', 'local'])
+    (argv,), options = calls.pop()
+    assert argv[-2] == 'invalidate'
+    assert json.loads(argv[-1]) == ['local', 'remote']
+    assert options['start_new_session'] and options['close_fds']
+    assert options['cwd'] == '/'
+    assert all(options[key] == subprocess.DEVNULL for key in ('stdin', 'stdout', 'stderr'))
+    assert not any(key.startswith('COV_CORE_') for key in options['env'])
+    cache.invalidate()
+    assert json.loads(calls.pop()[0][0][-1]) == ['local']
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **kw: (_ for _ in ()).throw(OSError('fork failed')))
+    cache.invalidate()  # Optional discovery cannot fail a launch.
+
+
+def test_invalidation_returns_while_cache_service_is_stalled(cache, monkeypatch):
+    # Use the worker's real private namespace, derived from this fixture's HOME.
+    monkeypatch.setenv('XDG_RUNTIME_DIR', '/tmp')
+    root = Path('/tmp') / ('t-sessions-' + str(os.getuid()) + '-' + cache._digest(cache._identity())[:16])
+    cache._private(root)
+    address = root / 'service.sock'
+    received, release = threading.Event(), threading.Event()
+    messages, children = [], []
+    popen = subprocess.Popen
+    def spawn(*a, **kw):
+        child = popen(*a, **kw)
+        children.append(child)
+        return child
+    monkeypatch.setattr(cache.subprocess, 'Popen', spawn)
+    with socket.socket(socket.AF_UNIX) as listener:
+        listener.bind(str(address))
+        listener.listen()
+        listener.settimeout(5)
+        def serve():
+            with listener.accept()[0] as connection:
+                with connection.makefile('rb') as stream:
+                    messages.append(json.loads(stream.readline()))
+                received.set()
+                release.wait(5)
+                try:
+                    connection.sendall(b'{"invalidated":["local"]}\n')
+                except OSError:
+                    pass
+        server = threading.Thread(target=serve)
+        server.start()
+        try:
+            cache.invalidate()
+            assert received.wait(3)
+            assert children[0].poll() is None
+            assert messages[0]['payload'] == {'targets': ['local']}
+            # The caller has returned while the service deliberately withholds
+            # acknowledgement. Only now permit the detached worker to finish.
+            release.set()
+            assert children[0].wait(timeout=5) == 0
+        finally:
+            release.set()
+            server.join(6)
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait()
+            address.unlink(missing_ok=True)
+            root.rmdir()
+
+
 def spec(target='local', host=None, context=None):
     return {'host': host or target, 'target': target, 'context': context or {}}
 
