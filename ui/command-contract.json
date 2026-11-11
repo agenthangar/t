@@ -848,6 +848,40 @@
             "tests/test_list_picker.py::test_list_always_prints_scoped_table"
           ],
           "notes": "Always print the scoped read-only table, including in terminals with fzf. Use session open for selection."
+        },
+        "wait": {
+          "argv": [
+            "session",
+            "list",
+            "--wait"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_session_wait.py::test_list_wait_is_explicit_and_readonly",
+            "tests/test_session_wait.py::test_wait_deadline_retains_rows_and_stops_queries"
+          ],
+          "notes": "Explicitly observe the shared cache refresh for up to 30 seconds, then use the existing list renderer and freshness notices. Fresh caches return immediately. Delayed shared spinner only on capable terminals; no picker or prompt. Ctrl-C cancels only the caller with 130. Timeout or service loss retains available rows; no false empty result."
+        },
+        "wait_redirected": {
+          "argv": [
+            "session",
+            "list",
+            "--wait"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_session_wait.py::test_list_wait_is_explicit_and_readonly",
+            "tests/test_session_wait.py::test_wait_deadline_retains_rows_and_stops_queries"
+          ],
+          "notes": "Explicit --wait is bounded, silent until results and prompt-free when redirected. Ordinary lists and MCP remain immediate; table schema is unchanged."
         }
       },
       "display_schema": "session_information",

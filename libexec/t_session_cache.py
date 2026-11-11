@@ -65,13 +65,27 @@ def _revision():
             ('bin/t', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py')]
 
 
-def _wire(operation, payload):
+def _wire(operation, payload, deadline=None):
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(2)
+        def budget():
+            remaining = 2 if deadline is None else min(2, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError('session cache deadline reached')
+            connection.settimeout(remaining)
+        budget()
         connection.connect(str(_runtime() / 'service.sock'))
+        budget()
         connection.sendall(json.dumps({'operation': operation, 'payload': payload, 'revision': _revision()}).encode() + b'\n')
-        with connection.makefile('rb') as stream:
-            raw = stream.readline(LIMIT + 1)
+        raw = bytearray()
+        while len(raw) <= LIMIT:
+            budget()
+            part = connection.recv(min(65536, LIMIT + 1 - len(raw)))
+            if not part:
+                break
+            raw.extend(part)
+            if b'\n' in part:
+                raw = raw.split(b'\n', 1)[0]
+                break
     if len(raw) > LIMIT:
         raise ValueError('session cache response too large')
     result = json.loads(raw)
@@ -80,14 +94,18 @@ def _wire(operation, payload):
     return result
 
 
-def request(operation, payload=None):
+def request(operation, payload=None, *, deadline=None):
     """Single API for discovery, lifecycle events, and private index artifacts."""
     payload = payload or {}
     _private(_runtime())
     try:
-        return _wire(operation, payload)
+        return _wire(operation, payload) if deadline is None else _wire(operation, payload, deadline)
     except (OSError, ValueError):
         pass
+    if deadline is not None:
+        # A waiter already contacted the service. Never restart it or extend the
+        # caller's deadline when that service disappears during observation.
+        return {'hosts': [], 'loading': False, 'unavailable': True}
     if operation == 'artifact':
         return {'value': None}  # Standalone live collectors must not start a daemon.
     _private(_runtime())
@@ -241,7 +259,9 @@ class _Memory:
                         generation = self.generations.get(spec['target'], 0)
                         self.submit(self.refresh, key, generation)
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
-                                      checked=entry['checked'], stale=stale, refreshing=entry['refreshing'],
+                                      checked=entry['checked'], stale=stale,
+                                      refreshing=entry['refreshing'] or (stale and now >= entry['retry']
+                                          and spec['target'] in self.active_targets),
                                       error=entry.get('error', ''), retry_at=entry['retry'],
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
