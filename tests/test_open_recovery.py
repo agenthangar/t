@@ -332,3 +332,30 @@ def test_recovery_menu_has_only_action_and_cancel(recovery,monkeypatch):
             return 'go'
     monkeypatch.setattr(recovery.runpy,'run_path',lambda *a,**kw:{'ShareUI':UI})
     assert recovery.ask({},'Title','Reason','Repair')
+
+
+@pytest.mark.parametrize('outcome', ['repaired', 'force', 'cancel'])
+def test_failed_open_prompts_for_repair_before_force(recovery, monkeypatch, outcome):
+    calls = []
+    monkeypatch.setattr(recovery.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(recovery.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(recovery.runpy, 'run_path', lambda *a, **kw: {'Config': lambda: None})
+    def ask(*args):
+        calls.append(args[-1])
+        return outcome != 'cancel'
+    monkeypatch.setattr(recovery, 'ask', ask)
+    class Target:
+        def __init__(self, *args):
+            self.backup = None
+        def repair(self):
+            calls.append('repair')
+            if outcome == 'force':
+                raise ValueError('original open failure')
+        def force(self, *, confirmed):
+            assert not confirmed  # Force retains its own confirmation after repair.
+            calls.append('force')
+    monkeypatch.setattr(recovery, 'Recovery', Target)
+    assert recovery.main(['repair', 'repo', '3', '0']) == (130 if outcome == 'cancel' else 0)
+    assert calls == (['Repair'] if outcome == 'cancel' else
+                     ['Repair', 'repair', 'force'] if outcome == 'force' else
+                     ['Repair', 'repair'])
