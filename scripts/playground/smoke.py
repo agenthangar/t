@@ -127,7 +127,9 @@ def main():
             terminal.send(b"\x02d")
             terminal.finish()
         assert (worktree / "smoke.txt").read_text() == "Keep this work across reattachment.\n"
-        assert "playground" in run("zsh", "-lic", "t session list").stdout
+        # Discovery is asynchronous after launch; explicitly wait before
+        # asserting the fresh inventory, then exercise the immediate alias.
+        assert "playground" in run("zsh", "-lic", "t session list --wait").stdout
         assert "playground" in run("zsh", "-lic", "t ls").stdout  # compatibility alias
         assert "Playground Claude stub" in run("zsh", "-lic", "t session read playground 1 --dump").stdout
         run("zsh", "-lic", "t session close playground 1 --yes")
