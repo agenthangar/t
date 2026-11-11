@@ -21,6 +21,18 @@ def run(*command, check=True):
     return result
 
 
+def expect_session_list(name):
+    """Cold discovery returns immediately while its cache refreshes in the background."""
+    deadline = time.monotonic() + 30
+    while True:
+        result = run("zsh", "-lic", "t session list")
+        if name in result.stdout:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"session list did not publish {name!r}:\n{result.stdout}\n{result.stderr}")
+        time.sleep(0.1)
+
+
 class Terminal:
     """A controlling terminal for the setup wizard and real tmux attach/detach."""
 
@@ -127,7 +139,7 @@ def main():
             terminal.send(b"\x02d")
             terminal.finish()
         assert (worktree / "smoke.txt").read_text() == "Keep this work across reattachment.\n"
-        assert "playground" in run("zsh", "-lic", "t session list").stdout
+        expect_session_list("playground")
         assert "playground" in run("zsh", "-lic", "t ls").stdout  # compatibility alias
         assert "Playground Claude stub" in run("zsh", "-lic", "t session read playground 1 --dump").stdout
         run("zsh", "-lic", "t session close playground 1 --yes")
