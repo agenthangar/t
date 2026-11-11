@@ -2591,9 +2591,9 @@ def test_tool_search_link_alone_never_becomes_a_session_pr(zsh, old_cache):
     assert r.stdout == f"{path}\t\t\n"
 
 
-@pytest.mark.parametrize("tabs", [True, False])
-def test_open_local_multi_picker(zsh, tmp_path, tabs):
-    """A batch opens extra slots before attaching, keeping aliases and local scope."""
+@pytest.mark.parametrize("windows", [True, False])
+def test_open_local_multi_picker(zsh, tmp_path, windows):
+    """A batch opens all slots in windows, keeping aliases and local scope."""
     (zsh.home / "code/api").mkdir(parents=True)
     stub = tmp_path / "stubbin/fzf"
     stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FZF_LOG\"\ncat\n")
@@ -2606,16 +2606,18 @@ def test_open_local_multi_picker(zsh, tmp_path, tabs):
         printf 'sid2\t%s\talias-4\tdetached\tactive\tSecond task\tclaude\tmodel\t2026-11-06T16:00:00Z\n' "$HOME/code/api"
         printf 'sid3\t%s\tweb-3\tdetached\tactive\tOther repo\tcodex\n' "$HOME/code/web"
       }
-      _dev_open_tab() { print -r -- "TAB $*"; TAB_RESULT; }
+      _dev_open_window() { print -r -- "WINDOW $*"; WINDOW_RESULT; }
       _t_dev api
       print -r -- "rc=$?"
-    '''.replace("TAB_RESULT", "return 0" if tabs else "return 1")
+    '''.replace("WINDOW_RESULT", "return 0" if windows else "return 1")
     result = zsh(snippet, _tty=True, FZF_LOG=str(log), FAKE_HAS_SESSION="1")
-    assert f"rc={0 if tabs else 1}" in result.stdout, result.stdout
-    assert "TAB t open alias 4 --cli --local" in result.stdout
-    assert ("Attach with: t open alias 4 --cli --local" in result.stdout) == (not tabs)
-    calls = zsh.log.read_text()
-    assert "attach-session -t =dev-api-2:" in calls
+    assert f"rc={0 if windows else 1}" in result.stdout, result.stdout
+    assert "WINDOW t open alias 4 --cli --local" in result.stdout
+    assert "WINDOW t open api 2 --cli --local" in result.stdout
+    assert ("Attach with: t open alias 4 --cli --local" in result.stdout) == (not windows)
+    assert ("Attach with: t open api 2 --cli --local" in result.stdout) == (not windows)
+    calls = zsh.log.read_text() if zsh.log.exists() else ''
+    assert "attach-session" not in calls and "switch-client" not in calls
     assert "new-session" not in calls and "dev-web-3" not in calls
     args = semantic_chrome(log.read_text())
     assert "--multi" in args and "space:put" in args
@@ -2651,26 +2653,27 @@ def test_open_remote_multi_picker_preserves_hosts(zsh, tmp_path):
         printf 'mini\tsid1\t%s\tapi-2\tdetached\tactive\tFirst\n' "$HOME/code/api"
         printf 'studio\tsid2\t%s\tother-4\tdetached\tactive\tSecond\n' "$HOME/code/api"
       }
-      _dev_open_tab() { print -r -- "TAB $*"; }
+      _dev_open_window() { print -r -- "WINDOW $*"; }
       _dev_remote_attach() { print -r -- "ATTACH $1"; }
       _dev_remote api
       print -r -- "rc=$?"
     ''', _tty=True)
     assert "rc=0" in result.stdout, result.stdout
-    assert "TAB t open other 4 --cli --host studio" in result.stdout
-    assert "ATTACH mini\tapi\t2" in result.stdout
-    assert result.stdout.index("TAB") < result.stdout.index("ATTACH")
+    assert "WINDOW t open other 4 --cli --host studio" in result.stdout
+    assert "WINDOW t open api 2 --cli --host mini" in result.stdout
+    assert "ATTACH " not in result.stdout
 
 
-def test_open_multi_inside_tmux_switches_first(zsh):
+def test_open_multi_inside_tmux_keeps_invoking_client(zsh):
     result = zsh(r'''
-      _dev_open_tab() { return 1; }
+      _dev_open_window() { return 1; }
       _dev_open_picks $'local\tapi\t2\nlocal\tapi\t4'
     ''', TMUX="isolated-stub")
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 1, result.stdout + result.stderr
     assert "Attach with: t open api 4 --cli --local" in result.stdout
-    assert "switch-client -t =dev-api-2:" in zsh.log.read_text()
-    assert "attach-session" not in zsh.log.read_text()
+    assert "Attach with: t open api 2 --cli --local" in result.stdout
+    calls = zsh.log.read_text() if zsh.log.exists() else ''
+    assert "switch-client" not in calls and "attach-session" not in calls
 
 
 def test_open_auto_remote_cancel_does_not_start_locally(zsh, tmp_path):
@@ -2695,7 +2698,7 @@ def test_open_auto_remote_cancel_does_not_start_locally(zsh, tmp_path):
 
 def test_open_multi_foreground_refused_before_opening(zsh):
     result = zsh(r'''
-      _dev_open_tab() { print UNEXPECTED_TAB; }
+      _dev_open_window() { print UNEXPECTED_WINDOW; }
       _dev_remote_attach() { print UNEXPECTED_ATTACH; }
       _dev_open_picks $'mini\tapi\t2\nmini\tapi\t4' 1
       print -r -- "rc=$?"
