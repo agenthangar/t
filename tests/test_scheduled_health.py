@@ -184,7 +184,7 @@ def test_monitor_reports_trigger_failure_even_if_a_newer_run_recovered(tmp_path,
     monkeypatch.setattr('sys.argv', ['scheduled_health.py'])
     recent = run(id=124, created_at=datetime.now(timezone.utc).isoformat())
     def api(repo, path, **kwargs):
-        if path.startswith('issues?'):
+        if path.startswith('releases?'):
             return [[]]
         if '/runs?' in path:
             return {'workflow_runs': [recent]}
@@ -195,3 +195,92 @@ def test_monitor_reports_trigger_failure_even_if_a_newer_run_recovered(tmp_path,
     health.main()
     assert [(args[2], args[3]) for args in calls] == [
         ('release.yml', '123-1-failure'), ('release.yml', None), ('scorecard.yml', None)]
+
+
+def release(number=14, **changes):
+    url = f'https://github.com/test/repo/releases/tag/v0.6.{number}'
+    item = dict(id=number, tag_name=f'v0.6.{number}', draft=False, prerelease=False,
+                published_at=(NOW + timedelta(minutes=number)).isoformat(), html_url=url,
+                assets=[dict(name=name, browser_download_url=url + '/' + name)
+                        for name in ('t.tar.gz', 'SHA256SUMS')])
+    item.update(changes)
+    return item
+
+
+def release_api(monkeypatch, publications):
+    calls = []
+    def api(repo, path, **kwargs):
+        calls.append((path, kwargs))
+        if path.startswith('releases?'):
+            # Multiple pages and reverse order must not change announcement order.
+            return [[item] for item in reversed(publications)]
+        assert path.startswith('commits/v0.6.')
+        return {'sha': 'a' * 40}
+    monkeypatch.setattr(health, 'api', api)
+    return calls
+
+
+def test_announces_latest_stable_release_once_with_download_and_commit_links(tmp_path, monkeypatch):
+    publications = [release(13), release(), release(15, draft=True),
+                    release(16, prerelease=True), release(17, tag_name='preview'),
+                    release(18, published_at=None)]
+    calls = release_api(monkeypatch, publications)
+    messages, state = [], {'release.yml': {'active': None, 'seen': ['123-1-failure']}}
+    path = tmp_path / 'state.json'
+    monkeypatch.setattr(health, 'send_discord', lambda url, embed: messages.append(embed))
+    health.notify_releases('test/repo', 'webhook', state, path)
+    # A rerun / validation-only completion reads the same publication metadata.
+    health.notify_releases('test/repo', 'webhook', health.json.loads(path.read_text()), path)
+    assert len(messages) == 1
+    card = messages[0]
+    assert card['title'] == 'v0.6.14 released' and card['url'] == release()['html_url']
+    assert 'Commit aaaaaaa' in card['fields'][0]['value']
+    assert 't.tar.gz' in card['fields'][1]['value'] and 'SHA256SUMS' in card['fields'][1]['value']
+    assert state['release-announcements']['seen'] == [14]
+    assert state['release.yml']['seen'] == ['123-1-failure']
+    assert calls[0] == ('releases?per_page=100', {'paginate': True})
+    assert len([call for call in calls if call[0].startswith('commits/')]) == 1
+
+
+@pytest.mark.parametrize('publications', [[], [release(draft=True)], [release(prerelease=True)]])
+def test_no_announcement_for_empty_or_unpublished_stable_releases(publications, tmp_path, monkeypatch):
+    release_api(monkeypatch, publications)
+    monkeypatch.setattr(health, 'send_discord', lambda *a: pytest.fail('unexpected announcement'))
+    state, path = {}, tmp_path / 'state.json'
+    health.notify_releases('test/repo', 'webhook', state, path)
+    assert not state and not path.exists()
+
+
+def test_incomplete_assets_wait_and_are_recovered_even_after_newer_publication(tmp_path, monkeypatch):
+    publications = [release(13), release(14, assets=[])]
+    release_api(monkeypatch, publications)
+    messages, path = [], tmp_path / 'state.json'
+    monkeypatch.setattr(health, 'send_discord', lambda url, embed: messages.append(embed['title']))
+    health.notify_releases('test/repo', 'webhook', {}, path)
+    assert messages == []
+    publications.extend([release(15), release(16)])
+    health.notify_releases('test/repo', 'webhook', health.json.loads(path.read_text()), path)
+    assert messages == ['v0.6.15 released', 'v0.6.16 released']
+    publications[1] = release(14)
+    health.notify_releases('test/repo', 'webhook', health.json.loads(path.read_text()), path)
+    assert messages[-1] == 'v0.6.14 released' and len(messages) == 3
+
+
+def test_failed_first_delivery_retries_before_newer_release_without_replaying_successes(tmp_path, monkeypatch):
+    publications = [release(13), release()]
+    release_api(monkeypatch, publications)
+    path, messages = tmp_path / 'state.json', []
+    def deliver(url, embed):
+        if embed['title'] == 'v0.6.14 released':
+            raise RuntimeError('delivery failed')
+        messages.append(embed['title'])
+    monkeypatch.setattr(health, 'send_discord', deliver)
+    with pytest.raises(RuntimeError, match='delivery failed'):
+        health.notify_releases('test/repo', 'webhook', {}, path)
+    assert health.json.loads(path.read_text())['release-announcements']['seen'] == []
+    publications.append(release(15))
+    monkeypatch.setattr(health, 'send_discord', lambda url, embed: messages.append(embed['title']))
+    health.notify_releases('test/repo', 'webhook', health.json.loads(path.read_text()), path)
+    assert messages == ['v0.6.14 released', 'v0.6.15 released']
+    health.notify_releases('test/repo', 'webhook', health.json.loads(path.read_text()), path)
+    assert len(messages) == 2

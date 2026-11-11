@@ -69,11 +69,21 @@ the tap dispatch; no additional credential is required.
   Rerunning only a failed publication job cannot reuse validation from an older
   attempt. Recovery revalidates the exact original commit before any asset writes.
 
-## Scheduled failure alerts
+## Discord release announcements and failure alerts
 
 [Scheduled health](../.github/workflows/scheduled-health.yml) runs when Releases
 or Scorecard completes and every six hours. It posts Discord failure and recovery
 messages with the run, commit, attempt and failed-job links.
+
+The same workflow announces newly published stable `vX.Y.Z` releases with links
+to release notes, the tagged commit, the archive and checksums. It waits until
+both release assets exist; drafts, prereleases and validation-only runs do not
+create release announcements. Initial setup announces the latest stable release
+only. Subsequent checks recover missed announcements, including a publication
+whose workflow failed afterward. Manually published releases are discovered by
+the next health check, within the six-hour polling interval when GitHub is healthy.
+Acknowledged releases are remembered across reruns independently of failure and
+recovery alerts. The same cache eviction and acknowledgement caveats below apply.
 
 To configure delivery:
 
