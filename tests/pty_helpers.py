@@ -46,6 +46,8 @@ def _run_under_pty(argv, env, timeout=60):
 
 
 def run_terminal(command, env, cwd, size, actions):
+    # Temporary terminal harnesses must not become measured product sources.
+    env = {key: value for key, value in env.items() if not key.startswith('COV_CORE_')}
     master, slave = pty.openpty()
     before = termios.tcgetattr(slave)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', size[1], size[0], 0, 0))
