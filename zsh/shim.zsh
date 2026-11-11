@@ -613,13 +613,14 @@ _t_list_snapshot() {
   _t_open_selected "$selected" "" ""
 }
 
-# Desktop selections open immediately; the first CLI selection uses this terminal
-# and the remaining CLI selections get tabs. Preserve the selected host/interface,
-# so a configured default never converts an existing owner as a side effect.
+# Multi-selections each get a new window; a single selection uses this terminal.
+# Preserve the selected host/interface so a configured default never converts an
+# existing owner as a side effect.
 _t_open_selected() {
   local selected="$1" app="$2" cli="$3" row host label state mode cmd rc=0
-  local -a fields args first
-  for row in "${(@f)selected}"; do
+  local -a fields args first rows
+  rows=("${(@f)selected}")
+  for row in "${rows[@]}"; do
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
     if [[ $state == app ]]; then
@@ -640,11 +641,11 @@ _t_open_selected() {
     elif [[ $mode == --cli ]]; then
       args+=(--local)
     fi
-    if (( ! $#first )); then
-      first=("${args[@]}")
-    else
+    if (( $#rows > 1 )); then
       cmd="t open ${(j: :)${(@q)args}}"
-      _dev_open_tab "$cmd" || { print -u2 -r -- "Could not open a terminal. Attach with: $cmd"; rc=1; }
+      _dev_open_window "$cmd" || { print -u2 -r -- "Could not open a terminal window. Attach with: $cmd"; rc=1; }
+    else
+      first=("${args[@]}")
     fi
   done
   if (( $#first )); then

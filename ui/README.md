@@ -1092,7 +1092,7 @@ Caller-shell-only operations, browser launches, private workers, and nested remo
 wrappers are rejected before connecting. Underlying command help remains local.
 
 Remote open reads and scopes inventory on the selected host, then uses the shared
-local picker and opens extra local tabs before the first attachment. Failed tab
+local picker and opens each multi-selected session in a new local window. Failed window
 creation reports an exact attach command and a nonzero result. Desktop rows are
 excluded from this CLI-only remote picker.
 
@@ -1166,13 +1166,15 @@ The filtered multi-selection mode of `t session open` prioritizes session identi
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
 Compact rows use the shared Unicode width helpers; full task text and metadata
 remain searchable. Hidden host/session/state identity fields remain unchanged.
-Extra tabs target the originating terminal window and commands target only the
-new tab. Switching tabs or windows never redirects commands into an existing tab.
-Terminal tab creation requires the originating window in front. If focus moves
-away, the origin is unavailable, or tab creation fails or is ambiguous, create a
-new window with its command atomically, without an activate call. If window
-creation also fails, retain the attach-command fallback and expose the automation
-error. iTerm uses the tab returned by its creation API.
+One selection attaches in the invoking terminal. With multiple selections, every
+selected session, including the first, opens in its own new Terminal or iTerm2
+window; leave the invoking terminal available. Commands target only new windows:
+both Terminal and iTerm create the window with its command atomically. iTerm's
+command runs through `zsh -lic`. Do not send keystrokes or activate an existing
+window. If creation fails or the terminal is unsupported, report the exact attach
+command for each unopened selection, continue the batch, and return nonzero.
+Preserve each row's exact host and foreground/session identity. Single opens and
+`--fg` retain their existing attachment behavior.
 Explicit targets still bypass selection. Open and close pickers label displayed
 columns in a non-selectable header preserved across filter changes. Narrow
 filtered views use full height and smaller margins to retain controls and rows.
