@@ -82,11 +82,13 @@ class Checkpoint:
         self.handoff = handoff
         self.declined = False
         self.notice = ''
+        self.startup_failure = False
 
     def save(self):
         private_write(self.directory/'checkpoint.json', {
             'workspace': self.cwd, 'thread_id': self.thread, 'turn_id': self.turn,
             'cloud_model': self.model, 'requests': self.users, 'recent_evidence': list(self.evidence),
+            'startup_failure': self.startup_failure,
             'unavailable_reason': self.invalid, 'updated_at': time.time()})
 
     def user(self, content):
@@ -119,6 +121,8 @@ class Checkpoint:
     def client(self, message):
         with self.lock:
             method, params = message.get('method'), message.get('params', {})
+            if method == 'account/read' and not self.thread:
+                self.pending[message.get('id')] = method
             if (method in ('thread/start', 'thread/resume', 'thread/fork') and not params.get('ephemeral')
                     and params.get('threadSource') in (None, 'user')):
                 self.pending[message.get('id')] = method
@@ -144,9 +148,21 @@ class Checkpoint:
         with self.lock:
             if 'id' in message and message['id'] in self.pending:
                 request = self.pending.pop(message['id'])
+                error = message.get('error', {})
+                # Correlate a native bootstrap RPC, never terminal output or an
+                # arbitrary error notification. Routing discovery is unavailable,
+                # not proof of an outage: only Ask offers an explicit local choice.
+                if not self.thread and request in ('account/read', 'thread/start') and isinstance(error, dict):
+                    routing = error.get('code') == -32603 and error.get('message') in (
+                        'workspace routing discovery failed',
+                        'account/read failed: workspace routing discovery failed')
+                    self.startup_failure = self.startup_failure or routing or connection_failure(error.get('data', error))
+                    if self.startup_failure:
+                        self.save()
                 result = message.get('result', {})
                 thread = result.get('thread', {})
                 if thread.get('id'):
+                    self.startup_failure = False
                     self.thread, self.turn = thread['id'], None
                     self.users.clear(); self.evidence.clear()
                     if self.seed:
@@ -332,6 +348,27 @@ def launch_options(argv, cwd):
     return server, local
 
 
+def startup_prompt(argv):
+    """Preserve a fresh launch's text; never invent history or drop attachments."""
+    values = {'-c', '--config', '--enable', '--disable', '-m', '--model', '-s', '--sandbox',
+              '-a', '--ask-for-approval', '--add-dir', '-C', '--cd'}
+    text, args = [], iter(argv[1:])
+    for arg in args:
+        if arg == '--':
+            text.extend(args)
+            break
+        if arg in ('-i', '--image'):
+            raise ValueError('The startup request contains images; retry cloud to preserve the complete request.')
+        if arg in values:
+            next(args, None)  # launch_options already validates these values.
+        elif not arg.startswith('-'):
+            text.append(arg)
+    prompt = ' '.join(text)
+    if len(prompt) > USER_LIMIT:
+        raise ValueError('The startup request exceeds the local checkpoint budget; retry cloud.')
+    return prompt or None
+
+
 def stop(process, group=False):
     if process is None:
         return
@@ -432,7 +469,7 @@ def stop_runtime(process):
         time.sleep(.05)
 
 
-def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, server_options=None):
+def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None, env=None, server_options=None):
     if chosen.get('on_cloud_failure') == 'ask' and monitor is None:
         return recover(argv, chosen, cwd)
     local = inference()
@@ -527,6 +564,8 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
                             paused(owned[0])
                             continue
                         checkpoint.server(message)
+                        if observer is not None:
+                            observer(message)
                         channel.send(raw.rstrip(b'\n'))
                 except Exception as exc:
                     failures.append(str(exc))
@@ -538,6 +577,10 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
                 with writes:
                     if any(time.monotonic()-started > 10 for _, started in owned_requests.values()):
                         failures.append('Timed out pausing the owned cloud turn')
+                if monitor is not None and checkpoint.startup_failure:
+                    # The frontend can exit before monitor runs. Retain the
+                    # correlated failure and stop both owners before showing UI.
+                    break
                 if failures or backend.poll() is not None:
                     try:
                         frontend.wait(timeout=.3)
@@ -564,7 +607,8 @@ def supervise(argv, chosen, cwd, *, monitor=None, checkpoint=None, env=None, ser
                         continue
                     try:
                         handoff = checkpoint.prompt()
-                        row = next((r for r in local['catalogue'](context=chosen['context_tokens'])['models']
+                        leased = local['leased_runtime'](chosen)
+                        row = {'ready': True} if leased else next((r for r in local['catalogue'](context=chosen['context_tokens'])['models']
                                     if r['model'] == chosen['model'] and r['provider'] == chosen['provider']), None)
                         if not row or not row.get('ready'):
                             raise ValueError('Selected local model is not installed and ready; no download was attempted.')
@@ -687,7 +731,7 @@ def recovery_ui(frontend=None, terminal=None):
             frontend.send_signal(signal.SIGWINCH)
 
 
-def choose_local(ui, local, chosen, reason='Cloud connection lost', failed=False, blocked=''):
+def choose_local(ui, local, chosen, reason='Cloud connection lost', failed=False, blocked='', startup=False):
     """A ready model is the action: no details or confirmation screen in between."""
     rows, values, disabled, selections = [], {}, {}, {}
     try:
@@ -705,13 +749,16 @@ def choose_local(ui, local, chosen, reason='Cloud connection lost', failed=False
         values[key] = f"Memory fit {fit} · " + ('Ready' if ready else 'Unavailable') + ' · ' + row['provider'] + (' · Default' if current else '')
         if blocked or not ready:
             disabled[key] = blocked or row.get('verification_error') or row.get('reason') or 'Install and verify this model before offline use.'
-    rows.append(('pause', 'Keep task paused' if failed else 'Pause and retry cloud'))
-    result = ui.pick('Continue locally', rows, values=values, disabled=disabled,
-                     sections={rows[0][0]: 'Local models' if models else 'Connection', 'pause': 'Connection'},
+    if startup:
+        rows.append(('retry', 'Retry cloud'))
+    rows.append(('pause', 'Cancel startup' if startup else 'Keep task paused' if failed else 'Pause and retry cloud'))
+    result = ui.pick('Start locally' if startup else 'Continue locally', rows, values=values, disabled=disabled,
+                     sections={rows[0][0]: 'Local models' if models else 'Connection',
+                               'retry' if startup else 'pause': 'Connection'},
                      context=[reason, 'Choose a ready model to continue immediately. This session only.'] +
                              ([] if models else ['No ready local models. Downloads require connectivity.']),
                      primary=('enter', 'Continue', 'with selected model'), back_label='pause')
-    return selections.get(result)
+    return 'retry' if startup and result == 'retry' else selections.get(result)
 
 
 def choose_cloud(ui, previous):
@@ -869,6 +916,32 @@ def recover(argv, chosen, cwd):
         if current == 'cloud':
             outcome = supervise(current_argv, dict(chosen, on_cloud_failure='pause'), cwd,
                                 checkpoint=checkpoint, monitor=cloud_monitor)
+            if (isinstance(outcome, dict) and not outcome['action'] and checkpoint.startup_failure
+                    and outcome['exit_code'] not in (0, 130)):
+                # A failed bootstrap has no conversation to hand off. The owned
+                # runtime has stopped; let the user retry or start fresh locally.
+                blocked = ''
+                try:
+                    # A returning conversation already has a validated bounded
+                    # checkpoint; its serialized handoff includes extra framing.
+                    initial = checkpoint.handoff if checkpoint.seed is not None else startup_prompt(current_argv)
+                except ValueError as exc:
+                    initial, blocked = None, str(exc)
+                private_write(directory/'status.json', {'state': 'startup_failed', 'reason': 'Cloud startup unavailable'})
+                with recovery_ui() as ui:
+                    choice = choose_local(ui, local, selected, 'Cloud startup unavailable. No conversation was started.',
+                                          startup=True, blocked=blocked)
+                if choice == 'retry':
+                    continue
+                if choice is None:
+                    return 1
+                selected = choice
+                if initial and checkpoint.seed is None:
+                    checkpoint.user([{'type': 'text', 'text': initial}])
+                checkpoint.save()
+                seed, handoff = checkpoint.seed or checkpoint, initial
+                current = 'local'
+                continue
             if not isinstance(outcome, dict) or not outcome['action']:
                 return outcome['exit_code'] if isinstance(outcome, dict) else outcome
             previous = checkpoint.model
@@ -881,7 +954,7 @@ def recover(argv, chosen, cwd):
             offered = False
             def local_monitor(cp, frontend, terminal):
                 nonlocal offered
-                if offered or not probe.ready.is_set() or cp.active or not cp.thread:
+                if offered or not probe.ready.is_set() or cp.active or not cp.thread or not cp.users:
                     return None
                 offered = True
                 try:
@@ -901,12 +974,12 @@ def recover(argv, chosen, cwd):
                 return None
             def runner(local_argv, env):
                 # UI uses the same isolated home and permissions as its local backend.
-                native = [*continuation, '--', handoff]
+                native = continuation + (['--', handoff] if handoff else [])
                 options = local_server_options(local_argv)
                 return supervise(native, dict(selected, on_cloud_failure='pause'), cwd, monitor=local_monitor,
                                  checkpoint=checkpoint, env=env, server_options=options)
             try:
-                outcome = local['lead']([*continuation, '--', handoff], cwd=cwd,
+                outcome = local['lead'](continuation + (['--', handoff] if handoff else []), cwd=cwd,
                                        chosen=dict(selected, mode='local-only', on_cloud_failure='pause'), runner=runner)
                 if not isinstance(outcome, dict):
                     return outcome

@@ -18,20 +18,30 @@ The [Releases workflow](../.github/workflows/release.yml) runs daily at **09:17 
 (01:17 Pacific standard time / 02:17 Pacific daylight time). GitHub may delay
 scheduled runs. It also supports **Run workflow** on `main` with an empty `tag`
 input to perform the same check immediately.
+Select `validate_only=true` to exercise the complete nightly validation without
+publishing a release.
 
 The workflow compares the fetched main commit with the highest published stable
 `vX.Y.Z` release, ignoring drafts and prereleases. No new commits means no release.
-All commits count, including documentation and workflow changes. When changes
-exist, the newest push-triggered CI run for that exact commit must have completed
-successfully. Pending, failed, cancelled, or missing CI leaves the commits for a
-later run. The workflow does not enable macOS CI or native desktop tests.
+All commits count, including documentation and workflow changes. Every nightly
+run invokes full Linux CI for the pinned commit, even when there is nothing new
+to publish. This includes all tests, combined 97% coverage, real compatibility
+tests on both fzf versions, install smoke, CLI/shell contracts and security scans.
+Failed or cancelled validation fails the workflow and prevents publication.
+The workflow does not enable macOS CI or native desktop tests.
 
 For eligible changes, automation increments only the patch number. It pins the
-commit, builds the runtime archive, verifies checksums and installation in an
+commit, waits for full validation, builds the runtime archive, verifies checksums and installation in an
 isolated home, and checks the installed version. It then creates a draft with
 commit notes and a comparison link, uploads `t.tar.gz` and `SHA256SUMS`, publishes
 the release, and dispatches the existing Homebrew formula update. It does not
 commit a version bump back to main.
+
+The successful full CI gate produces a `release-validation` artifact. Publication
+requires its commit, workflow run ID and attempt to match the archive checkout
+and current run. A fast PR/push check, evidence from a different commit, or a
+previous attempt cannot authorize a release. Testing precedes tag creation;
+separate cron schedules are never used to order validation and publication.
 
 Publication and tap dispatch run in the same workflow because releases created
 with `GITHUB_TOKEN` do not start a second release-triggered workflow. The existing
@@ -54,8 +64,42 @@ the tap dispatch; no additional credential is required.
   pinned Git tree and their checksums; conflicting assets cause failure instead
   of being overwritten. Investigate such a failure before retrying.
 - Runs are serialized without cancelling an active publication. If publication
-  succeeds but the tap update fails, rerun the failed job or use the explicit
+  succeeds but the tap update fails, rerun **all jobs** or use the explicit
   tag invocation above. An unchanged main does not generate a replacement release.
+  Rerunning only a failed publication job cannot reuse validation from an older
+  attempt. Recovery revalidates the exact original commit before any asset writes.
+
+## Scheduled failure alerts
+
+[Scheduled health](../.github/workflows/scheduled-health.yml) runs when Releases
+or Scorecard completes and every six hours. It posts Discord failure and recovery
+messages with the run, commit, attempt and failed-job links.
+
+To configure delivery:
+
+1. In Discord, open **Server Settings → Integrations → Create Webhook**. Choose
+   a text channel, name the webhook `t CI`, and copy its webhook URL.
+2. In this repository's **Settings → Secrets and variables → Actions**, create
+   a repository secret named `CI_ALERT_WEBHOOK_URL` containing the copied URL.
+   Use the native URL without a `/github` suffix. Never commit the URL.
+3. Set the Discord channel's notifications to **All Messages**. Messages do not
+   ping everyone or roles; personal Discord/device preferences control push delivery.
+4. On main, use **Scheduled health → Run workflow → test_notification=true**.
+   Verify the labeled test appears in the channel and reaches your device.
+
+The notifier waits for Discord to confirm message creation and retries transient
+failures. Failed delivery fails the workflow instead of being recorded as sent.
+Actions cache holds non-secret deduplication state, so repeated checks do not
+notify again; recovery sends one follow-up. Cache eviction or an interrupted
+acknowledgement can cause a duplicate alert. No GitHub issue is created.
+
+The watchdog also alerts when a workflow is disabled, a run remains incomplete
+for two hours, no nightly run has started within 36 hours, or no weekly Scorecard
+run has started within eight days. A pending recovery does not close an incident.
+GitHub schedules are best effort: this watchdog also runs on GitHub, so a platform
+outage that prevents every workflow from starting requires external monitoring.
+Only trusted main code executes; source-run logs and artifacts are not executed
+by the notifier. Its GitHub token has read-only contents and Actions access.
 
 The implementation is in [scripts/release.py](../scripts/release.py). Its planning
 command is read-only; publishing is confined to the archive job. The planner's

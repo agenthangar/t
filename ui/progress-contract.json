@@ -448,6 +448,126 @@
     "libexec/t_local_inference.py:download_command:subprocess.Popen": {
       "kind": "background",
       "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
+    },
+    "libexec/t_session_cache.py:request:subprocess.Popen": {
+      "kind": "protocol",
+      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+    },
+    "libexec/t_session_cache.py:request:time.sleep": {
+      "kind": "protocol",
+      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+    },
+    "libexec/t_session_cache.py:_collect:subprocess.run": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_session_cache.py:_serve:time.sleep": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_session_discovery.py:collect:subprocess.run": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_lifecycle.py:_discovery_changed:subprocess.run": {
+      "kind": "protocol",
+      "reason": "A bounded private cache invalidation runs after lifecycle effects; it must preserve action protocol output and cannot roll back a completed operation."
+    },
+    "libexec/t_eval.py:create_run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded local Git metadata lookup records the source revision in the immutable run manifest, without terminal output."
+    },
+    "libexec/t_eval.py:launch:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts an owned detached worker; waits at most five seconds for its durable ownership marker. Progress is subsequently read from checkpointed run state."
+    },
+    "libexec/t_eval.py:launch:time.sleep": {
+      "kind": "background",
+      "reason": "Starts an owned detached worker; waits at most five seconds for its durable ownership marker. Progress is subsequently read from checkpointed run state."
+    },
+    "libexec/t_eval_cli.py:choose:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The shared fzf picker owns terminal input and rendering until selection or cancellation."
+    },
+    "libexec/t_eval_engine.py:run:subprocess.run": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:harbor_python:subprocess.run": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:child_job:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:child_job:time.sleep": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:checkpoint:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:native_exec:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:outage_child.observe:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:outage:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_trial.py:outage:select.select": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:runtime_owned:subprocess.run": {
+      "kind": "background",
+      "reason": "Runs in the detached evaluation worker or its isolated container. The durable event journal and run phase expose progress; terminal animation must not corrupt native protocol output."
+    },
+    "libexec/t_eval_engine.py:native_codex:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Background evaluation preparation checkpoints the pinned official native Linux CLI download without terminal output."
+    },
+    "libexec/t_eval_engine.py:prepare_worker_sandbox:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Detached evaluation preparation records the sandbox policy download phase in its durable journal before bounded network access."
+    },
+    "libexec/t_eval_engine.py:workflow_python:urllib.request.urlopen": {
+      "kind": "background",
+      "reason": "Detached evaluation preparation checkpoints the pinned workflow interpreter download before bounded network access."
+    },
+    "libexec/t_runners.py:_local_target:subprocess.Popen": {
+      "kind": "phase",
+      "reason": "The CLI wraps runner execution in its snapshot-test spinner; machine callers receive durable run receipts."
+    },
+    "libexec/t_runners.py:_local_target:time.sleep": {
+      "kind": "phase",
+      "reason": "Bounded local child observation inside the runner spinner; the child owns execution timeout and cancellation."
+    },
+    "libexec/t_watch.py:owner:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ancestry verification for activity metadata; never emit progress into MCP or JSON output."
+    },
+    "libexec/t_watch.py:wait:time.sleep": {
+      "kind": "protocol",
+      "reason": "Explicit bounded watch: progress callback reports meaningful changes and machine callers receive the final wait result."
+    },
+    "libexec/t_watch.py:github.read:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Deadline-bounded provider read inside the explicit watch loop with state-change progress."
+    },
+    "libexec/t_workflow.py:resolve_context:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded read-only Git identity lookup for native hook and JSON context output."
+    },
+    "libexec/t_workflow_install.py:repositories:subprocess.run": {
+      "kind": "phase",
+      "reason": "Bounded local worktree inventory before listing the affected files for installer confirmation."
     }
   },
   "shell": [

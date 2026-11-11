@@ -796,3 +796,97 @@ def test_early_progress_interrupt_and_partial_source_upload(runners,tmp_path,mon
     target['dispatched']=False
     r._save(value,directory)
     assert r.cancel(value['id'])['targets']['worker']['status']=='cancelled'
+
+
+def local_repo(tmp_path):
+    root = tmp_path / 'repo'
+    root.mkdir()
+    (root / 'input.txt').write_text('committed')
+    for args in (['init', '-q'], ['add', 'input.txt'],
+                 ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'init']):
+        subprocess.run(['git', '-C', str(root), *args], check=True)
+    (root / 'input.txt').write_text('edited')
+    return root
+
+
+def test_local_default_and_explicit_target_constraints(runners, monkeypatch):
+    r = runners
+    data = config()
+    data['runners']['default_targets'] = []
+    monkeypatch.setattr(r.platform, 'system', lambda: 'Linux')
+    monkeypatch.setattr(r.platform, 'machine', lambda: 'x86_64')
+    assert r.select_targets(data)['local']['type'] == 'local'
+    del data['runners']['default_targets']
+    assert r.select_targets(data)['local']['type'] == 'local'
+    assert r.select_targets(data, targets=['worker'])['worker']['type'] == 'ssh'
+    assert r.select_targets(data, targets=['local'])['local']['type'] == 'local'
+    for kwargs in ({'os_filter': 'macos'}, {'capabilities': ['gpu']}):
+        with pytest.raises(ValueError, match='no runner targets'):
+            r.select_targets(data, **kwargs)
+    with pytest.raises(ValueError, match='unknown'):
+        r.select_targets(data, targets=['missing'])
+
+
+def test_local_snapshot_logs_artifacts_and_timeout(runners, tmp_path):
+    import sys
+    r = runners
+    root = local_repo(tmp_path)
+    command = [sys.executable, '-c', "from pathlib import Path; print(Path.cwd()); print(Path('input.txt').read_text()); Path('result.txt').write_text('artifact'); Path('input.txt').write_text('isolated')"]
+    result = r.start(root, {}, command, artifacts=['result.txt'])
+    assert result['status'] == 'succeeded' and result['exit_code'] == 0
+    assert list(result['targets']) == ['local']
+    assert (root / 'input.txt').read_text() == 'edited'
+    logs = r.logs(result['id'])['local']
+    assert 'edited' in logs and str(root) not in logs
+    assert r.artifacts(result['id'])['local'].endswith('artifacts.tar')
+    assert r.cleanup(result['id'])['status'] == 'succeeded'
+    result = r.start(root, {}, [sys.executable, '-c', 'import time; time.sleep(20)'], timeout=1)
+    assert result['targets']['local']['status'] == 'timed_out'
+    assert result['status'] == 'failed'
+
+
+def test_local_running_job_cancellation(runners, tmp_path):
+    import sys
+    import threading
+    import time
+    r = runners
+    root = local_repo(tmp_path)
+    job, results = [], []
+    started = threading.Event()
+    def progress(receipt):
+        job.append(receipt['id'])
+        started.set()
+    thread = threading.Thread(target=lambda: results.append(r.start(root, {},
+        [sys.executable, '-c', 'import time; time.sleep(20)'], progress=progress)))
+    thread.start()
+    assert started.wait(5)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if r.status(job[0])['targets']['local'].get('dispatched'):
+            break
+        time.sleep(.02)
+    r.cancel(job[0])
+    thread.join(5)
+    assert not thread.is_alive()
+    assert results[0]['targets']['local']['status'] == 'cancelled'
+    assert r.cleanup(job[0])['targets']['local']['status'] == 'cancelled'
+
+
+def test_local_result_survives_observer_exit_without_status_writes(runners, tmp_path):
+    import sys
+    r = runners
+    result = r.start(local_repo(tmp_path), {}, [sys.executable, '-c', 'print("finished")'])
+    directory = r._job_dir(result['id'])
+    result['status'] = 'running'
+    result['targets']['local']['status'] = 'running'
+    r._save(result, directory)
+    before = (directory / 'receipt.json').read_bytes()
+    observed = r.status(result['id'])
+    assert observed['status'] == 'succeeded'
+    assert observed['targets']['local']['result']['exit_code'] == 0
+    assert (directory / 'receipt.json').read_bytes() == before
+    data = json.loads((directory / 'local/result.json').read_text())
+    data['id'] = 'different-token'
+    (directory / 'local/result.json').write_text(json.dumps(data))
+    with pytest.raises(ValueError, match='token and snapshot'):
+        r.status(result['id'])

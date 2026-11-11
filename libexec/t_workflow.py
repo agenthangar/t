@@ -20,6 +20,7 @@ END = '<!-- t agent-workflow: end -->'
 ISSUE_BEGIN = '<!-- t public-issues: begin -->'
 ISSUE_END = '<!-- t public-issues: end -->'
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
+SPEEDS = ('inherit', 'standard', 'fast', 'ultrafast')
 SEPARATE_STAGES = ('planning', 'review')
 MODEL_STAGES = ('planning', 'implementation', 'review')
 TOOLS = ('codex', 'claude', 'cursor')
@@ -40,6 +41,10 @@ PERMISSIONS = {
 # One catalogue drives validation, menu choices, summaries and native instructions.
 # Absent keys mean no preference, not a directive to do the opposite.
 BEHAVIORS = {
+    'job_watching': {'label': 'Job watching', 'choices': {
+        'automatic': ('Automatically', 'Watch submitted jobs with bounded code-driven waits, rather than repeated model-driven polling. Retain the run ID, snapshot or commit, and next authorized task step. Use `t runners runs watch ID --timeout 60 --json` for runner receipts, `wait_task` for local worker tasks, and `t runners runs watch OWNER/REPO#PR@HEAD_SHA --timeout 60 --json` for GitHub checks. Recheck the PR head before accepting CI results. A timed-out wait leaves the job pending; stopping observation does not cancel it. On success inspect evidence and continue the next authorized step; on failure diagnose, fix and rerun affected checks. Resolve cancelled or unavailable jobs explicitly. A detached watcher alone cannot wake an agent: use supported notifications or resume the bounded wait. Preserve all approval gates.'),
+        'on_request': ('Only when requested', 'Watch jobs only when explicitly requested or required by the task or repository. Keep pending jobs and their next steps identifiable; never treat a pending, unavailable or timed-out wait as successful validation.'),
+    }},
     'design_system': {'label': 'Design system', 'choices': {
         'auto': ('Automatically', 'For user-facing design, including terminal interfaces, automatically discover repository-owned design guidance in the active worktree. Reuse its components, tokens, styles and interaction patterns in prototypes and implementation. Prefer a safe root DESIGN.md, then a single root design-system.md or design_system.md, then a single discovered source. Discovery considers design documentation, links from agent instructions, and local tokens/components/Storybook; exclude dependencies, generated files and symlinks. If candidates are ambiguous, ask the user to choose; if none exists, report that and offer to draft guidance. Never invent a source or create files automatically. Explicit repository selections override discovery. This preference is independent of previews.'),
         'off': ('Off', 'Do not add design-system discovery or a selected design-source instruction from this workflow. Continue following repository and task instructions.'),
@@ -184,7 +189,7 @@ BEHAVIOR_DEFAULTS = {
     'frontend_implement_before_approval': 'no', 'frontend_preview': 'fast_reload',
     'frontend_browser': 'automatic', 'cli_preview': 'run', 'cli_launch': 'on_request',
     'cli_planning_preview': 'before_implementation', 'cli_planning_approval': 'required',
-    'test_timing': 'before_pr',
+    'test_timing': 'before_pr', 'job_watching': 'automatic',
 }
 
 
@@ -483,9 +488,9 @@ PRECEDENCE = ('Explicit task instructions > repository rules > custom Markdown >
               'The selected repository workflow replaces the global default; exclusion suppresses all workflow instructions.')
 DEFAULT = {
     'enabled': True,
-    'planning': {'model': 'gpt-6-astra', 'effort': 'auto'},
-    'implementation': {'model': 'gpt-6.1-sol', 'effort': 'auto'},
-    'review': {'model': 'gpt-6-astra', 'effort': 'auto'},
+    'planning': {'model': 'gpt-6.1-sol', 'effort': 'medium'},
+    'implementation': {'model': 'gpt-6.1-sol', 'effort': 'medium'},
+    'review': {'model': 'gpt-6-astra', 'effort': 'medium'},
 }
 RUNNER_DEFAULT = {'default_targets': [], 'timeout_seconds': 900,
                   'queue_timeout_seconds': 300, 'artifacts': [], 'targets': {}}
@@ -513,6 +518,8 @@ def validate_runners(value):
         raise ValueError('runner targets must be an object with at most 16 entries')
     for name, target in targets.items():
         validate_name(name)
+        if name == 'local':
+            raise ValueError('local is reserved for the built-in snapshot runner')
         if not isinstance(target, dict):
             raise ValueError('runner target must be an object')
         provider = target.get('provider')
@@ -578,8 +585,10 @@ def _seed_instructions(document, texts):
 
 
 def defaults():
+    policy = dict(copy.deepcopy(DEFAULT), model_stages=['review'],
+                  session_defaults={'codex': {'model': 'gpt-6.1-sol', 'effort': 'medium'}})
     return _seed_instructions({'version': 3, 'default': 'standard',
-                              'workflows': {'standard': copy.deepcopy(DEFAULT)}, 'repositories': {}}, [issue_policy()])
+                              'workflows': {'standard': policy}, 'repositories': {}}, [issue_policy()])
 
 
 def tool_defaults(tool):
@@ -588,6 +597,8 @@ def tool_defaults(tool):
     document = defaults()
     if tool != 'codex':
         policy = document['workflows']['standard']
+        policy.pop('session_defaults', None)
+        policy.pop('model_stages', None)
         policy['stages_enabled'] = False
         for stage in MODEL_STAGES:
             policy[stage] = {'model': '', 'effort': 'auto'}
@@ -703,9 +714,11 @@ def validate_policy(value):
     if not isinstance(session_defaults, dict) or set(session_defaults) - set(TOOLS):
         raise ValueError('session_defaults supports codex, claude and cursor only')
     for tool, settings in session_defaults.items():
-        if not isinstance(settings, dict) or set(settings) - {'model', 'effort'}:
+        if not isinstance(settings, dict) or set(settings) - {'model', 'effort', 'speed'}:
             raise ValueError('session_defaults requires model and/or effort')
         model, effort = settings.get('model', ''), settings.get('effort', '')
+        if settings.get('speed', 'inherit') not in SPEEDS:
+            raise ValueError('invalid session speed')
         if not isinstance(model, str) or (model and not MODEL_ID.fullmatch(model)):
             raise ValueError('session default model must be a model ID without spaces')
         if not isinstance(effort, str) or (effort and effort not in EFFORTS):
@@ -720,8 +733,10 @@ def validate_policy(value):
             raise ValueError(f'{key} behavior must be one of: ' + ', '.join(BEHAVIORS[key]['choices']))
     for stage in ('planning', 'implementation', 'review'):
         setting = value[stage]
-        if not isinstance(setting, dict) or set(setting) != {'model', 'effort'}:
+        if not isinstance(setting, dict) or set(setting) - {'speed'} != {'model', 'effort'}:
             raise ValueError(f'{stage} requires model and effort')
+        if setting.get('speed', 'inherit') not in SPEEDS:
+            raise ValueError('invalid stage speed')
         model = setting['model']
         if not isinstance(model, str) or (model and not MODEL_ID.fullmatch(model)):
             raise ValueError(f'{stage} model must be a model ID without spaces or control characters, or empty to inherit')
@@ -912,6 +927,8 @@ def main_session_settings(policy, agent='codex'):
         if implementation['model']:
             settings['model'] = implementation['model']
         settings['effort'] = 'medium' if effective_effort(implementation['effort']) == 'auto' else implementation['effort']
+        if not implementation_worker(policy) and implementation.get('speed', 'inherit') != 'inherit':
+            settings['speed'] = implementation['speed']
     if agent == 'cursor':
         settings.pop('effort', None)
     return settings
@@ -1188,7 +1205,7 @@ def summary_lines(policy, tool='codex'):
             lines.append('Review stage: skipped before PR; saved model settings retained')
     if implementation_worker(policy):
         settings = main_session_settings({**policy, 'enabled': True}, tool)
-        lines.append('Main session: ' + (settings.get('model') or 'Agent default') + ' · ' +
+        lines.append('Lead model: ' + (settings.get('model') or 'Agent default') + ' · ' +
                      (settings['effort'].capitalize() if settings.get('effort') else 'Model default'))
     if 'implementation' not in summary['model_stages'] and policy.get('inference', {}).get('mode') != 'local-only':
         for agent, settings in summary['session_defaults'].items():
@@ -1262,7 +1279,7 @@ def runners(document, repository=None, name=None):
 def runners_summary(policy):
     value = policy.get('runners', RUNNER_DEFAULT)
     return (f"{len(value['targets'])} targets · defaults: " + ', '.join(value['default_targets'])
-            if value['targets'] else 'unconfigured')
+            if value['default_targets'] else 'Local snapshot runner')
 
 
 def edit_runners(document, repository=None, name=None):
@@ -1326,6 +1343,10 @@ def _stage_text(policy, tool='codex', design_source=None):
         parts.append('Local-only model selection supersedes retained cloud model stages. Active cloud sessions require a new local launch.')
     elif policy.get('stages_enabled', True):
         parts.append(_model_stage_text(policy, tool))
+        parts.append('For costly architecture or security decisions, obtain plan review before implementation. Use high effort for complex implementation and reviews involving security, permissions, sensitive data or complex classifiers. Return to the reviewer only for substantive unresolved findings.')
+        for stage in model_stages(policy):
+            speed = policy[stage].get('speed', 'inherit')
+            parts.append(f'{stage.title()} speed: {speed}. Inherit means the current parent speed. Apply only with verified runtime support; disclose unavailable settings and actual execution settings.')
     else:
         parts.append('Model stages are disabled for this scope. Do not require staged model selection '
                      'or delegation solely because of t preferences. Selected behavior preferences '
@@ -1340,6 +1361,7 @@ def _stage_text(policy, tool='codex', design_source=None):
                              'They do not change an active turn or require switching models during a task.')
     behaviors = visible_behaviors(policy.get('behaviors', {}))
     behaviors.setdefault('pr_review', pr_review_value(policy))
+    behaviors.setdefault('job_watching', policy.get('behaviors', {}).get('job_watching', 'automatic'))
     if design_source:
         behaviors['design_system'] = 'auto' if design_source.get('path') else 'off'
     if behaviors:
@@ -1353,8 +1375,9 @@ def _stage_text(policy, tool='codex', design_source=None):
                      'Resolve it inside the active worktree. Read it and its linked guidance before design work. '
                      'If missing or unsafe, report the problem and ask for a corrected selection; '
                      'do not silently replace it or create a new system.')
-    if policy.get('runners', {}).get('targets'):
-        parts.append(f'Test runners are configured. Use `t runners list --tool {tool}` '
+    if policy['enabled']:
+        parts.append('Test execution target: ' + (', '.join(policy.get('runners', {}).get('default_targets', [])) or 'local snapshot runner') + '. Adding remote targets does not select them. Execution location does not change test timing or authorize additional tests. Explicit target failures never fall back to local. ')
+        parts.append(('Test runners are configured. ' if policy.get('runners', {}).get('targets') else 'Local snapshot tests are available. ') + f'Use `t runners list --tool {tool}` '
                      '(with `--repo ALIAS` for repository settings) to inspect targets. '
                      f'Use `t runners runs start --tool {tool} -- COMMAND ...` to test one immutable snapshot '
                      'of current tracked worktree edits without committing or pushing source; include intended '
@@ -1444,7 +1467,7 @@ def _model_stage_text(policy, tool='codex'):
             f'reasoning settings. Do not blindly inherit the parent model. When model overrides '
             f'require fresh context, use it with a concise handoff containing the plan, relevant '
             f'repository instructions, acceptance criteria and implementation evidence. '
-            f'Each sub-agent should inherit the parent agent\'s current speed/service tier '
+            f'Unless an explicit stage speed is configured, each sub-agent should inherit the parent agent\'s current speed/service tier '
             f'(including Fast or Ultrafast), independently of its model and reasoning effort. '
             f'Check the parent\'s current speed at delegation and at any supported subsequent-turn boundary; '
             f'use exposed speed controls or documented inheritance when available. '
@@ -1456,24 +1479,51 @@ def _model_stage_text(policy, tool='codex'):
             f'These instructions do not enforce model selection or switch an active conversation.')
 
 
-def render(document, tool='codex', design_source=None):
+def shared_instructions():
+    return ('Agent workflow preferences supplied by t. These defaults supersede older general staged-model preferences; repository-specific rules remain authoritative. ' + PRECEDENCE +
+            ' The host instruction hierarchy is unchanged. These preferences never switch an active model.')
+
+
+def fallback(tool='codex'):
+    return BEGIN + '\n' + shared_instructions() + '\n' + (
+        'At session start, resume, or after compaction, if no resolved t workflow context was supplied, '
+        f'run `t workflow context --tool {tool}` from the current working directory. '
+        'Load only that resolved workflow; do not enumerate other repository policies. '
+        'If resolution fails, report it and follow the task and repository rules without guessing a scope.') + '\n' + END
+
+
+def resolve_context(document, cwd=None, tool='codex', common_dir=None):
+    """Resolve Git identity without confusing a failed probe with outside Git."""
     document = tool_document(document, tool)
-    text = ('Agent workflow preferences supplied by t. These managed defaults supersede older '
-            'general staged-model defaults in personal instructions. Explicit task instructions '
-            'and repository-specific rules remain authoritative. These are instructions for the '
-            f'agent; saved staged workflows set {tool.title()} main launch/resume defaults, while stage delegation '
-            'remains guidance and does not switch active conversations. The host instruction hierarchy is unchanged.\n' + PRECEDENCE + '\n\n'
-            'Global default (unless a repository scope below matches):\n' + _stage_text(effective(document), tool, design_source))
-    for repository in sorted(document['repositories']):
-        policy = effective(document, repository)
-        text += ('\n\nRepository scope: ' + json.dumps(repository, ensure_ascii=False) + '.\n'
-                 'Apply this complete override in that canonical checkout and all its linked '
-                 'worktrees, including worktrees created later. Resolve the current checkout with '
-                 '`git rev-parse --show-toplevel` and its canonical repository with '
-                 '`git rev-parse --path-format=absolute --git-common-dir`; the common Git directory '
-                 'must belong to the canonical checkout above. Other repositories use the global default.\n' +
-                 _stage_text(policy, tool, document['repositories'][repository].get('design_system')))
-    return BEGIN + '\n' + text + '\n' + END
+    cwd = Path(cwd or os.getcwd()).absolute()
+    repository = None
+    if common_dir is None:
+        result = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            if not cwd.is_dir() or 'not a git repository' not in result.stderr.lower() or any(
+                    (parent / '.git').exists() or (parent / '.git').is_symlink() for parent in (cwd, *cwd.parents)):
+                raise ValueError('cannot verify repository identity for workflow context')
+        else:
+            common_dir = result.stdout.strip()
+    if common_dir is not None:
+        common = Path(common_dir)
+        if not common.is_absolute() or not common.is_dir():
+            raise ValueError('invalid common Git directory for workflow context')
+        repository = next((scope for scope in document['repositories']
+                           if (Path(scope) / '.git').resolve() == common.resolve()), None)
+    policy = effective(document, repository)
+    return {'tool': tool, 'repository': repository, 'scope': repository or 'global',
+            'workflow': policy, 'enabled': policy['enabled'],
+            'text': render(document, tool, repository=repository)}
+
+
+def render(document, tool='codex', design_source=None, repository=None):
+    """Render exactly one resolved policy; never concatenate the catalogue."""
+    document = tool_document(document, tool)
+    design_source = design_source or document['repositories'].get(repository, {}).get('design_system')
+    return (BEGIN + '\n' + shared_instructions() + '\n\n' +
+            _stage_text(effective(document, repository), tool, design_source) + '\n' + END)
 
 
 def legacy_issue_body(text):
@@ -1524,7 +1574,7 @@ def native_changes(document):
             raise ValueError(f'{path}: native instructions changed while editing; retry')
         if path == override and before and not before[0].strip():
             continue  # An empty override must not begin masking the base file.
-        changes.append((path, before, merge(before[0] if before else '', render(document, tool), legacy_instructions, path in legacy_snapshots)))
+        changes.append((path, before, merge(before[0] if before else '', fallback(tool), legacy_instructions, path in legacy_snapshots)))
     return changes
 
 

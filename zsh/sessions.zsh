@@ -990,6 +990,7 @@ _dev_attach_fg() {
   tsess=${sel%%$'\t'*}
   label=$(print -r -- "$sel" | awk -F'\t' '{print $5}')
   _dev_workflow_attach "${sel##*$'\t'}"
+  _t_discovery_event local
   echo "Attaching $label in place (tmux session $tsess)"
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
@@ -1272,6 +1273,24 @@ _dev_session_rows_scoped() {
     print -r -- "$row"
   done
   return 0
+}
+
+# Browsing boundary only. Ownership scanners below always remain live.
+_t_discovery_rows() {
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    python3 "$T_HOME/bin/t" __cache-rows "$@"
+  elif [[ ${(M)@:#--local} != '' ]]; then
+    local rows; rows=$(_dev_session_rows --details) || return $?
+    if [[ ${(M)@:#--unprefixed} != '' ]]; then print -r -- "$rows"
+    else print -r -- "$rows" | awk 'NF {print "local\t" $0}'; fi
+  else
+    _dev_rows_all --best-effort --details
+  fi
+}
+
+_t_discovery_event() {
+  [[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]] && return 0
+  python3 "$T_HOME/bin/t" __cache-event "$@" >/dev/null 2>&1 || true
 }
 
 _dev_session_rows() {
@@ -1840,9 +1859,9 @@ _dev_kill_pick() {
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   local rows
   if [[ -n $remote_only ]]; then
-    rows=$(_dev_rows_all --best-effort --details) || return $?
+    rows=$(_t_discovery_rows --details) || return $?
   else
-    rows=$(_dev_session_rows --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return 1
+    rows=$(_t_discovery_rows --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return 1
   fi
   if [[ -n $remote_only ]]; then
     rows=$(print -r -- "$rows" | awk -F'\t' '$1 != "local"')
@@ -2126,6 +2145,7 @@ _dev_recovery_watch() {
 # Durable revision evidence belongs to the conversation, never just a slot branch.
 _dev_history_record() {
   local sid=$1 agent=$2 dir=$3 event=${4:-launch} interface=${5:-cli} tx
+  _t_discovery_event local
   [[ -n $sid && $sid != - ]] || return 0
   tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
   python3 "$T_HOME/libexec/t_history.py" record "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
@@ -2380,6 +2400,7 @@ _t_history_owner() {
 _t_history_attach() {
   local immutable agent=$4
   immutable=$(_t_history_owner "$@") || return $?
+  _t_discovery_event local
   _dev_workflow_attach "$agent"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi
@@ -2836,16 +2857,19 @@ _t_dev() {
     # a slot whose tmux died but whose worktree lingers is reused in place (work
     # preserved). On failure (or a per-repo opt-out) fall back to the shared tree +
     # the in-pane branch dance.
-    local skip_prepare=
+    local skip_prepare= new_workspace=
     if _dev_worktree_enabled "$repo"; then
-      local _wt; _wt="$(_dev_worktree_create "$repo" "$slot")"
+      local -a created_worktree
+      created_worktree=("${(@f)$(_dev_worktree_create "$repo" "$slot" '' new-launch)}")
+      local _wt=${created_worktree[1]}
+      new_workspace=${created_worktree[2]}
       if [[ -n $_wt ]]; then dir="$_wt"; skip_prepare=1
       else _dev_worktree_refuse "$repo" "$slot"; return 1; fi
     fi
     _dev_agent_check "$agent" || return 1
     local agent_note=; [[ $agent != claude ]] && agent_note=" · $agent"
     echo "Starting $session in $dir$agent_note (logging to $logfile)"
-    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" || return 1
+    _dev_new_session "$session" "$dir" "$branch" "$skip_prepare" "$agent" '' '' '' "$new_workspace" || return 1
     _t_session_attach "$session" "$agent" || {
       print -u2 -- "t open: $session did not remain available; inspect $logfile"
       return 1
@@ -2855,6 +2879,7 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
+  _t_discovery_event local
   _dev_workflow_attach "${2:-}"
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1

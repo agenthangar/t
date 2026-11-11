@@ -97,7 +97,7 @@ _dev_agent_default_args() {
   local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py" index
   local -a overrides permissions
   if [[ -f $helper ]]; then
-    overrides=("${(@f)$(python3 "$helper" --launch-settings "$agent" "$target" 2>/dev/null)}")
+    overrides=("${(@f)$(T_WORKFLOW_DEFAULT_MODEL="$model" python3 "$helper" --launch-settings "$agent" "$target")}")
     overrides=("${(@)overrides:#}")
     for (( index=1; index<=${#overrides}; index+=2 )); do
       case ${overrides[index]} in
@@ -109,7 +109,7 @@ _dev_agent_default_args() {
             permissions+=("${overrides[index]}" "${overrides[index+1]}")
           fi ;;
         --effort) effort=${overrides[index+1]} ;;
-        --sandbox|--ask-for-approval|--permission-mode)
+        --sandbox|--ask-for-approval|--permission-mode|--settings)
           permissions+=("${overrides[index]}" "${overrides[index+1]}") ;;
       esac
     done
@@ -144,13 +144,15 @@ _dev_agent_new_cmd() {
   defaults=("${(@f)$(_dev_agent_default_args "$agent" "${4:-$PWD}")}")
   defaults=("${(@)defaults:#}")
   launch_args+=("${defaults[@]}")
-  case "$agent:${DEV_FAST[$agent]:-}" in
-    codex:1|codex:fast) launch_args+=(-c service_tier=fast --enable fast_mode) ;;
-    codex:ultrafast) launch_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
-    codex:0) launch_args+=(-c service_tier=default) ;;
-    claude:1) launch_args+=(--settings '{"fastMode":true}') ;;
-    claude:0) launch_args+=(--settings '{"fastMode":false}') ;;
-  esac
+  if [[ " ${defaults[*]} " != *service_tier=* && " ${defaults[*]} " != *fastMode* ]]; then
+    case "$agent:${DEV_FAST[$agent]:-}" in
+      codex:1|codex:fast) launch_args+=(-c service_tier=fast --enable fast_mode) ;;
+      codex:ultrafast) launch_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
+      codex:0) launch_args+=(-c service_tier=default) ;;
+      claude:1) launch_args+=(--settings '{"fastMode":true}') ;;
+      claude:0) launch_args+=(--settings '{"fastMode":false}') ;;
+    esac
+  fi
   # A fresh slot must not inherit an independently updated shared daemon's
   # feature settings. Keep its backend local, as with desktop handoffs/recovery.
   [[ $agent == codex ]] && launch_args+=(--no-daemon)
@@ -174,7 +176,7 @@ _dev_agent_resume_cmd() {
   [[ $agent == codex ]] || agent=claude
   local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
   local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py"
-  local target=${T_WORKFLOW_CWD:-$PWD} index config_key separator=0 explicit_model=0 explicit_effort=0 explicit_permissions=0
+  local target=${T_WORKFLOW_CWD:-$PWD} index config_key separator=0 explicit_model=0 explicit_effort=0 explicit_permissions=0 explicit_speed=0
   local -a args overrides filtered
   for (( index=1; index<=$#; index++ )); do
     if [[ ${argv[index]} == -- ]]; then separator=1; break; fi
@@ -183,18 +185,21 @@ _dev_agent_resume_cmd() {
       --cd=*) target=${argv[index]#--cd=} ;;
       --model|-m|-m?*|--model=*) explicit_model=1 ;;
       --effort|--effort=*) explicit_effort=1 ;;
+      --enable|--disable) [[ ${argv[index+1]} == (fast_mode|ultrafast_mode) ]] && explicit_speed=1 ;;
       --sandbox|--sandbox=*|-s|-s?*|--ask-for-approval|--ask-for-approval=*|-a|-a?*|\
       --full-auto|--approve-for-me|--dangerously-bypass-approvals-and-sandbox|--yolo|--not-so-yolo|\
       --permission-mode|--permission-mode=*|--dangerously-skip-permissions|\
       --allow-dangerously-skip-permissions|--settings|--settings=*)
-        explicit_permissions=1 ;;
+        explicit_permissions=1; [[ ${argv[index]} == --settings* ]] && explicit_speed=1 ;;
       --profile|--profile=*|-p|-p?*) [[ $agent == codex ]] && explicit_permissions=1 ;;
       -c|--config)
+        [[ ${argv[index+1]} == (service_tier|features.fast_mode|features.ultrafast_mode)=* ]] && explicit_speed=1
         [[ ${argv[index+1]} == model=* ]] && explicit_model=1
         [[ ${argv[index+1]} == model_reasoning_effort=* ]] && explicit_effort=1
         config_key=${argv[index+1]%%=*}; config_key=${config_key//[[:space:]]/}
         [[ $config_key == (approval_policy|sandbox_mode|default_permissions|approvals_reviewer|permissions.*|sandbox_workspace_write.*|network*) ]] && explicit_permissions=1
         (( index++ )) ;;
+      --config=service_tier=*|-cservice_tier=*|--config=features.fast_mode=*|-cfeatures.fast_mode=*|--config=features.ultrafast_mode=*|-cfeatures.ultrafast_mode=*) explicit_speed=1 ;;
       --config=model=*|-cmodel=*) explicit_model=1 ;;
       --config=model_reasoning_effort=*|-cmodel_reasoning_effort=*) explicit_effort=1 ;;
       --config=*|-c?*)
@@ -204,18 +209,23 @@ _dev_agent_resume_cmd() {
     esac
   done
   if [[ -f $helper ]]; then
-    overrides=("${(@f)$(python3 "$helper" --resume-settings "$sid" "$target" "$agent" 2>/dev/null)}")
+    overrides=("${(@f)$(python3 "$helper" --resume-settings "$sid" "$target" "$agent")}")
     overrides=("${(@)overrides:#}")
+    if (( explicit_model && ! explicit_speed )) && [[ " ${overrides[*]} " == *service_tier=* || " ${overrides[*]} " == *fastMode* ]]; then
+      print -u2 -- 't workflow: explicit model override; retaining native speed until its support is verified.'
+      explicit_speed=1
+    fi
     for (( index=1; index<=${#overrides}; index+=2 )); do
       [[ ${overrides[index]} == --model && $explicit_model == 1 ]] && continue
       [[ ${overrides[index]} == --effort && $explicit_effort == 1 ]] && continue
       [[ ${overrides[index]} == -c && ${overrides[index+1]} == model_reasoning_effort=* && $explicit_effort == 1 ]] && continue
       if (( explicit_permissions )); then
         case ${overrides[index]} in
-          --sandbox|--ask-for-approval|--permission-mode) continue ;;
+          --sandbox|--ask-for-approval|--permission-mode|--settings) continue ;;
           -c) [[ ${overrides[index+1]} == (approval_policy|sandbox_mode|default_permissions|approvals_reviewer)=* ]] && continue ;;
         esac
       fi
+      [[ $explicit_speed == 1 && ( ${overrides[index+1]} == (service_tier|features.fast_mode|features.ultrafast_mode)=* || ${overrides[index]} == --settings ) ]] && continue
       filtered+=("${overrides[index]}" "${overrides[index+1]}")
     done
   fi

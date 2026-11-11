@@ -1271,14 +1271,19 @@ def test_config_unrelated_edits_do_not_stage_native_defaults(t_mod, native_defau
         edited._workflow_initial = copy.deepcopy(edited._workflow_document)
         edited._workflow_activate = False
         edited._workflow_document['workflows']['standard']['planning']['effort'] = 'medium'
-    before = native.stat(), native.read_text()
+    def unchanged_native():
+        # Reading may update atime on macOS; identity, content and write metadata must stay unchanged.
+        info = native.stat()
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns, native.read_text())
+    before = unchanged_native()
     monkeypatch.setitem(sync, 'native_defaults', lambda settings: pytest.fail('unrelated native write'))
     monkeypatch.setitem(helper, 'propagation', lambda: sync)
     monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
     monkeypatch.setattr(t_mod, '_config_editor', lambda: 0)
     monkeypatch.setattr(t_mod, 'Config', lambda: edited)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=change == 'show', edit=change == 'editor')) == 0
-    assert (native.stat(), native.read_text()) == before
+    assert unchanged_native() == before
     if change in ('unchanged', 'editor', 'show'):
         assert not helper['config_path']().exists()
         assert not sync['state_path']().exists()
@@ -1333,3 +1338,237 @@ def test_config_nosleep_opens_shared_editor_only_with_clean_hub(t_mod, config_cl
     if calls:
         assert calls[0][0] == t_mod.sys.executable
         assert calls[0][1].endswith('/libexec/nosleep_config.py')
+
+
+class ContinuationMenu(InterruptMenu):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.frames, self.reviews, self.messages = [], [], []
+
+    def pick(self, label, rows, default=0, **kwargs):
+        self.frames.append((label, rows[default][0], kwargs))
+        return super().pick(label, rows, default, **kwargs)
+
+    def page(self, label, lines, *args, **kwargs):
+        self.reviews.append((label, lines, kwargs))
+        return super().page(label, lines, *args, **kwargs)
+
+    def done(self, *args):
+        self.messages.append(args)
+
+
+@pytest.fixture
+def local_continuation(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    monkeypatch.setenv('HOME', str(local.parent))
+    monkeypatch.setenv('XDG_STATE_HOME', str(local.parent / 'state'))
+    monkeypatch.setenv('T_SETUP_SHIM', '1')
+    monkeypatch.setattr(t_mod, 'HOME', str(local.parent))
+    opened, offers, synced = [], [], []
+    original = t_mod.runpy.run_path
+    def run_path(path, *args, **kwargs):
+        if str(path).endswith('/t_local_runtime_ui.py'):
+            return {'hub': lambda ui, api: opened.append((local.read_text(), t_mod._config_state(cfg)))}
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', run_path)
+    monkeypatch.setattr(t_mod, '_host_verify_offer', lambda targets: offers.append(targets))
+    monkeypatch.setattr(t_mod, 'zsh_capture', synced.append)
+    return cfg, local, opened, offers, synced
+
+
+def stage_continuation_workflow(t_mod, monkeypatch):
+    def stage(ui, cfg, **kwargs):
+        cfg._workflow_document['workflows']['standard']['instructions'] = 'Sample pending instructions'
+    monkeypatch.setattr(t_mod, '_workflow_hub', stage)
+
+
+@pytest.mark.parametrize('kind', ['shell', 'workflow', 'mixed', 'native'])
+def test_config_local_save_continues_and_rebases(t_mod, local_continuation, monkeypatch, kind):
+    cfg, local, opened, offers, synced = local_continuation
+    stage_continuation_workflow(t_mod, monkeypatch)
+    prefix = (['trust', '1'] if kind in ('shell', 'mixed') else [])
+    if kind in ('workflow', 'mixed'):
+        prefix += ['workflow']
+    if kind == 'native':
+        prefix += ['codex', 'model', 'test-model', 'effort', 'high', 'back']
+    ui = ContinuationMenu(prefix + ['local', 'save', 'save'], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 0
+    assert len(opened) == 1
+    assert len(ui.reviews) == 1 and ui.reviews[0][2]['primary'][1] == 'SAVE AND CONTINUE'
+    assert 'After saving: open Local worker & models.' in '\n'.join(ui.reviews[0][1])
+    assert ui.frames[-1][1] == 'local'
+    assert ui.frames[-1][2]['primary'][2] == '0 pending'
+    assert cfg._config_before == local.read_text()
+    assert not t_mod._workflow_pending(cfg)
+    assert synced == ([] if kind == 'workflow' else ['_t_sync_config'])
+    assert offers == ([] if kind == 'workflow' else [[]])
+    if kind in ('shell', 'mixed'):
+        assert 'T_AUTO_TRUST=1' in opened[0][0]
+    if kind in ('workflow', 'mixed'):
+        assert cfg._workflow_document['workflows']['standard']['instructions'] == 'Sample pending instructions'
+    if kind == 'native':
+        assert 'test-model' in (local.parent / 'codex' / 'config.toml').read_text()
+    assert not any(label == 'pending' for label, *_ in ui.messages)
+
+
+@pytest.mark.parametrize('action', ['back', None, 'discard'])
+def test_config_local_discard_or_back_preserves_transaction_rules(t_mod, local_continuation, monkeypatch, action):
+    cfg, local, opened, _, synced = local_continuation
+    stage_continuation_workflow(t_mod, monkeypatch)
+    tail = ['save'] if action == 'discard' else ['cancel', 'discard']
+    ui = ContinuationMenu(['trust', '1', 'workflow', 'local', action] + tail)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    result = t_mod._config_wizard(cfg)
+    assert len(opened) == int(action == 'discard')
+    assert local.read_text() == '# keep me\n' and not synced
+    assert not t_mod._workflow_pending(cfg)
+    if result:
+        assert result.auto_trust == cfg.auto_trust == '0'
+        assert not t_mod._workflow_pending(result)
+    assert ui.frames[-1][2].get('primary', ('', '', ''))[2] == ('0 pending' if action == 'discard' else '')
+
+
+@pytest.mark.parametrize('review_key', ['n', 'q', 'esc', 'abort', KeyboardInterrupt])
+def test_config_local_review_cancel_keeps_edits(t_mod, local_continuation, monkeypatch, review_key):
+    cfg, local, opened, _, _ = local_continuation
+    interrupted = review_key in ('abort', KeyboardInterrupt)
+    picks = ['trust', '1', 'local', 'save'] + (['keep', 'save'] if interrupted else ['back', 'save'])
+    ui = ContinuationMenu(picks, pages=[review_key, 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    edited = t_mod._config_wizard(cfg)
+    assert edited.auto_trust == '1' and cfg.auto_trust == '0'
+    assert not opened and local.read_text() == '# keep me\n'
+    assert len(ui.reviews) == 2
+
+
+def test_config_local_clean_entry_and_repeated_entry_have_no_prompt(t_mod, local_continuation, monkeypatch):
+    cfg, _, opened, _, synced = local_continuation
+    ui = ContinuationMenu(['local', 'local', 'save'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    t_mod._config_wizard(cfg)
+    assert len(opened) == 2 and not synced and not ui.reviews
+    assert all(label == 'Local settings' for label in ui.labels)
+    assert ui.frames[-1][1] == 'local'
+
+
+@pytest.mark.parametrize('retry', ['retry', 'back', None, KeyboardInterrupt])
+def test_config_local_failed_save_retains_edits_and_retries(t_mod, local_continuation, monkeypatch, retry):
+    cfg, local, opened, offers, synced = local_continuation
+    original, attempts = t_mod._config_persist_changes, []
+    def persist(*args):
+        attempts.append(local.read_text())
+        if len(attempts) == 1:
+            raise OSError('sample storage unavailable')
+        return original(*args)
+    monkeypatch.setattr(t_mod, '_config_persist_changes', persist)
+    picks = ['trust', '1', 'local', 'save', retry, 'save']
+    ui = ContinuationMenu(picks, pages=['enter', 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    result = t_mod._config_wizard(cfg)
+    if retry is KeyboardInterrupt:
+        assert not opened and local.read_text() == '# keep me\n'
+        assert result.auto_trust == '1' and cfg.auto_trust == '0'
+    else:
+        assert len(opened) == 1 and len(attempts) == 2
+        assert attempts == ['# keep me\n', '# keep me\n']
+        assert result.auto_trust == cfg.auto_trust == '1'
+        assert len(synced) == len(offers) == 1
+    assert sum(label == 'Settings not saved' for label in ui.labels) == 1
+    assert not any(label == 'pending' for label, *_ in ui.messages)
+
+
+def test_config_local_save_then_second_save_uses_new_baseline(t_mod, local_continuation, monkeypatch):
+    cfg, local, opened, offers, synced = local_continuation
+    ui = ContinuationMenu(['trust', '1', 'local', 'save', 'trust', '0', 'save'], pages=['enter', 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 0
+    assert len(opened) == 1 and 'T_AUTO_TRUST=1' in opened[0][0]
+    assert 'T_AUTO_TRUST=0' in local.read_text() and 'T_AUTO_TRUST=1' not in local.read_text()
+    assert len(synced) == len(offers) == 2
+
+
+@pytest.mark.parametrize('failure', ['sync', 'ssh', 'reload'])
+def test_config_local_post_save_failure_keeps_saved_baseline(t_mod, local_continuation, monkeypatch, failure, capsys):
+    cfg, local, opened, _, _ = local_continuation
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    if failure == 'sync':
+        def fail(*args): raise OSError('sync unavailable')
+        monkeypatch.setattr(t_mod, 'zsh_capture', fail)
+    elif failure == 'ssh':
+        def fail(*args): raise KeyboardInterrupt
+        monkeypatch.setattr(t_mod, '_host_verify_offer', fail)
+    else:
+        original = t_mod._config_persist_changes
+        def persist(*args):
+            result = original(*args)
+            helper = t_mod._workflow()
+            def fail(): raise OSError('workflow reload unavailable')
+            helper['load'] = fail
+            monkeypatch.setattr(t_mod, '_workflow', lambda: helper)
+            return result
+        monkeypatch.setattr(t_mod, '_config_persist_changes', persist)
+    ui = ContinuationMenu(['trust', '1', 'local', 'save', 'cancel'], pages=['enter', 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 130
+    assert 'T_AUTO_TRUST=1' in local.read_text() and not opened
+    assert cfg.auto_trust == '1' and not t_mod._workflow_pending(cfg)
+    assert ui.reviews[-1][0] == 'Settings saved'
+    assert 'saved' in capsys.readouterr().err.lower()
+    assert 'earlier saves kept' in ui.messages[-1][1]
+
+
+def test_config_local_changed_host_verification_is_offered_once(t_mod, local_continuation, monkeypatch):
+    cfg, local, opened, offers, synced = local_continuation
+    monkeypatch.setattr(t_mod, '_config_hosts', lambda ui, edited: edited.hosts.update({'sample': 'sample.invalid'}))
+    ui = ContinuationMenu(['hosts', 'local', 'save', 'local', 'save'], pages=['enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 0
+    assert offers == [['sample.invalid']] and synced == ['_t_sync_config']
+    assert len(opened) == 2 and 'sample.invalid' in local.read_text()
+    assert 'After saving, offer native SSH verification' in '\n'.join(ui.reviews[0][1])
+
+
+def test_config_local_workflow_save_then_shell_save_keeps_file_baseline(t_mod, local_continuation, monkeypatch):
+    cfg, local, opened, _, _ = local_continuation
+    stage_continuation_workflow(t_mod, monkeypatch)
+    ui = ContinuationMenu(['workflow', 'local', 'save', 'trust', '1', 'save'], pages=['enter', 'enter'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, t_mod.build_parser().parse_args(['config'])) == 0
+    assert opened[0][0] == '# keep me\n'
+    assert 'T_AUTO_TRUST=1' in local.read_text()
+
+
+def test_config_local_conflict_does_not_overwrite_or_open_worker(t_mod, local_continuation, monkeypatch):
+    cfg, local, opened, offers, synced = local_continuation
+    ui = ContinuationMenu(['trust', '1', 'local', 'save', 'back', 'back', 'cancel', 'discard'], pages=['enter', 'n'])
+    original_page = ui.page
+    def review(*args, **kwargs):
+        local.write_text('# concurrent edit\n')
+        return original_page(*args, **kwargs)
+    ui.page = review
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod._config_wizard(cfg) is None
+    assert not opened and not offers and not synced
+    assert local.read_text() == '# concurrent edit\n'
+    failures = [frame for frame in ui.frames if frame[0] == 'Settings not saved']
+    assert len(failures) == 1
+    assert 'changed' in failures[0][2]['context'][0]
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_config_local_continuation_uses_shared_narrow_viewport(t_mod, local_continuation, monkeypatch, width, height):
+    from test_tui import make_ui
+    cfg, local, opened, _, _ = local_continuation
+    ui = make_ui(t_mod, ['j', 'enter', 'k', 'enter'] + ['j'] * 3 + ['enter'] * 3 + ['q'], width, height)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod._config_wizard(cfg) is None
+    assert len(opened) == 1 and 'T_AUTO_TRUST=1' in local.read_text()
+    choices = [frame for frame in ui.frames if any('Continue to' in line for line in frame)]
+    reviews = [frame for frame in ui.frames if any('Review local settings' in line for line in frame)]
+    assert choices and reviews
+    for frame in choices + reviews:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+    assert all(any('▸' in line for line in frame) for frame in choices)
+    assert all(any('SAVE AND CONTINUE' in line for line in frame) for frame in reviews)

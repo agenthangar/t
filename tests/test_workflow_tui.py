@@ -108,7 +108,7 @@ def test_workflow_stage_picker_one_model_reset_uses_real_checkboxes(workflow, t_
     assert workflow.model_stages(actual) == expected
     for stage in ('planning', 'implementation', 'review'):
         assert actual[stage] == policy[stage]
-    assert any('Use one model' in line for frame in ui.frames for line in frame)
+    assert any('Use lead model' in line for frame in ui.frames for line in frame)
     assert not workflow.config_path().exists()
 
 
@@ -137,7 +137,7 @@ def test_workflow_tui_save_discard(workflow, t_mod, monkeypatch, tmp_path, save,
         Path(argv[-1]).write_text('Try it locally before opening a PR.\n')
         return 0
     monkeypatch.setattr(workflow.subprocess, 'call', editor)
-    picks = ([] if direct else ['workflow']) + ['codex', 'customize', 'instructions', 'back']
+    picks = ([] if direct else ['workflow']) + ['codex', 'customize', 'instructions', 'edit', 'back']
     picks += ['save'] if save else ['back', 'back', *([] if direct else ['cancel']), 'discard']
     ui = Menu(picks)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
@@ -161,6 +161,23 @@ def test_workflow_tui_route_and_nonterminal(workflow, t_mod, monkeypatch, tmp_pa
     assert not workflow.config_path().exists() and local.read_text() == '# unchanged\n'
     assert t_mod._canonical_argv(['config', 'workflows']) == ['config', '--workflows-ui']
     assert not t_mod._command_readonly(['config', 'workflows'])
+
+
+@pytest.mark.parametrize('save', [False, True])
+def test_text_instruction_page_clear_save_or_discard(workflow, t_mod, monkeypatch, tmp_path, save):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    picks = ['codex', 'customize', 'instructions', 'clear', 'back']
+    picks += ['save'] if save else ['back', 'back', 'discard']
+    ui = Menu(picks)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    monkeypatch.setattr(workflow, 'edit_instructions', lambda *args: pytest.fail('clear must not launch an editor'))
+    args = t_mod.build_parser().parse_args(['config', 'workflows'])
+    assert t_mod.cmd_config(cfg, args) == (0 if save else 130)
+    if save:
+        assert workflow.instructions(workflow.load()[0]) == ''
+    else:
+        assert not workflow.config_path().exists()
+    assert local.read_text() == '# unchanged\n'
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
@@ -223,6 +240,8 @@ def test_workflow_bare_entry(workflow, t_mod, monkeypatch, tmp_path, capsys, ter
 ])
 def test_workflow_ctrl_c_preserves_completed_nested_selections(workflow, t_mod, monkeypatch, tmp_path, menu, field, value):
     cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    if field == 'implementation':
+        t_mod._workflow_session(cfg)['workflows']['standard']['model_stages'] = ['implementation']
     ui = InterruptMenu(['codex', 'customize', *menu, KeyboardInterrupt, 'save'], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)
@@ -260,7 +279,7 @@ def test_workflow_editor_interrupt_keeps_prior_staged_edits(workflow, t_mod, mon
     def interrupted_editor(*args):
         raise KeyboardInterrupt
     monkeypatch.setattr(workflow, 'edit_instructions', interrupted_editor)
-    ui = InterruptMenu(['codex', 'customize', 'enabled', '0', 'instructions', 'save'], pages=['enter'])
+    ui = InterruptMenu(['codex', 'customize', 'enabled', '0', 'instructions', 'edit', 'save'], pages=['enter'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     changed = t_mod._config_wizard(cfg, workflows_only=True)
     assert not changed._workflow_document['workflows']['standard']['enabled']

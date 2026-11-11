@@ -26,3 +26,7 @@ scrub-rules.json
 # (/model saves, "always allow" permission rules, plugin toggles), so only
 # settings.json.example is tracked. Ignore a stray real copy as defense-in-depth.
 claude/settings.json
+
+# Non-secret scheduled notification deduplication state, persisted by Actions.
+.ci-alert-state.json
+.ci-alert-state.tmp

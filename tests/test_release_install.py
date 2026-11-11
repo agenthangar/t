@@ -43,7 +43,7 @@ def artifact(version="v1.2.3", changed=None, extra=None):
     changed = changed or {}
     files = {name: (ROOT / name).read_bytes() for name in (*release.REQUIRED, *release.NOSLEEP_ASSETS, *release.NOSLEEP_WIFI_ASSETS) if name != ".t-release-version"}
     # Current installer integrations extend the backwards-compatible release minimum.
-    for name in ('libexec/t_lifecycle.py', 'libexec/t_codex_store.py', 'libexec/t_codex_ownership.py', 'zsh/lifecycle.zsh', 'libexec/t_mcp_setup.py', 'libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_dev.py', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_toml.py', 'libexec/t_codex_socket.py', 'libexec/vendor/SHA256SUMS', 'libexec/vendor/tomli-LICENSE', 'libexec/vendor/tomli/__init__.py', 'libexec/vendor/tomli/_parser.py', 'libexec/vendor/tomli/_re.py', 'libexec/vendor/tomli/_types.py', 'libexec/vendor/tomli/py.typed', 'libexec/t_workflow.py', 'libexec/t_design_system.py', 'libexec/t_workflow_sync.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_picker_theme.py', 'libexec/t_repos.py', 'libexec/t_remote.py'):
+    for name in ('libexec/t_workflow_install.py', 'libexec/t_workflow_context.py', 'libexec/t_watch.py', 'libexec/t_lifecycle.py', 'libexec/t_codex_store.py', 'libexec/t_codex_ownership.py', 'zsh/lifecycle.zsh', 'libexec/t_mcp_setup.py', 'libexec/t_runners.py', 'libexec/t_runner_job.py', 'share/runners/broker.yml', 'share/runners/sweeper.yml', 'libexec/t_dev.py', 'libexec/t_progress.py', 'bin/t-session-start', 'libexec/t_shell_setup.py', 'libexec/t_onboarding.py', 'libexec/t_discovery.py', 'libexec/t_toml.py', 'libexec/t_codex_socket.py', 'libexec/vendor/SHA256SUMS', 'libexec/vendor/tomli-LICENSE', 'libexec/vendor/tomli/__init__.py', 'libexec/vendor/tomli/_parser.py', 'libexec/vendor/tomli/_re.py', 'libexec/vendor/tomli/_types.py', 'libexec/vendor/tomli/py.typed', 'libexec/t_workflow.py', 'libexec/t_design_system.py', 'libexec/t_workflow_sync.py', 'libexec/t_issue.py', 'libexec/t_issue_policy.txt', 'libexec/t_resume_source.py', 'libexec/t_history.py', 'libexec/t_candidates.py', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py', 'libexec/t_session_details.py', 'libexec/t_picker_filters.py', 'libexec/t_picker_theme.py', 'libexec/t_repos.py', 'libexec/t_remote.py'):
         files[name] = (ROOT / name).read_bytes()
     files[".t-release-version"] = (version + "\n").encode()
     files.update(changed)
@@ -307,11 +307,12 @@ def test_release_workflow_verifies_installed_version_with_source_details(sandbox
     (scripts / "install-release.py").write_bytes((ROOT / "scripts/install-release.py").read_bytes())
     dist = tmp_path / "dist"
     dist.mkdir()
-    changed = {"bin/t": b"#!/usr/bin/env python3\nprint('t v9.9.9\\n  Source: release\\n  Worktree: none')\n"} if wrong_version else None
+    changed = {"bin/t": b"#!/usr/bin/env python3\nclass Config:\n    repos = {}\nif __name__ == '__main__':\n    print('t v9.9.9\\n  Source: release\\n  Worktree: none')\n"} if wrong_version else None
     archive, sums = artifact(changed=changed)
     (dist / "t.tar.gz").write_bytes(archive)
     (dist / "SHA256SUMS").write_bytes(sums)
     monkeypatch.setenv("RELEASE_TAG", "v1.2.3")
+    monkeypatch.setenv("TMPDIR", str(tmp_path))  # Keep the nested HOME on the canonical sandbox path.
     result = subprocess.run([sys.executable, "-c", snippet], cwd=tmp_path,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == (1 if wrong_version else 0), result.stdout + result.stderr

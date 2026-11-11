@@ -230,7 +230,7 @@ def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
         if mode=='shutdown_completion':assert 'late evidence' in argv[-1]
         if mode=='local_failure':raise ValueError('fixture local failure')
         return 0
-    local={'helper':lambda n:{'state_root':lambda:tmp_path/'state'},'catalogue':lambda **kw:{'models':[{'model':'local-fixture','provider':'lmstudio','ready':mode!='missing'}]},'lead':lead}
+    local={'leased_runtime':lambda chosen:None,'helper':lambda n:{'state_root':lambda:tmp_path/'state'},'catalogue':lambda **kw:{'models':[{'model':'local-fixture','provider':'lmstudio','ready':mode!='missing'}]},'lead':lead}
     if mode == 'catalogue_error':
         local['catalogue'] = lambda **kw: (_ for _ in ()).throw(OSError('fixture catalog unavailable'))
     monkeypatch.setattr(m,'inference',lambda:local)

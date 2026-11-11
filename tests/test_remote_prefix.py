@@ -39,6 +39,8 @@ def test_registry_policy_and_parser(t_mod, remote):
 
 
 @pytest.mark.parametrize('words,expected', [
+    (['eval', 'config', 'list'], 'query'), (['eval', 'runs', 'list'], 'query'),
+    (['eval', 'benchmarks', 'list'], 'query'),
     (['session', 'list'], 'query'), (['session', 'goal', 'api', '1', 'hello', '--json'], 'single'),
     (['runners', 'runs', 'start', '--json'], 'single'),
     (['session', 'history', 'api', '1', '--json'], 'query'),
@@ -352,7 +354,7 @@ words=(t remote workflow list alpha --); CURRENT=6; _t
 words=(t remote session move alpha api 2 --to ''); CURRENT=9; _t
 ''')
     assert result.returncode == 0, result.stderr
-    assert 'CHOICES start list ls status logs artifacts cancel cleanup' in result.stdout
+    assert 'CHOICES start list ls status watch logs artifacts cancel cleanup' in result.stdout
     assert 'source host or command argument alpha' in result.stdout
     assert '--json' in result.stdout
     assert 'destination host local alpha' in result.stdout

@@ -98,6 +98,15 @@ The repository source picker uses separate Default, Choose a source, Manage and
 Navigation groups. Use workflow default restores live inheritance; explicit paths
 and Off override it. Each candidate appears once, with evidence and a selection
 mark. Choose file or folder, Create design system, and Scan again are actions.
+Scan again explicitly refreshes the invoking worktree and registered checkout,
+then inspects the latest default-branch commit advertised by origin. It fetches
+objects without moving branches, changing FETCH_HEAD or writing checkout files.
+Discover candidates from a bounded snapshot without executing repository code or
+following symlinks. Deduplicate paths with the active worktree taking precedence;
+label candidates found only in the registered checkout or default branch. Selecting
+those paths stays staged and explains that the active worktree must be updated to
+use the guidance. Remote failures retain local candidates and show an unavailable
+warning. Ordinary browsing and read-only commands never fetch.
 Retain missing explicit paths with a visible error; never silently replace them.
 Repository source settings survive assignment changes and are tool-scoped.
 
@@ -121,8 +130,8 @@ discard pending settings first. Review the task, then start the existing guarded
 agent launcher in a new isolated worktree. Draft an entry point, agent-instruction
 reference and evidence-backed design/preview guidance without overwriting existing
 content or duplicating workflow approval rules. Drafting does not publish changes
-or select a source. Review the actual diff in the agent session, then refresh
-discovery from the accepted worktree to select the resulting source.
+or select a source. Review the actual diff in the agent session, then use Scan again
+after merging to select the source, or select it locally from the accepted worktree.
 
 Development availability is scoped to the caller's t worktree. With a canonical
 Git installation, each `dev/t-*` or `cursor/*` worktree supplies its own executable
@@ -198,7 +207,7 @@ an exclusive reset: selecting it clears all other marks, selecting a real option
 clears it, and unchecking the last real option restores it.
 The 60-column breakpoint applies to `_RailUI` inline menus. Most printed tables
 switch to labeled, wrapped cells when their actual columns no longer fit.
-Session lists instead keep one physical row per session, as described below.
+Session overviews may wrap the model list onto continuation lines; identity and status appear only on the first line.
 
 Terminal titles use short public command labels while a command runs and clear
 on return, including failures and cancellation. Remote open/resume adds the host
@@ -210,6 +219,14 @@ profiles may still append foreground arguments independently of OSC titles; remo
 foreground workers use single-quoted outer commands to avoid escaped-space titles.
 
 ## Command types
+
+`t eval` is the evaluation hub. `t eval config` manages persistent named
+configurations using the shared rail editor and review/save. `t eval runs start`
+uses the shared fzf configuration picker; Enter starts immediately. Missing detail
+or action targets use fzf. Interactive `t eval runs list` and targetless `show` share the same read-only run picker; redirected and JSON list output remains static. This is an explicitly approved exception to the usual list-without-selection rule. Run rows include
+progress/phase, selected models and separate per-mode benchmark results, observed
+tok/s and estimated cloud cost; unavailable measurements remain labeled unavailable.
+JSON never prompts. See [evaluation commands](../docs/evaluations.md).
 
 The types compose: `t session open` can be a direct action with an explicit
 slot, or a filtered multi-selection without one. Choose by behavior rather than
@@ -290,6 +307,15 @@ host registration and the default beam host. Settings collections and setup
 destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
+
+Entering Local worker & models with pending edits offers Review and save, then
+continue; Discard changes and continue; and Back to settings. Review shows the
+actual shell and workflow changes before saving. A successful save or explicit
+discard opens the worker hub without restarting config; returning retains focus
+and uses the new saved baseline. Back, review cancellation and Ctrl+C retain
+pending edits. Save failures show one replaceable Retry save / Back to review
+prompt instead of repeated scrollback warnings. Post-save follow-up failures
+are labeled as already saved, never as discarded or unsaved changes.
 
 Cross-host moves and resumes use guarded t transfer for both Claude and Codex.
 Worktree transfers preflight push access before stopping the source, then publish
@@ -635,7 +661,9 @@ without prompts, model discovery or writes. `instructions edit` uses a private .
 file in VISUAL/EDITOR, preserves formatting and editor status, and rejects embedded
 managed-block markers. Repository edits create an inline policy only after an actual
 change and preserve exclusion; inspection includes the stored prose when excluded.
-Clear text instructions appears when text is present and stages its removal in the
+Text instructions opens a page with Edit text instructions, Clear text instructions
+and Back. Clear is available on that page even when empty (Already empty is a no-op);
+the parent shortcut also appears when text is present. Removal stays in the
 same save transaction. Empty editor contents clear text too. Cancellation/discard
 preserves saved instructions, and clearing leaves other workflow settings intact.
 The issue-before-code rule is seeded once as editable Markdown in schema v3.
@@ -731,9 +759,9 @@ provider termination cannot be confirmed. See [test runners](../docs/test-runner
 ```text
 dev sessions   ● attached/loaded · ✓ active context · ↻ still in progress
 
-  STATUS  UI         MODEL    SESSION  WORKING ON
-  ○       › cli      ⬡ codex  api-2    Fix login
-  ○       ▣ desktop  ✱ opus   web-1    Review UI
+  STATUS  SESSION  WORKING ON  LOC/CLD TOKEN%  TOOL  MODELS
+  ○       api-2    Fix login   69/31           ⬡     ★ cloud, local
+  ○ ▣     web-1    Review UI   —               ✱     ★ opus
 
   reattach: t open <repo> <slot>
 
@@ -873,12 +901,14 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
-Saved candidate discovery uses a disposable source-validated cache and one snapshot
-per resume invocation. File identity, size, nanosecond timestamps, and SQLite WAL
-changes invalidate cached metadata. Live ownership is never taken from this cache.
-Terminal commands may print plain stage progress to stderr before slow discovery;
-redirected output, JSON, and remote scanner protocols remain free of progress.
-This adds no command, picker, prompt, or conditional selection mode.
+Session discovery uses one RAM-serving cache service for CLI and MCP. Local and
+remote snapshots and host status expire hourly. Missing/expired entries refresh
+asynchronously; cached rows remain visible with their age, and an open picker
+stays stable until the next invocation. Cold discovery reports refreshing,
+never a false empty result. Failed hosts retry on use after one hour. Session
+lifecycle events invalidate affected hosts; live ownership checks always bypass
+the cache. SQLite is asynchronous persistence for startup recovery only.
+See [session cache storage and lifecycle](../docs/session-cache.md).
 
 Quiet blocking work (provider calls, repository/setup probes, updates, AgentCore,
 sharing, and session/history discovery) uses a delayed
@@ -1077,7 +1107,7 @@ hosts without changing repository scope; unavailable-host warnings preserve
 reachable results. For example, run `t ls -r` for all repositories across hosts,
 or `t ls api -r` for only api.
 
-`t session list` additionally places LAST TURN in the final column, after WORKING ON.
+`t session list` places LAST TURN in the final column, after MODELS when space permits.
 It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
 local timezone, including remote rows; unavailable evidence displays `-`.
 Codex uses `task_started` (older transcripts may use `user_message`); Claude
@@ -1088,18 +1118,16 @@ an ISO 8601 UTC timestamp or `-`; legacy rows and the seven-field ownership
 protocol remain valid. The table remains read-only. History's DATE
 continues to describe retained activity.
 
-`t session list` overrides the shared table's narrow layout: first clip WORKING ON
-to the available space, then omit UI and MODEL if the other columns cannot fit.
-Compact rows show S (the same status marks without spaces), HOST for remote lists,
-SESSION (SLOT at the smallest width), TASK, and LAST TURN. Shorten timestamps to
-local `MM-DD HH:MM`, or `HH:MM` when necessary. Count Unicode display columns and
-mark clipped values with an ellipsis. Without a usable terminal or fzf, lists stay read-only.
-Redirected output retains all columns and complete values: `t ls | cat` or
-`t ls -r | cat`. For example, at 32 columns a remote row can look like:
+`t session list` keeps STATUS, SESSION and WORKING ON in that order. It reduces
+task width, wraps model names, then omits optional columns when necessary. Remote
+rows keep a separate HOST column when possible; otherwise the session is suffixed
+with @host. Timestamps use `HH:MM` when the full timestamp cannot fit. Count Unicode
+display columns and mark clipped values with an ellipsis. Redirected output retains
+all columns and complete values: `t ls | cat` or `t ls -r | cat`.
 
 ```text
-  S   HOST SLOT   TASK LAST TURN
-  ●✓↻ mini api-17 Fix… 09:41
+  STATUS  SESSION  WORKING ON
+  ● ✓ ↻   api-17   Fix login…
 ```
 
 `t session list` (`t ls`, `t list`) always prints the scoped, read-only session table.
@@ -1380,7 +1408,9 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **Cloud connection failure** opens grouped Cloud retries and Local
+task limit (15 minutes by default), maximum task limit (30 minutes), inactivity
+timeout (5 minutes) and queue wait (5 minutes). Reset time limits changes only
+these four values. **Cloud connection failure** opens grouped Cloud retries and Local
 fallback settings: **Retry cloud for** defaults to **Up to 5 minutes**, with
 15 seconds, 30 seconds, 1 minute, 2 minutes and 5 minutes available. **Then**
 defaults to **Pause**; **Continue locally** reveals the selected local model and
@@ -1407,16 +1437,17 @@ Unsupported resume/fork/exec/review or overridden launches reject local fallback
 Pause launches use native retry behavior and explicitly report that the configured
 retry limit is unavailable. Local-only workflows disable this cloud settings row.
 These are conditional launch modes, not new public command families.
-The model chooser uses the shared RailUI comparison profile. Show available
-publisher benchmark columns together; do not default to an empty benchmark suite
-or add a redundant benchmark-summary action. Label source keys in the column
-headers, and show missing scores as —. Number keys open source/version/harness
-for the focused model; m opens optional model tools. Scores remain original-model
-publisher results, never local quantization or speed measurements.
+The model chooser uses the shared RailUI comparison table with identity, size,
+provider, memory fit, readiness and a sourced benchmark score. Prefer SWE Pro when
+available, otherwise another published suite; show missing scores as —. A shared
+legend retains suite/version and base-model provenance. Number keys open the
+available publisher source/version/harness for the focused model; m opens optional
+model tools. Scores remain original-model publisher results, never local
+quantization or speed measurements.
 
 Model labels, metadata and actions align at the shared row text column. Wide
-terminals align numeric comparison columns; narrow terminals stack labeled scores
-and readiness under the model. Keep the cursor and navigation inside the existing
+terminals align numeric comparison columns; narrow terminals shorten labels and
+omit the same optional columns for every model, preserving one line per model. Keep the cursor and navigation inside the existing
 windowed frame. Distinguish the configured model from keyboard focus and disambiguate
 provider/model identities. Context includes file state, verification context and
 the next Enter action. Missing configured models, empty discovery and discovery
@@ -1485,8 +1516,14 @@ configuration remain usable elsewhere. Native macOS assertion tests are opt-in.
 Session lifecycle actions share native ownership checks and verified launch readiness.
 Moves reserve their destination and validate both stores before stopping the source,
 then checkpoint work, verify copied bytes and wait for the exact destination owner.
-An unidentified writer remains a blocker. Failed transfers retain receipts and use
-`t resume REPO SLOT` for reconciliation; they never restart an ambiguous source.
+Reused workspaces, saved resumes and transfers retain unidentified-writer refusals.
+When allocation proves a newly created worktree and its device/inode still match,
+unresolved sibling locks are recorded in the operation receipt rather than
+blocking every workspace. Known same-workspace
+writers, tmux/foreground owners, reservations and unsafe ownership stores still
+block a new launch. No existing writer is stopped or released by this check.
+Failed transfers retain receipts and use `t resume REPO SLOT` for reconciliation;
+they never restart an ambiguous source.
 `session history`, `remote session history` and `history` remain hidden compatibility
 routes for the internal saved-conversation implementation, excluded from menus and
 completion. Public instructions use `session resume`.
@@ -1556,7 +1593,7 @@ different evaluation methods and narrow terminal sizes with labeled sample data.
 
 ### Workflow model overview
 
-The existing local-model single-selection mode opens a compact RailUI overview
+The optional local-model tools view opens a compact RailUI overview
 with model identity, readiness, file size, memory fit, context and the next action.
 Use shared nonselectable context rows and the shared viewport; keep the focused
 action and footer visible at 80×24, 44×20 and 32×12. Include the same concise
@@ -1594,5 +1631,80 @@ screen buffers. Outside tmux, report that prompted recovery is unavailable and
 retain the native cloud session. Preserve exactly one writer through every exit.
 Nonterminal Ask launches preserve native cloud behavior without a picker.
 
+In Ask mode, correlated fresh-start `account/read`/`thread/start` transport errors
+and the native routing-discovery bootstrap failure use the same ready-model
+selection after verified runtime shutdown. Show Retry cloud and Cancel startup
+instead of offering to pause a conversation that does not exist. Selection starts
+locally immediately with the original text prompt or an empty conversation.
+Incomplete startup input disables local selection. Preserve Pause passthrough;
+routing-discovery failure alone never authorizes automatic local fallback.
+
 Development preview: `python3 scripts/preview_connection_recovery.py` uses the
 shared RailUI with labeled sample data, no services, and no real configuration.
+Add `--startup` to simulate a bootstrap failure and cloud retry.
+
+### Scoped workflow context and job watching
+
+`t workflow context [--tool TOOL] [--repo ALIAS] [--json]` is read-only. It
+resolves the current checkout through its common Git directory, including linked
+worktrees; `--repo` selects a registered checkout explicitly. It prints shared
+rules and one workflow. Global agent files contain a short loader; supported
+SessionStart hooks supply the resolved context at start, resume and compaction.
+An identity probe failure is an error, not permission to choose another scope.
+
+Installation shows the affected global and repository instruction paths and backup
+location, then asks **Back up and rebuild these global and repository instructions?
+[y/N]**. Declining, EOF or unattended installation preserves existing instructions.
+Only t-owned marked blocks are rebuilt; custom Markdown and hand-written content
+remain. Linked repository instruction files are preserved and reported. Global
+instruction symlinks block migration. Original contents, permissions and hashes are backed up under the user's
+state directory. Unchanged files are not backed up or prompted for again.
+
+New Codex presets use Sol / medium for main work and Astra / medium for bounded
+review. Model stages and workflow launch defaults have independent inherited,
+Standard, Fast and Ultrafast speed choices where advertised by the native tool.
+Unavailable saved choices remain saved, with an explicit native-speed fallback.
+
+Workflow Behavior includes **Job watching ›** (Automatically / Only when
+requested), independent of test timing and location. **Text instructions ›**
+contains Edit, Clear and Back; Clear stages removal and exposes Undo clear.
+Normal save/discard semantics apply. Test runners default to a local snapshot,
+even with remote targets configured. Empty remote defaults mean local; explicit
+remote failures never silently fall back. Native GUI tests remain opt-in.
+
+`t runners runs watch ID --timeout 60 --json` returns a terminal receipt or a
+pending wait result. `ID` can also be `OWNER/REPO#PR@HEAD_SHA` to watch GitHub
+checks pinned to that exact head. `--next-step TEXT` records the authorized step
+waiting on the results. Watch timeouts and interrupted observation do not cancel
+jobs. The local-worker MCP offers the equivalent connection-owned `wait_task`.
+A detached watcher does not wake an agent: use a bounded wait or a host-supported
+notification, then inspect evidence and continue the next authorized step.
+
+`t ls` shows STATUS, SESSION, WORKING ON, optional HOST, LOC/CLD TOKEN%, TOOL,
+MODELS, **WATCHER**, and LAST TURN. WATCHER is `active watch-ID`, `stale watch-ID`, or `—`, with `+N`
+for concurrent watches; full IDs and run references remain in picker details and
+structured session metadata. Narrow output preserves status, session identity and task; it retains WATCHER
+ahead of other optional columns when space permits. Listing reads cached activity only. Statusline fragments
+preserve model/token/custom content. Only verified conversation owners receive
+activity; completion never implies that an agent reviewed the result.
+
+### Usage overview
+
+`t ls` preserves STATUS, SESSION and WORKING ON first. Optional columns follow:
+LOC/CLD TOKEN% (observed input + output token percentage pair), TOOL (icon only),
+MODELS (a list with ★ on the lead), WATCHER, LAST TURN. Model lists may wrap; continuation
+lines never repeat status or session identity. Narrow screens omit optional columns.
+The legend retains attachment, active context, merged/still-in-progress, desktop
+and all tool icons. UI remains metadata; estimated costs live in usage details.
+
+`t system usage list [--json]` prints recorded usage on this machine without
+selection. `t system usage show [ID] [--json]` opens the shared fzf picker when
+ID is omitted in a terminal; Enter prints full details. JSON requires a show ID.
+Workflow rows aggregate their attributed session requests and are not extra usage
+that can be added to session totals. Launch snapshots freeze workflow revisions;
+unrecorded history stays unattributed. Copies of a session are deduplicated.
+Unknown provider, missing usage, missing timing and missing prices stay unavailable.
+Percentages describe observed tokens, not task counts or completeness. Throughput
+uses matched request time including prefill, never entire task duration. Costs
+are dated API estimates; savings need a compatible frontier-only baseline.
+Reports read existing local evidence only: no model start, downloads or network.

@@ -100,7 +100,7 @@ def test_named_and_repository_choices_are_scoped_and_read_only(workflow, tmp_pat
     repository = str(tmp_path.resolve() / 'repo')
     document = workflow.action(document, 'use', name='review-only', repository=repository)
     original = copy.deepcopy(document)
-    assert workflow.separate_stages(workflow.effective(document)) == ['planning', 'review']
+    assert workflow.separate_stages(workflow.effective(document)) == ['review']
     assert workflow.separate_stages(workflow.effective(document, repository)) == ['review']
     summary = workflow.catalogue(document)['workflows']['review-only']
     assert summary['workflow'] == policy
@@ -122,7 +122,7 @@ def test_planning_only_instructions_keep_review_in_main(workflow):
     policy = workflow.select_stages(workflow.DEFAULT, ['planning'])
     policy['review'] = {'model': 'inactive-reviewer', 'effort': 'ultra'}
     text = workflow._stage_text(policy)
-    assert 'Plan with a bounded gpt-6-astra sub-agent' in text
+    assert 'Plan with a bounded gpt-6.1-sol sub-agent' in text
     assert 'Review in the main conversation with gpt-6.1-sol' in text
     assert 'Review with a bounded' not in text
     assert 'inactive-reviewer' not in text and 'ultra' not in text
@@ -135,6 +135,7 @@ def test_review_task_effort_is_independent_of_implementation_effort(workflow, ma
     policy = workflow.select_stages(workflow.DEFAULT, ['review'])
     policy['planning'] = {'model': 'inactive-planner', 'effort': 'ultra'}
     policy['implementation']['effort'] = main_effort
+    policy['review']['effort'] = 'auto'
     text = workflow._stage_text(policy)
     assert 'Plan in the main conversation with gpt-6.1-sol' in text
     assert 'Plan with a bounded' not in text
@@ -208,7 +209,7 @@ def test_main_work_unselected_uses_each_tools_own_launch_defaults(workflow):
     text = workflow._stage_text(policy)
     assert 'Implement in the main conversation with main-codex' in text
     assert 'Review in the main conversation with main-codex' in text
-    assert 'gpt-6.1-sol' not in text
+    assert 'Plan with a bounded gpt-6.1-sol' in text
     assert 'Codex session default: main-codex; reasoning: low' in workflow.summary_lines(policy)
 
 
@@ -220,6 +221,7 @@ def test_main_work_unselected_native_defaults_do_not_reveal_inactive_values(work
     assert workflow.main_session_settings(policy, 'claude') == {}
     assert workflow.stage_settings(policy, 'planning') == {'model': '', 'effort': ''}
     assert workflow.stage_settings(policy, 'implementation') == {'model': '', 'effort': ''}
+    policy['review']['effort'] = 'auto'
     text = workflow._stage_text(policy)
     assert 'the current native model' in text
     assert 'the current native reasoning setting' in text
@@ -247,6 +249,7 @@ def test_model_stage_selector_rejects_invalid_edits(workflow):
 
 def test_worker_effort_is_distinct_from_inherited_main_effort(workflow):
     policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
+    policy['implementation']['effort'] = 'auto'
     assert workflow.stage_settings(policy, 'implementation') == policy['implementation']
     assert workflow.stage_settings(policy, 'implementation')['effort'] == 'auto'
     for stage in ('planning', 'review'):
@@ -256,7 +259,7 @@ def test_worker_effort_is_distinct_from_inherited_main_effort(workflow):
 
 
 def test_review_defaults_to_task_selected_effort(workflow):
-    assert workflow.DEFAULT['review']['effort'] == 'auto'
+    assert workflow.DEFAULT['review']['effort'] == 'medium'
     policy = workflow.select_model_stages(workflow.DEFAULT, ['review'])
     policy['review']['effort'] = 'auto'
     assert workflow.validate_policy(policy) == policy
@@ -275,6 +278,7 @@ def test_review_defaults_to_task_selected_effort(workflow):
 
 def test_task_selected_implementation_uses_worker_with_fixed_main_session(workflow):
     policy = workflow.select_model_stages(workflow.DEFAULT, ['implementation'])
+    policy['implementation']['effort'] = 'auto'
     before = copy.deepcopy(policy)
     assert workflow.implementation_worker(policy)
     assert workflow.implementation_worker({**policy, 'enabled': False})
@@ -289,7 +293,7 @@ def test_task_selected_implementation_uses_worker_with_fixed_main_session(workfl
     assert 'never pretend the main session\'s effort changed' in text
     assert 'Plan in the main conversation with gpt-6.1-sol; reasoning effort: medium.' in text
     assert 'Review in the main conversation with gpt-6.1-sol; reasoning effort: medium.' in text
-    assert 'Main session: gpt-6.1-sol · Medium' in workflow.summary_lines(policy)
+    assert 'Lead model: gpt-6.1-sol · Medium' in workflow.summary_lines(policy)
     assert workflow.main_session_settings(policy) == {'model': 'gpt-6.1-sol', 'effort': 'medium'}
     assert policy == before
 

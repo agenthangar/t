@@ -36,7 +36,7 @@ t() {
   [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
     case ${1:-} in
-      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|config|profile|policy|agent|system)
+      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
@@ -45,7 +45,7 @@ t() {
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
-      case ${3:-} in start|list|ls|status|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+      case ${3:-} in start|list|ls|status|watch|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
     fi
     _term_title "$label"
     title_active=1
@@ -486,10 +486,10 @@ _t_open_picker() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_dev_rows_all --best-effort --details) || return $?
+    rows=$(_t_discovery_rows --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_dev_session_rows --details) || return 1
+    rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
@@ -672,7 +672,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners config mcp profile policy agent system login help)
+  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners eval config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -692,6 +692,30 @@ _t() {
     return
   fi
   local -a actions
+  if [[ $group == eval ]]; then
+    if (( CURRENT == first - 1 )); then
+      actions=(config benchmarks runs)
+      _describe -t actions 'evaluation resource' actions
+    elif (( CURRENT == first )); then
+      case $action in
+        config) _values 'configuration action' list ls show edit ;;
+        benchmarks) _values 'benchmark action' list ls ;;
+        runs) _values 'run action' start list ls show compare resume cancel ;;
+      esac
+    elif [[ ${words[CURRENT-1]} == --config ]]; then
+      _files
+    elif [[ ${words[CURRENT]} == -* ]]; then
+      case ${words[first]} in
+        start) _values 'flag' --config --dry-run --frontier-model --local-model --local-provider --reasoning-effort --json -h --help ;;
+        resume) _values 'flag' --retry-interrupted -h --help ;;
+        list|ls|show|compare) _values 'flag' --json -h --help ;;
+        *) _values 'flag' -h --help ;;
+      esac
+    else
+      _message 'saved configuration name or run ID (omit for fzf)'
+    fi
+    return
+  fi
   if [[ $group == issue ]]; then
     if (( CURRENT == first - 1 )); then
       local -a issue_actions=(list ls status start open)
@@ -747,13 +771,13 @@ _t() {
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
     hosts) actions=(list ls show add edit remove default run) ;;
-    workflow) actions=(list ls open delete add use exclude inherit edit instructions) ;;
+    workflow) actions=(context list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local models) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose advisories) ;;
+    system) actions=(integrate update diagnose advisories usage) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -779,9 +803,9 @@ _t() {
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == runs ]] && (( CURRENT == first )); then
-      _values 'run verb' start list ls status logs artifacts cancel cleanup
+      _values 'run verb' start list ls status watch logs artifacts cancel cleanup
     elif [[ $action == runs ]]; then
-      _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --json --output -h --help
+      _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --next-step --json --output -h --help
     elif [[ $action == setup ]]; then
       _values 'flag' --github-repo --create -h --help
     else
@@ -800,7 +824,7 @@ _t() {
   if [[ $group == workflow || ( $group == config && $action == workflow ) ]]; then
     [[ $group == workflow ]] && (( first-- ))
     if (( CURRENT == first )); then
-      _values 'workflow resource or verb' list ls open delete add use exclude inherit edit instructions
+      _values 'workflow resource or verb' context list ls open delete add use exclude inherit edit instructions
     elif [[ ${words[CURRENT-1]} == --tool ]]; then
       _values 'CLI tool' codex claude cursor
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
@@ -809,6 +833,8 @@ _t() {
       _values 'instructions verb' show edit
     elif [[ ${words[first]} == list || ${words[first]} == ls ]]; then
       _values 'flag' --tool --repo --all --json -h --help
+    elif [[ ${words[first]} == context ]]; then
+      _values 'flag' --tool --repo --json -h --help
     elif [[ ${words[first]} == add ]]; then
       _values 'flag' --tool --from -h --help
     elif [[ ${words[first]} == delete ]]; then
@@ -1007,6 +1033,10 @@ _t() {
       else _files -/; fi ;;
     policy/check|policy/apply)
       _values 'flag' --defaults -h --help ;;
+    system/usage)
+      if (( CURRENT == first )); then _values 'usage action' list ls show
+      elif [[ ${words[CURRENT]} == -* ]]; then _values 'flag' --json -h --help
+      else _message 'usage ID (omit for fzf)'; fi ;;
     system/advisories)
       if [[ ${words[CURRENT-1]} == --interval-hours ]]; then _message 'refresh interval in hours (1–720)'
       elif (( CURRENT == first )); then _values 'action' enable disable status

@@ -24,8 +24,10 @@ UNSUPPORTED = {
 # Only finite, explicitly read-only modes may fan out. In particular, --json is
 # presentation, not evidence that a command cannot mutate state.
 QUERIES = frozenset({
+    'system usage list',
+    'eval config list', 'eval benchmarks list', 'eval runs list',
     'session list', 'repo list', 'repo locate', 'issue list', 'issue status',
-    'cursor list', 'hosts list', 'hosts show', 'workflow list',
+    'cursor list', 'hosts list', 'hosts show', 'workflow list', 'workflow context',
     'workflow instructions show', 'config show', 'config models list',
     'config models show', 'config models runtime status', 'config models requests list',
     'config models requests show', 'agent status', 'runners list', 'runners runs list',
@@ -38,7 +40,7 @@ INFER = frozenset({
     'session close', 'session restart', 'session read', 'session view-plan',
     'session paste', 'session search', 'repo locate', 'issue list', 'issue status',
     'issue start', 'profile show', 'profile edit', 'profile init', 'policy check',
-    'policy show', 'policy apply', 'runners runs start',
+    'policy show', 'policy apply', 'runners runs start', 'workflow context',
 })
 
 

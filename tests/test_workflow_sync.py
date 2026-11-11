@@ -28,6 +28,7 @@ def saved(sync, *, staged=True):
     doc = w['defaults']()
     if not staged:
         doc['workflows']['standard']['stages_enabled'] = False
+        doc['workflows']['standard'].pop('session_defaults', None)
     w['save'](doc, None, propagate=False)
     return w['load']()[0]
 

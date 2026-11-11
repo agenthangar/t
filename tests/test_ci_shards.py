@@ -123,7 +123,7 @@ def test_refresh_uses_all_phases_per_file(tmp_path):
 
 def test_opt_in_collection_and_report_accounting(monkeypatch):
     from types import SimpleNamespace
-    options = {'--ci-shard': 0, '--ci-shards': 2, '--ci-legacy': False}
+    options = {'--ci-fast': False, '--ci-shard': 0, '--ci-shards': 2, '--ci-legacy': False}
     deselections = []
     config = SimpleNamespace(
         _ci_audit={'outcomes': {}, 'durations': {}},
@@ -150,19 +150,21 @@ def test_opt_in_collection_and_report_accounting(monkeypatch):
 @pytest.mark.parametrize(('shard', 'count', 'legacy'), [(-1, 4, False), (4, 4, False), (0, 0, False), (0, 4, True)])
 def test_invalid_collection_configuration(shard, count, legacy):
     from types import SimpleNamespace
-    options = {'--ci-shard': shard, '--ci-shards': count, '--ci-legacy': legacy}
+    options = {'--ci-fast': False, '--ci-shard': shard, '--ci-shards': count, '--ci-legacy': legacy}
     config = SimpleNamespace(_ci_audit={}, getoption=options.__getitem__)
     with pytest.raises(ValueError):
         ci.pytest_collection_modifyitems(config, [SimpleNamespace(nodeid='a.py::test_one')])
 
 
-def test_legacy_collection_keeps_entire_files():
+def test_legacy_collection_keeps_real_fzf_cases_only():
     from types import SimpleNamespace
-    options = {'--ci-shard': None, '--ci-shards': 4, '--ci-legacy': True}
+    options = {'--ci-fast': False, '--ci-shard': None, '--ci-shards': 4, '--ci-legacy': True}
     config = SimpleNamespace(_ci_audit={}, getoption=options.__getitem__,
                              hook=SimpleNamespace(pytest_deselected=lambda **kwargs: None))
     nodes = [name + suffix for name in ci.LEGACY for suffix in ('::test_a', '::test_b')]
-    items = [SimpleNamespace(nodeid=node) for node in nodes + ['other.py::test_other']]
+    items = [SimpleNamespace(nodeid=node, get_closest_marker=lambda name: True) for node in nodes]
+    items.append(SimpleNamespace(nodeid=ci.LEGACY[0] + '::test_pure', get_closest_marker=lambda name: None))
+    items.append(SimpleNamespace(nodeid='other.py::test_other'))
     ci.pytest_collection_modifyitems(config, items)
     assert sorted(item.nodeid for item in items) == sorted(nodes)
-    assert len(config._ci_audit['full']) == len(nodes) + 1
+    assert len(config._ci_audit['full']) == len(nodes) + 2

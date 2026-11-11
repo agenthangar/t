@@ -77,8 +77,9 @@ def test_no_codex_home_no_hooks_file(box):
     assert (home / ".codex" / "prompts" / "tpush.md").is_symlink()
     assert not (home / ".codex" / "hooks.json").exists()
     assert "Review hooks" not in r.stdout
+    assert "Instruction migration deferred" in r.stdout
     for path in [home / '.codex/AGENTS.md', home / '.claude/CLAUDE.md']:
-        assert 'Record its URL before editing code' in path.read_text()
+        assert not path.exists()
 
 
 def test_second_run_preserves_hooks_and_repeats_review_guidance(box):

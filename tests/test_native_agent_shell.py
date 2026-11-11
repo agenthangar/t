@@ -102,6 +102,7 @@ def checkpoint(tmp_path):
     w=runpy.run_path(str(ROOT/'libexec/t_workflow.py'))
     sync=runpy.run_path(str(ROOT/'libexec/t_workflow_sync.py'))
     doc=w['defaults']()
+    doc['workflows']['standard'].pop('session_defaults', None)
     doc['workflows']['standard']['stages_enabled'] = False  # Exercise account intent without a scoped stage-model override.
     config=home/'.config/t';config.mkdir(parents=True)
     (config/'workflow.json').write_text(json.dumps(doc))

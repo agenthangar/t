@@ -22,7 +22,8 @@ def rows(local, monkeypatch):
     values[1].update(installed=True, ready=False, verification_allowed=True)
     values[2].update(installed=False, ready=False, fit=True)
     monkeypatch.setattr(local,'catalogue',lambda *a, **kw: {'models':values})
-    monkeypatch.setattr(local,'helper',lambda name: {'status': lambda: {'models': []}, 'reservation':nullcontext})
+    original_helper = local.helper
+    monkeypatch.setattr(local,'helper',lambda name: original_helper(name) if name == 't_model_display' else {'status': lambda: {'models': []}, 'reservation':nullcontext})
     return values
 
 
@@ -35,6 +36,9 @@ def test_ready_selects_directly_and_compares_all_published_scores(local, rows):
     _, entries, opts=ui.views[0]
     assert not any('benchmark' in label.lower() for _,label in entries)
     assert len(opts['columns'])==5
+    assert opts['benchmark_suite'] == 'swe-bench-pro'
+    selected = next(model for model in opts['model_table'] if model['selected'])
+    assert selected['key'] == rows[0]['model'] and selected['score'] == '61.7'
     assert opts['cells'][rows[0]['model']][:4]==['61.7','42.2','—','89.2']
     assert opts['cells'][rows[3]['model']][2]=='36.2'
     assert 'Configured' in opts['notes'][rows[0]['model']]
@@ -82,6 +86,7 @@ def test_provider_identity_sources_empty_and_unavailable(local, rows, monkeypatc
     ui=Menu([('gpqa',key),key])
     assert local.select_model(ui,provider='ollama')==local.selection(duplicate)
     assert ui.views[0][1][ui.views[0][2]['default']][0]==key
+    assert next(model for model in ui.views[0][2]['model_table'] if model['selected'])['key'] == key
     assert any(duplicate['benchmarks']['gpqa']['source'] in line for line in ui.pages[0][1])
     local.benchmark_source(ui,rows[2],'gpqa');assert 'No published' in ui.pages[-1][1][0]
     row=rows[2];row.update(fit=False,verification_allowed=False,reason='Too little memory')

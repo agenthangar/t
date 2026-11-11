@@ -468,6 +468,19 @@ def _parse_rows(text, host_prefixed=False):
             row["model"] = extra[1]
         if len(extra) > 2:
             row["last_turn_started_at"] = extra[2]
+        for encoded in extra[3:]:
+            try:
+                value = json.loads(encoded)
+                if isinstance(value, dict):
+                    row['usage'] = value
+                elif isinstance(value, list) and all(isinstance(item, dict) for item in value):
+                    row['watchers'] = value
+            except ValueError:
+                pass
+        if host == 'local' and 'watchers' not in row:
+            watches = _watchers()['records'](sid)
+            if watches:
+                row['watchers'] = watches
         rows.append(row)
     return rows
 
@@ -519,7 +532,7 @@ def _header(st, scope):
         # Make the scoped repo prominent (bold cyan) — the rest of the note stays dim.
         repo = os.path.basename(scope)
         note = f"   {st.y}(repo: {st.r}{st.b}{st.c}{repo}{st.r}{st.y} — --all for all){st.r}"
-    return f"dev sessions   {st.g}●{st.r} attached/loaded · {st.c}✓{st.r} active context · {st.w}↻{st.r} still in progress · ▣ desktop · {_agent_legend()}{note}"
+    return f"dev sessions   {st.g}●{st.r} attached/loaded · ○ detached/unloaded · {st.c}✓{st.r} active context · {st.w}↻{st.r} merged, still in progress · ▣ desktop · ★ lead model · LOC/CLD TOKEN% observed local/cloud · {_agent_legend()}{note}"
 
 
 def _ls_scope(cfg, repo, all_repos, cwd):
@@ -548,6 +561,10 @@ def _ls_scope(cfg, repo, all_repos, cwd):
     return scope, wt_scope
 
 
+def _session_discovery():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_session_discovery.py'))
+
+
 def cmd_ls(cfg, args):
     try:
         scope, wt_scope = _ls_scope(cfg, args.repo, args.all, os.getcwd())
@@ -557,7 +574,16 @@ def cmd_ls(cfg, args):
     st = Style()
     _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
     command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
-    rows = _scope_filter(_parse_rows(zsh_capture(command), host_prefixed=args.remote), scope, wt_scope)
+    if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
+        text = zsh_capture(command)
+    else:
+        cache = _session_discovery()
+        view = cache['discover'](cfg, local=not args.remote, fields=['rows'])
+        cache['announce'](view)
+        if not any(h.get('value') is not None for h in view.get('hosts', [])):
+            return 1 if view.get('unavailable') else 0
+        text = cache['rows'](view, prefixed=args.remote)
+    rows = _scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope)
     if not rows:
         if args.remote:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
@@ -658,6 +684,8 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     """Resume-style rows: target fields, full details, then compact display."""
     if not rows:
         return []
+    rows = [dict(row, summary=(row.get('summary') or '') +
+                 (' · ' + _watchers()['label'](row.get('watchers', [])) if _watchers()['label'](row.get('watchers', [])) != '—' else '')) for row in rows]
     cells, statuses = [], []
     for row in rows:
         label = row["slot"]
@@ -686,6 +714,9 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     for row, parts in zip(rows, cells):
         summary = row.get("summary") or ""
         details = "  ".join(parts) + "  " + summary
+        for watch in row.get('watchers', []):
+            info = f"  Watcher {watch.get('id', '?')}: {watch.get('state', 'unknown')} · run {watch.get('run_id', '?')}"
+            details += ''.join(char for char in info if char.isprintable())
         if last_turn:
             details += "  Last turn: " + _session_display_helpers()["format_last_turn"](row.get("last_turn_started_at"))
         parts[-1] = _truncate(parts[-1], widths[-1])
@@ -705,57 +736,86 @@ def _session_picker_rows(rows, remote=False, scoped=False, compact=False, header
     return ([heading] if header else []) + out
 
 
+def _watchers():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_watch.py'))
+
+
 def _session_table_lines(rows, remote=False):
-    headings = ["STATUS", "UI", "MODEL"] + (["HOST"] if remote else []) + ["SESSION", "WORKING ON", "LAST TURN"]
+    """Approved usage overview; model continuations never repeat session marks."""
     helpers = _session_display_helpers()
+    width = _columns() if sys.stdout.isatty() else 100000
+    clip, wrap = helpers['clip_columns'], helpers['wrap_columns']
+    headings = ['STATUS', 'SESSION', 'WORKING ON'] + (['HOST'] if remote else []) + ['LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'WATCHER', 'LAST TURN']
     cells = []
     for row in rows:
-        values = helpers["session_cells"](row, _agent_glyph(row.get("agent", "claude")), remote)
-        values.append(helpers["format_last_turn"](row.get("last_turn_started_at")))
-        cells.append(values)
-    if not sys.stdout.isatty() or not cells:
-        return _table_lines(headings, cells)
-
-    width = _columns()
-    clip = helpers["clip_columns"]
-    # A long task should consume spare space, not turn every session into a card.
-    widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
-              for i, label in enumerate(headings)]
-    task_width = width - sum(widths[:-2]) - widths[-1] - 2 * len(widths)
-    if task_width >= len("WORKING ON"):
-        widths[-2] = min(widths[-2], task_width)
-        gap = "  "
-    else:
-        # Keep the actionable identity, ownership marks and task on one line.
-        # Remote hosts remain separate so equal slot names can be distinguished.
-        headings = ["S"] + (["HOST"] if remote else []) + ["SESSION", "TASK", "LAST TURN"]
-        cells = [[row[0].replace(" ", "")] + ([row[3]] if remote else []) +
-                 [row[-3], row[-2], row[-1][5:16] if row[-1] != "-" else "-"]
-                 for row in cells]
-        widths = [max(_display_width(label), *(_display_width(row[i]) for row in cells))
-                  for i, label in enumerate(headings)]
-        widths[-3] = min(widths[-3], 12)
+        marks = helpers['session_cells'](row, '', remote)[0]
+        if row.get('state') == 'app':
+            marks += ' ▣'
+        usage = row.get('usage') or {}
+        share = usage.get('local_cloud_percent')
+        share = '/'.join(map(str, share)) if isinstance(share, list) and len(share) == 2 and all(type(v) is int and 0 <= v <= 100 for v in share) else '—'
+        safe = lambda value: ''.join(c if c.isprintable() else ' ' for c in str(value))
+        lead = safe(usage.get('lead_model') or row.get('model') or '')
+        models = list(dict.fromkeys([safe(v['model']) for v in usage.get('models', []) if isinstance(v, dict) and v.get('model')]))
+        if lead and lead != '-':
+            models = ['★ ' + lead] + [m for m in models if m != lead]
+        values = [marks, row['slot'], row.get('summary') or '-']
         if remote:
-            widths[1] = min(widths[1], 8)
-        widths[-2] = 4
-        gap = " "
-        available = width - 2 - (len(widths) - 1)
-        for i, minimum in [(-3, 6), *([(1, 4)] if remote else [])]:
-            widths[i] -= min(max(0, sum(widths) - available), max(0, widths[i] - minimum))
-        if widths[-3] < len("SESSION"):
-            headings[-3] = "SLOT"
-        if sum(widths) > available:
-            cells = [row[:-1] + [row[-1][-5:]] for row in cells]
-            widths[-1] = len("LAST TURN")
-        widths[-2] += max(0, available - sum(widths))
-
-    lines = []
-    for row in [headings, *cells]:
-        fitted = [clip(cell, size) for cell, size in zip(row, widths)]
-        line = "  " + gap.join(cell + " " * (size - _display_width(cell))
-                                 for cell, size in zip(fitted, widths)).rstrip()
-        lines.append(clip(line, width))
-    return lines
+            values.append(row.get('host', 'local'))
+        cells.append(values + [share, _agent_glyph(row.get('agent', 'claude')), ', '.join(models) or '—', _watchers()['label'](row.get('watchers', [])),
+                               helpers['format_last_turn'](row.get('last_turn_started_at'))])
+    if not cells or width == 100000:
+        return _table_lines(headings, cells)
+    widths = [max(_display_width(label), *(_display_width(r[i]) for r in cells)) for i, label in enumerate(headings)]
+    widths[1] = min(widths[1], 16)
+    widths[2] = min(widths[2], 32)
+    widths[headings.index('MODELS')] = min(widths[headings.index('MODELS')], 44)
+    if 2 + sum(widths) + 2 * (len(widths) - 1) > width:
+        for row in cells:
+            row[-1] = row[-1][11:16] if row[-1] != '-' else '-'
+        widths[-1] = len('LAST TURN')
+    excess = 2 + sum(widths) + 2 * (len(widths) - 1) - width
+    widths[2] -= min(max(0, excess), max(0, widths[2] - 12))
+    # Remove optional fields consistently, leaving the first three intact.
+    while len(headings) > 3 and 2 + sum(widths) + 2 * (len(widths)-1) > width:
+        if 'MODELS' in headings and widths[headings.index('MODELS')] > 16:
+            widths[headings.index('MODELS')] = 16
+            continue
+        index = next(headings.index(field) for field in ('LAST TURN', 'MODELS', 'TOOL', 'LOC/CLD TOKEN%', 'HOST', 'WATCHER') if field in headings)
+        if remote and headings[index] == 'HOST':
+            for row in cells:
+                row[1] = row[1] + '@' + row[index]
+            widths[1] = max(widths[1], max(_display_width(r[1]) for r in cells))
+        headings.pop(index); widths.pop(index)
+        for row in cells:
+            row.pop(index)
+    gap = '  '
+    if len(headings) == 3:
+        widths[0] = max(len('STATUS'), max(_display_width(r[0]) for r in cells))
+        widths[1] = min(widths[1], max(3, width - widths[0] - 16), 12)
+        widths[2] = max(1, width - 2 - widths[0] - widths[1] - 4)
+    else:
+        widths[2] += max(0, width - 2 - sum(widths) - 2*(len(widths)-1))
+    def line(values):
+        fitted = [clip(value, size) for value, size in zip(values, widths)]
+        return '  ' + gap.join(value + ' ' * (size - _display_width(value)) for value, size in zip(fitted, widths)).rstrip()
+    output = [line(headings)]
+    for row in cells:
+        continuation = []
+        if 'MODELS' in headings:
+            size = widths[headings.index('MODELS')]
+            for model in row[headings.index('MODELS')].split(', '):
+                if continuation and _display_width(continuation[-1] + ', ' + model) <= size:
+                    continuation[-1] += ', ' + model
+                else:
+                    continuation.extend(wrap(model, size))
+        if continuation:
+            row = list(row); row[headings.index('MODELS')] = continuation[0]
+        output.append(line(row))
+        for part in continuation[1:]:
+            extra = [''] * len(headings); extra[headings.index('MODELS')] = part
+            output.append(line(extra))
+    return output
 
 
 def _render_local(rows, scope, st, has_remote=False):
@@ -2049,12 +2109,16 @@ def _config_catalog(agent, raw):
                 fast = isinstance(legacy, list) and "fast" in legacy
                 ultrafast = isinstance(legacy, list) and "ultrafast" in legacy
         catalog.append({"id": ident, "resolved": resolved, "label": label, "efforts": efforts,
-                        "fast": fast, "ultrafast": ultrafast})
+                        "fast": fast, "ultrafast": ultrafast, "description": str(model.get("description") or "")[:160]})
     return catalog
 
 
 def _config_find_model(catalog, model):
     return next((m for m in catalog if model in (m["id"], m["resolved"])), None)
+
+
+def _model_display():
+    return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_model_display.py"))
 
 
 def _config_model_rows(current, catalog):
@@ -2091,7 +2155,7 @@ def _config_set_model(cfg, agent, model, catalog):
     return reset
 
 
-def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model="", quiet=False, model_validator=None):
+def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=None, fallback_model="", quiet=False, model_validator=None, role=""):
     while True:
         if agent not in catalogs:
             if not quiet:
@@ -2136,11 +2200,15 @@ def _config_model_menu(ui, cfg, agent, catalogs, setting="model", default_label=
         if default_label:
             rows = [(key, default_label if key == "" else label) for key, label in rows]
         title = f"{agent.title()} {setting if setting != 'fast' else ('Speed' if agent == 'codex' else 'Fast mode')}"
+        if role:
+            title = role + (" model" if setting == "model" else " reasoning effort")
         if setting != "model":
             title += f" · {model or 'tool default'}"
         picked = ui.pick(title, rows,
                          default=next(i for i, row in enumerate(rows) if row[0] == current),
-                         accents={key: "c" for key, _ in rows if key and not key.startswith("__")})
+                         accents={} if setting == "model" else {key: "c" for key, _ in rows if key and not key.startswith("__")},
+                         sections={"__custom__": "Manage"} if setting == "model" else None,
+                         model_table=_model_display()["native_models"](rows, catalog, agent, current) if setting == "model" else None)
         if picked == "__refresh__":
             del catalogs[agent]
             continue
@@ -2452,7 +2520,9 @@ def _workflow_model(ui, cfg, helper, stage, current):
         rows = list(choices.items()) + [("__custom__", "Enter a custom model ID…"),
                                         ("__refresh__", "Refresh model list")]
         picked = ui.pick(_workflow_stage_title(stage) + " model", rows,
-                         default=next(i for i, row in enumerate(rows) if row[0] == current))
+                         default=next(i for i, row in enumerate(rows) if row[0] == current),
+                         sections={"__custom__": "Manage"},
+                         model_table=_model_display()["native_models"](rows, catalog, tool, current))
         if picked == "__refresh__":
             getattr(cfg, "_workflow_catalogs", {}).pop(tool, None)
             if hasattr(cfg, "_workflow_catalog"):
@@ -2640,10 +2710,11 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
         cfg._workflow_session_catalogs = {}
     _config_model_menu(ui, staged, agent, cfg._workflow_session_catalogs, field,
                        default_label=_workflow_session_default_label(cfg, policy, agent, field),
-                       fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True,
+                       fallback_model=getattr(cfg, "models", {}).get(agent, ""), quiet=True, role="Lead",
                        model_validator=(lambda value: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*", value)) if agent == "cursor" else None)
     selected = {key: value for key, value in (("model", staged.models.get(agent)),
-                                             ("effort", staged.efforts.get(agent))) if value}
+                                             ("effort", staged.efforts.get(agent)),
+                                             ("speed", settings.get("speed"))) if value}
     if selected != settings:
         if selected:
             changed.setdefault("session_defaults", {})[agent] = selected
@@ -2654,9 +2725,35 @@ def _workflow_session_setting(ui, cfg, policy, agent, field):
     return changed
 
 
+def _workflow_speed(ui, cfg, policy, agent, stage=None):
+    from types import SimpleNamespace
+    settings = policy[stage] if stage else policy.get('session_defaults', {}).get(agent, {})
+    current = settings.get('speed', 'inherit')
+    encoded = {'inherit': '', 'standard': '0', 'fast': 'fast' if agent == 'codex' else '1'}
+    staged = SimpleNamespace(models={agent: settings.get('model', '')}, efforts={},
+                             fast={agent: encoded.get(current, current)})
+    _config_model_menu(ui, staged, agent, {}, 'fast', default_label='Inherit current parent speed' if stage else 'Inherit native speed',
+                       fallback_model=getattr(cfg, 'models', {}).get(agent, ''), quiet=True)
+    chosen = {'': 'inherit', '0': 'standard', '1': 'fast'}.get(staged.fast.get(agent, ''), staged.fast.get(agent))
+    if chosen == current or chosen == 'inherit' and current == 'inherit':
+        return copy.deepcopy(policy)
+    changed = copy.deepcopy(policy)
+    target = changed[stage] if stage else changed.setdefault('session_defaults', {}).setdefault(agent, {})
+    if chosen == 'inherit':
+        target.pop('speed', None)
+    else:
+        target['speed'] = chosen
+    if not stage and not target:
+        changed['session_defaults'].pop(agent, None)
+        if not changed['session_defaults']:
+            changed.pop('session_defaults')
+    return changed
+
+
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
     focus = 'enabled'
+    cleared_text = None
     try:
         while True:
             document = cfg._workflow_document
@@ -2677,18 +2774,19 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows += [(stage, _workflow_stage_title(stage))
                      for stage in ("planning", "implementation", "review") if stage in stages]
             if "implementation" not in stages and not local_only:
-                rows += [("main_model", "Model")]
+                rows += [("main_model", "Lead model")]
                 if agent != "cursor":
-                    rows.append(("main_effort", "Reasoning effort"))
+                    rows.append(("main_effort", "Lead reasoning effort"))
+            if not local_only:
+                rows.append(("main_speed", "Lead speed"))
             if agent == "codex":
                 rows.append(("inference", "Inference & routing ›"))
             rows.append(("frontend_design", "Frontend design ›"))
             rows.append(("behaviors", "PRs, previews & tests ›"))
+            rows.append(("job_watching", "Job watching ›"))
             if helper["PERMISSIONS"]:
                 rows.append(("permissions", "Permissions ›"))
-            rows += [("instructions", "Text instructions")]
-            if policy.get("instructions"):
-                rows.append(("clear_instructions", "Clear text instructions"))
+            rows += [("instructions", "Text instructions ›")]
             rows += [("edit", "Advanced JSON editor"), ("reset", "Reset workflow to defaults")]
             if name:
                 rows.append(("delete", "Delete workflow"))
@@ -2706,11 +2804,13 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
             values["main_model"] = defaults.get("model") or _workflow_session_default_label(cfg, policy, agent, "model")
             values["main_effort"] = _workflow_effort(defaults["effort"]) if defaults.get("effort") else _workflow_session_default_label(cfg, policy, agent, "effort")
+            values['main_speed'] = defaults.get('speed', 'Inherit native speed')
+            values['job_watching'] = helper['BEHAVIORS']['job_watching']['choices'][policy.get('behaviors', {}).get('job_watching', 'automatic')][0]
             selected = helper["effective_behaviors"](policy.get("behaviors", {}))
             count = sum(key in _WORKFLOW_TOPICS and key not in ("frontend_design", "design_system") for key in selected)
             values["behaviors"] = f"{count} overrides" if count else "Defaults"
             values["frontend_design"] = _workflow_field_value(helper, selected, "frontend_design")
-            values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Enter to edit"
+            values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Edit or clear"
                                       if policy.get("instructions") else "Default · No additional instructions")
             values["permissions"] = _workflow_permission_summary(helper, policy)
             reset = helper['reset_policy'](policy, tool=agent)
@@ -2728,13 +2828,23 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             if choice == 'repositories':
                 _workflow_repositories_menu(ui, cfg, helper, name)
                 continue  # Assignments and source edits already share the staged document.
-            elif choice == 'reset':
+            if choice == 'instructions':
+                action = ui.pick('Text instructions', [('edit', 'Edit text instructions'),
+                    ('clear', 'Clear text instructions'), *([('undo', 'Undo clear')] if cleared_text is not None else []), ('back', 'Back')],
+                    values={'clear': 'Remove all text' if policy.get('instructions') else 'Already empty'},
+                    accents={'clear': 'w'}, sections={'clear': 'Manage', 'back': 'Navigation'})
+                if action in (None, 'back'):
+                    continue
+                if action == 'clear' and not policy.get('instructions'):
+                    continue
+                choice = 'clear_instructions' if action == 'clear' else 'undo_clear' if action == 'undo' else 'instructions'
+            if choice == 'reset':
                 changed = reset
             elif choice == "stages_enabled":
                 backed = []
-                picked = ui.pick("Use multiple models", [("", "Use one model for all work"), ("planning", "Planning"),
+                picked = ui.pick("Use multiple models", [("", "Use lead model for all stages"), ("planning", "Planning"),
                                  ("implementation", "Implementation"), ("review", "Review"),
-                                 ('__default__', 'Use default · ' + (', '.join(_workflow_stage_title(key) for key in helper['model_stages'](helper['DEFAULT'])) or 'One model'))],
+                                 ('__default__', 'Use default · ' + (', '.join(_workflow_stage_title(key) for key in helper['model_stages'](helper['tool_defaults'](agent)['workflows']['standard'])) or 'One model'))],
                                  multi=True, marked={i + 1 for i, stage in enumerate(("planning", "implementation", "review")) if stage in stages} or {0},
                                  empty_choice="", exclusive_choices=('__default__',),
                                  sections={'__default__': 'Default'}, on_back=backed.extend, back_label="keep & back")
@@ -2772,8 +2882,19 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 policy = (copy.deepcopy(document["workflows"][name]) if name else helper["resolved"](document, repository))
             elif choice == "permissions":
                 changed = _workflow_permissions_menu(ui, helper, policy)
+            elif choice == 'main_speed':
+                changed = _workflow_speed(ui, cfg, policy, agent)
+            elif choice == 'job_watching':
+                choices = helper['BEHAVIORS']['job_watching']['choices']
+                picked = ui.pick('Job watching', [('', 'Use default · Automatically'), *[(key, value[0]) for key, value in choices.items()], ('back', 'Back')])
+                if picked is not None and picked != 'back':
+                    changed = helper['update_behavior'](policy, 'job_watching', picked)
             elif choice == "clear_instructions":
+                cleared_text = policy.get('instructions', '')
                 changed["instructions"] = ""
+            elif choice == 'undo_clear':
+                changed['instructions'] = cleared_text
+                cleared_text = None
             elif choice in ("edit", "instructions"):
                 ui.restore()
                 try:
@@ -2790,13 +2911,18 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             else:
                 stage = choice
                 stage_title = _workflow_stage_title(stage) + (" · worker" if stage == "implementation" and helper["implementation_worker"](policy) else "")
-                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("reset", "Reset to defaults"), ("back", "Back")],
+                field = ui.pick(stage_title, [("model", "Model")] + ([] if agent == "cursor" else [("effort", "Reasoning effort")]) + [("speed", "Speed"), ("reset", "Reset to defaults"), ("back", "Back")],
                                 values={"model": policy[stage]["model"], "effort": _workflow_effort(policy[stage]["effort"], stage),
+                                        "speed": policy[stage].get('speed', 'Inherit current parent speed'),
                                         'reset': _workflow_reset_value(policy[stage], helper['DEFAULT'][stage])}, sections={'reset': 'Manage'})
                 if field in (None, "back"):
                     continue
                 if field == 'reset':
                     cfg._workflow_document = helper['update'](document, helper['reset_policy'](policy, stage, agent), repository, name)
+                    continue
+                if field == 'speed':
+                    changed = _workflow_speed(ui, cfg, policy, agent, stage)
+                    cfg._workflow_document = helper['update'](document, changed, repository, name)
                     continue
                 if field == "model":
                     picked = _workflow_model(ui, cfg, helper, stage, policy[stage]["model"])
@@ -2890,7 +3016,7 @@ def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
                 cfg._workflow_document = helper['update'](document, after, repository, name)
             continue
         if choice == "show":
-            lines = [f"Defaults: {', '.join(value['default_targets']) or 'none'}",
+            lines = [f"Defaults: {', '.join(value['default_targets']) or 'local snapshot runner'}",
                      f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s",
                      "Artifacts: " + (", ".join(value["artifacts"]) or "none")]
             lines += [f"{key}: {target['provider']} · {target['os']}/{target['arch']}" for key, target in value["targets"].items()]
@@ -3239,7 +3365,7 @@ def _workflow_design_draft(ui, cfg, helper, repo, root):
             return
         result = launcher['launch'](cfg, source, agent, helper['design_system']()['draft_prompt'](), plan=plan)
         ui.done('Draft session started', result['open_command'])
-        ui.done('Next', 'Review the draft in that session. After accepting it, refresh discovery in its worktree and select DESIGN.md.')
+        ui.done('Next', 'Review the draft in that session. After merging it, return here, choose Scan again and select DESIGN.md.')
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         ui.done('Draft unavailable', str(exc))
 
@@ -3283,7 +3409,7 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
                 current_exists = True
             except ValueError:
                 pass
-            if not current_exists or path not in {item['path'] for item in candidates}:
+            if path not in {item['path'] for item in candidates}:
                 rows.append(('current', path))
                 values['current'] = '✓ Selected' if current_exists else 'Selected · missing or unsafe'
                 sections['current'] = 'Choose a source'
@@ -3294,7 +3420,7 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
                 sections[key] = 'Choose a source'
                 sections.pop('manual', None)
             rows.append((key, candidate['path']))
-            values[key] = ('✓ ' if candidate['path'] == path else '') + _workflow_design_evidence(candidate)
+            values[key] = ('✓ ' if candidate['path'] == path else '') + candidate.get('location', _workflow_design_evidence(candidate))
         rows += [('manual', 'Choose file or folder…'), ('draft', 'Create design system…'),
                  ('refresh', 'Scan again'), ('off', 'Off'), ('reset', 'Reset to defaults'), ('back', 'Back')]
         values['reset'] = 'Use workflow default' if selected else 'Already at defaults'
@@ -3305,7 +3431,13 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
             return
         focus_key = choice
         if choice == 'refresh':
-            results = None
+            root = design['workspace'](repository)
+            try:
+                results = design['refresh'](repository)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                results = {'candidates': [], 'warnings': [str(exc)]}
+            for warning in results['warnings']:
+                ui.done('Discovery', warning)
             continue
         if choice == 'draft':
             _workflow_design_draft(ui, cfg, helper, repo, root)
@@ -3319,7 +3451,12 @@ def _workflow_design_system_menu(ui, cfg, helper, repo, repository, policy=None)
         if chosen is None:
             continue
         try:
-            design['source_path'](root, chosen)
+            candidate = next((item for item in candidates if item['path'] == chosen), {})
+            if choice != 'manual' and candidate.get('location'):
+                ui.done('Source found', chosen + ' · ' + candidate['location'] +
+                        '. Update this worktree to use the merged guidance here.')
+            else:
+                design['source_path'](root, chosen)
             cfg._workflow_document = helper['select_design_system'](cfg._workflow_document, repository, chosen)
             return
         except ValueError as exc:
@@ -3580,6 +3717,8 @@ def _workflow_changed_review(helper, document, before, activate=False):
         return str(value)
 
     def path_label(path):
+        if len(path) == 3 and path[0] == 'session_defaults':
+            return path[1].title() + ' · Lead ' + {'model': 'model', 'effort': 'reasoning effort', 'speed': 'speed'}[path[-1]]
         if path[0] == 'behaviors' and len(path) == 2:
             return helper['BEHAVIORS'].get(path[1], {}).get('label', path[1])
         return ' · '.join(part.replace('_', ' ').capitalize() for part in path)
@@ -3920,6 +4059,9 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
     _workflow_session(cfg)
     edited = copy.deepcopy(cfg)
     initial = _config_state(cfg)
+    before = getattr(cfg, "_config_before", None)
+    if before is None:
+        before = _config_read(_current_local_rc())
     catalogs = {}
     st = Style()
     if not workflows_only:
@@ -3977,7 +4119,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         if choice in (None, "keep"):
                             continue
                     if choice != "save":
-                        ui.done("cancelled", "nothing written")
+                        ui.done("cancelled", "earlier saves kept; no pending changes saved" if getattr(cfg, "_config_saved", False) else "nothing written")
                         return None
                 last = choice if choice in dict(rows) else last
                 if choice == "mcp":
@@ -3995,17 +4137,28 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     continue
                 if choice == "local":
                     if pending:
-                        ui.done("pending", "Save or discard pending settings before local worker setup.")
+                        action = ui.pick("Continue to local worker setup?", [
+                            ("save", "Review and save, then continue"),
+                            ("discard", "Discard changes and continue"),
+                            ("back", "Back to settings")],
+                            context=[f"{pending} unsaved change{'s' if pending != 1 else ''}."],
+                            accents={"save": "g", "discard": "w"})
+                        if action == "save":
+                            choice = "save-local"
+                        elif action == "discard":
+                            edited = copy.deepcopy(cfg)
+                        else:
+                            continue
+                    if choice == "local":
+                        runtime_ui = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))
+                        runtime_ui["hub"](ui, globals())
                         continue
-                    runtime_ui = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))
-                    runtime_ui["hub"](ui, globals())
-                    continue
                 if choice == "edit":
                     if pending:
                         ui.done("pending", "Save or cancel your menu changes before opening the editor.")
                         continue
                     return "edit"
-                if choice == "save":
+                if choice in ("save", "save-local"):
                     changes = _config_diff(initial, _config_state(edited))
                     try:
                         lines = [f"      {st.c}{_config_assignment(k, v)}{st.r}" for k, v in changes.items()]
@@ -4022,12 +4175,59 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                             edited._workflow_document, before=edited._workflow_initial,
                             activate=edited._workflow_activate)]
                     if changes or _workflow_pending(edited):
+                        if choice == "save-local":
+                            lines.append("      After saving: open Local worker & models.")
                         answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
-                                         keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
+                                         keys="y save · n / esc / q back", primary=("enter", "SAVE AND CONTINUE" if choice == "save-local" else "SAVE CHANGES", f"{pending} pending"))
                         if answer == "abort":
                             raise KeyboardInterrupt
                         if answer not in ("enter", "y"):
+                            if choice == "save-local":
+                                next_choice = "local"
                             continue
+                    if choice == "save-local":
+                        while True:
+                            try:
+                                after, shell_changed, workflow_changed, targets = _config_persist_changes(cfg, edited, before)
+                                break
+                            except (OSError, ValueError) as exc:
+                                retry = ui.pick("Settings not saved", [("retry", "Retry save"), ("back", "Back to review")],
+                                                context=[str(exc), "Pending edits kept; local worker setup has not opened."])
+                                if retry != "retry":
+                                    next_choice = "save-local"
+                                    break
+                        if next_choice:
+                            continue
+                        # Rebase immediately after commit, before fallible follow-up work.
+                        # Keep the caller's cfg current so a later ordinary save uses this baseline.
+                        cfg.__dict__.update(copy.deepcopy(edited.__dict__))
+                        cfg._config_before = before = after
+                        cfg._config_saved = True
+                        cfg._workflow_initial = copy.deepcopy(cfg._workflow_document)
+                        cfg._workflow_activate = False
+                        initial = _config_state(cfg)
+                        edited = copy.deepcopy(cfg)
+                        ui.commit([])
+                        ui.restore()
+                        try:
+                            document, stored = _workflow()["load"]()
+                            cfg._workflow_document = document
+                            cfg._workflow_initial = copy.deepcopy(document)
+                            cfg._workflow_before = stored
+                            edited = copy.deepcopy(cfg)
+                            rc = _config_finish_save(cfg, edited, initial, shell_changed, workflow_changed, targets)
+                        except (OSError, ValueError) as exc:
+                            print(f"t config: settings saved; follow-up incomplete: {exc}", file=sys.stderr)
+                            rc = 1
+                        finally:
+                            ui.raw()
+                        if rc:
+                            ui.page("Settings saved", ["      Follow-up incomplete; saved changes are kept.",
+                                                      "      Review the diagnostic above before continuing."],
+                                    ("enter", "q", "esc"), keys="enter / esc / q back")
+                            continue
+                        next_choice = "local"
+                        continue
                     return edited
                 if choice == "hosts":
                     _config_hosts(ui, edited)
@@ -4366,7 +4566,7 @@ def _workflow_model_rows(helper, policy):
         rows.append((_workflow_stage_title(stage), settings["model"] or "Agent default",
                      "Model default" if helper.get("TOOL") == "cursor" else
                      _workflow_effort(settings["effort"], "implementation" if inherited else stage) if settings["effort"] else "Session default",
-                     "Main model" if inherited else "Main session" if stage == "implementation" and not helper["implementation_worker"](policy) else "Worker"))
+                     "Lead model" if inherited else "Lead session" if stage == "implementation" and not helper["implementation_worker"](policy) else "Worker"))
     return rows
 
 
@@ -4419,13 +4619,14 @@ def _workflow_print(helper, result, catalogue=False):
         stages = helper["model_stages"](policy)
         if stages:
             print("Model settings: " + ", ".join(_workflow_stage_title(stage) for stage in stages))
-            if helper["implementation_worker"](policy):
+            if helper["main_session_settings"](policy):
                 settings = helper["main_session_settings"]({**policy, "enabled": True})
-                print("Main session: " + (settings.get("model") or "Agent default") +
+                print("Lead model: " + (settings.get("model") or "Agent default") +
                       ("" if helper.get("TOOL") == "cursor" else " · " +
                        (_workflow_effort(settings["effort"]) if settings.get("effort") else "Session default")))
-            print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE"),
-                                        _workflow_model_rows(helper, policy))))
+            print("\n".join(_table_lines(("STEP", "MODEL", "REASONING", "SOURCE", "SCORE"),
+                                        [(*row, "—") for row in _workflow_model_rows(helper, policy)])))
+            print("Benchmark: — no sourced result for native models")
         else:
             print("Models: one model per session (saved stage choices retained)")
             defaults = policy.get("session_defaults", {})
@@ -4475,6 +4676,10 @@ def _cmd_workflow(cfg, args):
         saved_scope = before is not None and (tool == "codex" or tool in full_document.get("tools", {}))
         document = helper["tool_document"](full_document, tool)
         helper = _workflow_tool_helper(helper, tool)
+        if verb == 'context':
+            result = helper['resolve_context'](full_document, repository or os.getcwd(), tool)
+            print(json.dumps(result, indent=2) if getattr(args, 'json', False) else result['text'])
+            return 0
         if instructions_action == "show":
             print(helper["instructions"](document, repository, name), end="")
             return 0
@@ -4568,7 +4773,7 @@ def _cmd_workflow_runners(cfg, args):
                 print(helper["encode"]({"tool": tool, "scope": repository or name or "global", "runners": value}), end="")
             else:
                 print("Test runners · " + tool.title() + " · " + (repository or name or "global"))
-                print("Defaults: " + (", ".join(value["default_targets"]) or "none"))
+                print("Defaults: " + (", ".join(value["default_targets"]) or "Local snapshot runner"))
                 print(f"Timeout: {value['timeout_seconds']}s · queue: {value['queue_timeout_seconds']}s")
                 print("Artifacts: " + (", ".join(value["artifacts"]) or "none"))
                 if value["targets"]:
@@ -4576,7 +4781,7 @@ def _cmd_workflow_runners(cfg, args):
                         (key, target["provider"], target["os"] + " / " + target["arch"], ", ".join(target["capabilities"]) or "—")
                         for key, target in sorted(value["targets"].items())])))
                 else:
-                    print("No test runners configured. Use t runners edit.")
+                    print("Local snapshot runner (default). Use t runners edit to configure remote targets.")
             return 0
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ValueError("open the runner editor in a terminal")
@@ -4619,23 +4824,46 @@ def _cmd_workflow_runs(cfg, args):
             config["targets"] = selected
             config["default_targets"] = list(selected)
             for target in selected.values():
-                if target["provider"] == "ssh":
+                if target.get('provider', target.get('type')) == 'ssh':
                     if target["host"] not in cfg.hosts:
                         raise ValueError(f"SSH runner host {target['host']!r} is not registered; use t hosts add")
                     target["host"] = cfg.hosts[target["host"]]
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
             if not command:
                 raise ValueError("runs start requires -- COMMAND ...")
-            with _spinner("Running snapshot tests", machine=args.json):
-                result = helper["start"](root, config, command, targets=list(selected), os_filter=args.runner_os,
-                    capabilities=args.capabilities, include=args.includes, artifacts=args.artifact_paths,
-                    timeout=args.timeout, queue_timeout=args.queue_timeout,
-                    progress=None if args.json else lambda receipt: print("Run: " + receipt["id"], file=sys.stderr))
+            activity = None
+            result = None
+            def on_progress(receipt):
+                nonlocal activity
+                if activity is None and policy.get('behaviors', {}).get('job_watching', 'automatic') == 'automatic':
+                    kind = 'local tests' if all(t.get('type') == 'local' for t in receipt['targets'].values()) else 'remote checks'
+                    activity = _watchers()['Activity'](receipt['id'], kind, getattr(args, 'next_step', '')).start()
+                if not args.json:
+                    print('Run: ' + receipt['id'], file=sys.stderr)
+            try:
+                with _spinner("Running snapshot tests", machine=args.json):
+                    result = helper["start"](root, config, command, targets=list(selected), os_filter=args.runner_os,
+                        capabilities=args.capabilities, include=args.includes, artifacts=args.artifact_paths,
+                        timeout=args.timeout, queue_timeout=args.queue_timeout,
+                        progress=on_progress)
+            finally:
+                if activity:
+                    activity.finish(result)
             if args.json:
                 print(json.dumps(result, indent=2))
             else:
                 print("\n".join(_runner_receipt_lines(result)))
             return int(result.get("exit_code", 0))
+        if action == 'watch':
+            watcher = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_watch.py'))
+            result = watcher['runner'](args.run_id, args.timeout,
+                None if args.json else lambda receipt: print(' · '.join((receipt['id'], receipt['status'])), flush=True), args.next_step)
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print('Wait: ' + result['wait_status'])
+            return (int(result.get('exit_code', 0 if result['status'] in ('succeeded', 'completed') else 1))
+                    if result['wait_status'] == 'complete' else 2)
         if action == "logs":
             logs = helper["logs"](args.run_id, target=args.runner_target)
             for target, output in logs.items():
@@ -4701,6 +4929,85 @@ def _local_worker():
 def _local_setup(args):
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_setup.py"))
     return helper["run"](args, globals())
+
+
+def _config_persist_changes(cfg, result, before):
+    """Use the same atomic settings transaction for save-and-exit and continuation."""
+    current = _config_state(cfg)
+    changes = _config_diff(current, _config_state(result))
+    shell_changed = bool(changes)
+    workflow_changed = _workflow_pending(result)
+    after = _config_text(before, changes, current)
+    helper = _workflow()
+    sync = helper["propagation"]()
+    effective_after = _config_state(result)
+    main_settings = sync["settings_delta"](current, effective_after)
+    rebound = (sync["rebind_source"](_current_local_rc(), before, after, current, effective_after)
+               if changes and not main_settings else None)
+    if workflow_changed or main_settings or rebound:
+        extra = []
+        if main_settings:
+            extra, defaults_pending = sync["native_defaults"](main_settings)
+            if defaults_pending:
+                raise ValueError(defaults_pending)
+        if changes:
+            target = Path(os.path.realpath(_current_local_rc()))
+            local_before = helper["snapshot"](target)
+            if (local_before[0] if local_before else "") != before:
+                raise ValueError("local config changed while editing; retry")
+            extra.append((target, local_before, after))
+        workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
+        context = {"repos": result.repos, "hosts": getattr(result, "hosts", {})}
+        if main_settings:
+            context["settings_source"] = {"path": os.path.realpath(_current_local_rc()), "hash": sync["digest"](after)}
+        elif rebound:
+            context["settings_source"] = rebound
+        helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
+                       refresh_source=bool(rebound), propagation_context=context)
+    else:
+        _config_write(_current_local_rc(), before, after)
+    targets = _host_new_targets(cfg.hosts, result.hosts)
+    return after if shell_changed else before, shell_changed, workflow_changed, targets
+
+
+def _config_finish_save(cfg, result, initial_settings, shell_changed, workflow_changed, targets):
+    """Post-commit effects. A failure here never means the settings were discarded."""
+    if shell_changed:
+        try:
+            zsh_capture("_t_sync_config")
+            if result == "edit":
+                helper = _workflow()
+                sync = helper["propagation"]()
+                settings = sync["settings_delta"](initial_settings, _config_state(Config()))
+                if settings:
+                    extra, defaults_pending = sync["native_defaults"](settings)
+                    if defaults_pending:
+                        raise ValueError(defaults_pending)
+                    document, stored = helper["load"]()
+                    helper["save"](document, stored, extra, main_settings=settings,
+                                   propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
+                                                        "settings_source": {"path": os.path.realpath(_current_local_rc()),
+                                                                            "hash": sync["digest"](_config_read(_current_local_rc()))}})
+        except (OSError, ValueError) as exc:
+            print(f"t config: local settings saved; native defaults or propagation incomplete: {exc}", file=sys.stderr)
+            return 1
+    if workflow_changed:
+        print("✓ saved agent workflow and native instructions")
+    if not shell_changed:
+        return 0
+    print("✓ saved local settings to T_LOCAL_RC")
+    try:
+        _host_verify_offer(targets)
+    except (EOFError, KeyboardInterrupt):
+        print("Settings saved; SSH verification canceled.", file=sys.stderr)
+        return 130
+    if not os.environ.get("T_SETUP_SHIM"):
+        rc_file, rc_state = _shell_setup_helpers()["state"](HOME, os.environ)
+        if rc_state != "configured":
+            print("run `t doctor --repair`, then source the reported rc file to use these settings")
+        else:
+            print(f"run `source {shlex.quote(str(rc_file))}` (or open a new shell) to use these settings")
+    return 0
 
 
 def cmd_config(cfg, args):
@@ -4796,84 +5103,18 @@ def cmd_config(cfg, args):
                 print("t config: editor or syntax check failed; local config was not reloaded", file=sys.stderr)
                 return rc
         else:
-            current = _config_state(cfg)
-            changes = _config_diff(current, _config_state(result))
-            shell_changed = bool(changes)
-            workflow_changed = _workflow_pending(result)
-            if not changes and not workflow_changed:
-                print("Settings unchanged — nothing written")
+            before = getattr(cfg, "_config_before", before)
+            if not _config_diff(_config_state(cfg), _config_state(result)) and not _workflow_pending(result):
+                print("No pending changes — earlier saves kept" if getattr(cfg, "_config_saved", False)
+                      else "Settings unchanged — nothing written")
                 return 0
-            after = _config_text(before, changes, current)
-            helper = _workflow()
-            sync = helper["propagation"]()
-            effective_after = _config_state(result)
-            main_settings = sync["settings_delta"](current, effective_after)
-            rebound = (sync["rebind_source"](_current_local_rc(), before, after, current, effective_after)
-                       if changes and not main_settings else None)
-            if workflow_changed or main_settings or rebound:
-                extra = []
-                if main_settings:
-                    extra, defaults_pending = sync["native_defaults"](main_settings)
-                    if defaults_pending:
-                        raise ValueError(defaults_pending)
-                if changes:
-                    target = Path(os.path.realpath(_current_local_rc()))
-                    local_before = helper["snapshot"](target)
-                    if (local_before[0] if local_before else "") != before:
-                        raise ValueError("local config changed while editing; retry")
-                    extra.append((target, local_before, after))
-                workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
-                context = {"repos": result.repos, "hosts": getattr(result, "hosts", {})}
-                if main_settings:
-                    context["settings_source"] = {"path": os.path.realpath(_current_local_rc()), "hash": sync["digest"](after)}
-                elif rebound:
-                    context["settings_source"] = rebound
-                helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
-                               refresh_source=bool(rebound), propagation_context=context)
-            else:
-                _config_write(_current_local_rc(), before, after)
-            targets = _host_new_targets(cfg.hosts, result.hosts)
+            _, shell_changed, workflow_changed, targets = _config_persist_changes(cfg, result, before)
     except (OSError, ValueError) as exc:
         print(f"t config: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
-    if shell_changed:
-        try:
-            zsh_capture("_t_sync_config")
-            if result == "edit":
-                helper = _workflow()
-                sync = helper["propagation"]()
-                settings = sync["settings_delta"](initial_settings, _config_state(Config()))
-                if settings:
-                    extra, defaults_pending = sync["native_defaults"](settings)
-                    if defaults_pending:
-                        raise ValueError(defaults_pending)
-                    document, stored = helper["load"]()
-                    helper["save"](document, stored, extra, main_settings=settings,
-                                   propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
-                                                        "settings_source": {"path": os.path.realpath(_current_local_rc()),
-                                                                            "hash": sync["digest"](_config_read(_current_local_rc()))}})
-        except (OSError, ValueError) as exc:
-            print(f"t config: local settings saved; native defaults or propagation incomplete: {exc}", file=sys.stderr)
-            return 1
-    if workflow_changed:
-        print("✓ saved agent workflow and native instructions")
-    if not shell_changed:
-        return 0
-    print("✓ saved local settings to T_LOCAL_RC")
-    try:
-        _host_verify_offer(targets)
-    except (EOFError, KeyboardInterrupt):
-        print("Settings saved; SSH verification canceled.", file=sys.stderr)
-        return 130
-    if not os.environ.get("T_SETUP_SHIM"):
-        rc_file, rc_state = _shell_setup_helpers()["state"](HOME, os.environ)
-        if rc_state != "configured":
-            print("run `t doctor --repair`, then source the reported rc file to use these settings")
-        else:
-            print(f"run `source {shlex.quote(str(rc_file))}` (or open a new shell) to use these settings")
-    return 0
+    return _config_finish_save(cfg, result, initial_settings, shell_changed, workflow_changed, targets)
 
 
 class _RailUI:
@@ -5112,7 +5353,7 @@ class _RailUI:
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
              on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
-             columns=(), cells=None, notes=None, details=None, focused_shortcuts=None):
+             columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite=""):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
@@ -5143,6 +5384,8 @@ class _RailUI:
                 display.extend((line, None) for line in lines)
             if context:
                 display.append((self.rail, None))
+            table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
+            table_keys = [key for key, _ in rows if key in table_rows]
             label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
             widths = [max(len(title), max((len(str(cell[i])) for cell in cells.values()), default=0))
                       for i, title in enumerate(columns)]
@@ -5156,8 +5399,12 @@ class _RailUI:
                     if display:
                         display.append((self.rail, None))
                     display.append((self.section(sections[key]), None))
+                if table_keys and key == table_keys[0]:
+                    display.append((f"{self.rail}    {self.st.y}{table_header}{self.st.r}", None))
                 mark = ("◼" if n in marks else "◻") if multi else None
-                if key in cells:
+                if key in table_rows:
+                    display += [(line, n) for line in self.row(table_rows[key], selected=n == cur, mark=mark, accent="y" if key in disabled else accents.get(key, ""))]
+                elif key in cells:
                     if table and first_cell:
                         heading = 'Model'.ljust(model_width) + '  ' + '  '.join(t.rjust(w) for t, w in zip(columns, widths))
                         display.extend((line, None) for line in self.row(heading))
@@ -5188,10 +5435,20 @@ class _RailUI:
                 else:
                     display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
                                 mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key in table_rows and n == cur and details:
+                    display.append((self.rail, None))
+                    for detail in details(key):
+                        display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
+                if table_keys and key == table_keys[-1]:
+                    display.append((self.rail, None))
+                    display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None)
+                                   for line in _model_display()["legend"](model_table, benchmark_suite)
+                                   for part in _wrap_columns(line, self.cols()-8))
+                    display.append((self.rail, None))
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""
             k = self.read_key()
-            if k in (focused_shortcuts or {}) and rows[cur][0] in cells:
+            if k in (focused_shortcuts or {}) and (rows[cur][0] in cells or rows[cur][0] in table_rows):
                 return focused_shortcuts[k], rows[cur][0]
             if k in (shortcuts or {}):
                 return shortcuts[k]
@@ -7802,6 +8059,13 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if words[:2] == ["system", "usage"]:
+        return True
+    if verb == "eval":
+        if not tail or tail == ["config"]:
+            return not (terminal if terminal is not None else sys.stdin.isatty() and sys.stdout.isatty())
+        return (not tail or tail == ["config"] or len(tail) < 2 or
+                tail[1] in ("list", "show", "compare") or "--dry-run" in tail or "--help" in tail)
     if verb == "runners":
         return (not tail or tail == ["runs"] or tail[0] == "list" or
                 (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "logs")))
@@ -7815,7 +8079,7 @@ def _command_readonly(argv, *, terminal=None):
         return (len(words) == 2 or words[2] in ("list", "show") or
                 (len(words) >= 4 and words[2] in ("runtime", "requests") and words[3] in ("status", "list", "show", "monitor")))
     if words[:2] == ["config", "workflow"]:
-        return (len(words) == 2 or words[2] == "list" or words[2:4] == ["instructions", "show"] or
+        return (len(words) == 2 or words[2] in ("list", "context") or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
                 (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "logs")))
     if verb == "mcp" and tail and tail[0] == "status":
@@ -10595,21 +10859,11 @@ def _index_key(path):
 
 
 def _index_save(cpath, st):
-    """tmp + os.replace, pid-suffixed: every Claude session spawns its own `t mcp`, so
-    two processes can refresh the same transcript at once — a shared tmp name would
-    let one replace the other's half-written file. Never raises: an unwritable cache
-    just means the next process re-reads."""
-    tmp = "%s.%d.tmp" % (cpath, os.getpid())
-    try:
-        os.makedirs(os.path.dirname(cpath), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(st, fh, ensure_ascii=False)
-        os.replace(tmp, cpath)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    _session_discovery()['request']('artifact', {'key': str(cpath), 'value': st})
+
+
+def _index_load(cpath):
+    return _session_discovery()['request']('artifact', {'key': str(cpath)}).get('value')
 
 
 def _index_update(path, cache_dir):
@@ -10626,12 +10880,7 @@ def _index_update(path, cache_dir):
     except OSError:
         return None
     cpath = os.path.join(cache_dir, _index_key(path))
-    st = None
-    try:
-        with open(cpath, encoding="utf-8") as fh:
-            st = json.load(fh)
-    except (OSError, ValueError):
-        st = None
+    st = _index_load(cpath)
     if (not isinstance(st, dict) or st.get("v") != _INDEX_V or st.get("ino") != info.st_ino
             or not isinstance(st.get("off"), int) or st["off"] > info.st_size):
         st = _index_empty(info.st_ino)
@@ -10828,6 +11077,10 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     an isdir on the worktree, a stat on the opened stamp, and reads of the two
     sidecar files (PR-state cache, .origin). `origin` is null for this host — it is a
     "last ran ELSEWHERE" signal, like t resume's column."""
+    if rec.get('_cached_row') is not None:
+        row = dict(rec['_cached_row'])
+        row['this_session'] = bool(this_sid and rec.get('sid') == this_sid)
+        return row
     sid = rec.get("sid") or ""
     cwd = rec.get("cwd") or ""
     live = live_by_sid.get(sid) if sid else None
@@ -11216,11 +11469,11 @@ _MCP_TOOLS = [
          "required": ["query"]}},
     {"name": "list_sessions",
      "description": (
-         "The live agent sessions right now: tmux dev slots (<repo>-<n>) and foreground "
+         "Cached live agent sessions (hourly expiry): tmux dev slots (<repo>-<n>) and foreground "
          "claudes, with title, branch, PR + state, dev-server URL, and "
          "the last prompts. Use it for 'what is running', 'what is slot 17 doing', or to "
-         "map a slot to its worktree/branch. all_hosts also asks the other machines "
-         "(slow: several seconds)."),
+         "map a slot to its worktree/branch. all_hosts includes cached remote hosts. "
+         "Cold or expired data refreshes in the background; inspect freshness and retry for updated results."),
      "inputSchema": {"type": "object", "properties": {
          "repo": {"type": "string", "description": "Registered alias or repository directory name to restrict to"},
          "all_hosts": {"type": "boolean", "default": False}}}},
@@ -11242,6 +11495,16 @@ def _mcp_context(cfg, state):
     """Everything a tool call reads, gathered once per call (glue): the index (re-stat
     at most every _INDEX_REFRESH_S — a back-to-back pair of calls must not walk 600
     files twice) and liveness."""
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        cache = _session_discovery()
+        view = cache['discover'](cfg, local=True, fields=['mcp'])
+        ctx = next(((h.get('value') or {}).get('mcp') for h in view.get('hosts', [])
+                    if (h.get('value') or {}).get('mcp')), None)
+        ctx = ctx or dict(recs=[], live={}, idle=[], live_rows=[], cache_root=None)
+        ctx.update(now=time.time(), this_sid=(os.environ.get('CLAUDE_CODE_SESSION_ID') or
+                   os.environ.get('CODEX_THREAD_ID') or os.environ.get('CODEX_SESSION_ID')),
+                   freshness=cache['freshness'](view))
+        return ctx
     now = time.time()
     if state.get("recs") is None or now - state.get("at", 0) > _INDEX_REFRESH_S:
         state["recs"] = _index_dedupe(_mcp_records())
@@ -11289,7 +11552,7 @@ def _tool_list(cfg, ctx, args):
                      "url": None,
                      "this_session": False})
     for row in rows:
-        if row.get("slot") and row.get("cwd"):
+        if "freshness" not in ctx and row.get("slot") and row.get("cwd"):
             row["url"] = _dev_url(row["slot"], row["cwd"])
     if want:
         rows = [r for r in rows if cfg.repos.get(r.get("repo")) == want]
@@ -11297,8 +11560,14 @@ def _tool_list(cfg, ctx, args):
     out = {"count": len(rows), "sessions": rows}
     if args.get("all_hosts"):
         remote = []
-        for r in _parse_rows(zsh_capture("_dev_rows_all", stdin=subprocess.DEVNULL),
-                             host_prefixed=True):
+        if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
+            remote_text = zsh_capture("_dev_rows_all", stdin=subprocess.DEVNULL)
+        else:
+            cache = _session_discovery()
+            view = cache['discover'](cfg)
+            remote_text = cache['rows'](view)
+            out['freshness'] = cache['freshness'](view)
+        for r in _parse_rows(remote_text, host_prefixed=True):
             if r["host"] == "local":
                 continue
             alias, _ = cfg.repo_of_dir(r["cwd"]) if r["cwd"] else (None, None)
@@ -11356,7 +11625,11 @@ def _mcp_tools():
 def _mcp_call(cfg, state, name, args):
     if name not in _MCP_HANDLERS:
         return _mcp_controls()["call"](cfg, name, args, globals())
-    return _MCP_HANDLERS[name](cfg, _mcp_context(cfg, state), args or {})
+    ctx = _mcp_context(cfg, state)
+    result = _MCP_HANDLERS[name](cfg, ctx, args or {})
+    if isinstance(result, dict) and 'freshness' in ctx:
+        result.setdefault('freshness', ctx['freshness'])
+    return result
 
 
 # ── framing (mirrors hive's mcp_servers/protocol.py) ──
@@ -11655,7 +11928,18 @@ def cmd_agentcore(cfg, args):
 def cmd_history(cfg, args):
     _progress("Finding saved conversations", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
-    history = helper["HistoryCommand"](cfg, globals())
+    snapshot = None
+    view = None
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        cache = _session_discovery()
+        if getattr(args, 'refresh', False):
+            cache['event'](['local', *cfg.hosts.values()])
+        view = cache['discover'](cfg, fields=['catalog'])
+        if not getattr(args, 'json', False):
+            cache['announce'](view)
+        snapshot = cache['SnapshotStore'](view)
+    history = helper["HistoryCommand"](cfg, globals(), store=snapshot)
+    history.discovery_view = view
     try:
         return history.execute(args)
     except (ValueError, OSError) as error:
@@ -11676,6 +11960,11 @@ def cmd_share(cfg, args):
     return helper["run"](cfg, args, globals())
 
 
+def cmd_eval(cfg, args):
+    helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_eval_cli.py"))
+    return helper["command"](cfg, args, globals())
+
+
 # ─── argument parsing (gh-style) ───────────────────────────────────────────────
 
 # Public command vocabulary. Values are the established parser spellings and any
@@ -11683,6 +11972,11 @@ def cmd_share(cfg, args):
 # shell-bound dispatch in zsh/; the Python parser remains the source of flag
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
+    "eval": {
+        "config": {v: ("eval", "config", v) for v in ("list", "show", "edit")},
+        "benchmarks": {"list": ("eval", "benchmarks", "list")},
+        "runs": {v: ("eval", "runs", v) for v in ("start", "list", "show", "compare", "resume", "cancel")},
+    },
     "mcp": {"status": ("mcp", "status"), "install": ("mcp", "install"), "uninstall": ("mcp", "uninstall")},
     "remote": {"open": ("remote", "open"), "move": ("remote", "move"),
                "resume": ("remote", "resume"), "kill": ("remote", "kill")},
@@ -11714,13 +12008,13 @@ COMMAND_GROUPS = {
                "models": {**{verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")},
                           "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("status", "edit", "monitor")},
                           "requests": {verb: ("config", "models", "requests", verb) for verb in ("list", "show", "cancel")}}},
-    "workflow": {"list": ("config", "workflow", "list"),
+    "workflow": {"context": ("config", "workflow", "context"), "list": ("config", "workflow", "list"),
                  "edit": ("config", "workflow", "edit"),
                  **{verb: ("config", "workflow", verb) for verb in ("open", "delete", "add", "use", "exclude", "inherit")},
                  "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
                  },
     "runners": {**{verb: ("runners", verb) for verb in ("list", "edit", "setup")},
-                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "logs", "artifacts", "cancel", "cleanup")}},
+                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "watch", "logs", "artifacts", "cancel", "cleanup")}},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -11730,7 +12024,8 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
-               "diagnose": ("doctor",), "advisories": ("__advisories",)},
+               "diagnose": ("doctor",), "advisories": ("__advisories",),
+               "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
 }
 
 _REMOTE = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_remote.py'))
@@ -11757,6 +12052,7 @@ def cmd_remote(cfg, args):
 
 
 GROUP_DESCRIPTIONS = {
+    "eval": "Evaluate frontier and local coding workflows against third-party benchmarks",
     "mcp": "Inspect and manage the sessions MCP server on this machine",
     "remote": "Run command families on registered SSH hosts",
     "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
@@ -11903,6 +12199,7 @@ def _root_help():
   t                       Guided setup or open a work session
 
 WORK
+  eval       Evaluate frontier and local coding workflows
   session    Open, find, and move work sessions
   move       Alias for session move
   remote     Run command families on registered SSH hosts
@@ -11983,6 +12280,25 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group == 'system usage':
+        return _wrap_help("USAGE\n  t system usage <verb> [ID] [--json]\n\nCOMMANDS\n  list  Print recorded usage without selection\n  show  Inspect usage; omit ID for fzf\n\nSCOPE\n  This machine's sessions, recorded workflow revisions and evaluations.\n  No repository argument or inference. JSON never prompts.\n  Run t help system usage <verb> for details.\n")
+    if group == "eval" or group.startswith("eval "):
+        node = COMMAND_GROUPS
+        for word in group.split():
+            node = node[word]
+        descriptions = {"config": "Create and edit saved configurations", "benchmarks": "List benchmark profiles",
+            "runs": "Start and inspect durable evaluation runs", "list": "List entries; run lists use fzf in a terminal",
+            "show": "Show details [NAME or ID]", "edit": "Edit a saved configuration [NAME]",
+            "start": "Run a configuration [CONFIG_NAME]", "compare": "Compare results [ID] [ID]",
+            "resume": "Resume unfinished work [ID]", "cancel": "Cancel active work [ID]"}
+        rows = [f"  {word:<12} {descriptions[word]}" for word in node]
+        return _wrap_help(f"USAGE\n  t {group} <verb> [arguments] [flags]\n\nCOMMANDS\n" +
+            "\n".join(rows) + "\n\nUser-wide configurations and runs; no repository argument or inference.\n"
+            "Omitted names and IDs use fzf in a terminal. Run list and targetless show share a picker; JSON never selects.\n"
+            "t eval config creates, edits and deletes named configurations.\n"
+            "t eval runs start opens the config picker; Enter starts immediately.\n"
+            "Use --dry-run to inspect preparation, and --json for machine output.\n"
+            "ls aliases list. Run t help eval <resource> <verb> for details.\n")
     if group.startswith('remote '):
         path, node = _command_path(group.split())
         if isinstance(node, dict):
@@ -12015,7 +12331,8 @@ COMMANDS
 SCOPE
   User-wide catalog for this machine; no repository inference or picker.
   Select local models in t workflow → Inference & routing.
-  Use --suite to compare one evaluation; unknown scores remain blank.
+  Use --suite to select an evaluation; unavailable scores show —.
+  Lists align model, size, provider, memory fit, readiness and benchmark score.
 
 LEARN MORE
   t help config models <verb>
@@ -12039,6 +12356,8 @@ SCOPE
   override or account default.
   --repo explicitly selects a registered repository; it cannot combine with NAME.
   List reads local configuration without network access, prompts or writes.
+  Execution defaults to the local snapshot runner, even with remote targets.
+  Select remote defaults explicitly or pass --target NAME.
   Saving configuration never provisions runners. Setup uses gh authentication;
   --create explicitly permits creating the private broker repository.
 
@@ -12050,6 +12369,7 @@ LEARN MORE
   t runners runs start [--tool TOOL] [--repo ALIAS] [--target NAME ...] -- COMMAND ...
   t runners runs list [--json]
   t runners runs status ID [--json]
+  t runners runs watch ID [--timeout SECONDS] [--json]
   t runners runs logs ID [--target NAME]
   t runners runs artifacts ID [--target NAME] [--output DIR]
   t runners runs cancel ID
@@ -12059,6 +12379,7 @@ COMMANDS
   start      Snapshot current worktree files and wait for concurrent test targets
   list       Print local durable run receipts
   status     Inspect a local receipt without contacting providers
+  watch      Wait for receipt changes or pinned GitHub checks
   logs       Print retained local target logs
   artifacts  Extract bounded retained artifacts into a local directory
   cancel     Request cancellation and verify terminal provider state
@@ -12071,6 +12392,11 @@ SCOPE
   repository tool override or account default.
   --include PATH explicitly adds intended untracked files. Tracked edits are
   included without committing or pushing source. One snapshot serves all targets.
+  The default target is the local snapshot runner, even when remote targets are
+  configured. Explicit workflow defaults or --target select remote execution.
+  Watch accepts a run UUID or OWNER/REPO#PR@HEAD_SHA for pinned GitHub checks.
+  --next-step records the task step waiting on results. A wait timeout does not
+  cancel the underlying job; exit 2 means results are still pending.
   --os linux|macos and --capability NAME filter configured targets. Windows
   execution is not yet supported. Native desktop tests remain explicitly opt-in.
   List, status and logs read local state without network access or update prompts.
@@ -12101,6 +12427,7 @@ LEARN MORE
         return _wrap_help("""USAGE
   t workflow <verb> [arguments] [flags]
   t workflow
+  t workflow context [--tool TOOL] [--repo ALIAS] [--json]
   t workflow list [--tool TOOL] [--repo ALIAS | --all] [--json]
   t workflow add NAME [--tool TOOL] [--from NAME]
   t workflow open NAME [--tool TOOL]
@@ -12113,6 +12440,7 @@ LEARN MORE
   t workflow instructions <verb> [NAME] [--tool TOOL] [--repo ALIAS]
 
 COMMANDS
+  context       Print only the current checkout workflow (including worktrees)
   list          Print effective settings or the named catalogue with --all
   add           Copy the current default (or --from NAME); selection stays unchanged
   open          Open a named workflow in the staged editor (also t workflow NAME)
@@ -12127,11 +12455,8 @@ SCOPE
   Use --tool codex, claude or cursor; default: repository or account tool.
   Omit --repo for that tool's global workflow. --repo selects a registered repository
   alias, basename or origin name explicitly.
-  Start with Codex, Claude or Cursor in the editor, then choose its workflow.
-  Each tool has separate workflows, defaults and repository assignments.
-  Browsing never changes the tool that launches sessions.
-  Explicit verbs never infer the checkout. Bare t workflow opens the editor.
-  Named opens use the account tool unless --tool selects another catalogue.
+  Context infers the current checkout; other explicit verbs do not.
+  Bare t workflow opens the editor in a terminal; otherwise it prints help.
   Delete keeps at least one workflow and preserves repository exclusions.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
@@ -12139,7 +12464,9 @@ SCOPE
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
   Models, Behavior and Manage group the editor; resets stay pending until Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
+  Lead model and Lead reasoning effort configure the main conversation.
   Inference & routing: cloud retry limit (default 5m), then pause or local.
+  Time limits: task 15m, maximum 30m, inactivity 5m, queue 5m; reset only these.
   Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
   Workflow → Repositories assigns repos; each repo also exposes its design source.
@@ -12147,7 +12474,6 @@ SCOPE
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits publish native instructions, then reconcile supported loaded sessions.
   List reports propagation without connecting; saves and starts apply preferences.
-  Instruction reload and current-turn settings cannot be verified or forced.
 
 LEARN MORE
   t help workflow <verb>
@@ -12258,7 +12584,7 @@ def _command_description(group, action):
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t",
-                   "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks"},
+                   "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks", "usage": "Inspect workflow, session and evaluation usage"},
     }
     if group == 'remote' and action not in descriptions['remote']:
         return "Run " + action + " commands on an SSH host"
@@ -12392,6 +12718,43 @@ def build_parser():
                    help="show version, active source, and current worktree")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
     p._group_parsers = {}
+    system = sub.add_parser('system', help='inspect system usage')
+    system_sub = system.add_subparsers(dest='system_resource', required=True)
+    usage = system_sub.add_parser('usage', help='inspect recorded workflow, session and evaluation usage')
+    usage_sub = usage.add_subparsers(dest='usage_action', required=True)
+    for action in ('list', 'show'):
+        leaf = usage_sub.add_parser(action, help=action + ' recorded usage',
+            description='Usage recorded on this machine. Show without ID selects with fzf; list and JSON never prompt. Unknown measurements stay unavailable.')
+        if action == 'show':
+            leaf.add_argument('usage_id', nargs='?', metavar='ID', help='omit for a searchable usage picker')
+        leaf.add_argument('--json', action='store_true', help='machine output; show requires ID')
+    evaluation = sub.add_parser("eval", help="evaluate coding workflows with named configurations")
+    evaluation_sub = evaluation.add_subparsers(dest="eval_resource")
+    for resource, verbs in (("config", ("list", "show", "edit")), ("benchmarks", ("list",)),
+                            ("runs", ("start", "list", "show", "compare", "resume", "cancel"))):
+        group = evaluation_sub.add_parser(resource, help="manage evaluation " + resource)
+        actions = group.add_subparsers(dest="eval_action")
+        for action in verbs:
+            leaf = actions.add_parser(action, help=action + " evaluation " + resource,
+                description="User-wide evaluation state; no repository inference. Omit a target in a terminal to select with fzf. Run list and targetless show share a picker; redirected and JSON lists never prompt.")
+            if resource == "config" and action != "list":
+                leaf.add_argument("name", nargs="?", metavar="NAME")
+            if resource == "runs" and action == "start":
+                leaf.add_argument("name", nargs="?", metavar="CONFIG_NAME", help="omit for fzf; Enter immediately starts")
+                leaf.add_argument("--config", dest="config_file", metavar="FILE", help="optional explicit configuration JSON")
+                leaf.add_argument("--dry-run", action="store_true", help="inspect without downloads, model loading or execution")
+                leaf.add_argument("--frontier-model", metavar="MODEL")
+                leaf.add_argument("--local-model", metavar="MODEL")
+                leaf.add_argument("--local-provider", choices=("lmstudio", "ollama"))
+                leaf.add_argument("--reasoning-effort", metavar="EFFORT", help="automatic uses the model default")
+            elif resource == "runs" and action != "list":
+                leaf.add_argument("run_id", nargs="?", metavar="ID")
+                if action == "compare":
+                    leaf.add_argument("other_id", nargs="?", metavar="ID")
+                if action == "resume":
+                    leaf.add_argument("--retry-interrupted", action="store_true", help="record a new attempt for interrupted trials")
+            if action in ("list", "show", "compare", "start"):
+                leaf.add_argument("--json", action="store_true", help="machine output; explicit targets required")
     help_sp = sub.add_parser("help", help="show help for a command or subcommand",
         description="Show top-level help, or help for a command or subcommand. "
             "For example: `t help session open` or `t help repo locate`.")
@@ -12639,7 +13002,9 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Open sessions. Bare: browse all repos; attached sessions are hidden.",
+        description="Open sessions. Bare: browse all repos; attached sessions are hidden. "
+            "Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; "
+            "run again for updated results. Ownership is checked live before opening.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
@@ -12684,6 +13049,9 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  Unidentified Codex writers do not block newly allocated worktrees globally.
+  Known worktree owners and reservations still block. Reused workspaces and
+  saved resumes retain stricter checks; unresolved IDs remain in the receipt.
   Legacy desktop opening defaults are ignored.
   --codex and --claude select the agent for a fresh slot. Otherwise,
   DEV_AGENT[repo] overrides DEV_AGENT_DEFAULT (fallback: claude).
@@ -12720,10 +13088,10 @@ REMOTE SESSIONS
     location.add_argument("--host", help="open or attach on this host")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
-        description='List live sessions across all repositories without prompting. Name a repository to scope the list. '
-            'Registered hosts are included by default; --local limits the view; unavailable hosts warn '
-            'while reachable sessions remain listed. LAST TURN shows turn initiation time. Pipe to cat for '
-            'complete values on narrow terminals.',
+        description='List cached live sessions across repositories and registered hosts without prompting. '
+            'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
+            'Cold or expired entries refresh in the background; run again for updated results. '
+            'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
 
   List dev sessions: whether each is attached, and whether it has an active
@@ -12887,9 +13255,10 @@ REMOTE SESSIONS
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
-        description='Resume saved conversations. A plain slot target opens conversation history. Infer the current repository; '
-            'outside one, browse local and remote repositories. Enter selects; Tab marks several. Live selections '
-            'attach to their owner. Repositories are cloned only after selection. Claude and Codex use guarded t transfers.',
+        description='Browse cached saved conversations; a plain slot target opens its history. '
+            'Infer the current repository, or browse local and remote repositories outside a checkout. '
+            'Discovery expires hourly and refreshes in the background; run again for updated results. '
+            'Repositories are cloned only after selection. Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
@@ -13267,6 +13636,10 @@ EXAMPLES
 
   Save changes reviews then writes a managed block in T_LOCAL_RC.
 
+  Local worker & models offers Review and save, then continue / Discard changes
+  and continue / Back when hub edits are pending. For example, change Codex effort,
+  open Local worker & models, then review and save to continue without restarting.
+
   New or changed SSH targets then offer Verify SSH now or Later; native OpenSSH asks
   before trusting keys.
 
@@ -13283,10 +13656,10 @@ EXAMPLES
 
   Workflows opens the editor for models, PRs, previews, tests, and text.
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
-  Clear text instructions removes Markdown in the pending review and save changes.
-  Use multiple models offers stage checkboxes and Use one model for all work.
+  Text instructions offers Edit or Clear; clearing stays pending until review/save.
+  Use multiple models offers stage checkboxes and Use lead model for all stages.
   Unchecked Implementation uses session defaults;
-  unchecked helpers use the main model.
+  unchecked helpers use the lead model.
   Run t workflow directly to edit, review and save workflow changes.
   Ctrl+C offers Keep editing, Review and save, or Discard for pending changes;
   without changes it exits immediately. Saving still requires the final review.
@@ -13348,8 +13721,9 @@ EXAMPLES
                 leaf.add_argument("--view", choices=("cli", "gui"), default="cli", help="live terminal or local browser usage view")
     workflow = config_sub.add_parser("workflow", hidden=True, help="manage named agent workflows and behavior preferences")
     workflow_sub = workflow.add_subparsers(dest="workflow_action")
-    for verb in ("list", "edit", "open", "delete", "add", "use", "exclude", "inherit"):
+    for verb in ("context", "list", "edit", "open", "delete", "add", "use", "exclude", "inherit"):
         leaf = workflow_sub.add_parser(verb, help={
+            "context": "print current checkout resolved agent instructions; --repo selects a registered repository",
             "list": "list effective workflow or named catalogue", "edit": "edit workflow JSON in a terminal",
             "open": "open a named workflow in the staged terminal editor",
             "delete": "delete a workflow; --replacement is required for a default or assigned workflow",
@@ -13369,6 +13743,8 @@ EXAMPLES
         if verb == "delete":
             leaf.add_argument("--replacement", dest="workflow_replacement", metavar="NAME",
                               help="move default and repository assignments to another existing workflow; exclusions are retained")
+        if verb == "context":
+            leaf.add_argument("--json", action="store_true", help="print resolved context and scope as JSON without writes")
         if verb == "list":
             leaf.add_argument("--all", dest="all_workflows", action="store_true", help="list named catalogue and assignments")
             leaf.add_argument("--json", action="store_true", help="print workflow values as JSON")
@@ -13414,15 +13790,19 @@ EXAMPLES
     leaf.add_argument("--timeout", type=int, metavar="SECONDS", help="per-target execution deadline (1–21600)")
     leaf.add_argument("--queue-timeout", type=int, metavar="SECONDS", help="provisioning/queue deadline (1–3600)")
     leaf.add_argument("--json", action="store_true", help="print the final durable receipt as JSON")
+    leaf.add_argument("--next-step", default="", help="authorized task step waiting on these results")
     leaf.add_argument("command", nargs=argparse.REMAINDER, metavar="COMMAND", help="argv after --; never interpreted as shell code")
-    for verb in ("list", "status", "logs", "artifacts", "cancel", "cleanup"):
+    for verb in ("list", "status", "watch", "logs", "artifacts", "cancel", "cleanup"):
         leaf = run_sub.add_parser(verb, help={"list": "list local run receipts without network access", "status": "show a local run receipt without network access",
-            "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
+            "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
             "cleanup": "retry deletion of retained remote run resources"}[verb])
         if verb != "list":
-            leaf.add_argument("run_id", metavar="ID", help="durable local run UUID")
-        if verb in ("list", "status"):
-            leaf.add_argument("--json", action="store_true", help="print local receipts as JSON without network access")
+            leaf.add_argument("run_id", metavar="ID", help="local run UUID; watch also accepts OWNER/REPO#PR@HEAD_SHA")
+        if verb == "watch":
+            leaf.add_argument("--timeout", type=int, default=60, metavar="SECONDS", help="bounded wait, 1–3600 seconds; default 60")
+            leaf.add_argument("--next-step", default="", help="authorized task step waiting on this result")
+        if verb in ("list", "status", "watch"):
+            leaf.add_argument("--json", action="store_true", help="print watcher results as JSON" if verb == "watch" else "print local receipts as JSON without network access")
         if verb in ("logs", "artifacts"):
             leaf.add_argument("--target", dest="runner_target", metavar="NAME", help="one target; default: all")
         if verb == "artifacts":
@@ -13833,6 +14213,7 @@ PERIODIC CHECKS
 IMPLEMENTED = {
     "remote": cmd_remote,
     "__advisories": cmd_advisories,
+    "system": lambda cfg, args: runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner),
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,
@@ -13846,7 +14227,7 @@ IMPLEMENTED = {
     "permissions": cmd_permissions, "trust": cmd_trust,
     "restart": cmd_restart,
     "__session-goal": cmd_session_goal,
-    "config": cmd_config, "runners": cmd_config,
+    "config": cmd_config, "runners": cmd_config, "eval": cmd_eval,
     "repo": cmd_repo,
     "hosts": cmd_hosts,
     "update": cmd_update,
@@ -14038,6 +14419,48 @@ def _main(argv):
         finally:
             history.store.close()
         return 0
+    if argv and argv[0] in ('__cache-collect', '__cache-collect-local'):
+        os.environ['T_DISCOVERY_COLLECTOR'] = '1'
+        spec = json.load(sys.stdin) if argv[0] == '__cache-collect' else {'target': 'local', 'export': True}
+        print(json.dumps(_session_discovery()['collect'](spec, globals())))
+        return 0
+    if len(argv) == 6 and argv[0] == '__cache-record':
+        event, sid, agent, cwd, label = argv[1:]
+        row = '\t'.join([sid or '-', cwd, label, 'detached', 'none', '-', agent])
+        _session_discovery()['event'](['local'], event=event, row=row)
+        return 0
+    if argv and argv[0] == '__cache-event':
+        cfg = Config()
+        targets = [cfg.hosts.get(host, host) for host in argv[1:]] or ['local']
+        _session_discovery()['event'](targets)
+        return 0
+    if argv and argv[0] == '__cache-rows':
+        cache = _session_discovery()
+        selected_host = argv[argv.index('--host') + 1] if '--host' in argv else None
+        repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
+        view = cache['discover'](Config(), local='--local' in argv, host=selected_host, fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        cache['announce'](view)
+        text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
+        if '--basic' in argv:
+            text = ''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in text.splitlines())
+        sys.stdout.write(text)
+        return 1 if view.get('unavailable') else 0
+    if argv and argv[0] == '__resume-candidates' and os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        aliases, slot = argv[1:], None
+        if aliases[:1] == ['--diagnostics-file']:
+            aliases = aliases[2:]
+        if '--slot' in aliases:
+            at = aliases.index('--slot')
+            if at != len(aliases) - 2 or not aliases[-1].isdigit():
+                print('t resume: invalid saved conversation slot', file=sys.stderr)
+                return 2
+            slot, aliases = aliases[-1], aliases[:at]
+        cache = _session_discovery()
+        view = cache['discover'](Config())
+        cache['announce'](view)
+        for row in cache['candidates'](view, aliases, slot):
+            print(row)
+        return 1 if view.get('unavailable') else 0
     if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())
@@ -14181,6 +14604,11 @@ def _main(argv):
         return 0
     if argv == ["workflow"] and sys.stdin.isatty() and sys.stdout.isatty():
         argv = ["config", "--workflows-ui"]
+    if argv in (["eval"], ["eval", "config"]):
+        if argv == ["eval"] and not (sys.stdin.isatty() and sys.stdout.isatty()):
+            print(_group_help("eval"), end="")
+            return 0
+        return IMPLEMENTED["eval"](Config(), parser.parse_args(argv))
     if len(argv) == 1 and argv[0] in COMMAND_GROUPS and argv[0] not in ("config", "mcp"):
         print(_group_help(argv[0]), end="")
         return 0

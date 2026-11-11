@@ -10,7 +10,9 @@ unbounded integers: v0.1.9 is followed by v0.1.10, not v0.2.0. Preserve publishe
 versions and tags; continue from the highest published stable version (the next
 routine release after v0.6.0 is v0.6.1), rather than renumbering history.
 The Releases workflow checks main nightly and publishes a patch only when there
-are unreleased commits and required Linux CI passed for the exact target commit.
+are unreleased commits and full Linux CI in that release workflow passed for the
+exact target commit. Fast PR/push CI cannot authorize a release. Full validation
+and its 97% coverage gate also run nightly when no release is needed.
 Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
 
@@ -21,7 +23,9 @@ and conditional mode; compatibility aliases inherit the canonical entry. Use
 the shared `_RailUI` or `_t_fzf_single`/`_t_fzf_multi`/`_t_fzf_filtered`/`_t_fzf_paginated`
 profile for interactive behavior. Update the inventory, help, examples, and
 contract tests with the implementation. Lists and status are read-only and must never open a picker or an automatic
-update prompt. Run
+update prompt. The approved `t eval runs list` terminal mode is the sole picker
+exception: it shares targetless `show`'s read-only picker; JSON and redirected
+lists stay static. Run
 `python3 scripts/lint_cli.py` to check these rules.
 
 Keep public commands in noun/verb families, with nested resources before verbs

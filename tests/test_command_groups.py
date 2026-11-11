@@ -5,7 +5,7 @@ import pytest
 
 def test_registry_covers_the_public_groups(t_mod):
     assert tuple(t_mod.COMMAND_GROUPS) == (
-        "mcp", "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "workflow", "runners", "profile", "policy", "agent", "system")
+        "eval", "mcp", "remote", "issue", "session", "repo", "cursor", "hosts", "agentcore", "config", "workflow", "runners", "profile", "policy", "agent", "system")
     for path, legacy in t_mod._command_routes():
         assert t_mod._canonical_argv([*path, "payload"]) == [*legacy, "payload"]
 
@@ -200,7 +200,7 @@ def test_nested_resource_help_does_not_load_config(t_mod, monkeypatch, capsys, a
     assert t_mod.main(argv) == 0
     output = capsys.readouterr().out
     assert "t workflow <verb>" in output
-    assert "--repo ALIAS" in output and "Explicit verbs never infer the checkout" in output
+    assert "--repo ALIAS" in output and "Context infers the current checkout; other explicit verbs do not." in output
     assert "Bare t workflow opens the editor" in output
     assert "t workflow sync" not in output and "Retry pending" not in output
 

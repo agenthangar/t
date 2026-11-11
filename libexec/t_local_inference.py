@@ -18,13 +18,21 @@ import textwrap
 import urllib.parse
 import urllib.request
 import uuid
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 DEFAULT_MODEL = 'mlx-community/Qwen3.8-27B-8bit'
 MODES = ('disabled', 'manual', 'automatic', 'local-only')
 DEFAULT = {'mode': 'manual', 'provider': 'lmstudio', 'model': DEFAULT_MODEL,
-           'context_tokens': 32768, 'timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause', 'cloud_retry_seconds': 300}
+           'context_tokens': 32768, 'timeout_seconds': 900, 'max_timeout_seconds': 1800, 'inactivity_timeout_seconds': 300, 'queue_timeout_seconds': 300, 'on_cloud_failure': 'pause', 'cloud_retry_seconds': 300}
+TIME_LIMITS = {'timeout_seconds': 'Default task limit', 'max_timeout_seconds': 'Maximum task limit',
+               'inactivity_timeout_seconds': 'Inactivity timeout', 'queue_timeout_seconds': 'Queue wait'}
+
+def duration(seconds):
+    return f'{seconds // 60} min' if seconds % 60 == 0 else f'{seconds} sec'
+
+
 SUITES = ('swe-bench-verified-bash-only', 'swe-bench-pro', 'deepswe', 'gpqa', 'terminal-bench', 'livebench-coding')
 
 
@@ -49,10 +57,11 @@ def policy(value=None):
         raise ValueError('select an explicit local model artifact')
     if type(result['context_tokens']) is not int or not 4096 <= result['context_tokens'] <= 131072:
         raise ValueError('context_tokens must be 4096–131072')
-    if type(result['timeout_seconds']) is not int or not 10 <= result['timeout_seconds'] <= 1800:
-        raise ValueError('timeout_seconds must be 10–1800')
-    if type(result['queue_timeout_seconds']) is not int or not 10 <= result['queue_timeout_seconds'] <= 1800:
-        raise ValueError('queue_timeout_seconds must be 10–1800')
+    for key in TIME_LIMITS:
+        if type(result[key]) is not int or not 10 <= result[key] <= 1800:
+            raise ValueError(key + ' must be 10–1800')
+    if result['timeout_seconds'] > result['max_timeout_seconds']:
+        raise ValueError('Maximum task limit must be at least the default task limit')
     if type(result['cloud_retry_seconds']) is not int or not 15 <= result['cloud_retry_seconds'] <= 300:
         raise ValueError('cloud_retry_seconds must be 15–300')
     return result
@@ -78,7 +87,7 @@ def instructions(value):
     if p['mode'] == 'disabled':
         return 'Local delegation is disabled in this workflow.'
     identity = f"{p['provider']} / {p['model']}"
-    base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds; separate queue wait {p['queue_timeout_seconds']} seconds. "
+    base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds; maximum explicit task {p['max_timeout_seconds']} seconds; inactivity {p['inactivity_timeout_seconds']} seconds; separate queue wait {p['queue_timeout_seconds']} seconds. Omitted limits inherit this workflow; activity resets inactivity, never the task deadline. "
             'Use the t-local-worker MCP start_task/task_status/cancel_task tools for local delegation. '
             'Announce Local requested with provider, model and reason before delegating. '
             'Say Local accepted only after start_task succeeds; a request is not proof of inference. '
@@ -413,7 +422,7 @@ def ollama_revision(name):
     return None
 
 
-def catalogue(suite='swe-bench-verified-bash-only', context=32768):
+def catalogue(suite='swe-bench-pro', context=32768):
     policy({'context_tokens': context})
     if suite not in SUITES:
         raise ValueError('unknown benchmark suite')
@@ -452,6 +461,25 @@ def catalogue(suite='swe-bench-verified-bash-only', context=32768):
     for row in rows:
         row['benchmark'] = row.get('benchmarks', {}).get(suite)
     return {'hardware': machine, 'suite': suite, 'context_tokens': context, 'models': rows}
+
+
+def leased_runtime(chosen):
+    """Verify a host-owned runtime capability when executing in an eval container."""
+    path = os.environ.get('T_LOCAL_RUNTIME_RECEIPT')
+    if not path:
+        return None
+    info = json.loads(Path(path).read_text())
+    if (info.get('model') != chosen['model'] or info.get('provider') != chosen['provider'] or
+            info.get('context_tokens') != chosen['context_tokens'] or not info.get('revision')):
+        raise ValueError('runtime lease does not match the selected model/context')
+    from urllib.parse import urlsplit
+    url = urlsplit(info.get('base', ''))
+    if url.scheme != 'http' or url.hostname not in ('127.0.0.1', '192.168.5.2') or not url.port or url.username:
+        raise ValueError('runtime lease requires a local capability endpoint')
+    actual = request(info['base'] + '/identity')
+    if any(actual.get(key) != info.get(key) for key in ('model', 'alias', 'revision', 'context_tokens')):
+        raise ValueError('runtime lease identity verification failed')
+    return info
 
 
 def detail_lines(row):
@@ -523,6 +551,9 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
         summary = [('Model', model_name(row)),
                    ('Runtime', f"{row['provider']} · {row.get('precision', 'runtime metadata')}"),
                    ('Files', f"{row['bytes']/1e9:.1f} GB · {'On disk' if row['installed'] else 'To download'}"),
+                   ('Activity', 'Generating' if any(x.get('active') for x in instances) else 'Loaded · idle' if instances else 'Not loaded'),
+                   ('Memory', f"{row.get('memory_bytes', 0)/1024**3:.1f} GiB estimated"),
+                   ('Benchmark', next((suite + ' ' + str(score['score']) + ' · ' + score['version'] + ' · base model' for suite, score in row.get('benchmarks', {}).items()), 'Benchmark unavailable')),
                    ('Context', f'{context:,} tokens'), ('Status', model_status(row)),
                    ('Memory fit', '✓' if row['fit'] is True else '✕' if row['fit'] is False else '?')]
         action = ui.pick('Model tools', actions, context=summary,
@@ -709,9 +740,14 @@ def select_model(ui, current=DEFAULT_MODEL, context=32768, provider=None, *, use
             intro += ['No local models found.']
         elif configured is None:
             intro += ['Configured model unavailable · Choose a replacement.']
+        suite = 'swe-bench-pro' if 'swe-bench-pro' in suites else next(iter(suites), '')
+        table = helper('t_model_display')['local_models'](models, suite, current)
+        for item, (key, row) in zip(table, candidates.items()):
+            item.update(key=key, selected=key == configured)
         choice = ui.pick('Choose a local model', rows, context=intro,
                          values={'': DEFAULT_MODEL.split('/')[-1]},
                          columns=columns, cells=cells, notes=notes, details=details,
+                         model_table=table, benchmark_suite=suite,
                          sections={next(iter(candidates), '__refresh'): 'Compare models', '__refresh': 'Manage'},
                          default=next((i for i, r in enumerate(rows) if r[0] == focus), 0),
                          focused_shortcuts={**{str(i+1): suite for i, suite in enumerate(suites)}, 'm': 'tools'})
@@ -801,14 +837,15 @@ def workflow_menu(ui, value=None):
         while True:
             rows = [('mode', 'Routing'), ('model', 'Local model'),
                     ('on_cloud_failure', 'Cloud connection failure ›'),
-                    ('context_tokens', 'Context'), ('timeout_seconds', 'Task budget'),
-                    ('queue_timeout_seconds', 'Queue wait'),
+                    ('context_tokens', 'Context'), *TIME_LIMITS.items(),
+                    ('reset_time', 'Reset time limits to defaults'),
                     ('reset', 'Reset to defaults'), ('back', 'Back')]
             choice = ui.pick('Inference & routing', rows,
                             default=next(i for i, row in enumerate(rows) if row[0] == focus),
-                            sections={'on_cloud_failure': 'Connection recovery', 'context_tokens': 'Local inference', 'reset': 'Manage'},
+                            sections={'on_cloud_failure': 'Connection recovery', 'context_tokens': 'Local inference', 'timeout_seconds': 'Time limits', 'reset_time': 'Manage'},
                             disabled={'on_cloud_failure': 'Local-only workflow · No cloud connection'} if current['mode'] == 'local-only' else {},
-                            values={**{k: str(v) for k, v in current.items()}, 'on_cloud_failure':
+                            values={**{k: duration(v) if k in TIME_LIMITS else str(v) for k, v in current.items()},
+                                    'reset_time': '15 / 30 / 5 / 5 min', 'on_cloud_failure':
                                     retry_label(current['cloud_retry_seconds']) + ' → ' + {'local': 'Continue locally', 'ask': 'Ask which local model', 'pause': 'Pause'}[current['on_cloud_failure']],
                                     'reset': 'Already at defaults' if current == DEFAULT else 'Routing settings'})
             if choice in (None, 'back'):
@@ -816,6 +853,8 @@ def workflow_menu(ui, value=None):
             focus = choice
             if choice == 'reset':
                 current = policy()
+            elif choice == 'reset_time':
+                current.update({key: DEFAULT[key] for key in TIME_LIMITS})
             elif choice == 'model':
                 selection = select_model(ui, current['model'], current['context_tokens'], current['provider'])
                 if selection:
@@ -832,9 +871,16 @@ def workflow_menu(ui, value=None):
                 cloud_failure_menu(ui, current)
             else:
                 values = (8192, 16384, 32768, 65536) if choice == 'context_tokens' else (60, 300, 900, 1800)
-                selected = ui.pick(choice.replace('_', ' ').title(), [('', 'Use default · ' + str(DEFAULT[choice]))] +
-                                   [(str(v), str(v)) for v in values])
-                if selected is not None:
+                format_value = duration if choice in TIME_LIMITS else str
+                disabled = {str(v): 'Maximum task limit must be at least the default task limit.' for v in values
+                            if (choice == 'timeout_seconds' and v > current['max_timeout_seconds']) or
+                               (choice == 'max_timeout_seconds' and v < current['timeout_seconds'])}
+                if (choice == 'timeout_seconds' and DEFAULT[choice] > current['max_timeout_seconds']) or (choice == 'max_timeout_seconds' and DEFAULT[choice] < current['timeout_seconds']):
+                    disabled[''] = 'Adjust the other task limit first.'
+                selected = ui.pick(TIME_LIMITS.get(choice, choice.replace('_', ' ').title()),
+                                   [('', 'Use default · ' + format_value(DEFAULT[choice]))] +
+                                   [(str(v), format_value(v)) for v in values], disabled=disabled)
+                if selected is not None and selected not in disabled:
                     current[choice] = int(selected) if selected else DEFAULT[choice]
     except KeyboardInterrupt as exc:
         if current != policy(value):
@@ -886,7 +932,7 @@ def command(args):
     policy({'context_tokens': context})
     provider = getattr(args, 'provider', None)
     name = getattr(args, 'model_name', None)
-    suite = getattr(args, 'suite', None) or ('livebench-coding' if getattr(args, 'benchmark', None) else 'swe-bench-verified-bash-only')
+    suite = getattr(args, 'suite', None) or ('livebench-coding' if getattr(args, 'benchmark', None) else 'swe-bench-pro')
     if action in ('list', 'refresh'):
         if action == 'refresh':
             helper('t_local_models')['refresh']()
@@ -905,11 +951,9 @@ def command(args):
             print(json.dumps(view, indent=2))
         else:
             print(f"Local models · {view['hardware']['accelerator']} · Context {view['context_tokens']}\nBenchmark: {suite}")
-            print('MODEL · SCORE · MEMORY FIT · INSTALLED')
-            for row in view['models']:
-                print(f"{row['model']} · {row['benchmark']['score'] if row['benchmark'] else '—'} · "
-                      f"{'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'} · {'yes' if row['installed'] else 'no'}")
-            print('Publisher scores use different harnesses; inspect model details. Local quantization is not evaluated.')
+            display = helper('t_model_display')
+            print('\n'.join(display['lines'](display['local_models'](view['models'], suite), suite,
+                                           shutil.get_terminal_size((100, 24)).columns if sys.stdout.isatty() else 10000)))
         return 0
     provider = provider or ('lmstudio' if any(r['model'] == name for r in artifacts()) else 'ollama')
     row = next((r for r in catalogue(context=context)['models'] if r['model'] == name and r['provider'] == provider), None)
@@ -950,7 +994,32 @@ def managed_runtime(model, provider, context=32768, kind='session', activity=Non
 
 
 @contextmanager
+def reserved_provider_runtime(chosen):
+    """Eval-only provider while the caller owns the machine reservation.
+
+    Entering the queued manager under its legacy lock would wait on ourselves.
+    The caller must retain reservation() for this context's entire lifetime.
+    """
+    if chosen['provider'] == 'lmstudio':
+        with runtime(chosen['model'], chosen['context_tokens'], None) as value:
+            yield value
+    else:
+        worker = helper('t_local_worker')
+        with worker['ollama_server'](chosen['context_tokens']) as (base, _):
+            worker['check_model'](base, chosen['model'])
+            tags = request(base + '/api/tags')['models']
+            info = next((r for r in tags if r['name'] == chosen['model']), None)
+            if not info or not info.get('digest'):
+                raise ValueError('Ollama did not confirm the exact local model digest')
+            yield base, chosen['model'], {'revision': info['digest']}
+
+
+@contextmanager
 def provider_runtime(chosen):
+    leased = leased_runtime(chosen)
+    if leased:
+        yield leased['base'], leased['alias'], leased
+        return
     with managed_runtime(chosen['model'], chosen['provider'], chosen['context_tokens'], chosen=chosen) as value:
         yield value
 
@@ -965,6 +1034,17 @@ def trusted_workspace(cwd):
                    for path, value in projects.items())
     except (OSError, ValueError, TypeError, AttributeError):
         return False
+
+
+@contextmanager
+def lead_client(chosen, activity, leased=None):
+    if leased:
+        # The verified eval gateway owns the reservation and exact artifact.
+        # Never start a second manager inside the isolated candidate container.
+        yield SimpleNamespace(base=leased['base'], alias=leased['alias'], error=None)
+    else:
+        with helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
+            yield client
 
 
 def lead(argv, cwd=None, chosen=None, runner=None):
@@ -986,7 +1066,10 @@ def lead(argv, cwd=None, chosen=None, runner=None):
         raise ValueError('Local-only inference requires user approval review; automatic cloud review is unavailable')
     if 'resume' in argv[1:]:
         raise ValueError('Local-only provider changes require a new session; cloud/local resume is not verified')
-    if chosen['provider'] == 'lmstudio':
+    leased = leased_runtime(chosen)
+    if leased:
+        fit = {'fit': True}
+    elif chosen['provider'] == 'lmstudio':
         fit = report(artifact(chosen['model']), helper('t_local_models')['hardware'](), chosen['context_tokens'])
     else:
         fit = next((r for r in catalogue(context=chosen['context_tokens'])['models'] if r['model'] == chosen['model'] and r['provider'] == 'ollama'), None)
@@ -995,10 +1078,14 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
     w = helper('t_local_worker')
-    with helper('t_local_status')['Activity'](chosen['model']) as activity, helper('t_local_manager')['Client'](chosen, 'session', activity) as client:
-        base, alias = client.base, chosen['model']
+    with helper('t_local_status')['Activity'](chosen['model']) as activity, lead_client(chosen, activity, leased) as client:
+        base, alias = client.base, leased['alias'] if leased else chosen['model']
         home = w['state_root']() / ('lead-' + uuid.uuid4().hex)
         env = w['environment'](home)
+        try:
+            helper('t_usage')['local_launch'](home, cwd or os.getcwd())
+        except (OSError, ValueError):
+            pass  # Telemetry must not block an otherwise valid local-only launch.
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
         codex_home = Path(env['CODEX_HOME'])
         if trusted_workspace(cwd or os.getcwd()):

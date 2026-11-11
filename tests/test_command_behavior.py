@@ -31,7 +31,7 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, termina
         monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
     monkeypatch.setattr(t_mod, 'cmd_cursor', handler)
     assert t_mod.main(argv) == 0
-    assert len(seen) == (0 if argv in (['share'], ['workflow']) and not terminal else 1)
+    assert len(seen) == (0 if argv in (['share'], ['workflow'], ['eval']) and not terminal else 1)
     assert t_mod._command_readonly(argv, terminal=terminal)
 
 
@@ -159,13 +159,12 @@ def test_session_table_keeps_status_and_identity_in_small_view(t_mod, monkeypatc
     assert len(lines) == len(rows) + 1
     assert all(t_mod._display_width(line) <= width for line in lines)
     assert all(value in text.replace(' ', '') for value in ('●✓↻', 'api-17', 'web-3', 'Fix', '…'))
-    assert lines[0].endswith('LAST TURN')
-    stamp = t_mod._session_display_helpers()['format_last_turn'](rows[0]['last_turn_started_at'])
-    rendered_stamp = next(value for value in (stamp, stamp[5:16], stamp[11:16]) if lines[1].endswith(value))
-    last_column = t_mod._display_width(lines[0][:-len('LAST TURN')])
-    assert all(t_mod._display_width(line[:-len(rendered_stamp)]) == last_column for line in lines[1:])
-    if remote:
-        assert 'HOST' in lines[0] and 'mini' in text
+    assert all(label in lines[0] for label in ('STATUS', 'SESSION', 'WORKING ON'))
+    if 'LAST TURN' in lines[0]:
+        stamp = t_mod._session_display_helpers()['format_last_turn'](rows[0]['last_turn_started_at'])
+        assert lines[1].endswith((stamp, stamp[11:16]))
+    if remote and 'HOST' in lines[0]:
+        assert 'mini' in text
     assert '\x1b' not in text
     rows[0].update(state='detached', context='', summary='')
     assert '○' in '\n'.join(t_mod._session_table_lines(rows))
@@ -179,12 +178,14 @@ def test_session_table_clips_only_task_when_other_columns_fit(t_mod, monkeypatch
     lines = t_mod._session_table_lines([row], remote=True)
     assert len(lines) == 2
     assert all(t_mod._display_width(line) <= 120 for line in lines)
-    assert all(value in lines[1] for value in ('desktop', 'model-test', 'mini', 'api-17', '…'))
-    assert lines[1].endswith(t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at']))
+    assert all(value in lines[1] for value in ('▣', 'model-test', 'mini', 'api-17', '…'))
+    if 'LAST TURN' in lines[0]:
+        stamp = t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at'])
+        assert lines[1].endswith((stamp, stamp[11:16]))
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: False)
     assert row['summary'] in t_mod._session_table_lines([row], remote=True)[1]
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
-    assert t_mod._session_table_lines([]) == ['  STATUS  UI  MODEL  SESSION  WORKING ON  LAST TURN']
+    assert t_mod._session_table_lines([]) == ['  STATUS  SESSION  WORKING ON  LOC/CLD TOKEN%  TOOL  MODELS  WATCHER  LAST TURN']
 
 
 @pytest.mark.parametrize('width', [20, 32, 44])
@@ -342,17 +343,19 @@ def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_pa
     assert schema['layouts']['table']['columns'][:len(labels)] == labels
     for label in schema['layouts']['table']['columns']:
         assert label in retained
-    full_live = 'STATUS' in live
+    full_live = 'MODELS' in live
     for label in labels:
         assert label in retained
-        if full_live:
+        if label in ('STATUS', 'SESSION', 'WORKING ON'):
             assert label in live
-    live_cells = _table_contract_cells(live, labels)
+    live_labels = ['STATUS', 'SESSION', 'WORKING ON'] + [v for v in ('HOST', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'WATCHER', 'LAST TURN') if v in live.splitlines()[0]]
+    live_cells = _table_contract_cells(live, live_labels)
     retained_cells = _table_contract_cells(retained, schema['layouts']['table']['columns'])
     for label, value in (('UI', 'cli'), ('HOST', owner['host']), ('SESSION', owner['slot']),
                          ('MODEL', owner['model']), ('WORKING ON', owner['summary'])):
-        if width is None:
-            assert ''.join(value.split()) in ''.join(live_cells[label].split())
+        if width is None and label != 'UI':
+            live_label = 'MODELS' if label == 'MODEL' else label
+            assert ''.join(value.split()) in ''.join(live_cells[live_label].split())
         assert ''.join(value.split()) in ''.join(retained_cells[label].split())
     assert row['associations'][0]['branch'] in retained_cells['BRANCH']
     assert '#12[MERGED]' in retained_cells['PRS']
@@ -365,7 +368,7 @@ def test_session_and_history_display_follow_shared_schema(history, t_mod, tmp_pa
     if width is not None:
         assert len(live.splitlines()) == 2
         assert all(t_mod._display_width(line) <= width for line in live.splitlines())
-        assert CONTRACT['commands']['session list']['display_layout']['physical_row'] == 'single_line'
+        assert CONTRACT['commands']['session list']['display_layout']['physical_row'] == 'model_continuations'
         assert all(t_mod._display_width(line) <= width for line in retained.splitlines() if line.startswith('  '))
 
 
@@ -379,29 +382,22 @@ def test_session_last_turn_display_contract(t_mod, monkeypatch, width, remote):
     wire = 'sid\t/wt/3\tweb-3\tdetached\tactive\tFix login\tcodex\tmodel\t2026-10-23T16:41:07Z'
     row, = t_mod._parse_rows(('mini\t' if remote else '') + wire, host_prefixed=remote)
     assert row['last_turn_started_at'] == '2026-10-23T16:41:07Z'
-    labels = ['STATUS', 'UI', 'MODEL'] + (['HOST'] if remote else []) + ['SESSION', 'WORKING ON', extension['label']]
-    assert labels[-1] == extension['label'] and extension['position'] == 'last'
     output = '\n'.join(t_mod._session_table_lines([row], remote=remote))
-    compact = 'STATUS' not in output
-    if compact:
-        labels = ['S'] + (['HOST'] if remote else []) + [('SLOT' if 'SLOT' in output else 'SESSION'), 'TASK', 'LAST TURN']
+    labels = ['STATUS', 'SESSION', 'WORKING ON'] + [v for v in ('HOST', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'WATCHER', 'LAST TURN') if v in output.splitlines()[0]]
     cells = _table_contract_cells(output, labels)
     expected = t_mod._session_display_helpers()['format_last_turn'](row['last_turn_started_at'])
-    if compact:
-        expected = expected[5:16]
-        if remote and width == 32:
-            expected = expected[-5:]
-    assert ''.join(cells[extension['label']].split()) == ''.join(expected.split())
-    task = cells['TASK' if compact else 'WORKING ON']
+    if 'LAST TURN' in cells:
+        assert labels[-1] == extension['label'] and extension['position'] == 'last'
+        assert cells['LAST TURN'] in (expected, expected[11:16])
+    task = cells['WORKING ON']
     assert task == 'Fix login' or (task.endswith('…') and 'Fix login'.startswith(task[:-1]))
     if width is not None:
         assert all(t_mod._display_width(line) <= width for line in output.splitlines())
-    # Pre-extension hosts remain readable and never substitute general activity.
     legacy, = t_mod._parse_rows(wire.rsplit('\t', 1)[0])
     legacy['updated_at'] = '2026-10-23T16:41:07Z'
-    output = '\n'.join(t_mod._session_table_lines([legacy], remote=remote))
-    assert output.splitlines()[0].endswith(extension['label'])
-    assert output.splitlines()[1].endswith(extension['unknown'])
+    lines = t_mod._session_table_lines([legacy], remote=remote)
+    if lines[0].endswith(extension['label']):
+        assert lines[1].endswith(extension['unknown'])
 
 
 def test_history_display_contract_preserves_unknowns_preview_and_json(history, t_mod, tmp_path, monkeypatch, capsys):

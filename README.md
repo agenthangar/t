@@ -1,5 +1,15 @@
 # t
 
+Evaluate coding workflows with `t eval config`, then `t eval runs start`.
+The configuration picker launches the selected run directly; `t eval runs list`
+opens the run picker in a terminal, with progress and per-workflow benchmark results.
+Redirected and JSON lists stay static. See [workflow evaluations](docs/evaluations.md).
+
+`t ls` shows observed local/cloud token percentages and participating models
+(★ marks the lead). Use `t system usage show` for the searchable workflow,
+session and eval usage view, or `t system usage list --json` to export records.
+Unknown usage and cost remain unavailable; workflow attribution is recorded at launch.
+
 ![t — coding-agent sessions, under control](docs/media/hero.svg)
 
 **Your sessions. Any terminal.**
@@ -403,6 +413,10 @@ local and reachable hosts. Saved resumes still check known owners and local
 launch locks; ownership on an unavailable host cannot be verified. A failed local
 ownership scan still stops the launch. To start a fresh conversation locally, use
 `t session open my-project --here --new --cli`.
+Codex tmux sessions in freshly allocated worktrees can start while other held
+Codex writers have unresolved workspace metadata. The lifecycle receipt retains
+those writer IDs; known same-workspace owners and reservations still block.
+Reused workspaces, saved resumes and transfers retain stricter writer checks.
 Remote ownership scans time out after 15 seconds rather than waiting indefinitely
 for a host's login shell.
 
@@ -960,9 +974,20 @@ inheritance or a custom model ID.
 Workflow rows show **Global default**, **Assigned to N repos**, or **Not assigned**.
 Repository counts include explicit, non-excluded assignments; a disabled definition
 is marked **Disabled**. Being enabled does not mean a workflow is assigned.
-Choose **Use recommended defaults** to activate planning with `gpt-6-astra`, implementation
-with `gpt-6.1-sol`, and review with `gpt-6-astra`. **Edit default workflow** and
+Choose **Use recommended defaults** for `gpt-6.1-sol` / medium in the main
+conversation and bounded review with `gpt-6-astra` / medium. **Edit default workflow** and
 **Edit named workflow** give each stage separate model and reasoning-effort controls.
+Workflow context is scoped to the current checkout, including linked worktrees:
+`t workflow context --tool codex` (add `--json` for scope and policy metadata).
+Updates ask before rebuilding managed global and repository instructions and back
+up originals first. Unattended updates defer that migration.
+
+Test runners use a local snapshot by default. Configuring a remote runner does
+not select it; choose remote defaults explicitly or pass `--target NAME`.
+Use `t runners runs watch ID --timeout 60 --json` for a bounded wait, or
+`t runners runs watch 'OWNER/REPO#PR@HEAD_SHA' --timeout 60 --json` for checks
+pinned to a PR head. A pending wait does not mean success or cancel the job.
+
 All three stages offer **Agent selects by task**. Before delegating, the agent
 chooses a concrete supported reasoning effort for that stage's worker.
 Task-based Implementation uses a bounded implementation worker; the main session
@@ -1242,8 +1267,10 @@ workflow, custom Markdown takes precedence over behavior preferences, which take
 precedence over generic model-stage guidance. `t` preserves Markdown as written;
 it does not try to interpret or detect conflicting prose.
 
-Use **Text instructions** inside a workflow to write ordinary headings,
-bullets and prose in your editor. No JSON is needed. The equivalent commands are:
+Use **Text instructions → Edit text instructions** inside a workflow to write
+ordinary headings, bullets and prose in your editor. Choose **Clear text instructions**
+on that same page to remove the text without opening an editor. No JSON is needed.
+The equivalent editing commands are:
 
 ```sh
 t workflow instructions edit careful
@@ -1259,6 +1286,13 @@ Choose **Clear text instructions** to stage their removal, then save. Saving an
 empty file in the text editor also clears them. Discarding menu changes restores
 the saved text; clearing instructions preserves the other workflow settings.
 **Edit reusable instructions** still opens the separate `t profile edit` profile.
+
+After merging a design-system draft, use **Frontend design → Design systems →
+your repository → Scan again**. This checks the current worktree, registered
+checkout and latest default branch from `origin`, without moving either checkout.
+Sources found outside the current worktree are labeled; select the source and save,
+then update your worktree before using the merged guidance there. Offline refresh
+keeps local results and reports that the default-branch scan was unavailable.
 
 The supplied public-repository issue-before-code rule is ordinary editable workflow
 Markdown. `t workflow list` shows whether the supplied text is included;
@@ -1728,3 +1762,6 @@ retains existing nosleep settings and hotspot credentials.
 Use **t config → Nosleep** for the same settings editor, nearby-network selection,
 macOS discovery permission setup, and hotspot passwords. Its live dashboard shows
 the selected network's availability even when fallback is disabled.
+
+Session discovery is served from a shared in-memory cache with hourly expiry
+and asynchronous disk persistence. See [session cache behavior and storage](docs/session-cache.md).

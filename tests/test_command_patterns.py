@@ -25,12 +25,18 @@ def test_declared_commands(t_mod):
     assert lint.check_command_patterns(t_mod.build_parser(), t_mod.COMMAND_GROUPS, CONTRACT) == []
     assert set(CONTRACT["commands"]) == ({
         " ".join(path) for path, _ in t_mod._command_routes()}
-        | {"share", "share targets", "share inbox", "share read", "workflow"})
+        | {"share", "share targets", "share inbox", "share read", "workflow", "eval", "eval config"})
+
+
+@pytest.fixture(scope='module')
+def inventory_parser(t_mod):
+    # Parsing is read-only; mutation tests below construct their own parsers.
+    return t_mod.build_parser()
 
 
 @pytest.mark.parametrize("command,mode,spec", list(_cases()))
-def test_declared_modes(t_mod, command, mode, spec):
-    parser = t_mod.build_parser()
+def test_declared_modes(t_mod, inventory_parser, command, mode, spec):
+    parser = inventory_parser
     assert spec["argv"][:len(command.split())] == command.split()
     assert t_mod._canonical_error(spec["argv"]) is None
     with contextlib.redirect_stderr(io.StringIO()):

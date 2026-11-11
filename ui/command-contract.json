@@ -694,7 +694,8 @@
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
-        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer"
+        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer",
+        "tests/test_session_lifecycle.py::test_public_new_scopes_unindexed_writers"
       ],
       "modes": {
         "default": {
@@ -762,7 +763,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts."
     },
     "session list": {
       "patterns": [
@@ -853,6 +854,12 @@
             "tests/test_session_details.py::test_last_turn_ignores_later_activity",
             "tests/test_command_behavior.py::test_session_last_turn_display_contract"
           ]
+        },
+        "watchers": {
+          "label": "WATCHER",
+          "position": "before_last_turn_started_at",
+          "unknown": "\u2014",
+          "meaning": "Cached verified watcher identity and active or stale state; full IDs and results remain in details."
         }
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
@@ -860,16 +867,19 @@
         "overrides": "session_information.table",
         "wide": "aligned_columns",
         "narrow": "compact_columns",
-        "physical_row": "single_line",
+        "physical_row": "model_continuations",
         "priority": [
           "status",
-          "host_when_remote",
           "session",
           "working_on",
+          "watcher",
+          "host_when_remote",
+          "local_cloud_percent",
+          "tool",
+          "models",
           "last_turn"
         ],
         "short_timestamps": [
-          "MM-DD HH:MM",
           "HH:MM"
         ],
         "redirected": "untruncated",
@@ -877,7 +887,8 @@
           "tests/test_command_behavior.py::test_session_table_keeps_status_and_identity_in_small_view",
           "tests/test_command_behavior.py::test_session_table_clips_only_task_when_other_columns_fit"
         ]
-      }
+      },
+      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead with WATCHER before last turn. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns while prioritizing WATCHER after the first three fields. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts."
     },
     "session close": {
       "patterns": [
@@ -1193,7 +1204,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts.",
       "source_reconciliation": {
         "scope": "selected local and cross-host saved conversations",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1328,7 +1339,7 @@
       "display_schema": "history_information",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
       "visibility": "hidden-compatibility",
-      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly."
+      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts."
     },
     "session cd": {
       "patterns": [
@@ -2395,7 +2406,13 @@
         "tests/test_model_selection.py::test_ready_selects_directly_and_compares_all_published_scores",
         "tests/test_model_selection.py::test_prepare_is_explicit_and_stages_only_after_verification",
         "tests/test_model_selection.py::test_comparison_picker_layout_navigation_and_source_keys",
-        "tests/test_model_selection.py::test_context_and_actions_align"
+        "tests/test_model_selection.py::test_context_and_actions_align",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset",
+        "tests/test_design_system.py::test_refresh_finds_merged_design_without_moving_stale_checkouts",
+        "tests/test_design_system.py::test_refresh_menu_selects_merged_source_without_duplicate_rows",
+        "tests/test_workflow_single_model.py::test_clear_text_instructions_is_staged_and_preserves_policy",
+        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop"
       ],
       "modes": {
         "default": {
@@ -2415,9 +2432,14 @@
             "tests/test_config.py::test_config_main_menu_shows_repo_aliases",
             "tests/test_config.py::test_config_group_navigation_retains_focus",
             "tests/test_config.py::test_config_grouped_menu_narrow_navigation",
-            "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows"
+            "tests/test_workflow_review.py::test_config_save_review_passes_baseline_without_dumping_workflows",
+            "tests/test_config.py::test_config_local_save_continues_and_rebases",
+            "tests/test_config.py::test_config_local_discard_or_back_preserves_transaction_rules",
+            "tests/test_config.py::test_config_local_failed_save_retains_edits_and_retries",
+            "tests/test_config.py::test_config_local_post_save_failure_keeps_saved_baseline",
+            "tests/test_config.py::test_config_local_continuation_uses_shared_narrow_viewport"
           ],
-          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines."
+          "notes": "Suggest unique host short names on addition; allow host renaming with defaults preserved and review before saving. Group the hub into Session defaults, Agents, Workflows, Runners, MCP server, Repositories & worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep all actions directly reachable with stable focus and Save/Discard behavior; collection/setup rows use a trailing submenu cue. Focus and Save remain visible at narrow terminal sizes. Workflow save review displays only changes against the initial staged-document snapshot, with before/after values and changed text lines. Pending edits before Local worker & models offer reviewed save-and-continue, discard-and-continue, or Back; retryable save errors preserve edits, successful continuation refreshes the baseline and return focus, and post-save failures retain completed saves."
         },
         "host_add": {
           "argv": [
@@ -2509,7 +2531,7 @@
             "tests/test_design_system.py::test_menu_missing_manual_clear_refresh_and_defer",
             "tests/test_design_system.py::test_discovery_real_renderer_narrow_and_cancel"
           ],
-          "notes": "Repository settings expose assignment and design-source selection. Discovery is bounded and read-only; only explicit source choices are staged until shared review/save. Clear is the leading Not set choice. Missing selected sources remain visible; cancellation preserves the transaction."
+          "notes": "Repository settings expose assignment and design-source selection. Discovery is bounded and read-only; only explicit source choices are staged until shared review/save. Clear is the leading Not set choice. Missing selected sources remain visible; cancellation preserves the transaction. Explicit refresh may fetch default-branch objects without changing refs or checkout files. Candidate provenance is shown for sources outside the active worktree."
         },
         "design_guidance_draft": {
           "argv": [
@@ -2566,7 +2588,7 @@
           "notes": "Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes."
         }
       },
-      "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection compares all available publisher benchmark columns, readiness and configured identity with shared RailUI width-aware layout. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; header number keys open focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable."
+      "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection uses the shared one-row comparison table, readiness and configured identity with a width-aware layout and sourced benchmark legend. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; number keys open available focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable.. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged. Text instructions opens Edit, Clear and Back; clearing is staged and an empty clear is a no-op. Explicit Scan again includes registered-checkout and latest origin default-branch evidence without moving checkouts or refs; sources absent from the active worktree are labeled and selection advises updating that worktree. Remote failures retain local candidates. Ordinary browsing never fetches."
     },
     "config show": {
       "patterns": [
@@ -3220,7 +3242,7 @@
         }
       },
       "hook_review": "Explain Codex CLI /hooks; never grant hook trust.",
-      "notes": "Read-only launch resources include aggregate PTY/process evidence and bounded recent macOS kernel failure counts. No test PTYs, launch retries, raw kernel logs, or tmux restarts; unavailable evidence never implies health. Recent session attempts defaults to five; --recent N selects 1–20. Recorded failures retain stage, operation exit code and bounded stderr; log excerpts use attempt boundaries, with unknown, missing, rotated and unreadable evidence labeled. Diagnosis never writes records or reads transcripts."
+      "notes": "Read-only launch resources include aggregate PTY/process evidence and bounded recent macOS kernel failure counts. No test PTYs, launch retries, raw kernel logs, or tmux restarts; unavailable evidence never implies health. Recent session attempts defaults to five; --recent N selects 1\u201320. Recorded failures retain stage, operation exit code and bounded stderr; log excerpts use attempt boundaries, with unknown, missing, rotated and unreadable evidence labeled. Diagnosis never writes records or reads transcripts."
     },
     "repo add": {
       "patterns": [
@@ -3732,7 +3754,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH."
         },
         "explicit": {
           "argv": [
@@ -3819,7 +3841,9 @@
         "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool",
         "tests/test_design_system.py::test_assignment_guides_selection_and_review",
         "tests/test_design_system.py::test_repo_source_in_read_only_json",
-        "tests/test_design_system.py::test_explicit_draft_launch_is_guarded"
+        "tests/test_design_system.py::test_explicit_draft_launch_is_guarded",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset"
       ],
       "modes": {
         "default": {
@@ -3919,7 +3943,7 @@
           "notes": "Supplied issue-before-code policy lives in editable Markdown; v1/v2 migrate in memory to v3 without read-only writes, then persist on save/install. Later edits/removal are preserved."
         }
       },
-      "notes": "Read-only effective scope/source, exclusion, text precedence, permissions and model settings. PRs, previews & tests groups Pull requests, Local preview and Tests. Agent review before PR is Enabled/Disabled; missing pr_review displays Enabled without a write. Disabled shows the Review stage as Skipped before PR while retaining its configured model and selection. PR opening, state and merging are independent; When to open PR is Automatically when ready or Only when I ask, and automatic merging is Automerge. Local preview has Global Preview timing and Approval before PR above Frontend and CLI submenus, both visible with Enabled/Disabled state. Both inherit timing and PR approval or override each field, showing Inherit global/Override with the resolved value. Frontend Open in browser and CLI Run command each provide one independent launch choice; legacy preview_launch remains an effective fallback until a launch edit materializes both choices. Runtime guidance uses only resolved rules for enabled preview types; request-only timing gates automatic launch. Frontend alone contains Implement before approval (Yes/No/Not set), Design approach, Preview method (Fast reload/Build) and Open in browser (Automatically/Only when I ask). CLI contains Preview method (Install locally/Run from the repo) and Run command (Automatically/Only when I ask); CLI has separate Planning preview and Planning preview approval rows; retired cli_implement_before_approval stays inert. Disabled summaries suppress retained settings. Tests contains When to run tests and Test runners; the CI choice is On PR CI. Lists and catalogue use the same hierarchy and effective choices; save review shows only changed fields. Not set applies to optional choices; Inherit is used only for real parent values. Show effective Implementation or session-default model and selected workers; unselected stages use the main session model/effort, and no selected stages means one model. Never present inactive saved values as effective. Task-selected Implementation uses a bounded worker; show main fixed launch settings separately and label Worker/Main session/Main model sources. Effort pickers separate Automatic from Fixed effort. Per-tool permissions apply to subsequent CLI launch/resume. Retain legacy rules separately. --all is a compact named catalogue. Raw JSON preserves saved keys and text bytes. No picker, write, update prompt, connection or retry. Wide labels use available terminal width; narrow screens retain stacked values. --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference. The parent Local preview settings are labeled Global, not Defaults. Use concise submenu summaries and open Frontend/CLI to inspect details; inherited preview choices explicitly say Inherit global. Agent review before PR names the reviewing actor; it offers Default, Enabled and Disabled. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards."
+      "notes": "Read-only effective scope/source, exclusion, text precedence, permissions and model settings. PRs, previews & tests groups Pull requests, Local preview and Tests. Agent review before PR is Enabled/Disabled; missing pr_review displays Enabled without a write. Disabled shows the Review stage as Skipped before PR while retaining its configured model and selection. PR opening, state and merging are independent; When to open PR is Automatically when ready or Only when I ask, and automatic merging is Automerge. Local preview has Global Preview timing and Approval before PR above Frontend and CLI submenus, both visible with Enabled/Disabled state. Both inherit timing and PR approval or override each field, showing Inherit global/Override with the resolved value. Frontend Open in browser and CLI Run command each provide one independent launch choice; legacy preview_launch remains an effective fallback until a launch edit materializes both choices. Runtime guidance uses only resolved rules for enabled preview types; request-only timing gates automatic launch. Frontend alone contains Implement before approval (Yes/No/Not set), Design approach, Preview method (Fast reload/Build) and Open in browser (Automatically/Only when I ask). CLI contains Preview method (Install locally/Run from the repo) and Run command (Automatically/Only when I ask); CLI has separate Planning preview and Planning preview approval rows; retired cli_implement_before_approval stays inert. Disabled summaries suppress retained settings. Tests contains When to run tests and Test runners; the CI choice is On PR CI. Lists and catalogue use the same hierarchy and effective choices; save review shows only changed fields. Not set applies to optional choices; Inherit is used only for real parent values. Show effective Implementation or session-default model and selected workers; unselected stages use the main session model/effort, and no selected stages means one model. Never present inactive saved values as effective. Task-selected Implementation uses a bounded worker; show main fixed launch settings separately and label Worker/Main session/Main model sources. Effort pickers separate Automatic from Fixed effort. Per-tool permissions apply to subsequent CLI launch/resume. Retain legacy rules separately. --all is a compact named catalogue. Raw JSON preserves saved keys and text bytes. No picker, write, update prompt, connection or retry. Wide labels use available terminal width; narrow screens retain stacked values. --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference. The parent Local preview settings are labeled Global, not Defaults. Use concise submenu summaries and open Frontend/CLI to inspect details; inherited preview choices explicitly say Inherit global. Agent review before PR names the reviewing actor; it offers Default, Enabled and Disabled. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged."
     },
     "workflow edit": {
       "patterns": [
@@ -3965,7 +3989,13 @@
         "tests/test_workflow_tool_ui.py::test_workflow_read_default_uses_explicit_repository_tool",
         "tests/test_design_system.py::test_assignment_guides_selection_and_review",
         "tests/test_design_system.py::test_repo_source_in_read_only_json",
-        "tests/test_design_system.py::test_explicit_draft_launch_is_guarded"
+        "tests/test_design_system.py::test_explicit_draft_launch_is_guarded",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset",
+        "tests/test_design_system.py::test_refresh_finds_merged_design_without_moving_stale_checkouts",
+        "tests/test_design_system.py::test_refresh_menu_selects_merged_source_without_duplicate_rows",
+        "tests/test_workflow_single_model.py::test_clear_text_instructions_is_staged_and_preserves_policy",
+        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop"
       ],
       "modes": {
         "default": {
@@ -4031,7 +4061,7 @@
           "terminal": true
         }
       },
-      "notes": "Advanced JSON editor with strict validation and no write for invalid/unchanged edits. Optional stages_enabled defaults true; model_stages is a nonempty unique subset of planning/implementation/review. Legacy separate_stages selects planning/review helpers with Implementation active. Deselecting all stages retains models and selections. Disabled/excluded workflows suppress generated stages, behaviors and Markdown. Optional session_defaults stores codex/claude model and explicit effort, active with Implementation unchecked or stages disabled; omitted values use native defaults. Never rewrite global native settings or active turns. Optional permissions maps codex to ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan; explicit invocation permission flags suppress the preset. Stage effort accepts auto or supported explicit levels. Legacy one-level-lower for Implementation/Review resolves auto without read writes. Auto Implementation delegates a concrete-effort worker; the main launch effort stays fixed. Behavior keys include pr_review, pr_open, pr_state, pr_merge, frontend_enabled, cli_enabled, local_preview, preview_pr_approval, preview_launch, frontend_preview_timing, cli_preview_timing, frontend_preview_pr_approval, cli_preview_pr_approval, frontend_implement_before_approval, cli_preview, cli_launch, frontend_design, frontend_preview, frontend_browser and test_timing. pr_review retains review/skip storage with Enabled/Disabled labels; omission means Enabled without materializing storage. Disabled skips both main-session and worker pre-PR review, retaining reviewer settings; explicit repository/task requirements still apply. When stages are off, enabled PR review uses the main agent. PR timing/state/merge and validation/preview preferences remain independent. Both preview types inherit local_preview timing and preview_pr_approval unless their respective child override is present. Launch controls are independent per type; preview_launch remains a legacy read fallback until editing a launch choice materializes independent values. frontend_preview_pr_approval and cli_preview_pr_approval override PR approval; frontend_browser and cli_launch select independent launch behavior. Clearing timing or approval overrides restores live inheritance; clearing launch leaves that type unset. frontend_implement_before_approval is direct yes/no; CLI planning-preview approval is separate from the working-command preview. PR approval is independent and can apply to either enabled preview type. Legacy implement_before_approval falls back to the frontend key; explicit frontend wins. Older preview_approval/design_approval map inversely to frontend only. Retired cli_implement_before_approval remains accepted raw but is inert. Clearing frontend approval must not restore aliases. frontend_enabled/cli_enabled independently override legacy preview_target; missing settings enable both types. Disabled preview types retain stored preferences but suppress their preview instructions; design_system remains active independently. frontend_browser and cli_launch accept automatic/on_request and act only once the corresponding preview is due/requested and ready; neither independently requests a preview. CLI launch composes with install/repo method; request-only launch prepares the command without running it. Interactive CLI launch uses a supported terminal or reports the limitation and exact command. Legacy worktree/preview/validation/delivery values remain readable; explicit choices take precedence. No read-time migration. Unknown keys/values rejected; required repository checks and approvals remain authoritative. The checklist one-model reset maps to stages_enabled=false while retaining configured model_stages and model/effort values. --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards."
+      "notes": "Advanced JSON editor with strict validation and no write for invalid/unchanged edits. Optional stages_enabled defaults true; model_stages is a nonempty unique subset of planning/implementation/review. Legacy separate_stages selects planning/review helpers with Implementation active. Deselecting all stages retains models and selections. Disabled/excluded workflows suppress generated stages, behaviors and Markdown. Optional session_defaults stores codex/claude model and explicit effort, active with Implementation unchecked or stages disabled; omitted values use native defaults. Never rewrite global native settings or active turns. Optional permissions maps codex to ask/auto/full/read_only and claude to manual/acceptEdits/auto/bypassPermissions/plan; explicit invocation permission flags suppress the preset. Stage effort accepts auto or supported explicit levels. Legacy one-level-lower for Implementation/Review resolves auto without read writes. Auto Implementation delegates a concrete-effort worker; the main launch effort stays fixed. Behavior keys include pr_review, pr_open, pr_state, pr_merge, frontend_enabled, cli_enabled, local_preview, preview_pr_approval, preview_launch, frontend_preview_timing, cli_preview_timing, frontend_preview_pr_approval, cli_preview_pr_approval, frontend_implement_before_approval, cli_preview, cli_launch, frontend_design, frontend_preview, frontend_browser and test_timing. pr_review retains review/skip storage with Enabled/Disabled labels; omission means Enabled without materializing storage. Disabled skips both main-session and worker pre-PR review, retaining reviewer settings; explicit repository/task requirements still apply. When stages are off, enabled PR review uses the main agent. PR timing/state/merge and validation/preview preferences remain independent. Both preview types inherit local_preview timing and preview_pr_approval unless their respective child override is present. Launch controls are independent per type; preview_launch remains a legacy read fallback until editing a launch choice materializes independent values. frontend_preview_pr_approval and cli_preview_pr_approval override PR approval; frontend_browser and cli_launch select independent launch behavior. Clearing timing or approval overrides restores live inheritance; clearing launch leaves that type unset. frontend_implement_before_approval is direct yes/no; CLI planning-preview approval is separate from the working-command preview. PR approval is independent and can apply to either enabled preview type. Legacy implement_before_approval falls back to the frontend key; explicit frontend wins. Older preview_approval/design_approval map inversely to frontend only. Retired cli_implement_before_approval remains accepted raw but is inert. Clearing frontend approval must not restore aliases. frontend_enabled/cli_enabled independently override legacy preview_target; missing settings enable both types. Disabled preview types retain stored preferences but suppress their preview instructions; design_system remains active independently. frontend_browser and cli_launch accept automatic/on_request and act only once the corresponding preview is due/requested and ready; neither independently requests a preview. CLI launch composes with install/repo method; request-only launch prepares the command without running it. Interactive CLI launch uses a supported terminal or reports the limitation and exact command. Legacy worktree/preview/validation/delivery values remain readable; explicit choices take precedence. No read-time migration. Unknown keys/values rejected; required repository checks and approvals remain authoritative. The checklist one-model reset maps to stages_enabled=false while retaining configured model_stages and model/effort values. --tool codex|claude|cursor selects the tool catalogue. Omission uses the explicit repository tool override or account default. Reads identify the tool; writes preserve other catalogues. No checkout inference. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged. Text instructions opens Edit, Clear and Back; clearing is staged and an empty clear is a no-op. Explicit Scan again includes registered-checkout and latest origin default-branch evidence without moving checkouts or refs; sources absent from the active worktree are labeled and selection advises updating that worktree. Remote failures retain local candidates. Ordinary browsing never fetches."
     },
     "workflow add": {
       "patterns": [
@@ -4336,7 +4366,9 @@
       "confirmation": "review",
       "tests": [
         "tests/test_local_setup.py::test_setup_and_disable",
-        "tests/test_local_setup.py::test_status_readonly"
+        "tests/test_local_setup.py::test_status_readonly",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset"
       ],
       "modes": {
         "default": {
@@ -4401,7 +4433,8 @@
             "tests/test_local_setup.py::test_status_readonly"
           ]
         }
-      }
+      },
+      "notes": " Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged."
     },
     "runners list": {
       "patterns": [
@@ -5048,7 +5081,9 @@
         "tests/test_model_selection.py::test_ready_selects_directly_and_compares_all_published_scores",
         "tests/test_model_selection.py::test_prepare_is_explicit_and_stages_only_after_verification",
         "tests/test_model_selection.py::test_comparison_picker_layout_navigation_and_source_keys",
-        "tests/test_model_selection.py::test_context_and_actions_align"
+        "tests/test_model_selection.py::test_context_and_actions_align",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset"
       ],
       "modes": {
         "default": {
@@ -5100,7 +5135,7 @@
           "notes": "Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes."
         }
       },
-      "notes": "Bare t workflow opens the shared RailUI staged editor in a terminal; outside a terminal or with --help it prints help without writes. Hidden config workflows alias uses the same editor. Select named workflows and explicit repository assignments, edit Planning/Implementation/Review model-stage checkboxes and selected models/efforts or session defaults, permissions, behaviors and text. Clear text instructions and empty editor contents stage removal; discard publishes nothing. Repository assignment is one selector: Inherit global with its workflow name, named workflows, or Disabled. A saved inline policy may appear as Current custom workflow to retain or restore it. Selection stages the assignment and returns; cancel and reselecting the current option are no-ops. No copy, edit, exclusion-action or JSON submenu appears here. Agent review before PR in Pull requests is an Enabled/Disabled toggle, no Not set row. Missing pr_review shows Enabled; selecting its current value is a no-op. Disabled suppresses agent review and marks Review Skipped before PR while keeping its model controls editable. Local preview exposes Global Preview timing and Approval before PR above Frontend and CLI. Frontend and CLI each have independent Preview Enabled/Disabled plus source-aware Inherit global/Override values for timing, PR approval, only. Every workflow behavior has a resolved default from BEHAVIOR_DEFAULTS; reset displays that value. Native models, effort and permissions may inherit tool settings; do not invent unavailable values. Frontend Open in browser and CLI Run command each provide one independent launch setting; the shared launch menu is removed. Legacy shared values remain effective until a launch edit materializes both type choices. Clearing an override follows Global; only resolved rules for enabled types reach agent instructions. Frontend preview has Implement before approval Yes/No/Use default, Fast reload/Build and browser opening. Design approach and systems live on the top-level Frontend design page. CLI has install/repo method and Run command Automatically/Only when I ask; it has no implementation-approval control. Disabled submenus stay editable and retain settings. Shared pickers separate a leading unset/inherit choice with a blank nonselectable rail row; binary choices also offer a resolved default choice. Tests embeds Test runners beside When to run tests; the CI choice is On PR CI. Nested runner edits preserve prior/later behavior edits in the same transaction. Back restores focus and pending choices. No explanatory preambles. Ctrl+C with pending changes offers Keep editing (default), Review and save, or Discard changes and exit from hubs, nested menus and save review. Preserve completed nested edits. Review and save uses the normal final review; repeated interruption never implicitly saves/discards. No edits exits immediately with status 130. Restore terminal state; external editors and post-save actions retain their own behavior. Use multiple models starts with Use one model for all work as an exclusive empty-key reset in the shared checklist, separated from stage choices. Space selects it and clears Planning/Implementation/Review; selecting any stage clears it and clearing the last stage restores it. Enter or q/Esc Back applies the marks; translate the reset to no active stages. One-model mode exposes session model/effort controls while retaining all saved stage values and other preferences. Back retains model-stage marks in the transaction; unchanged selections create no repository override or write. Hub and catalogue assignment labels show Global default, Assigned to N repos or Not assigned, with Disabled appended for a disabled definition. Count only explicit non-excluded named assignments, not inline copies or implicit global inheritance. The workflow row is Model, with an Inherit default choice showing the top-level tool model. Reasoning effort follows the same source-aware wording. An explicit workflow model leaves omitted effort to native settings; unverified native values say Tool setting, without treating catalogue metadata as effective configuration. Permissions displays the preset alone and opens choices directly for the selected tool. Save review compares against the transaction baseline and displays only changed fields, text lines, runner fields and assignments with before/after values. Preserve visibility of additions, removals, default changes, exclusions and initial activation; omit unchanged workflows and instruction text. Start with Codex/Claude/Cursor, then that tool catalogue. Tool rows show Global and the current registered repository assignment, including linked worktrees, without changing edit scope or command scope inference. Each tool has independent named definitions, default and repository assignments. Navigation never changes launch tool preferences. Scoped editors merge into one staged document and immutable baseline, including Ctrl+C and runner edits; review shows only changed tool scopes. Models come from the selected CLI. Cursor model IDs contain parameters; no separate effort or permission picker. Unavailable discovery retains Inherit and custom IDs. Existing root data remains Codex; optional tools.claude and tools.cursor store complete catalogues. Shared legacy Claude preferences migrate in memory and freeze on save, with Codex stages removed and explicit Claude defaults/permissions plus delivery/text/runners retained. Reads never write. Native rendering and launch/resume resolve tool before repository scope. Save changes appears once as the persistent footer action with the s shortcut, never as a duplicate menu row. The shortcut opens the existing final diff review. Tool Back navigation restores focus; reverting a newly materialized tool scope restores its absent baseline without discarding other tools edits. The parent Local preview settings are labeled Global, not Defaults. Use concise submenu summaries and open Frontend/CLI to inspect details; inherited preview choices explicitly say Inherit global. Agent review before PR names the reviewing actor; it offers Default, Enabled and Disabled. Inherited effective values after Inherit global/default are dimmed, including focused and narrow rows. Named workflow menus include staged deletion with replacement selection for consumers and last-workflow protection. Codex Inference & routing includes staged On cloud connection failure: Pause and retry (default) or Continue locally with selected model. Fresh native CLI launches with continuation enabled use an owned app-server and native terminal UI; typed transport failures exhaust the turn or wait 30 seconds before stopping the cloud runtime and launching a fresh local-only session from a private bounded checkpoint. Auth/quota/HTTP errors, cancellation and auxiliary threads never trigger fallback. Missing local readiness or incomplete checkpoints pause without downloads. Local mode stays selected after reconnect. Resume/fork, exec/review and remote/profile/OSS/worktree overrides require Pause. No new public command is added. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Model selection uses a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection compares all available publisher benchmark columns, readiness and configured identity with shared RailUI width-aware layout. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; header number keys open focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable."
+      "notes": "Bare t workflow opens the shared RailUI staged editor in a terminal; outside a terminal or with --help it prints help without writes. Hidden config workflows alias uses the same editor. Select named workflows and explicit repository assignments, edit Planning/Implementation/Review model-stage checkboxes and selected models/efforts or session defaults, permissions, behaviors and text. Clear text instructions and empty editor contents stage removal; discard publishes nothing. Repository assignment is one selector: Inherit global with its workflow name, named workflows, or Disabled. A saved inline policy may appear as Current custom workflow to retain or restore it. Selection stages the assignment and returns; cancel and reselecting the current option are no-ops. No copy, edit, exclusion-action or JSON submenu appears here. Agent review before PR in Pull requests is an Enabled/Disabled toggle, no Not set row. Missing pr_review shows Enabled; selecting its current value is a no-op. Disabled suppresses agent review and marks Review Skipped before PR while keeping its model controls editable. Local preview exposes Global Preview timing and Approval before PR above Frontend and CLI. Frontend and CLI each have independent Preview Enabled/Disabled plus source-aware Inherit global/Override values for timing, PR approval, only. Every workflow behavior has a resolved default from BEHAVIOR_DEFAULTS; reset displays that value. Native models, effort and permissions may inherit tool settings; do not invent unavailable values. Frontend Open in browser and CLI Run command each provide one independent launch setting; the shared launch menu is removed. Legacy shared values remain effective until a launch edit materializes both type choices. Clearing an override follows Global; only resolved rules for enabled types reach agent instructions. Frontend preview has Implement before approval Yes/No/Use default, Fast reload/Build and browser opening. Design approach and systems live on the top-level Frontend design page. CLI has install/repo method and Run command Automatically/Only when I ask; it has no implementation-approval control. Disabled submenus stay editable and retain settings. Shared pickers separate a leading unset/inherit choice with a blank nonselectable rail row; binary choices also offer a resolved default choice. Tests embeds Test runners beside When to run tests; the CI choice is On PR CI. Nested runner edits preserve prior/later behavior edits in the same transaction. Back restores focus and pending choices. No explanatory preambles. Ctrl+C with pending changes offers Keep editing (default), Review and save, or Discard changes and exit from hubs, nested menus and save review. Preserve completed nested edits. Review and save uses the normal final review; repeated interruption never implicitly saves/discards. No edits exits immediately with status 130. Restore terminal state; external editors and post-save actions retain their own behavior. Use multiple models starts with Use one model for all work as an exclusive empty-key reset in the shared checklist, separated from stage choices. Space selects it and clears Planning/Implementation/Review; selecting any stage clears it and clearing the last stage restores it. Enter or q/Esc Back applies the marks; translate the reset to no active stages. One-model mode exposes session model/effort controls while retaining all saved stage values and other preferences. Back retains model-stage marks in the transaction; unchanged selections create no repository override or write. Hub and catalogue assignment labels show Global default, Assigned to N repos or Not assigned, with Disabled appended for a disabled definition. Count only explicit non-excluded named assignments, not inline copies or implicit global inheritance. The workflow row is Model, with an Inherit default choice showing the top-level tool model. Reasoning effort follows the same source-aware wording. An explicit workflow model leaves omitted effort to native settings; unverified native values say Tool setting, without treating catalogue metadata as effective configuration. Permissions displays the preset alone and opens choices directly for the selected tool. Save review compares against the transaction baseline and displays only changed fields, text lines, runner fields and assignments with before/after values. Preserve visibility of additions, removals, default changes, exclusions and initial activation; omit unchanged workflows and instruction text. Start with Codex/Claude/Cursor, then that tool catalogue. Tool rows show Global and the current registered repository assignment, including linked worktrees, without changing edit scope or command scope inference. Each tool has independent named definitions, default and repository assignments. Navigation never changes launch tool preferences. Scoped editors merge into one staged document and immutable baseline, including Ctrl+C and runner edits; review shows only changed tool scopes. Models come from the selected CLI. Cursor model IDs contain parameters; no separate effort or permission picker. Unavailable discovery retains Inherit and custom IDs. Existing root data remains Codex; optional tools.claude and tools.cursor store complete catalogues. Shared legacy Claude preferences migrate in memory and freeze on save, with Codex stages removed and explicit Claude defaults/permissions plus delivery/text/runners retained. Reads never write. Native rendering and launch/resume resolve tool before repository scope. Save changes appears once as the persistent footer action with the s shortcut, never as a duplicate menu row. The shortcut opens the existing final diff review. Tool Back navigation restores focus; reverting a newly materialized tool scope restores its absent baseline without discarding other tools edits. The parent Local preview settings are labeled Global, not Defaults. Use concise submenu summaries and open Frontend/CLI to inspect details; inherited preview choices explicitly say Inherit global. Agent review before PR names the reviewing actor; it offers Default, Enabled and Disabled. Inherited effective values after Inherit global/default are dimmed, including focused and narrow rows. Named workflow menus include staged deletion with replacement selection for consumers and last-workflow protection. Codex Inference & routing includes staged On cloud connection failure: Pause and retry (default) or Continue locally with selected model. Fresh native CLI launches with continuation enabled use an owned app-server and native terminal UI; typed transport failures exhaust the turn or wait 30 seconds before stopping the cloud runtime and launching a fresh local-only session from a private bounded checkpoint. Auth/quota/HTTP errors, cancellation and auxiliary threads never trigger fallback. Missing local readiness or incomplete checkpoints pause without downloads. Local mode stays selected after reconnect. Resume/fork, exec/review and remote/profile/OSS/worktree overrides require Pause. No new public command is added. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Optional Model tools opens a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection uses the shared one-row comparison table, readiness and configured identity with a width-aware layout and sourced benchmark legend. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; number keys open available focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable.. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged."
     },
     "workflow open": {
       "patterns": [
@@ -5128,7 +5163,13 @@
         "tests/test_model_selection.py::test_ready_selects_directly_and_compares_all_published_scores",
         "tests/test_model_selection.py::test_prepare_is_explicit_and_stages_only_after_verification",
         "tests/test_model_selection.py::test_comparison_picker_layout_navigation_and_source_keys",
-        "tests/test_model_selection.py::test_context_and_actions_align"
+        "tests/test_model_selection.py::test_context_and_actions_align",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset",
+        "tests/test_design_system.py::test_refresh_finds_merged_design_without_moving_stale_checkouts",
+        "tests/test_design_system.py::test_refresh_menu_selects_merged_source_without_duplicate_rows",
+        "tests/test_workflow_single_model.py::test_clear_text_instructions_is_staged_and_preserves_policy",
+        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop"
       ],
       "modes": {
         "default": {
@@ -5180,7 +5221,7 @@
             "tests/test_design_system.py::test_menu_missing_manual_clear_refresh_and_defer",
             "tests/test_design_system.py::test_discovery_real_renderer_narrow_and_cancel"
           ],
-          "notes": "Repository settings expose assignment and design-source selection. Discovery is bounded and read-only; only explicit source choices are staged until shared review/save. Clear is the leading Not set choice. Missing selected sources remain visible; cancellation preserves the transaction."
+          "notes": "Repository settings expose assignment and design-source selection. Discovery is bounded and read-only; only explicit source choices are staged until shared review/save. Clear is the leading Not set choice. Missing selected sources remain visible; cancellation preserves the transaction. Explicit refresh may fetch default-branch objects without changing refs or checkout files. Candidate provenance is shown for sources outside the active worktree."
         },
         "design_guidance_draft": {
           "argv": [
@@ -5223,7 +5264,7 @@
           "notes": "Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes."
         }
       },
-      "notes": "Open the named workflow immediately, then return through the shared tool catalogue. Unknown names fail without writes. Existing verbs take precedence over names; use open NAME for collisions. config workflow NAME is a compatibility alias. Codex workflows include Inference & routing and the shared local artifact picker; local-only hides retained cloud-stage controls. Installing or measuring a selected model is immediate; changing the workflow remains staged. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Model selection uses a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection compares all available publisher benchmark columns, readiness and configured identity with shared RailUI width-aware layout. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; header number keys open focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable."
+      "notes": "Open the named workflow immediately, then return through the shared tool catalogue. Unknown names fail without writes. Existing verbs take precedence over names; use open NAME for collisions. config workflow NAME is a compatibility alias. Codex workflows include Inference & routing and the shared local artifact picker; local-only hides retained cloud-stage controls. Installing or measuring a selected model is immediate; changing the workflow remains staged. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Optional Model tools opens a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection uses the shared one-row comparison table, readiness and configured identity with a width-aware layout and sourced benchmark legend. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; number keys open available focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable.. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged. Text instructions opens Edit, Clear and Back; clearing is staged and an empty clear is a no-op. Explicit Scan again includes registered-checkout and latest origin default-branch evidence without moving checkouts or refs; sources absent from the active worktree are labeled and selection advises updating that worktree. Remote failures retain local candidates. Ordinary browsing never fetches."
     },
     "workflow delete": {
       "patterns": [
@@ -5294,7 +5335,9 @@
       "scope": "local machine; cached public metadata",
       "confirmation": "none",
       "tests": [
-        "tests/test_local_models.py::test_commands"
+        "tests/test_local_models.py::test_commands",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset"
       ],
       "modes": {
         "default": {
@@ -5328,7 +5371,8 @@
             "tests/test_local_models.py::test_commands"
           ]
         }
-      }
+      },
+      "notes": " Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged."
     },
     "config models refresh": {
       "patterns": [
@@ -5339,7 +5383,9 @@
       "scope": "local machine; cached public metadata",
       "confirmation": "none",
       "tests": [
-        "tests/test_local_models.py::test_commands"
+        "tests/test_local_models.py::test_commands",
+        "tests/test_model_display.py::test_shared_picker_one_row_focus_and_actions",
+        "tests/test_local_inference.py::test_time_limits_defaults_validation_and_scoped_reset"
       ],
       "modes": {
         "default": {
@@ -5373,7 +5419,8 @@
             "tests/test_local_models.py::test_commands"
           ]
         }
-      }
+      },
+      "notes": " Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged."
     },
     "config models show": {
       "patterns": [
@@ -5423,7 +5470,7 @@
           ]
         }
       },
-      "notes": " Model selection uses a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success."
+      "notes": " Optional Model tools opens a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success."
     },
     "config models install": {
       "patterns": [
@@ -5510,7 +5557,7 @@
           ]
         }
       },
-      "notes": " Model selection uses a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success."
+      "notes": " Optional Model tools opens a compact shared RailUI overview with readiness and the next action; Benchmarks and Artifact & runtime drilldowns retain provenance. Downloaded artifacts offer explicit Verify readiness, reuse files, and refresh status. Failed/cancelled verification clears old readiness; successful response text records hardware/context. Flash-Next verification requires eligible hardware and a compatible runtime, preserving runtime memory guardrails and unknown fit until success."
     },
     "config models measure": {
       "patterns": [
@@ -8692,6 +8739,1130 @@
           ]
         }
       }
+    },
+    "eval": {
+      "patterns": [
+        "detail",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "nonterminal_help": {
+          "argv": [
+            "eval"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config": {
+      "patterns": [
+        "review",
+        "single",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config"
+          ],
+          "patterns": [
+            "single",
+            "wizard",
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "config",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config show": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "config",
+            "show",
+            "example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval config edit": {
+      "patterns": [
+        "review",
+        "single",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "single",
+            "wizard",
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval benchmarks list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "benchmarks",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "benchmarks",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs start": {
+      "patterns": [
+        "action",
+        "detail",
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "start"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "start",
+            "example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "eval",
+            "runs",
+            "start",
+            "example",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs list": {
+      "patterns": [
+        "list",
+        "machine",
+        "single"
+      ],
+      "renderer": "plain",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "interactive_picker": {
+          "argv": [
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_usage.py::test_eval_list_show_same_picker"
+          ]
+        }
+      },
+      "notes": "Explicitly approved exception: interactive list and targetless show share the run picker; JSON and redirected list remain static."
+    },
+    "eval runs show": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "show",
+            "eval-20261106-012345abcdef",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs compare": {
+      "patterns": [
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "compare"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "eval",
+            "runs",
+            "compare",
+            "eval-20261106-012345abcdef",
+            "eval-20261106-012345abcdef",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs resume": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "resume"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "eval runs cancel": {
+      "patterns": [
+        "action",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "user-wide saved evaluation configurations and durable runs",
+      "confirmation": "when_interrupting",
+      "tests": [
+        "tests/test_eval.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "eval",
+            "runs",
+            "cancel"
+          ],
+          "patterns": [
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_eval.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "remote eval config list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "config",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval config show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "config",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval config edit": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "config",
+            "edit"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval benchmarks list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "benchmarks",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs start": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "start"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs compare": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "compare"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "remote eval runs cancel": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "eval",
+            "runs",
+            "cancel"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "system usage list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_usage.py::test_usage_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "usage",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "usage",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        }
+      }
+    },
+    "system usage show": {
+      "patterns": [
+        "detail",
+        "machine",
+        "single"
+      ],
+      "renderer": "mixed",
+      "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_usage.py::test_usage_command_contract"
+      ],
+      "modes": {
+        "detail": {
+          "argv": [
+            "system",
+            "usage",
+            "show",
+            "session:codex:example"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "usage",
+            "show",
+            "session:codex:example",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        },
+        "default": {
+          "argv": [
+            "system",
+            "usage",
+            "show"
+          ],
+          "patterns": [
+            "single"
+          ],
+          "read_only": true,
+          "terminal": true,
+          "tests": [
+            "tests/test_usage.py::test_usage_command_contract"
+          ]
+        }
+      }
+    },
+    "remote system usage list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; no repository inference",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "usage",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
+    },
+    "remote system usage show": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; no repository inference",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "usage",
+            "show"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
+    },
+    "workflow context": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "current checkout or explicit --repo",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_update.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "workflow",
+            "context"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_update.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "workflow",
+            "context",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_update.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "remote workflow context": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "workflow",
+            "context"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "runners runs watch": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "explicit durable run UUID; bounded observation only",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_workflow_update.py::test_command_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "watch",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_update.py::test_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "runners",
+            "runs",
+            "watch",
+            "11111111-1111-4111-8111-111111111111",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_workflow_update.py::test_command_contract"
+          ]
+        }
+      }
+    },
+    "remote runners runs watch": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "watch",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
     }
   },
   "display_schemas": {
@@ -8786,10 +9957,10 @@
         }
       ],
       "status_marks": {
-        "attached": "●",
-        "detached": "○",
-        "active_context": "✓",
-        "still_in_progress": "↻"
+        "attached": "\u25cf",
+        "detached": "\u25cb",
+        "active_context": "\u2713",
+        "still_in_progress": "\u21bb"
       },
       "layouts": {
         "table": {
@@ -9044,8 +10215,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "·",
-        "archived": "□",
+        "saved": "\u00b7",
+        "archived": "\u25a1",
         "missing": "!"
       }
     }
@@ -9108,7 +10279,7 @@
             "review",
             "passthrough"
           ],
-          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior."
+          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
         }
       },
       "tests": [
@@ -9123,7 +10294,10 @@
         "tests/test_local_inference.py::test_cloud_recovery_staging_and_readiness",
         "tests/test_offline.py::test_configured_retry_window_and_pause",
         "tests/test_local_inference.py::test_default_retry_launch_prefix_and_disabled_workflow",
-        "tests/test_local_inference.py::test_pause_launch_compatibility"
+        "tests/test_local_inference.py::test_pause_launch_compatibility",
+        "tests/test_offline_startup.py::test_bootstrap_error_survives_immediate_frontend_exit",
+        "tests/test_offline_startup.py::test_startup_recovery_retries_or_launches_local_without_extra_screen",
+        "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible"
       ],
       "notes": "Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption."
     }
@@ -9260,7 +10434,8 @@
     "workflow exclude": "_cmd_workflow workflow_repo",
     "workflow inherit": "_cmd_workflow workflow_repo",
     "workflow instructions show": "_cmd_workflow workflow_repo",
-    "workflow instructions edit": "_cmd_workflow workflow_repo"
+    "workflow instructions edit": "_cmd_workflow workflow_repo",
+    "workflow context": "_cmd_workflow resolves explicit workflow_repo or current common Git directory"
   },
   "command_aliases": {
     "list_verbs": {
@@ -9434,7 +10609,7 @@
             "tests/test_nosleep_config.py::test_frame_inserts_nonselectable_breaks_between_sections",
             "tests/test_nosleep_config.py::test_battery_menu_edit_review_save_and_discard"
           ],
-          "notes": "Shared editor reachable through t config → Nosleep. Blank rail lines separate sections. Select one nearby fallback or enter an SSID manually; explicit discovery setup requests Location access. Password changes stay pending until reviewed and use Keychain’s private prompt. Battery protection stages an independent enable switch and integer cutoff from 1 to 100 percent; defaults are off and 20 percent."
+          "notes": "Shared editor reachable through t config \u2192 Nosleep. Blank rail lines separate sections. Select one nearby fallback or enter an SSID manually; explicit discovery setup requests Location access. Password changes stay pending until reviewed and use Keychain\u2019s private prompt. Battery protection stages an independent enable switch and integer cutoff from 1 to 100 percent; defaults are off and 20 percent."
         },
         "show": {
           "argv": [
@@ -9480,7 +10655,7 @@
           "tests": [
             "tests/test_nosleep_hotspot.py::test_setup_prompts_locally_and_only_enables_after_keychain_success"
           ],
-          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config → Nosleep or nosleep config."
+          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config \u2192 Nosleep or nosleep config."
         }
       }
     }

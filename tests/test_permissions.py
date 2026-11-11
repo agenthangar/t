@@ -651,7 +651,8 @@ def test_no_settings_file_is_a_noop_in_links_only(box):
 def test_a_stub_bin_t_is_a_silent_noop(box):
     co, home = box
     p = _claude_settings(home, ["Bash(mine:*)"])
-    (co / "bin" / "t").write_text("#!/bin/sh\n")
+    # Retain the installer inventory interface, but no permission capability.
+    (co / "bin" / "t").write_text("#!/usr/bin/env python3\nclass Config:\n    repos = {}\n")
     r = relink(co, home)
     assert r.returncode == 0, r.stderr
     assert "permissions" not in r.stdout + r.stderr

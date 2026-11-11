@@ -18,7 +18,7 @@ def test_workflow_review_stage_toggle_shows_only_changed_workflow(review, workfl
     after = copy.deepcopy(before)
     after['workflows']['fast']['stages_enabled'] = False
     assert review(after, before) == ['Codex workflows', '  Workflow fast',
-        '    Use multiple models: Planning, Implementation, Review → One model']
+        '    Use multiple models: Review → One model']
     assert before['workflows']['fast'].get('stages_enabled') is None
 
 
@@ -37,7 +37,7 @@ def test_workflow_review_changed_paths_and_clear_values(review, workflow):
     changed['behaviors']['pr_open'] = 'automatic'
     text = '\n'.join(review(after, before))
     assert 'Implementation · Model: gpt-6.1-sol → new-model' in text
-    assert 'Session defaults · Codex · Effort: Low → Inherit default · Tool setting' in text
+    assert 'Codex · Lead reasoning effort: Low → Inherit default · Tool setting' in text
     assert 'Permissions · Codex: Ask for approval → Full access' in text
     assert 'Only when I ask → Automatically when ready' in text
     assert '→ Inherit global' in text
@@ -76,8 +76,8 @@ def test_workflow_review_session_default_clears_show_live_inheritance(review, wo
     after = copy.deepcopy(before)
     after['workflows']['standard'].pop('session_defaults')
     text = '\n'.join(review(after, before))
-    assert 'Session defaults · Codex · Model: chosen-model → Inherit default' in text
-    assert 'Session defaults · Codex · Effort: High → Inherit default' in text
+    assert 'Codex · Lead model: chosen-model → Inherit default' in text
+    assert 'Codex · Lead reasoning effort: High → Inherit default' in text
     assert 'Agent default' not in text
 
 

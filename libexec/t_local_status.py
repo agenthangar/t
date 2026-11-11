@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -55,6 +56,20 @@ def safe(text, limit):
     return ''.join(c for c in str(text) if c.isprintable())[:limit].replace('#', '##')
 
 
+def watcher_status(socket, pane, info):
+    watches = runpy.run_path(str(Path(__file__).with_name('t_watch.py')))
+    value = tmux(socket, 'show-environment', '-t', info[2], 'CLAUDE_RESUME_ID').stdout.strip()
+    sid = value.removeprefix('CLAUDE_RESUME_ID=')
+    items = [item for item in watches['records'](sid) if item.get('socket') == socket and
+             item.get('pane') == pane and item.get('pane_pid') == int(info[1])]
+    text = watches['label'](items)
+    if text != '—':
+        visible = next(item for item in items if item.get('active') or item.get('state') == 'stale')
+        return safe(visible['state'].capitalize() + ' · ' + text, 100) + ' '
+    ready = [item for item in items if item.get('state') == 'result ready' and 0 <= time.time() - item['updated'] <= watches['TTL']]
+    return 'Result ready ' if ready else ''
+
+
 def render(side, folder, socket, pane):
     try:
         info = pane_info(socket, pane)
@@ -64,12 +79,15 @@ def render(side, folder, socket, pane):
             title = info[3].rpartition(' | ')[0] or info[5]
             cwd = Path(info[4])
             return safe(title, 24) + ' ' + safe(cwd.parent.name + '/' + cwd.name, 24) + ' '
+        watching = watcher_status(socket, pane, info)
+        if not record_path(folder, socket, pane).exists():
+            return watching
         data = json.loads(record_path(folder, socket, pane).read_text())
         if (data['pane_pid'] != int(info[1]) or not 0 <= time.time() - data['updated'] <= TTL
                 or data['state'] not in ('loading', 'inferring', 'working', 'idle', 'failed', 'queued', 'waiting', 'cancelling')):
-            return ''
+            return watching
         label = re.sub(r'(?i)-(?:mlx-)?\d+bit$', '', data['model'].split('/')[-1])
-        return 'local ' + safe(label, 35) + ' · ' + data['state'] + ' '
+        return watching + 'local ' + safe(label, 35) + ' · ' + data['state'] + ' '
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return ''
 

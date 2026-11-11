@@ -52,7 +52,7 @@ def test_unchanged_candidates_skip_reads_and_writes(candidates, store, monkeypat
     assert candidates.discover(home, cache) == [('/work', path)]
 
 
-def test_source_changes_and_home_isolation(candidates, store):
+def test_source_changes_and_home_isolation(candidates, store, isolate_discovery_artifacts):
     home, cache, day = store
     path = day / 'rollout-one.jsonl'
     rollout(path)
@@ -78,7 +78,8 @@ def test_source_changes_and_home_isolation(candidates, store):
     assert candidates.discover(home, cache) == []
     other = home.parent / 'other'
     assert candidates.discover(other, cache) == []
-    assert len(list((cache / 'claude-sessions').glob('candidates-*.json'))) == 2
+    assert len(isolate_discovery_artifacts) == 2
+    assert not cache.exists()
 
 
 def test_database_wal_and_missing_paths(candidates, store):
@@ -107,8 +108,13 @@ def test_corrupt_cache_is_disposable(candidates, store, content):
     home, cache, day = store
     path = rollout(day / 'rollout-one.jsonl')
     candidates.discover(home, cache)
-    file, = (cache / 'claude-sessions').glob('candidates-*.json')
-    file.write_text(content)
+    import hashlib
+    file = cache / 'claude-sessions' / ('candidates-' + hashlib.sha256(os.fsencode(home.absolute())).hexdigest()[:20] + '.json')
+    try:
+        value = json.loads(content)
+    except ValueError:
+        value = None
+    candidates.save(file, value)
     assert candidates.discover(home, cache) == [('/work', path)]
 
 
@@ -124,6 +130,7 @@ def test_rollout_only_subagents_malformed_and_unwritable(candidates, store):
         connection.execute('insert into threads values (?, ?, 0, ?, 1)', ('/moved', path, 'cli'))
     candidates.discover(home, cache)
     assert candidates.discover(home, cache, rollouts_only=True) == [('/work', path)]
+    cache.mkdir(exist_ok=True)
     blocked = cache / 'blocked'
     blocked.write_text('file')
     assert candidates.discover(home, blocked) == [('/moved', path), ('/work', path)]
@@ -245,4 +252,4 @@ def test_disappearing_files_and_failed_cache_replace(candidates, store, monkeypa
     monkeypatch.setattr(candidates, 'stamp', original)
     monkeypatch.setattr(candidates.os, 'replace', lambda *args: (_ for _ in ()).throw(OSError('unwritable')))
     assert candidates.discover(home, cache) == [('/work', path)]
-    assert len(list((cache / 'claude-sessions').iterdir())) == 1
+    assert not cache.exists()  # No collector-owned cache files.

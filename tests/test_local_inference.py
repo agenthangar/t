@@ -35,6 +35,26 @@ def test_policy_and_instructions(local):
         assert label in m.instructions({'mode':'automatic'})
 
 
+def test_runtime_lease_pins_provider_artifact_and_context(local, monkeypatch, tmp_path):
+    m = local
+    chosen = m.policy()
+    assert m.leased_runtime(chosen) is None
+    path = tmp_path / 'lease.json'; monkeypatch.setenv('T_LOCAL_RUNTIME_RECEIPT', str(path))
+    receipt = {'model': chosen['model'], 'provider': chosen['provider'], 'context_tokens': chosen['context_tokens'],
+               'revision': 'pinned', 'alias': 'selected-alias', 'base': 'http://127.0.0.1:1234/capability/local'}
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(m, 'request', lambda url: receipt)
+    assert m.leased_runtime(chosen) == receipt
+    with m.provider_runtime(chosen) as (base, alias, identity):
+        assert base == receipt['base'] and alias == 'selected-alias' and identity['revision'] == 'pinned'
+    for change in ({'model': 'different'}, {'context_tokens': 4096}, {'base': 'https://external.invalid:1234'}):
+        path.write_text(json.dumps({**receipt, **change}))
+        with pytest.raises(ValueError): m.leased_runtime(chosen)
+    path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(m, 'request', lambda url: {**receipt, 'revision': 'different'})
+    with pytest.raises(ValueError, match='identity'): m.leased_runtime(chosen)
+
+
 def test_receipts_fit_and_identity(local):
     m=local;name=m.DEFAULT_MODEL
     assert len(m.artifacts())==4
@@ -133,7 +153,8 @@ def test_install_verify_and_measure(local,monkeypatch):
 def test_commands(local,t_mod,monkeypatch,capsys):
     m=local;row=dict(m.artifact(m.DEFAULT_MODEL),provider='lmstudio',benchmark=None,fit=True,installed=False,reason='estimated fit')
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row], 'hardware':hardware(), 'context_tokens':32768})
-    monkeypatch.setattr(m,'helper',lambda n:{'reservation':nullcontext,'refresh':lambda:None})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'reservation':nullcontext,'refresh':lambda:None})
     monkeypatch.setattr(m,'install',lambda *a:{'downloaded':True})
     monkeypatch.setattr(m,'measure',lambda *a:{'median':10})
     for action in ('list','refresh','show','install','measure'):
@@ -161,7 +182,7 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     workflow=m.helper('t_workflow')
     toml=m.helper('t_toml')
     status=m.helper('t_local_status')
-    monkeypatch.setattr(m,'helper',lambda n: status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
+    monkeypatch.setattr(m,'helper',lambda n: {'local_launch':lambda *a:None} if n=='t_usage' else status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
     @contextmanager
     def runtime(*a,**kw):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
     monkeypatch.setattr(m,'runtime',runtime)
@@ -356,7 +377,8 @@ def test_picker_install_measure_and_unavailable(local,monkeypatch):
     def run_action(ui, operation, model):
         try: operation(None)
         except ValueError: pass
-    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[]}} if n=='t_local_manager' else {'run_model_action':run_action})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'status':lambda:{'models':[]}} if n=='t_local_manager' else {'run_model_action':run_action})
     calls=[]
     monkeypatch.setattr(m,'install',lambda *a,**k:calls.append(a) or {})
     monkeypatch.setattr(m,'measure',lambda *a,**k:calls.append(a) or {})
@@ -651,6 +673,7 @@ def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_pa
             self.error = 'Shared manager connection lost'
     modules.update(t_local_models={'hardware': hardware}, t_local_manager={'Client': LostLease},
                    t_local_worker={'state_root': lambda: tmp_path, 'environment': worker['environment']})
+    modules['t_usage'] = {'local_launch': lambda *a: None}
     monkeypatch.setattr(m, 'helper', lambda name: modules[name])
     class Process:
         returncode = None
@@ -753,3 +776,29 @@ def test_default_retry_launch_prefix_and_disabled_workflow(local, tmp_path):
         result = local.subprocess.run([local.sys.executable, str(local.ROOT/'libexec/t_local_inference.py'),
                                        '--launch-prefix', str(tmp_path)], env=env, text=True, capture_output=True, check=True)
         assert ('--lead' in result.stdout) is enabled
+
+
+def test_time_limits_defaults_validation_and_scoped_reset(local):
+    m=local
+    assert [m.DEFAULT[k] for k in m.TIME_LIMITS] == [900,1800,300,300]
+    for key in m.TIME_LIMITS:
+        for value in (True,0,1801,'300'):
+            with pytest.raises(ValueError):m.policy({key:value})
+    with pytest.raises(ValueError,match='Maximum'):m.policy({'timeout_seconds':900,'max_timeout_seconds':300})
+    class UI:
+        def __init__(self,choices):self.choices=iter(choices);self.views=[]
+        def pick(self,title,rows,**kwargs):self.views.append((title,rows,kwargs));return next(self.choices)
+    chosen=m.policy({'mode':'automatic','context_tokens':8192,'timeout_seconds':300})
+    ui=UI(['reset_time','back'])
+    result=m.workflow_menu(ui,chosen)
+    assert result['mode']=='automatic' and result['context_tokens']==8192 and result['timeout_seconds']==900
+    assert dict(ui.views[0][1])['timeout_seconds']=='Default task limit'
+    assert ui.views[0][2]['sections']['timeout_seconds']=='Time limits'
+    ui=UI(['max_timeout_seconds','300','inactivity_timeout_seconds','60','queue_timeout_seconds','','back'])
+    result=m.workflow_menu(ui)
+    assert result['max_timeout_seconds']==1800 and result['inactivity_timeout_seconds']==60
+    assert result['queue_timeout_seconds']==300 and '300' in ui.views[1][2]['disabled']
+    ui=UI(['timeout_seconds','','back'])
+    result=m.workflow_menu(ui,{'timeout_seconds':60,'max_timeout_seconds':300})
+    assert result['timeout_seconds']==60 and '' in ui.views[1][2]['disabled']
+    assert m.duration(10)=='10 sec'
