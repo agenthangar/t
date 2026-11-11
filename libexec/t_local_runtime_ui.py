@@ -389,7 +389,11 @@ def hub(ui, api):
                 requests_menu(ui)
             elif action == 'models':
                 local = helper('t_local_inference')
-                selected = local['select_model'](ui, use_label='Select for local worker')
+                selection_args = {'use_label': 'Select for local worker'}
+                if config.get('model'):
+                    selection_args.update(current=config['model'], provider=config.get('provider'),
+                                          context=config.get('context_tokens', 32768))
+                selected = local['select_model'](ui, **selection_args)
                 if selected and ui.pick('Review worker model', [('save', 'Save selection'), ('back', 'Keep current model')],
                                         context=[selected['model'], selected['provider']]) == 'save':
                     worker = helper('t_local_worker')

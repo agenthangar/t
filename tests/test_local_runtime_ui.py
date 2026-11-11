@@ -307,16 +307,17 @@ def test_hub_unavailable_keeps_settings_and_errors_reachable(ui_module,monkeypat
 
 @pytest.mark.parametrize('review',['back','save'])
 def test_hub_model_selection_review_preserves_worker_settings(ui_module,monkeypatch,review):
-    m=ui_module;saved=[];selected={'model':'new-model','provider':'lmstudio'}
-    config={'enabled':False,'model':'old-model','provider':'ollama'}
+    m=ui_module;saved=[];selections=[];selected={'model':'new-model','provider':'lmstudio'}
+    config={'enabled':False,'model':'old-model','provider':'ollama','context_tokens':16384}
     monkeypatch.setattr(m,'manager',lambda:{'status':lambda:view()})
     def helper(name):
         if name=='t_local_worker':return {'settings':lambda:config,'save_settings':lambda value:saved.append(value)}
         assert name=='t_local_inference'
-        return {'select_model':lambda *a,**kw:selected}
+        return {'select_model':lambda *a,**kw:selections.append(kw) or selected}
     monkeypatch.setattr(m,'helper',helper)
     ui=UI('models',review,'back');m.hub(ui,{})
     assert saved==([dict(config,**selected)] if review=='save' else [])
+    assert selections == [{'use_label':'Select for local worker','current':'old-model','provider':'ollama','context':16384}]
     assert ui.pages[-1][2]['default']==0
 
 
