@@ -350,7 +350,10 @@ def usage_status(job, task):
     if now - task.get('_usage_updated', 0) < 2:
         return
     task['_usage_updated'] = now
-    task['partial_patch_available'] = bool(git(job / 'workspace', 'status', '--porcelain'))
+    try:
+        task['partial_patch_available'] = bool(git(job / 'workspace', 'status', '--porcelain'))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        task['partial_patch_available'] = None  # Telemetry must not interrupt work.
     keys = ('task_id', 'status', 'model', 'provider', 'resolved_model', 'revision', 'runtime_model',
             'identity_verified', 'parent_session_id', 'parent_identity_verified', 'started_at', 'generation_events', 'workflow_snapshot',
             'adapter_version', 'manager_protocol', 'timeout_seconds', 'max_timeout_seconds', 'inactivity_timeout_seconds', 'queue_timeout_seconds', 'queue_seconds',

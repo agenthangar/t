@@ -255,6 +255,7 @@ def test_live_worker_status_is_prompt_free_and_expires(usage,tmp_path,monkeypatc
           'parent_session_id':'one','parent_identity_verified':True,'identity_verified':False,'assignment':'PRIVATE'}
     worker.usage_status(job,task)
     assert 'PRIVATE' not in (job/'usage.json').read_text()
+    assert json.loads((job/'usage.json').read_text())['partial_patch_available'] is None
     before=(job/'usage.json').read_bytes();worker.usage_status(job,task)
     assert (job/'usage.json').read_bytes()==before
     rows=usage.worker_rows()
