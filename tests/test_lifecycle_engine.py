@@ -467,12 +467,16 @@ def test_final_manifest_stages_assets_created_while_source_was_live(engine, tmp_
 
 def test_cache_invalidation_is_targeted_and_cannot_roll_back_action(engine, monkeypatch):
     monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
+    monkeypatch.setenv('COV_CORE_SOURCE', 'measured-parent')
     calls = []
-    monkeypatch.setattr(engine.subprocess, 'run', lambda argv, **kw: calls.append((argv, kw)))
+    monkeypatch.setattr(engine.subprocess, 'Popen', lambda argv, **kw: calls.append((argv, kw)))
     engine._discovery_changed(['', 'user@mini'])
     assert calls[0][0][-3:] == ['__cache-event', 'local', 'user@mini']
-    assert calls[0][1]['timeout'] == 3
+    options = calls[0][1]
+    assert options['start_new_session'] and options['close_fds']
+    assert all(options[k] == subprocess.DEVNULL for k in ('stdin', 'stdout', 'stderr'))
+    assert not any(key.startswith('COV_CORE_') for key in options['env'])
     def unavailable(*args, **kwargs):
-        raise subprocess.TimeoutExpired('cache', 3)
-    monkeypatch.setattr(engine.subprocess, 'run', unavailable)
+        raise OSError('cache process unavailable')
+    monkeypatch.setattr(engine.subprocess, 'Popen', unavailable)
     engine._discovery_changed(['local'])
