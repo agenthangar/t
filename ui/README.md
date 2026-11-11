@@ -1594,6 +1594,28 @@ the publisher's resident estimate and minimum RAM fit; fit remains unknown until
 verified. Runtime guardrails are never bypassed. These extend existing wizard,
 single-selection, detail and install action modes; no new public command.
 
+Model tests and measurements check shared runtime ownership before inference.
+The preflight lists every blocking session and its models; session rows open
+read-only details and remain navigable in narrow terminals. Offer Wait for a
+turn, Interrupt all sessions, and Back. Selecting interruption acts directly on
+the displayed set, with no second confirmation. Recheck the full owner set and
+each exact conversation before sending Escape; unidentified or unsupported owners
+disable interruption. Conversations remain open, but their current work may need
+resuming. Older workers must actually release their lock before a test can run.
+
+Reserve admission during interruption and testing; no other request may start in
+between. Report interruption requested until all affected generation has stopped.
+A failed or partial interruption never starts a test. Idle loaded models alone
+do not require interruption. A prior manager upgrades only when it has no clients;
+never restart a manager serving live sessions. Lists and machine output do not
+enter this preflight or interrupt sessions.
+
+The shared picker refreshes model-test progress and terminal outcomes without
+input, preserves focus, and suppresses background spinners. Cancellation affects
+only the test. Queue timeout retains downloaded files and valid earlier evidence.
+Worktree preview: `python3 scripts/preview_model_test.py` uses simulated owners
+and no real model, runtime, session or configuration changes.
+
 ### Prompted connection recovery
 
 The existing native Codex inference launch has an `on_cloud_failure=ask`

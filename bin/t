@@ -5250,11 +5250,14 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite=""):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite="",
+             refresh=None, refresh_interval=.5):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
-        Optional shortcuts return an action key."""
+        Optional shortcuts return an action key. refresh may update context in
+        place; True returns '__done__' without a keypress. Timed repaint retains
+        selection and marks and uses the same viewport as ordinary pickers."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
         cur = max(0, min(default or 0, len(rows) - 1))
@@ -5270,6 +5273,8 @@ class _RailUI:
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
         while True:
+            if refresh is not None and refresh():
+                return '__done__'
             display = [(f"{self.rail}   {part}", None) for text in context
                        for part in _wrap_columns(text, max(1, self.cols() - 6))]
             table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
@@ -5295,6 +5300,10 @@ class _RailUI:
                     display.append((self.rail, None))
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""
+            if refresh is not None:
+                import select
+                if not select.select([sys.stdin], [], [], max(.05, refresh_interval))[0]:
+                    continue
             k = self.read_key()
             if k in (shortcuts or {}):
                 return shortcuts[k]
@@ -13602,6 +13611,11 @@ EXAMPLES
             "add": "copy a workflow under a new name", "use": "select a named workflow",
             "exclude": "exclude a repository from its workflow", "inherit": "restore the global default for a repository"}[verb],
             description="Global default unless --repo selects a registered repository. No checkout inference or repository picker.")
+        if verb == 'open':
+            leaf.help_details = ('MODEL TESTS\n\n  Inference & routing → Local model → Test model checks shared runtime owners.\n'
+                                 '  Choose Wait for a turn, Interrupt all sessions, or Back. Interruption acts\n'
+                                 '  directly on the listed sessions, without a second confirmation. Progress\n'
+                                 '  refreshes automatically; the test waits for confirmed runtime release.')
         leaf.add_argument("--tool", dest="workflow_tool", choices=("codex", "claude", "cursor"),
                           help="workflow tool; default: repository tool or account default")
         if verb not in ("add", "open", "delete"):

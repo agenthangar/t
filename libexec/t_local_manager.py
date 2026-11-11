@@ -136,12 +136,12 @@ def status():
                     clients=[], settings=saved.get('settings', settings()))
 
 
-def ensure():
+def ensure(testing=False):
     private_directory(root())
     try:
         view = rpc('status')
-        if view.get('protocol') != VERSION:
-            if view.get('protocol') != 1 or view.get('clients') != []:
+        if view.get('protocol') != VERSION or (testing and not view.get('test_preflight')):
+            if view.get('protocol') not in (1, VERSION) or view.get('clients') != []:
                 raise ValueError('Existing local manager uses a different protocol; let its sessions finish before restarting')
             # The old manager rechecks attached clients under its lock. Never
             # replace a runtime serving a live session, even if admission races.
@@ -234,6 +234,7 @@ class Engine:
         self.port = None
         self.needs_recovery = True
         self.maintenance_busy = False
+        self.test_lease = None
         self.recovery_pending = []
         self.blocked_instance = None
         self.thread = threading.Thread(target=self.work, daemon=True)
@@ -300,7 +301,7 @@ class Engine:
                            last_used=x['last_used'], pinned=x['alias'] in self.pins(),
                            active=bool(self.active and self.active.get('alias') == x['alias']))
                       for x in list(self.providers.instances.values())]
-            return dict(protocol=VERSION, generation=self.generation, pid=os.getpid(), manager='blocked' if self.blocked else 'running',
+            return dict(protocol=VERSION, test_preflight=True, generation=self.generation, pid=os.getpid(), manager='blocked' if self.blocked else 'running',
                         error=self.blocked, updated=now, requests=requests[-200:], clients=clients,
                         models=models + self.providers.external, settings=self.config,
                         endpoints={'lmstudio': self.config['providers']['lmstudio']['url'],
@@ -320,7 +321,76 @@ class Engine:
                     generation_events=client.get('generation_events', 0),
                     request_id=current['id'] if current else None, identity_verified=client.get('identity_verified', False),
                     revision=client.get('revision'), runtime_model=client.get('runtime_model'),
-                    owner_verified=client['owner_verified'], owner_label=client['owner_label'], failed=any(j['state'] in ('failed', 'timed_out') for j in jobs))
+                    owner_verified=client['owner_verified'], owner_label=client['owner_label'],
+                    interrupted=client.get('interrupted', False),
+                    failed=any(j['state'] in ('failed', 'timed_out') for j in jobs))
+
+    def test_owners(self):
+        """Stable identities only: elapsed time and heartbeat do not change consent."""
+        busy = {j['client'] for j in self.jobs.values() if j['state'] not in TERMINAL}
+        busy |= {v['client'] for v in self.responses.values()}
+        busy |= {c['id'] for c in self.clients.values() if c.get('pinned_alias')}
+        return [dict(id=c['id'], pid=c['pid'], identity=c['identity'],
+                     model=c['chosen']['model'], kind=c['kind'],
+                     tmux=c.get('tmux', ''), pane=c.get('pane', ''))
+                for c in sorted(self.clients.values(), key=lambda c: c['id']) if c['id'] in busy]
+
+    def test_control(self, data):
+        action = data['action']
+        if action == 'test-preflight':
+            owners = self.test_owners()
+            active_label = {'running': 'Generating', 'loading': 'Loading', 'cancelling': 'Stopping',
+                            'waiting_for_legacy': 'Waiting for older worker', 'waiting_for_memory': 'Waiting for memory'}
+            activities = {owner['id']: (active_label.get(self.active['state'], 'Queued') if self.active and self.active['client'] == owner['id'] else
+                          'Queued' if any(j['client'] == owner['id'] and j['state'] not in TERMINAL for j in self.jobs.values()) else
+                          'Conversation holds model') for owner in owners}
+            return dict(generation=self.generation, owners=owners, activities=activities,
+                        legacy_owned=bool(self.legacy), pid=os.getpid(), reserved=bool(self.test_lease))
+        if action == 'test-reserve':
+            if self.test_lease or data.get('generation') != self.generation or data.get('owners') != self.test_owners():
+                raise ValueError('Runtime owners changed; review the updated session list')
+            identity = process_identity(data.get('pid'))
+            if not identity:
+                raise ValueError('Test process identity could not be verified')
+            self.test_lease = dict(token=secrets.token_urlsafe(32), pid=data['pid'], identity=identity,
+                                   heartbeat=time.time(), owners=data['owners'], client=None)
+            return {'token': self.test_lease['token']}
+        lease = self.test_lease
+        if not lease or not hmac.compare_digest(lease['token'], data.get('token', '')):
+            raise ValueError('Model test reservation expired')
+        lease['heartbeat'] = time.time()
+        if action == 'test-release':
+            self.test_lease = None
+            self.condition.notify_all()
+            return {'released': True}
+        if action == 'test-interrupt':
+            if any(owner not in lease['owners'] for owner in self.test_owners()):
+                raise ValueError('Runtime owners changed; review the updated session list')
+            # Consent covers every managed pin and active request. Only t-owned
+            # instances may be unloaded; borrowed instances retain their guard.
+            for c in self.clients.values():
+                if c['id'] in {o['id'] for o in lease['owners']} and c['kind'] == 'worker':
+                    c['interrupted'] = True
+            for job in self.jobs.values():
+                if job['client'] in {o['id'] for o in lease['owners']}:
+                    job['interruptible'] = job.get('owned_instance', False)
+                    self.cancel_locked(job)
+            lease['interrupted'] = True
+            return {'interrupt_requested': True}
+        if action == 'test-heartbeat':
+            return {'reserved': True}
+        if action == 'test-ready':
+            if self.blocked or self.active or self.maintenance_busy:
+                return {'ready': False, 'error': self.blocked}
+            if lease.get('interrupted'):
+                ids = {o['id'] for o in lease['owners']}
+                self.responses = {k: v for k, v in self.responses.items() if v['client'] not in ids}
+                for c in self.clients.values():
+                    if c['id'] in ids:
+                        c.pop('pinned_alias', None)
+            lease['ready'] = self.legacy_lock()
+            return {'ready': lease['ready']}
+        raise ValueError('Unknown model test control action')
 
     def pins(self):
         return ({v['alias'] for v in self.responses.values() if v['client'] in self.clients} |
@@ -339,8 +409,10 @@ class Engine:
     def control(self, data):
         action = data.get('action')
         with self.condition:
+            if isinstance(action, str) and action.startswith('test-'):
+                return self.test_control(data)
             if action == 'shutdown':
-                if self.clients or self.active:
+                if self.clients or self.active or self.test_lease:
                     raise ValueError('Local sessions are still attached')
                 self.stopping.set()
                 return {'stopping': True}
@@ -357,7 +429,14 @@ class Engine:
                 owner, verified = owner_identity(pid, data.get('tmux', ''), data.get('pane', ''))
                 token = secrets.token_urlsafe(32)
                 client = dict(id=uuid.uuid4().hex, token=token, chosen=chosen, pid=pid, identity=identity, owner=owner,
-                              owner_verified=verified, owner_label=('Terminal pane ' + data.get('pane', '') if verified and data.get('pane') else 'Process ' + str(pid)), heartbeat=time.time(), kind=data.get('kind', 'session')[:32])
+                              owner_verified=verified, owner_label=('Terminal pane ' + data.get('pane', '') if verified and data.get('pane') else 'Process ' + str(pid)), heartbeat=time.time(), kind=data.get('kind', 'session')[:32],
+                              tmux=data.get('tmux', ''), pane=data.get('pane', ''))
+                if data.get('test_token'):
+                    lease = self.test_lease
+                    if (not lease or not hmac.compare_digest(lease['token'], data['test_token'])
+                            or lease['pid'] != pid or lease['identity'] != identity or lease['client'] or not lease.get('ready')):
+                        raise ValueError('Model test reservation expired or already in use')
+                    lease['client'] = client['id']
                 if client['kind'] == 'measurement':
                     client['owner'] = 'measurement:' + client['id']
                 self.clients[client['id']] = client
@@ -388,7 +467,7 @@ class Engine:
                 instance = next((v for v in self.providers.instances.values() if v['alias'] == data.get('alias')), None)
                 if not instance:
                     raise ValueError('This model was not loaded by t')
-                if self.active or self.maintenance_busy or instance['alias'] in self.pins():
+                if self.active or self.maintenance_busy or self.test_lease or instance['alias'] in self.pins():
                     raise ValueError('Finish active responses and conversations before releasing this model')
                 self.maintenance_busy = True
                 self.condition.release()
@@ -401,7 +480,7 @@ class Engine:
                 return {'released': True}
             if action == 'settings':
                 value = settings(data.get('value'))
-                if self.active or self.maintenance_busy or self.providers.instances or self.clients:
+                if self.active or self.maintenance_busy or self.providers.instances or self.clients or self.test_lease:
                     raise ValueError('Finish local sessions and release cached models before changing machine settings')
                 self.config = self.providers.settings = value
                 write_json(root() / 'settings.json', value)
@@ -431,6 +510,8 @@ class Engine:
 
     def submit(self, client, path, payload, handler):
         with self.condition:
+            if client.get('interrupted'):
+                raise ValueError('This local worker was interrupted for a model test')
             if self.blocked:
                 raise ValueError(self.blocked)
             if len([j for j in self.jobs.values() if j['state'] not in TERMINAL]) >= 128:
@@ -475,7 +556,9 @@ class Engine:
     def work(self):
         while not self.stopping.is_set():
             with self.condition:
-                job = None if self.blocked or self.maintenance_busy else self.scheduler.take(time.time(), self.measurement_owner)
+                test_client = self.test_lease['client'] if self.test_lease else None
+                job = (None if self.blocked or self.maintenance_busy or (self.test_lease and not test_client)
+                       else self.scheduler.take(time.time(), test_client or self.measurement_owner))
                 if not job:
                     self.condition.wait(.2)
                     continue
@@ -499,7 +582,7 @@ class Engine:
                 other_pins = {v['alias'] for v in self.responses.values() if v['client'] != job['client']} | {c.get('pinned_alias') for c in self.clients.values() if c['id'] != job['client']}
                 job['interruptible'] = instance['owned'] and instance['alias'] not in other_pins
                 client = self.clients.get(job['client'])
-                if not client:
+                if not client or job['cancel'].is_set():
                     self.finish(job, 'cancelled')
                     continue
                 client.update(identity_verified=True, revision=instance['revision'], runtime_model=instance['alias'])
@@ -601,6 +684,8 @@ class Engine:
             probe_index += 1
             with self.condition:
                 now = time.time()
+                if self.test_lease and now - self.test_lease['heartbeat'] > 15:
+                    self.test_lease = None
                 for job in list(self.jobs.values()):
                     if job is not self.active and job['state'] not in TERMINAL and now > job['deadline']:
                         self.finish(job, 'timed_out', 'Queue wait expired; execution budget was not consumed')
@@ -637,7 +722,7 @@ class Engine:
                         self.condition.acquire()
                         self.maintenance_busy = False
                         self.condition.notify_all()
-                    if not self.providers.instances and not self.blocked and self.legacy:
+                    if not self.providers.instances and not self.blocked and self.legacy and not self.test_lease:
                         self.legacy.close()
                         self.legacy = None
                 # A bounded metadata history; no request bodies are written here.
@@ -840,7 +925,8 @@ class Client:
     def __enter__(self):
         ensure()
         self.info = rpc('register', chosen=self.chosen, pid=os.getpid(), kind=self.kind,
-                        tmux=os.environ.get('TMUX', '').rsplit(',', 2)[0], pane=os.environ.get('TMUX_PANE', ''))
+                        tmux=os.environ.get('TMUX', '').rsplit(',', 2)[0], pane=os.environ.get('TMUX_PANE', ''),
+                        test_token=getattr(self.cancel_event, 'test_token', ''))
         self.base = self.info['base']
         self.cancel_event.client_id = self.info['id']
         self.thread = threading.Thread(target=self.heartbeat, daemon=True)
@@ -857,6 +943,8 @@ class Client:
                     self.call('close')
                     return
                 self.last = self.call('heartbeat')
+                if self.last.get('interrupted'):
+                    self.cancel_event.set()
                 if self.activity:
                     state = self.last['state']
                     self.activity.update({'running': 'inferring', 'waiting_for_memory': 'waiting',

@@ -13,6 +13,19 @@ import types
 _state = sys.modules.setdefault('_t_progress_state', types.ModuleType('_t_progress_state'))
 if not hasattr(_state, 'lock'):
     _state.lock = threading.Lock()
+if not hasattr(_state, 'local'):
+    _state.local = threading.local()
+
+
+@contextmanager
+def quiet():
+    """Suppress nested feedback on this thread while another UI owns the terminal."""
+    previous = getattr(_state.local, 'quiet', False)
+    _state.local.quiet = True
+    try:
+        yield
+    finally:
+        _state.local.quiet = previous
 
 
 @lru_cache(maxsize=1)
@@ -23,7 +36,7 @@ def _clipper():
 @contextmanager
 def spinner(message, *, machine=False):
     """Animate only a quiet wait, never a picker, passthrough, or data stream."""
-    enabled = (not machine and sys.stdout.isatty() and sys.stderr.isatty()
+    enabled = (not machine and not getattr(_state.local, 'quiet', False) and sys.stdout.isatty() and sys.stderr.isatty()
                and os.environ.get("TERM") != "dumb"
                and not {'--json', '--dump', '--statusline', '--quiet', '-q', '__mcp', '__share'} & set(sys.argv[1:]))
     if not enabled or not _state.lock.acquire(blocking=False):

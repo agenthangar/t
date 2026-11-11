@@ -235,24 +235,47 @@ def copy_command(command):
     subprocess.run(target, input=command, text=True, check=True, timeout=5)
 
 
-def run_model_action(ui, operation, model):
+def run_model_action(ui, operation, model, preflight=False):
     """Cancellable action page; a task is accepted before claiming inference readiness."""
     cancel = threading.Event()
+    lease = helper('t_model_preflight')['prepare'](ui, model) if preflight else None
+    if lease is False:
+        return None
+    if lease:
+        cancel.test_token = lease.token
     result = {}
     started = time.time()
     def run():
         try:
-            result['value'] = operation(cancel)
+            with helper('t_progress')['quiet']():
+                result['value'] = operation(cancel)
         except Exception as exc:
             result['error'] = str(exc)
+        finally:
+            if lease:
+                lease.close()
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
+    lines = []
+    def refresh():
+        view = manager()['status']()
+        rows = [x for x in view.get('requests', []) if getattr(cancel, 'client_id', None) and x.get('client') == cancel.client_id and x['created'] >= started]
+        lines[:] = [model.split('/')[-1], label(rows[-1]['state']) if rows else 'Preparing model action…']
+        if rows:
+            row = rows[-1]
+            lines.extend(['Queue       ' + str(row.get('queue_position') or '—'),
+                          'Waited      ' + str(row.get('queue_seconds', 0)) + 's'])
+            if row.get('error'):
+                lines.append(clean(row['error']))
+                result['runtime_error'] = row['error']
+        if lease and lease.error:
+            cancel.set()
+            result['runtime_error'] = lease.error
+        return not thread.is_alive()
     try:
         while thread.is_alive():
-            view = manager()['status']()
-            rows = [x for x in view.get('requests', []) if getattr(cancel, 'client_id', None) and x.get('client') == cancel.client_id and x['created'] >= started]
-            lines = [model.split('/')[-1], label(rows[-1]['state']) if rows else 'Preparing model action…']
-            choice = ui.pick('Model test', [('refresh', 'Refresh progress'), ('cancel', 'Cancel this test')], context=lines)
+            refresh()
+            choice = ui.pick('Model test', [('refresh', 'Refresh progress'), ('cancel', 'Cancel this test')], context=lines, refresh=refresh)
             if choice in (None, 'cancel'):
                 cancel.set()
                 thread.join(timeout=35)
@@ -263,8 +286,11 @@ def run_model_action(ui, operation, model):
         cancel.set()
         thread.join(timeout=35)
         raise
+    if cancel.is_set():
+        page(ui, 'Model test cancelled', ['This test stopped. Downloaded files are retained.'])
+        return None
     if result.get('error'):
-        page(ui, 'Model action failed', [result['error'], 'Downloaded files and previous verification evidence are retained.'])
+        page(ui, 'Model action failed', [result.get('runtime_error') or result['error'], 'Downloaded files and previous verification evidence are retained.'])
         return None
     value = result.get('value', {})
     page(ui, 'Model test complete', ['Ready · test response succeeded.' if value.get('ready') else
