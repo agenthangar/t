@@ -1,14 +1,18 @@
-"""Notify the configured maintainer of failed or overdue scheduled workflows.
+"""Notify Discord of failed or overdue scheduled workflows.
 
-Run from trusted main, with contents:read, actions:read and issues:write. Only
+Run from trusted main, with contents:read and actions:read. Only
 GitHub API metadata is read; source-run artifacts and logs are never executed.
 """
 import argparse
 from datetime import datetime, timedelta, timezone
+import http.client
 import json
 import os
 import re
 import subprocess
+from pathlib import Path
+import time
+from urllib.parse import urlsplit
 
 
 WORKFLOWS = {
@@ -58,49 +62,89 @@ def assess(workflow, runs, now, created_at):
     return None, '', latest
 
 
-def issue_marker(workflow):
-    return f'<!-- t scheduled health: {workflow} -->'
+def webhook_target(url):
+    """Accept only a native Discord incoming webhook, never a redirect target."""
+    parsed = urlsplit(url)
+    if (parsed.scheme != 'https' or parsed.netloc not in {'discord.com', 'discordapp.com'}
+            or not re.fullmatch(r'/api/webhooks/[0-9]+/[A-Za-z0-9_-]+', parsed.path)
+            or parsed.query or parsed.fragment):
+        raise ValueError('Set CI_ALERT_WEBHOOK_URL to the copied Discord webhook URL')
+    return parsed.netloc, parsed.path + '?wait=true'
 
 
-def notify(repo, recipient, workflow, incident, reason, run, issues):
-    marker = issue_marker(workflow)
-    existing = next((i for i in issues if not i.get('pull_request')
-                     and i.get('user', {}).get('login') == 'github-actions[bot]'
-                     and marker in (i.get('body') or '')), None)
+def send_discord(url, content):
+    host, path = webhook_target(url)
+    body = json.dumps({'content': content, 'allowed_mentions': {'parse': []}}).encode()
+    for attempt in range(3):
+        connection = http.client.HTTPSConnection(host, timeout=20)
+        try:
+            connection.request('POST', path, body, {'Content-Type': 'application/json',
+                                                  'User-Agent': 't-scheduled-health/1'})
+            response = connection.getresponse()
+            data = response.read(65536)
+            if response.status == 200:
+                message = json.loads(data)
+                if isinstance(message, dict) and message.get('id'):
+                    return
+                raise RuntimeError('Discord did not confirm message creation')
+            if response.status != 429 and response.status < 500:
+                raise RuntimeError(f'Discord rejected alert delivery (HTTP {response.status})')
+            delay = response.getheader('Retry-After', '2')
+            delay = min(max(float(delay), 1), 30) if re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', delay) else 2
+        except (OSError, http.client.HTTPException):
+            # Exception strings can contain request details; never expose the URL/token.
+            delay = 2
+        except (ValueError, TypeError):
+            raise RuntimeError('Discord returned an invalid delivery response') from None
+        finally:
+            connection.close()
+        if attempt < 2:
+            time.sleep(delay)
+    raise RuntimeError('Discord alert delivery failed after three attempts') from None
+
+
+def save_state(path, state):
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(state))
+    temporary.replace(path)
+
+
+def notify(repo, webhook, workflow, incident, reason, run, state, state_path):
+    previous = state.get(workflow, {})
     if incident == 'pending':
         return
-    if incident is None:
-        if existing and existing['state'] == 'open':
-            url = run['html_url'] if run else f'https://github.com/{repo}/actions'
-            api(repo, f"issues/{existing['number']}/comments", method='POST', payload={
-                'body': f'Recovered: [latest successful run]({url}). Scheduled execution is within its deadline.'})
-            api(repo, f"issues/{existing['number']}", method='PATCH', payload={'state': 'closed', 'state_reason': 'completed'})
-            existing['state'] = 'closed'
-        return
-    event_marker = f'<!-- t health event: {incident} -->'
-    if existing and event_marker in (existing.get('body') or ''):
-        return
     name = WORKFLOWS.get(workflow, ('Alert delivery test', None))[0]
-    lines = [marker, event_marker, '', f'@{recipient} — **{name} needs attention.**', '', reason]
-    if run:
-        lines += ['', f"[Workflow run]({run['html_url']})", f"Commit: `{run['head_sha']}`",
-                  f"Attempt: {run.get('run_attempt', 1)}"]
-        jobs = api(repo, f"actions/runs/{run['id']}/attempts/{run.get('run_attempt', 1)}/jobs?per_page=100", paginate=True)
-        failed = [j for page in jobs for j in page['jobs'] if j.get('conclusion') in FAILURES]
-        lines += [f"- [{j['name']}]({j['html_url']}): {j['conclusion']}" for j in failed]
-    lines += ['', 'This issue is updated once per incident/run attempt and closes after recovery.',
-              'GitHub notification delivery follows your personal notification settings.']
-    body = '\n'.join(lines)
-    if existing:
-        api(repo, f"issues/{existing['number']}", method='PATCH', payload={
-            'state': 'open', 'body': body, 'assignees': [recipient]})
-        api(repo, f"issues/{existing['number']}/comments", method='POST', payload={'body': body})
-        existing.update(state='open', body=body)
+    seen = previous.get('seen', [])
+    if incident is None:
+        if not previous.get('active'):
+            return
+        url = run['html_url'] if run else f'https://github.com/{repo}/actions'
+        content = f'✅ **{repo}: {name} recovered.**\n[Latest successful run]({url})\nScheduled execution is within its deadline.'
     else:
-        created = api(repo, 'issues', method='POST', payload={
-            'title': f'[CI alert] {name}', 'body': body, 'assignees': [recipient]})
-        issues.append(created)
-    print(f'{name}: alert delivered to @{recipient}')
+        if incident == previous.get('active') or incident in seen:
+            return
+        lines = [f'⚠️ **{repo}: {name} needs attention.**', reason]
+        if run:
+            lines += [f"[Workflow run]({run['html_url']})", f"Commit: `{run['head_sha']}` · Attempt: {run.get('run_attempt', 1)}"]
+            pages = api(repo, f"actions/runs/{run['id']}/attempts/{run.get('run_attempt', 1)}/jobs?per_page=100", paginate=True)
+            failed = [j for page in pages for j in page['jobs'] if j.get('conclusion') in FAILURES]
+            for job in failed:
+                line = f"- [{job['name']}]({job['html_url']}): {job['conclusion']}"
+                if len('\n'.join(lines + [line])) > 1850:
+                    lines.append('More failed jobs are listed in the workflow run.')
+                    break
+                lines.append(line)
+        else:
+            lines.append(f'[Workflow dashboard](https://github.com/{repo}/actions)')
+        content = '\n'.join(lines)
+    send_discord(webhook, content)
+    # Remember run-specific events across recoveries. Stable disabled/overdue
+    # conditions can recur, so only deduplicate those while actively unhealthy.
+    if incident and re.match(r'^[0-9]+-', incident):
+        seen = (seen + [incident])[-100:]
+    state[workflow] = {'active': incident, 'seen': seen}
+    save_state(state_path, state)
+    print(f'{name}: Discord confirmed {"recovery" if incident is None else "alert"} delivery')
 
 
 def main():
@@ -108,14 +152,15 @@ def main():
     parser.add_argument('--test', action='store_true', help='send a clearly labeled delivery test')
     args = parser.parse_args()
     repo = os.environ['GITHUB_REPOSITORY']
-    recipient = os.environ['CI_ALERT_ASSIGNEE']
-    if not re.fullmatch(r'[\w.-]+/[\w.-]+', repo) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,38}', recipient):
-        raise ValueError('A repository and one GitHub alert recipient are required')
-    pages = api(repo, 'issues?state=all&per_page=100', paginate=True)
-    issues = [issue for page in pages for issue in page]
+    webhook = os.environ.get('CI_ALERT_WEBHOOK_URL', '')
+    webhook_target(webhook)
+    if not re.fullmatch(r'[\w.-]+/[\w.-]+', repo):
+        raise ValueError('A GitHub repository is required')
+    state_path = Path(os.environ.get('CI_ALERT_STATE_PATH', '.ci-alert-state.json'))
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
     if args.test:
-        notify(repo, recipient, 'delivery-test', 'delivery-test-' + os.environ['GITHUB_RUN_ID'],
-               '**Delivery test only.** No nightly or weekly failure is being reported.', None, issues)
+        notify(repo, webhook, 'delivery-test', 'delivery-test-' + os.environ['GITHUB_RUN_ID'],
+               '**Delivery test only.** No nightly or weekly failure is being reported.', None, state, state_path)
         return
     now = datetime.now(timezone.utc)
     event_path = os.environ.get('GITHUB_EVENT_PATH')
@@ -136,12 +181,12 @@ def main():
             # Still notify a failed scheduled run if a newer push already passed
             # before this monitor started; recovery can follow in the same pass.
             key = f"{triggered['id']}-{triggered.get('run_attempt', 1)}-{triggered['conclusion']}"
-            notify(repo, recipient, workflow, key, f"Run concluded **{triggered['conclusion']}**.", triggered, issues)
+            notify(repo, webhook, workflow, key, f"Run concluded **{triggered['conclusion']}**.", triggered, state, state_path)
         if metadata['state'] != 'active':
             incident, reason, run = 'disabled', 'Scheduled workflow is disabled.', None
         else:
             incident, reason, run = assess(workflow, runs, now, metadata['created_at'])
-        notify(repo, recipient, workflow, incident, reason, run, issues)
+        notify(repo, webhook, workflow, incident, reason, run, state, state_path)
 
 
 if __name__ == '__main__':

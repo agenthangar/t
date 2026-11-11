@@ -45,53 +45,122 @@ def test_untrusted_or_pr_runs_do_not_change_health():
                          run(head_branch='feature', conclusion='failure')], NOW, NOW.isoformat()) == (None, '', None)
 
 
-def test_failure_assigns_mentions_deduplicates_reopens_and_recovers(monkeypatch):
-    calls, issues = [], []
-    def api(repo, path, **kw):
-        calls.append((path, kw))
-        if path.startswith('actions/'):
-            return [{'jobs': [dict(name='Linux tests', html_url='https://github.com/test/repo/jobs/1', conclusion='failure')]}]
-        if path == 'issues':
-            return dict(number=7, state='open', user={'login': 'github-actions[bot]'}, **kw['payload'])
-    monkeypatch.setattr(health, 'api', api)
-    health.notify('test/repo', 'maintainer', 'release.yml', '123-1-failure', 'Failed.', run(), issues)
-    assert issues[0]['assignees'] == ['maintainer']
-    assert '@maintainer' in issues[0]['body'] and 'Linux tests' in issues[0]['body']
-    count = len(calls)
-    health.notify('test/repo', 'maintainer', 'release.yml', '123-1-failure', 'Failed.', run(), issues)
-    assert len(calls) == count
-    health.notify('test/repo', 'maintainer', 'release.yml', 'pending', '', run(), issues)
-    assert len(calls) == count
-    health.notify('test/repo', 'maintainer', 'release.yml', None, '', run(), issues)
-    assert issues[0]['state'] == 'closed'
-    count = len(calls)
-    health.notify('test/repo', 'maintainer', 'release.yml', '123-1-failure', 'Failed.', run(), issues)
-    assert len(calls) == count  # a replay cannot reopen an already recovered run
-    health.notify('test/repo', 'maintainer', 'release.yml', '123-2-failure', 'Failed again.', run(run_attempt=2), issues)
-    assert issues[0]['state'] == 'open'
-    assert calls[-1][0] == 'issues/7/comments' and '@maintainer' in calls[-1][1]['payload']['body']
+def test_failure_deduplicates_replays_and_recovers(tmp_path, monkeypatch):
+    messages, state = [], {}
+    path = tmp_path / 'state.json'
+    monkeypatch.setattr(health, 'send_discord', lambda url, content: messages.append(content))
+    monkeypatch.setattr(health, 'api', lambda *a, **kw: [{'jobs': [dict(
+        name='Linux tests', html_url='https://github.com/test/repo/jobs/1', conclusion='failure')]}])
+    def notify(incident, item=None):
+        health.notify('test/repo', 'webhook', 'release.yml', incident, 'Failed.', item or run(), state, path)
+    notify('123-1-failure')
+    assert len(messages) == 1 and 'Linux tests' in messages[0] and run()['html_url'] in messages[0]
+    # Restore persisted state as a later workflow invocation would.
+    state = health.json.loads(path.read_text())
+    notify('123-1-failure')
+    notify('pending')
+    assert len(messages) == 1
+    notify(None)
+    assert len(messages) == 2 and 'recovered' in messages[-1]
+    notify(None)
+    notify('123-1-failure')
+    assert len(messages) == 2
+    notify('123-2-failure', run(run_attempt=2))
+    assert len(messages) == 3 and 'Attempt: 2' in messages[-1]
 
 
-def test_disabled_or_overdue_without_run_still_notifies(monkeypatch):
-    calls = []
-    def api(repo, path, **kw):
-        calls.append((path, kw))
-        return dict(number=8, state='open', **kw['payload'])
-    monkeypatch.setattr(health, 'api', api)
-    health.notify('test/repo', 'maintainer', 'scorecard.yml', 'disabled', 'Disabled.', None, [])
-    assert len(calls) == 1 and calls[0][1]['payload']['assignees'] == ['maintainer']
+@pytest.mark.parametrize('incident', ['disabled', 'overdue-never'])
+def test_condition_alerts_again_after_recovery(incident, tmp_path, monkeypatch):
+    messages, state = [], {}
+    monkeypatch.setattr(health, 'send_discord', lambda url, content: messages.append(content))
+    for value in [incident, incident, None, incident]:
+        health.notify('test/repo', 'webhook', 'scorecard.yml', value, 'Needs attention.', None,
+                      state, tmp_path / 'state.json')
+    assert len(messages) == 3
+    assert 'Workflow dashboard' in messages[0] and 'recovered' in messages[1]
 
 
-def test_public_issue_cannot_impersonate_alert_state(monkeypatch):
-    calls = []
-    def api(repo, path, **kw):
-        calls.append((path, kw))
-        return dict(number=8, state='open', user={'login': 'github-actions[bot]'}, **kw['payload'])
-    monkeypatch.setattr(health, 'api', api)
-    forged = dict(number=99, state='open', user={'login': 'someone-else'},
-                  body=health.issue_marker('scorecard.yml') + '\n<!-- t health event: disabled -->')
-    health.notify('test/repo', 'maintainer', 'scorecard.yml', 'disabled', 'Disabled.', None, [forged])
-    assert calls[0][0] == 'issues'  # create a genuine alert; do not skip or edit the forged issue
+def test_failed_delivery_does_not_persist_or_suppress_retry(tmp_path, monkeypatch):
+    state = {}
+    path = tmp_path / 'state.json'
+    def fail(*a):
+        raise RuntimeError('delivery failed')
+    monkeypatch.setattr(health, 'send_discord', fail)
+    with pytest.raises(RuntimeError, match='delivery failed'):
+        health.notify('test/repo', 'webhook', 'scorecard.yml', 'disabled', 'Disabled.', None, state, path)
+    assert not state and not path.exists()
+
+
+def test_many_failed_jobs_fit_discord_limit(tmp_path, monkeypatch):
+    messages = []
+    monkeypatch.setattr(health, 'send_discord', lambda url, content: messages.append(content))
+    monkeypatch.setattr(health, 'api', lambda *a, **kw: [{'jobs': [dict(
+        name='Long job name ' * 10, html_url='https://github.com/test/repo/jobs/1', conclusion='failure')] * 100}])
+    health.notify('test/repo', 'webhook', 'release.yml', '123-1-failure', 'Failed.', run(), {}, tmp_path / 'state.json')
+    assert len(messages[0]) <= 2000 and 'More failed jobs' in messages[0]
+
+
+@pytest.mark.parametrize('url', [
+    '', 'http://discord.com/api/webhooks/123/token', 'https://evil.example/api/webhooks/123/token',
+    'https://discord.com.evil.example/api/webhooks/123/token',
+    'https://user@discord.com/api/webhooks/123/token', 'https://discord.com:443/api/webhooks/123/token',
+    'https://discord.com/api/webhooks/123/token/github',
+    'https://discord.com/api/webhooks/123/token?wait=false', 'https://discord.com/api/webhooks/123/token#fragment',
+])
+def test_webhook_target_rejects_non_native_or_untrusted_url(url):
+    with pytest.raises(ValueError, match='copied Discord webhook URL'):
+        health.webhook_target(url)
+
+
+def fake_transport(monkeypatch, responses):
+    calls, sleeps = [], []
+    class Connection:
+        def __init__(self, host, timeout):
+            assert host == 'discord.com' and timeout == 20
+        def request(self, method, path, body, headers):
+            calls.append((method, path, health.json.loads(body), headers))
+        def getresponse(self):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+        def close(self):
+            pass
+    monkeypatch.setattr(health.http.client, 'HTTPSConnection', Connection)
+    monkeypatch.setattr(health.time, 'sleep', sleeps.append)
+    return calls, sleeps
+
+
+def response(status, body=b'{"id":"456"}', retry_after='2'):
+    from types import SimpleNamespace
+    return SimpleNamespace(status=status, read=lambda limit: body, getheader=lambda *a: retry_after)
+
+
+def test_discord_waits_for_confirmation_and_disables_mentions(monkeypatch):
+    calls, sleeps = fake_transport(monkeypatch, [response(200)])
+    health.send_discord('https://discord.com/api/webhooks/123/token', '@everyone test')
+    assert calls[0][0:2] == ('POST', '/api/webhooks/123/token?wait=true')
+    assert calls[0][2] == {'content': '@everyone test', 'allowed_mentions': {'parse': []}}
+    assert sleeps == []
+
+
+@pytest.mark.parametrize('transient', [response(429, retry_after='120'), response(503), OSError('secret URL')])
+def test_discord_retries_transient_failures(monkeypatch, transient):
+    calls, sleeps = fake_transport(monkeypatch, [transient, response(200)])
+    health.send_discord('https://discord.com/api/webhooks/123/token', 'test')
+    assert len(calls) == 2 and len(sleeps) == 1 and sleeps[0] <= 30
+
+
+@pytest.mark.parametrize('replies,expected', [
+    ([response(401)], 'HTTP 401'), ([response(302)], 'HTTP 302'),
+    ([response(200, b'{}')], 'did not confirm'), ([response(200, b'not json')], 'invalid delivery response'),
+    ([OSError('secret URL')] * 3, 'after three attempts'),
+])
+def test_discord_rejects_unconfirmed_delivery_without_leaking_secrets(monkeypatch, replies, expected):
+    fake_transport(monkeypatch, replies)
+    with pytest.raises(RuntimeError, match=expected) as caught:
+        health.send_discord('https://discord.com/api/webhooks/123/token', 'test')
+    assert 'secret URL' not in str(caught.value) and 'token' not in str(caught.value)
 
 
 def test_api_payload_is_passed_on_stdin_not_interpolated(monkeypatch):
@@ -110,7 +179,8 @@ def test_monitor_reports_trigger_failure_even_if_a_newer_run_recovered(tmp_path,
     event.write_text(json.dumps({'workflow_run': failed}))
     monkeypatch.setenv('GITHUB_EVENT_PATH', str(event))
     monkeypatch.setenv('GITHUB_REPOSITORY', 'test/repo')
-    monkeypatch.setenv('CI_ALERT_ASSIGNEE', 'maintainer')
+    monkeypatch.setenv('CI_ALERT_WEBHOOK_URL', 'https://discord.com/api/webhooks/123/token')
+    monkeypatch.setenv('CI_ALERT_STATE_PATH', str(tmp_path / 'state.json'))
     monkeypatch.setattr('sys.argv', ['scheduled_health.py'])
     recent = run(id=124, created_at=datetime.now(timezone.utc).isoformat())
     def api(repo, path, **kwargs):

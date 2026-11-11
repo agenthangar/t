@@ -72,24 +72,34 @@ the tap dispatch; no additional credential is required.
 ## Scheduled failure alerts
 
 [Scheduled health](../.github/workflows/scheduled-health.yml) runs when Releases
-or Scorecard completes and every six hours. Set the repository Actions variable
-`CI_ALERT_ASSIGNEE` to the maintainer's GitHub login. It creates or reopens one
-assigned, mentioned issue per workflow, with the run, commit, attempt and failed
-job links. Repeated checks of the same incident do not notify again; successful
-recovery closes the issue. A new failed attempt posts a fresh mention.
+or Scorecard completes and every six hours. It posts Discord failure and recovery
+messages with the run, commit, attempt and failed-job links.
+
+To configure delivery:
+
+1. In Discord, open **Server Settings → Integrations → Create Webhook**. Choose
+   a text channel, name the webhook `t CI`, and copy its webhook URL.
+2. In this repository's **Settings → Secrets and variables → Actions**, create
+   a repository secret named `CI_ALERT_WEBHOOK_URL` containing the copied URL.
+   Use the native URL without a `/github` suffix. Never commit the URL.
+3. Set the Discord channel's notifications to **All Messages**. Messages do not
+   ping everyone or roles; personal Discord/device preferences control push delivery.
+4. On main, use **Scheduled health → Run workflow → test_notification=true**.
+   Verify the labeled test appears in the channel and reaches your device.
+
+The notifier waits for Discord to confirm message creation and retries transient
+failures. Failed delivery fails the workflow instead of being recorded as sent.
+Actions cache holds non-secret deduplication state, so repeated checks do not
+notify again; recovery sends one follow-up. Cache eviction or an interrupted
+acknowledgement can cause a duplicate alert. No GitHub issue is created.
 
 The watchdog also alerts when a workflow is disabled, a run remains incomplete
 for two hours, no nightly run has started within 36 hours, or no weekly Scorecard
 run has started within eight days. A pending recovery does not close an incident.
 GitHub schedules are best effort: this watchdog also runs on GitHub, so a platform
 outage that prevents every workflow from starting requires external monitoring.
-
-Use **Scheduled health → Run workflow → test_notification=true** to send a
-clearly labeled delivery test. The recipient should subscribe to the issue and
-enable GitHub web/email notifications for mentions and assignments. The workflow
-cannot change personal email or notification preferences. It uses `GITHUB_TOKEN`
-with issues write access; no mail or chat secret is needed. Only trusted main
-code executes; source-run logs and artifacts are not executed by the notifier.
+Only trusted main code executes; source-run logs and artifacts are not executed
+by the notifier. Its GitHub token has read-only contents and Actions access.
 
 The implementation is in [scripts/release.py](../scripts/release.py). Its planning
 command is read-only; publishing is confined to the archive job. The planner's
