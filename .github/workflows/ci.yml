@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.scope.outputs.sha }}
       full: ${{ steps.scope.outputs.full }}
@@ -57,7 +57,7 @@ jobs:
         run: python3 "$RUNNER_TEMP/t-ci-policy.py" scope
   cli-contract:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,7 +68,7 @@ jobs:
         run: python3 scripts/lint_progress.py
   shell:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -90,7 +90,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
       T_REQUIRE_AWS_CONTRACT: '1'
@@ -123,7 +123,7 @@ jobs:
     needs: scope
     name: Legacy fzf compatibility
     if: needs.scope.outputs.full == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -148,7 +148,7 @@ jobs:
     needs: [scope, pytest]
     name: Combined Linux coverage
     if: needs.scope.outputs.full == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -176,7 +176,7 @@ jobs:
     needs: scope
     name: Unsharded Linux reference
     if: github.event_name == 'workflow_dispatch' && inputs.verify_shards
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
       T_REQUIRE_AWS_CONTRACT: '1'
@@ -207,7 +207,7 @@ jobs:
     name: Verify shard equivalence
     if: github.event_name == 'workflow_dispatch' && inputs.verify_shards
     needs: [scope, coverage, reference]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -253,7 +253,7 @@ jobs:
           retention-days: 14
   playground:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -263,7 +263,7 @@ jobs:
         run: python3 scripts/playground.py smoke
   gitleaks:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -272,7 +272,7 @@ jobs:
       - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.21.2 detect --source=/repo --redact
   pip-audit:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -283,7 +283,7 @@ jobs:
       - run: python -m pip install pip-audit && pip-audit -r requirements-dev.txt
   codeql:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
@@ -304,7 +304,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [0, 1]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       T_REQUIRE_AWS_CONTRACT: '1'
       CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
@@ -333,7 +333,7 @@ jobs:
     name: CI
     if: always()
     needs: [scope, cli-contract, shell, pytest, smoke, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ needs.scope.outputs.sha }}
     steps:
