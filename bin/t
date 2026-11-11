@@ -12822,6 +12822,8 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  Session-cache refresh and history indexing run in the background. Worktree
+  preparation, ownership checks and launch settings finish before you enter.
   Unidentified Codex writers do not block newly allocated worktrees globally.
   Known worktree owners and reservations still block. Reused workspaces and
   saved resumes retain stricter checks; unresolved IDs remain in the receipt.
@@ -14201,7 +14203,7 @@ def _main(argv):
     if argv and argv[0] == '__cache-event':
         cfg = Config()
         targets = [cfg.hosts.get(host, host) for host in argv[1:]] or ['local']
-        _session_discovery()['event'](targets)
+        _session_discovery()['invalidate'](targets)
         return 0
     if argv and argv[0] == '__cache-rows':
         cache = _session_discovery()

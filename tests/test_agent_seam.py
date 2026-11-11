@@ -125,6 +125,46 @@ def test_hook_writes_registry_opened_and_origin_stamps(sandbox):
     assert not (pathlib.Path(env["TMUX_LOG"])).exists()
 
 
+def test_hook_returns_and_registers_identity_while_history_is_locked(sandbox):
+    home, env = sandbox
+    env.update(XDG_STATE_HOME=str(home / 'state'), XDG_CONFIG_HOME=str(home / 'config'),
+               CODEX_HOME=str(home / '.codex'), T_HOME=str(REPO_ROOT))
+    repo = home / 'repo'
+    repo.mkdir()
+    for args in (['init', '-q'], ['config', 'user.name', 'Fixture'],
+                 ['config', 'user.email', 'fixture@example.invalid'],
+                 ['commit', '-q', '--allow-empty', '-m', 'launch base']):
+        subprocess.run(['git', '-C', str(repo), *args], env=env, check=True, capture_output=True)
+    expected = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], env=env, text=True).strip()
+    path = home / 'state/t/history/v1/history.sqlite3'
+    path.parent.mkdir(parents=True)
+    db = sqlite3.connect(path)
+    db.execute('create table conversations (key text primary key, record text not null)')
+    db.commit()
+    try:
+        db.execute('BEGIN EXCLUSIVE')
+        result = subprocess.run([str(HOOK), '--agent', 'codex'],
+                                input=json.dumps({'session_id': 'blocked-history', 'cwd': str(repo)}),
+                                env=env, capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert (home / '.cache/claude-sessions/opened/blocked-history').exists()
+        assert db.execute('select record from conversations').fetchall() == []
+        subprocess.run(['git', '-C', str(repo), 'commit', '-q', '--allow-empty', '-m', 'later work'],
+                       env=env, check=True, capture_output=True)
+        db.rollback()
+        deadline = time.monotonic() + 10
+        rows = []
+        while not rows and time.monotonic() < deadline:
+            rows = db.execute('select record from conversations').fetchall()
+            if not rows:
+                time.sleep(.05)
+        assert rows
+        assert json.loads(rows[0][0])['associations'][0]['commit'] == expected
+    finally:
+        db.rollback()
+        db.close()
+
+
 def test_hook_stamps_tmux_when_inside_a_pane(sandbox):
     home, env = sandbox
     r = run_hook(env, {"session_id": "sid-9", "cwd": str(home)}, TMUX="/tmp/tmux-1/default,1,0",
