@@ -13,7 +13,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 HELPERS = (
     "Dockerfile", "entrypoint.sh", "playground-install",
-    "playground-demo-agent", "fake-claude.c", "smoke.py",
+    "playground-demo-agent", "fake-claude.c", "smoke.py", "install-deps.sh",
 )
 
 

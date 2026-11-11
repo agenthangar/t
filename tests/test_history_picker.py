@@ -207,6 +207,7 @@ def test_scope_bare_slot_and_explicit_repo_slot_are_read_only(history, app):
 
 @pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('hostile_defaults', [False, True])
+@pytest.mark.fzf_compat
 def test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel(history, tmp_path, hostile_defaults, multi):
     """fzf actually reloads its rows under a private PTY; no desktop windows."""
     import shutil
@@ -325,6 +326,7 @@ finally:
 
 @pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('width,height', [(44, 20), (32, 12), (120, 12)])
+@pytest.mark.fzf_compat
 def test_paginated_history_keeps_action_and_focused_row_visible_on_small_terminals(
         history, tmp_path, width, height, multi):
     import shutil

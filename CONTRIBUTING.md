@@ -30,7 +30,22 @@ Use the [disposable playground](docs/playground.md) to rehearse installation and
 the first session in a clean Linux account. Run `python3 scripts/playground.py smoke`
 for its automated flow.
 
-CI runs Linux with both pinned fzf versions by default. macOS tests are disabled
+PR CI keeps the install/session smoke, fast regressions, ownership/worktree/remote
+shell safeguards, CLI/shell contracts and security checks. Expensive integration
+matrices run when their implementation, tests, or CI changes, and on every nightly
+release validation. Shared test-harness changes also request the full suite;
+ordinary unit-test edits stay fast, and new test files join it by default. The policy lives in
+`scripts/ci_policy.py`; run the fast subset with
+`python3 -m pytest -p scripts.ci_shards --ci-fast`.
+
+Full validation includes both pinned fzf versions and combined 97% coverage.
+Use **CI → Run workflow** with `run_full=true` to request it explicitly. Legacy
+fzf repeats only `fzf_compat` tests that invoke real fzf; pure unit tests run once.
+The full help inventory is validated by the required CLI lint job; pytest tests
+specific behaviors and rejection paths. Nightly and weekly failures are reported
+through the [scheduled alert workflow](docs/releases.md#scheduled-failure-alerts).
+
+macOS tests are disabled
 for routine pull requests and main-branch pushes. For an explicit macOS check,
 run the **CI** workflow manually with **Include macOS and native desktop tests**
 enabled (`gh workflow run ci.yml -f run_macos=true`). Local native desktop tests

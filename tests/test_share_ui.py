@@ -294,6 +294,7 @@ def test_non_tty_never_enters_guided_ui(module, t_mod, monkeypatch):
 
 
 @pytest.mark.parametrize("width,height", [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.fzf_compat
 def test_real_isolated_tty_source_target_review_cancel(tmp_path, width, height):
     """Exercise the real rail and fzf profile without launching an agent or writing a share."""
     if not shutil.which("tmux") or not shutil.which("fzf"):
