@@ -1,7 +1,21 @@
 name: CI
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to validate
+        type: string
+        required: true
+    outputs:
+      sha:
+        description: Commit that passed complete validation
+        value: ${{ jobs.ci.outputs.sha }}
   workflow_dispatch:
     inputs:
+      run_full:
+        description: Run complete Linux validation and coverage
+        type: boolean
+        default: true
       run_macos:
         description: Include macOS and native desktop tests
         type: boolean
@@ -14,27 +28,52 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
 permissions:
   contents: read
 concurrency:
   # Keep only the newest CI run for each PR or pushed branch.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.scope.outputs.sha }}
+      full: ${{ steps.scope.outputs.full }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+      - run: cp scripts/ci_policy.py "$RUNNER_TEMP/t-ci-policy.py"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+      - id: scope
+        env:
+          FORCE_FULL: ${{ inputs.ref != '' || (github.event_name == 'workflow_dispatch' && (inputs.run_full || inputs.run_macos || inputs.verify_shards)) }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 "$RUNNER_TEMP/t-ci-policy.py" scope
   cli-contract:
+    needs: scope
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - name: Public CLI noun/verb contract
         run: python3 scripts/lint_cli.py
       - name: Long-running command progress contract
         run: python3 scripts/lint_progress.py
   shell:
+    needs: scope
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
+      - run: sudo bash scripts/playground/install-deps.sh zsh
       - name: Shell syntax and lint
         run: |
           files=(install.sh)
@@ -44,17 +83,22 @@ jobs:
           shellcheck "${files[@]}"
           for f in t.plugin.zsh zsh/*.zsh; do zsh -n "$f"; done
   pytest:
+    needs: scope
     name: Linux shard ${{ matrix.shard }}
+    if: needs.scope.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3]
     runs-on: ubuntu-latest
     env:
+      CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
       T_REQUIRE_AWS_CONTRACT: '1'
       COVERAGE_FILE: artifacts/.coverage.${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: ./.github/actions/test-runtime
         with:
           fzf: '0.74.5'
@@ -70,19 +114,24 @@ jobs:
         if: always()
         with:
           name: shard-${{ matrix.shard }}
+          overwrite: true
           path: artifacts/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
   fzf-legacy:
+    needs: scope
     name: Legacy fzf compatibility
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: ./.github/actions/test-runtime
         with:
           fzf: '0.44.1'
-      - name: Complete real fzf compatibility files
+      - name: Real fzf compatibility cases
         run: >-
           python -m pytest -p scripts.ci_shards --ci-legacy
           --ci-manifest=artifacts/manifest.json
@@ -91,15 +140,19 @@ jobs:
         if: always()
         with:
           name: fzf-legacy
+          overwrite: true
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
   coverage:
+    needs: [scope, pytest]
     name: Combined Linux coverage
-    needs: pytest
+    if: needs.scope.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -114,19 +167,24 @@ jobs:
         if: always()
         with:
           name: combined
+          overwrite: true
           path: combined/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
   reference:
+    needs: scope
     name: Unsharded Linux reference
     if: github.event_name == 'workflow_dispatch' && inputs.verify_shards
     runs-on: ubuntu-latest
     env:
+      CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
       T_REQUIRE_AWS_CONTRACT: '1'
       COVERAGE_FILE: artifacts/.coverage.reference
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: ./.github/actions/test-runtime
         with:
           fzf: '0.74.5'
@@ -140,6 +198,7 @@ jobs:
         if: always()
         with:
           name: reference
+          overwrite: true
           path: artifacts/
           include-hidden-files: true
           if-no-files-found: error
@@ -147,10 +206,12 @@ jobs:
   verify-shards:
     name: Verify shard equivalence
     if: github.event_name == 'workflow_dispatch' && inputs.verify_shards
-    needs: [coverage, reference]
+    needs: [scope, coverage, reference]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -165,6 +226,7 @@ jobs:
           path: reference
       - run: python scripts/ci_shards.py compare combined/audit.json reference
   macos:
+    needs: scope
     name: macOS fzf ${{ matrix.fzf }}
     if: github.event_name == 'workflow_dispatch' && inputs.run_macos
     strategy:
@@ -174,6 +236,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: ./.github/actions/test-runtime
         with:
           fzf: ${{ matrix.fzf }}
@@ -183,32 +247,42 @@ jobs:
         if: always()
         with:
           name: macos-${{ matrix.fzf }}
+          overwrite: true
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
   playground:
+    needs: scope
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - name: Fresh install and terminal session flow
         run: python3 scripts/playground.py smoke
   gitleaks:
+    needs: scope
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.scope.outputs.sha }}
           fetch-depth: 0
       - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.21.2 detect --source=/repo --redact
   pip-audit:
+    needs: scope
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: python -m pip install pip-audit && pip-audit -r requirements-dev.txt
   codeql:
+    needs: scope
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,31 +290,69 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: github/codeql-action/init@v3
         with:
           languages: python
       - uses: github/codeql-action/analyze@v3
+  smoke:
+    needs: scope
+    if: needs.scope.outputs.full != 'true'
+    name: Fast Linux shard ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    runs-on: ubuntu-latest
+    env:
+      T_REQUIRE_AWS_CONTRACT: '1'
+      CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
+      - uses: ./.github/actions/test-runtime
+        with:
+          fzf: '0.74.5'
+      - name: Fast regressions and core safety contracts
+        run: >-
+          python -m pytest -p scripts.ci_shards --ci-fast
+          --ci-shard=${{ matrix.shard }} --ci-shards=2
+          --ci-manifest=artifacts/manifest.json
+          --durations=30 --junitxml=artifacts/junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.shard }}
+          overwrite: true
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
   ci:
     name: CI
     if: always()
-    needs: [cli-contract, shell, pytest, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
+    needs: [scope, cli-contract, shell, pytest, smoke, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ needs.scope.outputs.sha }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
       - name: Required jobs and explicitly optional modes
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          EXPECT_FULL: ${{ needs.scope.outputs.full }}
           EXPECT_MACOS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_macos }}
           EXPECT_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_shards }}
-        run: |
-          python - <<'PY'
-          import json, os
-          optional = set()
-          if os.environ['EXPECT_MACOS'] != 'true':
-              optional.add('macos')
-          if os.environ['EXPECT_REFERENCE'] != 'true':
-              optional.update(('reference', 'verify-shards'))
-          for name, job in json.loads(os.environ['NEEDS_JSON']).items():
-              expected = 'skipped' if name in optional else 'success'
-              if job['result'] != expected:
-                  raise SystemExit(f"{name}: {job['result']} (expected {expected})")
-          PY
+          TESTED_SHA: ${{ needs.scope.outputs.sha }}
+        run: python3 scripts/ci_policy.py gate
+      - uses: actions/upload-artifact@v4
+        if: needs.scope.outputs.full == 'true'
+        with:
+          name: release-validation
+          overwrite: true
+          path: validation/validation.json
+          if-no-files-found: error
+          retention-days: 14

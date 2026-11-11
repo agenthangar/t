@@ -68,11 +68,19 @@ def draft_target(release):
     return sha
 
 
-def ci_passed(repo, sha):
-    data = api(repo, f"actions/workflows/ci.yml/runs?event=push&head_sha={sha}&per_page=1")
-    runs = data["workflow_runs"]
-    return bool(runs and runs[0]["head_sha"] == sha and runs[0]["event"] == "push"
-                and runs[0]["status"] == "completed" and runs[0]["conclusion"] == "success")
+def require_validation(sha, path):
+    """Consume only full-validation evidence from this workflow attempt.
+
+    The trusted workflow downloads this artifact from its successful validation
+    dependency. Never accept a PR artifact or an older successful push run.
+    """
+    if not path:
+        raise ValueError('Full validation evidence is required before publication')
+    data = json.loads(Path(path).read_text())
+    run_id, attempt = os.environ.get('GITHUB_RUN_ID'), os.environ.get('GITHUB_RUN_ATTEMPT')
+    if (not run_id or not attempt or data.get('sha') != sha or data.get('full') is not True
+            or data.get('run_id') != run_id or data.get('run_attempt') != attempt):
+        raise ValueError('Full validation must match the release commit and workflow attempt')
 
 
 def plan(repo, tag=""):
@@ -91,7 +99,7 @@ def plan(repo, tag=""):
         raise ValueError("Latest stable release is not an ancestor of main")
     if base == head:
         print("No unreleased commits on main; no release needed.")
-        return {}
+        return dict(sha=head)
     major, minor, patch = version(previous)
     tag = f"v{major}.{minor}.{patch + 1}"
     pending = next((r for r in items if r["tag_name"] == tag), None)
@@ -104,9 +112,6 @@ def plan(repo, tag=""):
         existing = run("git", "tag", "--list", tag)
         if existing:
             raise ValueError(f"{tag} already exists without a resumable draft; refusing to reuse it")
-    if not ci_passed(repo, head):
-        print(f"CI has not passed for {head}; leaving it for a later run.")
-        return {}
     return dict(tag=tag, sha=head, previous=previous, automatic="true")
 
 
@@ -140,10 +145,11 @@ def sync_assets(repo, tag, release, directory):
             run("gh", "release", "upload", tag, "--repo", repo, *missing)
 
 
-def publish(repo, tag, sha, previous, automatic, directory):
+def publish(repo, tag, sha, previous, automatic, directory, validation=None):
     version(tag)
     if not SHA.fullmatch(sha) or commit("HEAD") != sha:
         raise ValueError("The archive checkout is not the planned release commit")
+    require_validation(sha, validation)
     items = releases(repo)
     release = next((r for r in items if r["tag_name"] == tag), None)
     if automatic:
@@ -153,8 +159,6 @@ def publish(repo, tag, sha, previous, automatic, directory):
         latest = latest_stable(items)["tag_name"]
         if latest != previous and not (latest == tag and release and not release["draft"]):
             raise ValueError("A newer release appeared after planning; retry from main")
-        if not ci_passed(repo, sha):
-            raise ValueError("CI no longer passes for the planned commit")
         if release and release["draft"] and draft_target(release) != sha:
             raise ValueError("Pending draft targets a different commit")
         if not release:
@@ -199,6 +203,7 @@ def main():
     parser.add_argument("--previous", default="")
     parser.add_argument("--automatic", action="store_true")
     parser.add_argument("--directory", default="dist")
+    parser.add_argument("--validation", help="same-run full-validation artifact")
     args = parser.parse_args()
     if args.action == "plan":
         values = plan(args.repo, args.tag)
@@ -208,7 +213,7 @@ def main():
                 for key, value in values.items():
                     output.write(f"{key}={value}\n")
     else:
-        publish(args.repo, args.tag, args.sha, args.previous, args.automatic, args.directory)
+        publish(args.repo, args.tag, args.sha, args.previous, args.automatic, args.directory, args.validation)
 
 
 if __name__ == "__main__":

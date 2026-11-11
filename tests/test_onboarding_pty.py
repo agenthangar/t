@@ -1,19 +1,14 @@
 """Real terminal entry, review, installation and cancellation in disposable homes."""
-import fcntl
 import json
 import os
 from pathlib import Path
-import pty
-import select
-import signal
 import shutil
-import struct
 import subprocess
 import sys
-import termios
-import time
 
 import pytest
+
+from pty_helpers import run_terminal
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,52 +29,6 @@ def sandbox(tmp_path):
     return home, env
 
 
-def run_terminal(command, env, cwd, size, actions):
-    master, slave = pty.openpty()
-    before = termios.tcgetattr(slave)
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', size[1], size[0], 0, 0))
-    process = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave,
-                               cwd=cwd, env=env, start_new_session=True)
-    output, index, searched_from = b'', 0, 0
-    deadline = time.monotonic() + 30
-    try:
-        while time.monotonic() < deadline:
-            if select.select([master], [], [], 0.05)[0]:
-                output += os.read(master, 65536)
-            if index < len(actions):
-                needle, keys = actions[index]
-                if needle.encode() in output[searched_from:]:
-                    searched_from = len(output)
-                    if keys == b"\x03":
-                        process.send_signal(signal.SIGINT)
-                    else:
-                        os.write(master, keys)
-                    index += 1
-            if process.poll() is not None:
-                while select.select([master], [], [], 0)[0]:
-                    try:
-                        chunk = os.read(master, 65536)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    output += chunk
-                break
-        pending = repr(actions[index]) if index < len(actions) else 'process exit'
-        diagnostic = (f'Completed {index}/{len(actions)} terminal actions; waiting for {pending}\n'
-                      + output.decode(errors='replace'))
-        assert process.poll() is not None, diagnostic
-        assert index == len(actions), diagnostic
-        after = termios.tcgetattr(slave)
-        flags = termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN
-        assert after[3] & flags == before[3] & flags, 'terminal mode was not restored'
-        return process.returncode, output.decode(errors='replace')
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=5)
-        os.close(master)
-        os.close(slave)
 
 
 @pytest.mark.parametrize('size', [(80, 24), (44, 20), (32, 12)])

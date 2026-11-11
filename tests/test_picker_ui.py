@@ -224,6 +224,7 @@ def picker():
         tmux('kill-server', check=False)
 
 
+@pytest.mark.fzf_compat
 def test_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     start, wait, keys, finish = picker
     start()
@@ -251,6 +252,7 @@ def test_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     assert len(selected) == 1 and selected[0].split('\t')[1] == 'api-2'
 
 
+@pytest.mark.fzf_compat
 def test_empty_filter_can_reveal_rows_and_narrow_preview_keeps_details(picker):
     start, wait, keys, finish = picker
     start(empty=True, width=48, mode='resume')
@@ -266,6 +268,7 @@ def test_empty_filter_can_reveal_rows_and_narrow_preview_keeps_details(picker):
 
 
 @pytest.mark.parametrize('shell', ['/bin/sh', 'zsh -f'])
+@pytest.mark.fzf_compat
 def test_kill_filters_are_independent_and_show_all_is_idempotent(picker, shell):
     start, wait, keys, finish = picker
     start(mode='kill', shell=shell)
@@ -295,6 +298,7 @@ def test_kill_filters_are_independent_and_show_all_is_idempotent(picker, shell):
     assert [row.split('\t')[1] for row in finish()] == ['api-3']
 
 
+@pytest.mark.fzf_compat
 def test_resume_live_hotkey_restores_defaults_without_losing_search(picker):
     start, wait, keys, finish = picker
     start(mode='resume')
@@ -312,6 +316,7 @@ def test_resume_live_hotkey_restores_defaults_without_losing_search(picker):
     assert [row.split('\t')[1] for row in finish()] == ['api-7']
 
 
+@pytest.mark.fzf_compat
 def test_generic_filtered_picker_uses_explicit_show_all_and_defaults(picker):
     start, wait, keys, finish = picker
     start(mode='generic')
@@ -330,6 +335,7 @@ def test_generic_filtered_picker_uses_explicit_show_all_and_defaults(picker):
     assert [row.split('\t')[1] for row in finish()] == ['api-7']
 
 
+@pytest.mark.fzf_compat
 def test_filtered_picker_remains_operable_at_32_columns(picker):
     start, wait, keys, finish = picker
     start(width=32)
@@ -342,6 +348,7 @@ def test_filtered_picker_remains_operable_at_32_columns(picker):
 
 
 @pytest.mark.parametrize('source', ['env', 'file'])
+@pytest.mark.fzf_compat
 def test_filtered_picker_controls_override_hostile_fzf_options(picker, source):
     start, wait, keys, finish = picker
     start(hostile_opts=source)
@@ -352,6 +359,7 @@ def test_filtered_picker_controls_override_hostile_fzf_options(picker, source):
 
 
 @pytest.mark.parametrize('source', ['env', 'file'])
+@pytest.mark.fzf_compat
 def test_single_picker_enter_override_hostile_fzf_options(picker, source):
     start, wait, keys, finish = picker
     start(hostile_opts=source, profile='single')
@@ -363,6 +371,7 @@ def test_single_picker_enter_override_hostile_fzf_options(picker, source):
 
 @pytest.mark.parametrize('source', ['env', 'file'])
 @pytest.mark.parametrize('key', ['Escape', 'C-c'])
+@pytest.mark.fzf_compat
 def test_single_picker_abort_keys_override_hostile_fzf_options(picker, source, key):
     start, wait, keys, finish = picker
     start(hostile_opts=source, profile='single')
@@ -372,6 +381,7 @@ def test_single_picker_abort_keys_override_hostile_fzf_options(picker, source, k
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('profile,prompt', [('single', 'single'), ('multi', 'multi'), ('filtered', 'open')])
+@pytest.mark.fzf_compat
 def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width, height, profile, prompt):
     start, wait, keys, finish = picker
     start(width=width, height=height, profile=profile)
@@ -385,6 +395,7 @@ def test_primary_action_and_focused_row_visible_in_small_viewports(picker, width
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('mode,key,label', [('open', 'C-t', 'attached'), ('resume', 'C-l', 'live'), ('kill', 'C-p', 'pending')])
+@pytest.mark.fzf_compat
 def test_all_session_filter_keys_visible_at_every_size(picker, width, height, mode, key, label):
     start, wait, keys, finish = picker
     start(mode=mode, width=width, height=height)
@@ -399,6 +410,7 @@ def test_all_session_filter_keys_visible_at_every_size(picker, width, height, mo
 
 
 @pytest.mark.parametrize('key', ['Escape', 'C-c'])
+@pytest.mark.fzf_compat
 def test_open_abort_does_not_start_or_attach_sessions(picker, key):
     start, wait, keys, finish = picker
     start(profile='public-open')
@@ -408,6 +420,7 @@ def test_open_abort_does_not_start_or_attach_sessions(picker, key):
     assert finish(key, status=130) == []
 
 
+@pytest.mark.fzf_compat
 def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-cli')
@@ -421,6 +434,7 @@ def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('monochrome', [False, True])
+@pytest.mark.fzf_compat
 def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
     start, wait, keys, finish = picker
     start(profile='public-open', width=width, height=height, monochrome=monochrome)
@@ -446,6 +460,7 @@ def test_open_simple_rows_and_focused_marks(picker, width, height, monochrome):
 
 @pytest.mark.parametrize('empty', [False, True])
 @pytest.mark.parametrize('source', ['env', 'file'])
+@pytest.mark.fzf_compat
 def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
     start, wait, keys, finish = picker
     start(profile='public-open', empty=empty, hostile_opts=source)
@@ -459,6 +474,7 @@ def test_open_removed_shortcuts_never_launch_or_preview(picker, empty, source):
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12), (120, 12)])
 @pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
+@pytest.mark.fzf_compat
 def test_inline_filters_keep_the_list_visible_and_repeat_clears(picker, width, height, profile):
     start, wait, keys, finish = picker
     start(profile=profile, width=width, height=height)
@@ -491,6 +507,7 @@ def test_inline_filters_keep_the_list_visible_and_repeat_clears(picker, width, h
     assert finish('Escape', status=130) == []
 
 
+@pytest.mark.fzf_compat
 def test_inline_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-all')
@@ -513,6 +530,7 @@ def test_inline_filter_toggle_preserves_query_and_removes_hidden_marks(picker):
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('auth_warning', [False, True])
+@pytest.mark.fzf_compat
 def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, height, auth_warning):
     start, wait, keys, finish = picker
     start(profile='resume-rich', mode='resume', width=width, height=height, auth_warning=auth_warning)
@@ -546,6 +564,7 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('monochrome', [False, True])
+@pytest.mark.fzf_compat
 def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, width, height, monochrome):
     start, wait, keys, finish = picker
     start(profile='resume-merged', mode='resume', width=width, height=height,
@@ -572,6 +591,7 @@ def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, widt
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 @pytest.mark.parametrize('marked', [False, True])
+@pytest.mark.fzf_compat
 def test_open_kill_key_ignores_marks_and_accepts_focus(picker, width, height, marked):
     start, wait, keys, finish = picker
     start(width=width, height=height)
@@ -587,6 +607,7 @@ def test_open_kill_key_ignores_marks_and_accepts_focus(picker, width, height, ma
     assert [row.split('\t')[1] for row in selected] == ['api-2']
 
 
+@pytest.mark.fzf_compat
 def test_public_open_kill_keeps_picker_without_rediscovery(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-kill')
@@ -599,6 +620,7 @@ def test_public_open_kill_keeps_picker_without_rediscovery(picker):
     assert finish() == ['KILL api 4 1', 'api 2 --local']
 
 
+@pytest.mark.fzf_compat
 def test_open_kill_preserves_query_and_hidden_marks(picker):
     start, wait, keys, finish = picker
     start()
@@ -617,6 +639,7 @@ def test_open_kill_preserves_query_and_hidden_marks(picker):
 
 
 @pytest.mark.parametrize('close_rc', [1, 130])
+@pytest.mark.fzf_compat
 def test_open_failed_or_canceled_kill_keeps_rows_marks_and_picker(picker, close_rc):
     start, wait, keys, finish = picker
     start(close_rc=close_rc)
@@ -629,6 +652,7 @@ def test_open_failed_or_canceled_kill_keeps_rows_marks_and_picker(picker, close_
     assert [row.split('\t')[1] for row in finish()] == ['api-2']
 
 
+@pytest.mark.fzf_compat
 def test_open_kill_last_row_leaves_empty_picker_until_cancel(picker):
     start, wait, keys, finish = picker
     start()
@@ -642,6 +666,7 @@ def test_open_kill_last_row_leaves_empty_picker_until_cancel(picker):
     assert finish('Escape', status=130) == []
 
 
+@pytest.mark.fzf_compat
 def test_open_kill_temporarily_locks_query_then_accepts_typing(picker):
     start, wait, keys, finish = picker
     start(slow_update=True)
@@ -662,6 +687,7 @@ def test_open_kill_temporarily_locks_query_then_accepts_typing(picker):
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.fzf_compat
 def test_list_sort_filter_query_and_cancel_at_terminal_sizes(picker, width, height):
     start, wait, keys, finish = picker
     start(profile='list-rich', mode='list', width=width, height=height)
@@ -690,6 +716,7 @@ def test_list_sort_filter_query_and_cancel_at_terminal_sizes(picker, width, heig
     assert finish('Escape', status=130) == []
 
 
+@pytest.mark.fzf_compat
 def test_list_details_preview_preserves_full_metadata(picker):
     start, wait, keys, finish = picker
     start(profile='list-rich', mode='list', width=80, height=24)
@@ -701,6 +728,7 @@ def test_list_details_preview_preserves_full_metadata(picker):
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
+@pytest.mark.fzf_compat
 def test_full_phrase_search_accepts_spaces_and_k_without_marking_or_closing(picker, width, height):
     start, wait, keys, finish = picker
     start(width=width, height=height, hostile_opts=True)
@@ -713,6 +741,7 @@ def test_full_phrase_search_accepts_spaces_and_k_without_marking_or_closing(pick
     assert [row.split('\t')[1] for row in finish()] == ['web-4']
 
 
+@pytest.mark.fzf_compat
 def test_sort_control_keys_never_enter_the_search_query(picker):
     start, wait, keys, finish = picker
     start(profile='resume-rich', mode='resume')
@@ -733,6 +762,7 @@ def test_sort_control_keys_never_enter_the_search_query(picker):
     assert finish()[0].split('\t')[2] == 'sid1'
 
 
+@pytest.mark.fzf_compat
 def test_long_phrase_search_matches_full_metadata_beyond_narrow_display(picker):
     start, wait, keys, finish = picker
     start(profile='public-open', width=32, height=12)
