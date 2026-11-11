@@ -151,6 +151,8 @@ source "$_NOSLEEP_ROOT/zsh/nosleep-fallback.zsh"
 #
 # HOTSPOT FALLBACK
 #   --hotspot MODE     on | off
+#   Configure a retry window or attempt limit in nosleep config.
+#   New defaults: retry for 60m, pause 5m between attempts, timeout 30s per attempt.
 #   -h, --help          Show help
 #
 # EXAMPLES
@@ -187,6 +189,8 @@ nosleep() {
   local agent=1 internet=1 monitoring=1 requirement=all required_count=0 enabled_count=0
   local hotspot=0 hotspot_ssid='' hotspot_after=300 hotspot_timeout=30
   local battery_protection=0 battery_below=20
+
+  local hotspot_attempts=3 hotspot_retry_delay=300 hotspot_retry_mode=duration hotspot_retry_minutes=60
   defaults=$(_nosleep_config --values) || return $?
   for setting in ${(f)defaults}; do
     value=${setting#*=}
@@ -208,6 +212,11 @@ nosleep() {
       hotspot_timeout) hotspot_timeout=$value ;;
       battery_protection) battery_protection=$value ;;
       battery_below) battery_below=$value ;;
+
+      hotspot_attempts) hotspot_attempts=$value ;;
+      hotspot_retry_delay) hotspot_retry_delay=$value ;;
+      hotspot_retry_mode) hotspot_retry_mode=$value ;;
+      hotspot_retry_minutes) hotspot_retry_minutes=$value ;;
     esac
   done
   # Expand short-option groups before parsing. Value-taking options consume the
@@ -374,6 +383,12 @@ nosleep() {
   [[ $hotspot_after == <-> && ${#hotspot_after} -le 10 && $hotspot_after -le 2147483647 && $hotspot_timeout == <-> && ${#hotspot_timeout} -le 3 && $hotspot_timeout -ge 1 && $hotspot_timeout -le 300 ]] || {
     print -u2 -- 'nosleep: hotspot delay must be nonnegative and timeout must be 1–300 seconds'; return 2
   }
+  [[ $hotspot_attempts == <-> && ${#hotspot_attempts} -le 2 && $hotspot_attempts -ge 1 && $hotspot_attempts -le 10 && $hotspot_retry_delay == <-> && ${#hotspot_retry_delay} -le 3 && $hotspot_retry_delay -ge 1 && $hotspot_retry_delay -le 300 ]] || {
+    print -u2 -- 'nosleep: hotspot attempts must be 1–10 and retry delay must be 1–300 seconds'; return 2
+  }
+  [[ $hotspot_retry_mode == (attempts|duration) && $hotspot_retry_minutes == <-> && ${#hotspot_retry_minutes} -le 4 && $hotspot_retry_minutes -ge 1 && $hotspot_retry_minutes -le 1440 ]] || {
+    print -u2 -- 'nosleep: hotspot retry mode must be attempts or duration and window must be 1–1440 minutes'; return 2
+  }
   if (( hotspot )); then
     python3 "$_NOSLEEP_ROOT/libexec/nosleep_hotspot.py" validate --ssid="$hotspot_ssid" || return 2
   fi
@@ -460,6 +475,7 @@ nosleep() {
   local retry_count=0 retry_delay=$backoff retry_for='' missing online=1 was_online=1 refreshed_at=0
   local failed_agent=0 failed_internet=0 effective_passes=0
   local fallback_outage_at=-1 fallback_started_at=-1 fallback_deadline=0 fallback_done=0
+  local fallback_attempts=0 fallback_retry_at=0 fallback_window_deadline=0
   local wifi_text='Checking availability…' wifi_next_scan=0 wifi_observed_at=0
   typeset -g _NOSLEEP_WIFI_PID='' _NOSLEEP_WIFI_DIR=''
   # Presentation tracks observed signals separately from the grace timestamps,
@@ -770,21 +786,41 @@ _nosleep_status() {
   rows+=("  Battery   $battery_text")
   styles+=(36)
   local hotspot_text='Off' hotspot_style=2
+  local hotspot_count=$fallback_attempts hotspot_next=$(( fallback_attempts + 1 ))
+  if [[ $hotspot_retry_mode != duration ]]; then
+    hotspot_count+="/$hotspot_attempts" hotspot_next+="/$hotspot_attempts"
+  fi
   if (( hotspot )); then
     hotspot_style=0
     if (( ! monitoring || ! internet )); then
       hotspot_text='Inactive (requires internet checks)'
     elif (( fallback_done )); then
-      hotspot_text='Attempt complete · no verified internet recovery'
+      if [[ $hotspot_retry_mode == duration ]]; then
+        hotspot_text="Retry window expired · ${hotspot_retry_minutes}m · no verified internet recovery"
+      else
+        hotspot_text="Attempts exhausted · $hotspot_count · no verified internet recovery"
+      fi
     elif (( fallback_started_at >= 0 )); then
       _nosleep_duration $(( fallback_deadline - now ))
-      hotspot_text="Joining/rechecking internet · $REPLY left"
+      hotspot_text="Attempt $hotspot_count · joining/rechecking internet · $REPLY left"
+    elif (( fallback_attempts > 0 )); then
+      _nosleep_duration $(( fallback_retry_at - now ))
+      hotspot_text="Retry $hotspot_next in $REPLY"
     elif (( fallback_outage_at >= 0 )); then
       _nosleep_duration $(( hotspot_after - now + fallback_outage_at ))
       hotspot_text="Waiting for continuous outage · $REPLY left"
     else
       _nosleep_duration "$hotspot_after"
       hotspot_text="On · after $REPLY offline"
+      if [[ $hotspot_retry_mode == duration ]]; then
+        hotspot_text+=" · retry for ${hotspot_retry_minutes}m"
+      else
+        hotspot_text+=" · up to $hotspot_attempts attempts"
+      fi
+    fi
+    if [[ $hotspot_retry_mode == duration ]] && (( ! fallback_done && fallback_window_deadline > 0 )); then
+      _nosleep_duration $(( fallback_window_deadline > now ? fallback_window_deadline - now : 0 ))
+      hotspot_text+=" · $REPLY retry window left"
     fi
   fi
   rows+=("  Hotspot   $hotspot_text")
