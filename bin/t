@@ -2767,6 +2767,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             stages = helper["model_stages"](policy)
             local_only = policy.get("inference", {}).get("mode") == "local-only" and agent == "codex"
             rows = [("enabled", "Use this workflow")]
+            if name:
+                rows.append(('repositories', 'Repositories ›'))
             if not local_only:
                 rows.append(("stages_enabled", "Use multiple models"))
             rows += [(stage, _workflow_stage_title(stage))
@@ -2796,6 +2798,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 values["review"] = "Skipped before PR"
             values["inference"] = policy.get("inference", {}).get("mode", "manual")
             values["enabled"] = "enabled" if policy["enabled"] else "disabled"
+            if name:
+                using = sum(item['using'] for item in _workflow_assignment_rows(cfg, helper, name))
+                values['repositories'] = f"{using} using this workflow"
             values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
             values["main_model"] = defaults.get("model") or _workflow_session_default_label(cfg, policy, agent, "model")
             values["main_effort"] = _workflow_effort(defaults["effort"]) if defaults.get("effort") else _workflow_session_default_label(cfg, policy, agent, "effort")
@@ -2820,6 +2825,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 return
             focus = choice
             changed = copy.deepcopy(policy)
+            if choice == 'repositories':
+                _workflow_repositories_menu(ui, cfg, helper, name)
+                continue  # Assignments and source edits already share the staged document.
             if choice == 'instructions':
                 action = ui.pick('Text instructions', [('edit', 'Edit text instructions'),
                     ('clear', 'Clear text instructions'), *([('undo', 'Undo clear')] if cleared_text is not None else []), ('back', 'Back')],
@@ -3089,6 +3097,100 @@ def _config_workflow(ui, cfg, repo=None):
             return
         last = tool
         _workflow_tool_scope(ui, cfg, tool, lambda scoped: _config_workflow_tool(ui, scoped, repo))
+
+
+def _workflow_assignment_rows(cfg, helper, name):
+    """Read registered assignments without scanning repositories or writing defaults."""
+    document = cfg._workflow_document
+    result = []
+    for alias, path in sorted(cfg.repos.items()):
+        path = os.path.realpath(path)
+        entry = document['repositories'].get(path, {})
+        source = helper['source'](document, path)
+        using = not entry.get('excluded') and 'inline' not in entry and source == name
+        if entry.get('excluded'):
+            label = 'Workflows disabled'
+        elif 'inline' in entry:
+            label = 'Custom workflow'
+        elif 'workflow' in entry:
+            label = 'Assigned · ' + source
+        else:
+            label = 'Inherit global · ' + source
+        if not entry.get('excluded') and not helper['resolved'](document, path)['enabled']:
+            label += ' · Workflow disabled'
+        result.append({'key': 'repo:' + alias, 'alias': alias, 'path': path, 'using': using, 'label': label})
+    return result
+
+
+def _workflow_repositories_menu(ui, cfg, helper, name):
+    focus = 'assign'
+    while True:
+        repositories = _workflow_assignment_rows(cfg, helper, name)
+        available = [item for item in repositories if not item['using']]
+        rows, values, sections = [('assign', '+ Assign repositories…')], {}, {'back': 'Navigation'}
+        for using, heading in ((True, 'Using this workflow'), (False, 'Other repositories')):
+            group = [item for item in repositories if item['using'] == using]
+            if group:
+                sections[group[0]['key']] = heading
+            for item in group:
+                rows.append((item['key'], item['alias'] + ' ›'))
+                values[item['key']] = item['label']
+        rows.append(('back', 'Back'))
+        reason = 'All registered repositories already use this workflow.' if repositories else 'Register a repository with t repo add first.'
+        if not available:
+            values['assign'] = 'All assigned' if repositories else 'No registered repositories'
+        choice = ui.pick('Workflow · ' + name + ' · Repositories', rows, values=values, sections=sections,
+                         disabled={'assign': reason} if not available else {},
+                         default=next((i for i, row in enumerate(rows) if row[0] == focus), 0))
+        if choice in (None, 'back'):
+            return
+        focus = choice
+        if choice == 'assign':
+            if not available:
+                continue
+            selected = ui.pick('Assign repositories to ' + name,
+                               [(item['key'], item['alias']) for item in available], multi=True, marked=set(),
+                               values={item['key']: item['label'] for item in available})
+            if not selected:
+                continue
+            # Build the whole batch before replacing the staged document.
+            after = cfg._workflow_document
+            for item in available:
+                if item['key'] in selected:
+                    after = helper['action'](after, 'use', name, item['path'])
+            cfg._workflow_document = after
+        else:
+            item = next(item for item in repositories if item['key'] == choice)
+            _workflow_assign_repository_menu(ui, cfg, helper, name, item['alias'], item['path'])
+
+
+def _workflow_assign_repository_menu(ui, cfg, helper, name, repo, repository):
+    focus = 'use'
+    while True:
+        document = cfg._workflow_document
+        entry = document['repositories'].get(repository, {})
+        selected = entry.get('workflow') == name and not entry.get('excluded') and 'inline' not in entry
+        rows = [('use', 'Use this workflow'), ('inherit', 'Use global default'),
+                ('choose', 'Choose another workflow ›'), ('disable', 'Disable workflows'),
+                ('design_system', 'Design system ›'), ('back', 'Back')]
+        choice = ui.pick('Repository · ' + repo, rows,
+                         values={'use': name + (' · Selected' if selected else ''), 'inherit': document['default'],
+                                 'choose': helper['source'](document, repository),
+                                 'disable': 'Selected' if entry.get('excluded') else '',
+                                 'design_system': _workflow_design_source_label(helper, document, repository)},
+                         sections={'use': 'Workflow', 'design_system': 'Design', 'back': 'Navigation'},
+                         default=next(i for i, row in enumerate(rows) if row[0] == focus))
+        if choice in (None, 'back'):
+            return
+        focus = choice
+        if choice == 'choose':
+            _workflow_repository_selector(ui, cfg, helper, repo, repository)
+        elif choice == 'design_system':
+            _workflow_design_system_menu(ui, cfg, helper, repo, repository)
+        else:
+            verb = {'use': 'use', 'inherit': 'inherit', 'disable': 'exclude'}[choice]
+            cfg._workflow_document = helper['action'](document, verb, name if verb == 'use' else None, repository)
+            return
 
 
 def _workflow_repository_selector(ui, cfg, helper, repo, repository):
@@ -5250,7 +5352,8 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite="",
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
+             columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite="",
              refresh=None, refresh_interval=.5):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
@@ -5260,6 +5363,7 @@ class _RailUI:
         selection and marks and uses the same viewport as ordinary pickers."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
+        cells, notes = cells or {}, notes or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
         empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
@@ -5271,15 +5375,28 @@ class _RailUI:
                 marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
+        if focused_shortcuts:
+            keys += ' · ' + '/'.join(focused_shortcuts) + ' sources/tools'
         flash = ""
         while True:
             if refresh is not None and refresh():
                 return '__done__'
-            display = [(f"{self.rail}   {part}", None) for text in context
-                       for part in _wrap_columns(text, max(1, self.cols() - 6))]
+            display = []
+            context_width = max((len(text[0]) for text in context if isinstance(text, tuple)), default=0)
+            for text in context:
+                lines = (self.row(*text, label_width=context_width) if isinstance(text, tuple) else
+                         [f"{self.rail}    {part}" for part in _wrap_columns(text, max(1, self.cols() - 7))])
+                display.extend((line, None) for line in lines)
+            if context:
+                display.append((self.rail, None))
             table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
             table_keys = [key for key, _ in rows if key in table_rows]
             label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
+            widths = [max(len(title), max((len(str(cell[i])) for cell in cells.values()), default=0))
+                      for i, title in enumerate(columns)]
+            model_width = self.cols() - 8 - sum(widths) - 2 * len(widths)
+            table = bool(columns and model_width >= 18)
+            first_cell = True
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
                     display.append((self.rail, None))
@@ -5290,8 +5407,43 @@ class _RailUI:
                 if table_keys and key == table_keys[0]:
                     display.append((f"{self.rail}    {self.st.y}{table_header}{self.st.r}", None))
                 mark = ("◼" if n in marks else "◻") if multi else None
-                display += [(line, n) for line in self.row(table_rows.get(key, text), None if key in table_rows else values.get(key), selected=n == cur,
-                            mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key in table_rows:
+                    display += [(line, n) for line in self.row(table_rows[key], selected=n == cur, mark=mark, accent="y" if key in disabled else accents.get(key, ""))]
+                elif key in cells:
+                    if table and first_cell:
+                        heading = 'Model'.ljust(model_width) + '  ' + '  '.join(t.rjust(w) for t, w in zip(columns, widths))
+                        display.extend((line, None) for line in self.row(heading))
+                    first_cell = False
+                    if table:
+                        body = _truncate(text, model_width).ljust(model_width) + '  ' + '  '.join(str(v).rjust(w) for v, w in zip(cells[key], widths))
+                        lines = self.row(body, selected=n == cur)
+                    else:
+                        lines = self.row(text, cells[key][-1], selected=n == cur)
+                        scores = [f'{title} {value}' for title, value in zip(columns[:-1], cells[key][:-1]) if value != '—'] or ['Benchmarks · Unreported']
+                        packed, part = [], ''
+                        for score in scores:
+                            if part and _display_width(part+' · '+score) > self.cols()-7:
+                                packed.append(part); part = ''
+                            part += (' · ' if part else '') + score
+                        packed.append(part)
+                        lines += [f'{self.rail}    {self.st.c}{part}{self.st.r}' for text in packed
+                                  for part in _wrap_columns(text, max(1, self.cols() - 7))]
+                    if notes.get(key):
+                        lines += [f'{self.rail}    {self.st.y}{part}{self.st.r}' for part in _wrap_columns(notes[key], max(1, self.cols() - 7))]
+                    # Only the label anchors the viewport; a short terminal must never lose its cursor.
+                    display.extend((line, n if i == 0 else None) for i, line in enumerate(lines))
+                    if n == cur and details:
+                        display.append((self.rail, None))
+                        for detail in details(key):
+                            display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
+                        display.append((self.rail, None))
+                else:
+                    display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
+                                mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key in table_rows and n == cur and details:
+                    display.append((self.rail, None))
+                    for detail in details(key):
+                        display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
                 if table_keys and key == table_keys[-1]:
                     display.append((self.rail, None))
                     display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None)
@@ -5305,6 +5457,8 @@ class _RailUI:
                 if not select.select([sys.stdin], [], [], max(.05, refresh_interval))[0]:
                     continue
             k = self.read_key()
+            if k in (focused_shortcuts or {}) and (rows[cur][0] in cells or rows[cur][0] in table_rows):
+                return focused_shortcuts[k], rows[cur][0]
             if k in (shortcuts or {}):
                 return shortcuts[k]
             if k in ("up", "k"):
@@ -12320,12 +12474,11 @@ SCOPE
   Models, Behavior and Manage group the editor; resets stay pending until Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   Lead model and Lead reasoning effort configure the main conversation.
-  Inference & routing: local models; opt-in Continue locally on cloud outage.
-  Time limits: default task 15 min, maximum task 30 min, inactivity 5 min,
-  queue wait 5 min. Reset time limits affects only these four values.
+  Inference & routing: cloud retry limit (default 5m), then pause or local.
+  Time limits: task 15m, maximum 30m, inactivity 5m, queue 5m; reset only these.
   Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
-  Repository assignments select design sources or start guidance drafting.
+  Workflow → Repositories assigns repos; each repo also exposes its design source.
   Text instructions can override work preferences and model-stage guidance.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits publish native instructions, then reconcile supported loaded sessions.
