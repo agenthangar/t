@@ -1,6 +1,19 @@
 # CI test scheduling and coverage
 
-The required `CI` check keeps the Linux suite serial within four independent
+Routine PRs and pushes to main use two Linux shards for a fast regression tier.
+It keeps most tests plus representative lifecycle/ownership smoke cases, while
+deferring expensive integration matrices listed in
+[`scripts/ci_policy.py`](../scripts/ci_policy.py). It is broader than an
+installation-only smoke test. New test files join the fast tier by default.
+
+Critical runtime, installer, shell, test-harness and CI changes automatically
+select full Linux validation on PRs. Nightly/release runs always select it for
+the exact pinned commit; a fast PR result cannot authorize publication.
+Gitleaks, pip-audit, CodeQL, shell/CLI contracts and install smoke remain required
+in both tiers. Scorecard runs separately each week. Coverage is enforced at 97%
+on full validation; the fast tier does not lower that threshold.
+
+Full validation keeps the Linux suite serial within four independent
 GitHub-hosted runners, with fzf 0.74.5. Each runner collects the full suite,
 then selects complete files. `scripts/ci_shards.py` assigns longest estimated
 files first to the least-loaded shard; filename and shard index break ties.
@@ -10,9 +23,8 @@ starts with approximate file timings from [the previous full Linux run](https://
 
 Every shard requires real fzf/tmux/zsh before testing and sets
 `T_REQUIRE_AWS_CONTRACT=1`, so the AWS contract runs once in its assigned file.
-A separate fzf 0.44.1 compatibility job selects all tests in
-`test_picker_ui.py`, `test_history_picker.py`, `test_history_details.py` and
-`test_share_ui.py`. It writes the same explicit selected-test manifest.
+A separate fzf 0.44.1 compatibility job selects the real-fzf compatibility
+cases during full validation. It writes the same explicit selected-test manifest.
 
 Artifacts persist for 14 days: full collection, selected files and node IDs,
 per-test outcomes and setup/call/teardown duration totals, JUnit, and uniquely
