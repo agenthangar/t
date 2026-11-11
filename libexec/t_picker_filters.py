@@ -1,5 +1,4 @@
 """Filter a private picker snapshot without rediscovery or session actions."""
-import datetime
 import json
 import os
 from pathlib import Path
@@ -8,7 +7,8 @@ import subprocess
 import sys
 
 from t_session_details import clip_columns, display_width, enrich, format_last_turn
-from t_picker_theme import key_labels, paint
+from t_picker_theme import key_labels, paint, control_rows, sort_rows
+from t_session_sort import RESUME_SORTS, natural, turn_epoch
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -51,23 +51,6 @@ def metadata(source, profile):
                     progress='in progress' if re.search(r'#\d+ merged, still in progress', fields[6]) else 'not marked')
     return result
 
-
-RESUME_SORTS = {'turn': ('Alt-T', 'last turn'), 'repo': ('Alt-R', 'repo'),
-                'agent': ('Alt-G', 'agent'), 'host': ('Alt-O', 'host'),
-                'session': ('Alt-V', 'session')}
-
-
-def natural(value):
-    return tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
-                 for part in re.split(r'(\d+)', value))
-
-
-def turn_epoch(value):
-    try:
-        stamp = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
-        return stamp.timestamp() if stamp.tzinfo else float('-inf')
-    except (AttributeError, TypeError, ValueError, OverflowError, OSError):
-        return float('-inf')
 
 
 def sort_resume(rows, records, mode='turn'):
@@ -146,9 +129,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
     def keys(parts, selected=()):
-        active = {key(part) for part in selected}
-        return [' · '.join(style(part, 'active' if part in active else 'action') for part in line.split(' · '))
-                for line in pack([key(part) for part in parts], width)]
+        return control_rows(parts, width, selected, compact, color)
     lines = [] if compact else [style('HOTKEYS', 'heading')]
     lines += keys(['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓', 'Ctrl-K kill' if profile == 'open' else 'Ctrl-/'])
     if not compact:
@@ -176,12 +157,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
         lines += [style('Match highlighted row; repeat key to clear'), '']
-    sorts = {name: ('turn' if compact and name == 'turn' else label)
-             for name, (_, label) in RESUME_SORTS.items() if (profile in ('resume', 'open') or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
-    label = ('turn' if compact and sort == 'turn' else RESUME_SORTS[sort][1]) if sort_enabled else 'OFF'
-    lines += keys(['Sort: ' + label, 'Ctrl-S toggle'], ['Sort: ' + label] if sort_enabled else [])
-    lines += keys((['Ctrl-Y next'] if compact else ['Ctrl-Y next'] + list(sorts.values())),
-                  [sorts[sort]] if sort_enabled and sort in sorts and not compact else [])
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'))
     if not compact:
         lines += ['']
     if columns:

@@ -14,11 +14,24 @@ import termios
 import time
 
 
-def run(*command, check=True):
-    result = subprocess.run(command, text=True, capture_output=True, timeout=30)
+def run(*command, check=True, timeout=30):
+    result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
     if check and result.returncode:
         raise RuntimeError(f"{command!r}\n{result.stdout}\n{result.stderr}")
     return result
+
+
+def expect_output(text, *command, timeout=30):
+    """Allow background discovery to converge, with a bounded diagnostic failure."""
+    deadline = time.monotonic() + timeout
+    last_output = "command did not run"
+    while (remaining := deadline - time.monotonic()) > 0:
+        result = run(*command, timeout=remaining)
+        if text in result.stdout:
+            return result
+        last_output = result.stdout + "\n" + result.stderr
+        time.sleep(min(.1, max(0, deadline - time.monotonic())))
+    raise AssertionError(f"waiting for {text!r} from {command!r}:\n{last_output}")
 
 
 class Terminal:
@@ -130,7 +143,7 @@ def main():
         # Discovery is asynchronous after launch; explicitly wait before
         # asserting the fresh inventory, then exercise the immediate alias.
         assert "playground" in run("zsh", "-lic", "t session list --wait").stdout
-        assert "playground" in run("zsh", "-lic", "t ls").stdout  # compatibility alias
+        expect_output("playground", "zsh", "-lic", "t ls")  # compatibility alias
         assert "Playground Claude stub" in run("zsh", "-lic", "t session read playground 1 --dump").stdout
         run("zsh", "-lic", "t session close playground 1 --yes")
         assert run("tmux", "has-session", "-t", "=dev-playground-1", check=False).returncode != 0

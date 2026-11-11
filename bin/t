@@ -12882,7 +12882,7 @@ SELECTION
   Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
-  LAST TURN is newest first by default; unknown timestamps sort last.
+  LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
@@ -13097,7 +13097,11 @@ REMOTE SESSIONS
   The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down
   scrolls.
 
-  Search covers all pages. Search, paging, and refresh clear marks.
+  Search and sorting cover all pages. Ctrl-S toggles sorting; Ctrl-Y cycles
+  last turn, repository, agent, host, and session. Last turn ↓ defaults to newest
+  user turn first; unknown times sort last. Text sorts ascend. Sorting off
+  restores snapshot order. Sort changes clear marks and return to page 1.
+  Search, paging, and refresh retain sort choices and clear marks.
   Extra selections open in new tabs before the first attaches here.
   Resume errors exit nonzero without reopening the picker; batches stop and
   report already-resumed conversations.
@@ -13158,7 +13162,9 @@ REMOTE SESSIONS
 
   A plain slot target browses saved conversations: select exact
   conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
-  and Ctrl-/ shows details. Without a terminal, history lists without launching.
+  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last turn,
+  repository, agent, host, and session. Last turn ↓ means newest first, unknown last.
+  Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
   With explicit options, a slot without a terminal takes its newest saved chat.
