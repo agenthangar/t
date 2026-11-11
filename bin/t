@@ -2971,6 +2971,12 @@ def _workflow_delete_menu(ui, cfg, helper, name):
                               [(other, other) for other in sorted(document["workflows"]) if other != name])
         if replacement is None:
             return False
+    confirmation = ui.pick(f"Delete {name}?", [("keep", "Keep workflow"), ("delete", "Delete workflow")],
+                           values={"delete": f"Replace with {replacement}" if replacement else "Not assigned"},
+                           accents={"delete": "w"},
+                           context=("Deletion stays pending until you review and save.",))
+    if confirmation != "delete":
+        return False
     cfg._workflow_document = helper["action"](document, "delete", name, replacement=replacement)
     return True
 
@@ -3524,6 +3530,7 @@ def _workflow_tool_hub(ui, cfg, standalone=False, shell_pending=False):
         default = document["default"]
         names = [default, *sorted(name for name in document["workflows"] if name != default)]
         rows = [("customize" if name == default else "name:" + name, name + " ›") for name in names]
+        workflow_rows = {key: name for (key, _), name in zip(rows, names)}
         values = {}
         for name in names:
             policy = document["workflows"][name]
@@ -3544,13 +3551,23 @@ def _workflow_tool_hub(ui, cfg, standalone=False, shell_pending=False):
                          sections={rows[0][0]: "Select a workflow to edit", "choose": "Where it applies", "back": "Finish"},
                          accents={"add": "g", "back": "y"},
                          primary=("s", "SAVE CHANGES", values["save"]), shortcuts={"s": "save"},
+                         row_shortcuts={"d": ("delete", workflow_rows)},
                          default=next((i for i, row in enumerate(rows) if row[0] == last), 0))
-        last = choice
+        last = choice[1] if isinstance(choice, tuple) else choice
         if choice in (None, "back"):
             return "cancel" if standalone else None
         if choice == "save":
             return "save"
         try:
+            if isinstance(choice, tuple):
+                name = workflow_rows[last]
+                if _workflow_delete_menu(ui, cfg, helper, name):
+                    remaining = cfg._workflow_document
+                    new_default = remaining["default"]
+                    surviving = [new_default, *sorted(other for other in remaining["workflows"] if other != new_default)]
+                    focused = surviving[min(names.index(name), len(surviving) - 1)]
+                    last = "customize" if focused == new_default else "name:" + focused
+                continue
             if choice == "customize" or choice.startswith("name:"):
                 _workflow_policy_menu(ui, cfg, helper, name=default if choice == "customize" else choice[5:])
             elif choice == "add":
@@ -5176,11 +5193,12 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite=""):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite="", row_shortcuts=None):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
-        Optional shortcuts return an action key."""
+        Optional shortcuts return an action key. Row shortcuts map a key to
+        (action label, eligible row keys) and return (action, focused row key)."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
         cur = max(0, min(default or 0, len(rows) - 1))
@@ -5193,6 +5211,7 @@ class _RailUI:
             if not marks:
                 marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
+        keys += "".join(f" · {key} {action}" for key, (action, _) in (row_shortcuts or {}).items())
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
         flash = ""
         while True:
@@ -5224,6 +5243,11 @@ class _RailUI:
             k = self.read_key()
             if k in (shortcuts or {}):
                 return shortcuts[k]
+            if k in (row_shortcuts or {}):
+                action, eligible = row_shortcuts[k]
+                if rows[cur][0] in eligible and rows[cur][0] not in disabled:
+                    return action, rows[cur][0]
+                continue
             if k in ("up", "k"):
                 cur = (cur - 1) % len(rows)
             elif k in ("down", "j"):
@@ -12229,24 +12253,23 @@ SCOPE
   alias, basename or origin name explicitly.
   Context infers the current checkout; other explicit verbs do not.
   Bare t workflow opens the editor in a terminal; otherwise it prints help.
+  In the list, d deletes a workflow after replacement and confirmation.
+  Keep workflow is default; Esc cancels. Review and Save applies deletion.
   Delete keeps at least one workflow and preserves repository exclusions.
   NAME and --repo cannot be combined for edit. Shared definition edits affect
   all its consumers. --all lists named workflows; it cannot combine with --repo.
-  Reset a page or workflow to defaults; Save reviews before and after values.
   Ctrl+C offers Keep editing, Review and save, or Discard when changes are pending.
-  Models, Behavior and Manage group the editor; resets stay pending until Save.
+  Models, Behavior and Manage group the editor; resets use review and Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   Lead model and Lead reasoning effort configure the main conversation.
   Inference & routing: local models; opt-in Continue locally on cloud outage.
-  Time limits: default task 15 min, maximum task 30 min, inactivity 5 min,
-  queue wait 5 min. Reset time limits affects only these four values.
+  Time limits: task 15 min, maximum 30 min, inactivity/queue 5 min; reset is scoped.
   Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
   Repository assignments select design sources or start guidance drafting.
   Text instructions can override work preferences and model-stage guidance.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
-  Edits publish native instructions, then reconcile supported loaded sessions.
-  List reports propagation without connecting; saves and starts apply preferences.
+  Saves publish native instructions and reconcile sessions; lists never connect.
 
 LEARN MORE
   t help workflow <verb>

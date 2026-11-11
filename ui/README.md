@@ -145,8 +145,16 @@ names, so use `open NAME` for collisions. Unknown names and nonterminal opens
 fail without writes. `t workflow delete NAME [--tool TOOL] [--replacement NAME]`
 is a direct action: require a replacement for a default or any repository
 assignment (including excluded ones), preserve exclusions and other catalogues,
-and reject deleting the last definition. Editor deletion uses the same rules,
-selects a replacement when needed, and stays pending until review/save. Root `t list` aliases `t ls`. Resolve only
+and reject deleting the last definition. In the per-tool workflow catalogue,
+show `d delete` in the shared RailUI footer. It acts on the focused workflow only;
+non-workflow rows ignore it. Both this shortcut and the editor's Delete workflow
+action select a replacement when needed, then show Delete NAME? with Keep workflow
+selected by default and Delete workflow showing the replacement. Esc cancels.
+Deletion stays pending until review/save; discard retains the workflow.
+Cancellation preserves focus; deletion focuses a surviving workflow.
+Keep last-workflow protection, excluded assignments and other tool catalogues.
+These interactions extend the existing wizard/single-selection modes.
+Root `t list` aliases `t ls`. Resolve only
 command words, preserving option values, repository names, and delegated commands.
 The old `t repos` family is removed; use `t repo` verbs. Existing repository selectors
 accept registered aliases, checkout basenames, and unambiguous local origin repository

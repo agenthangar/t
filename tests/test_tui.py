@@ -305,3 +305,13 @@ def test_primary_enter_hint_preserves_action_on_narrow_terminal(t_mod, width, ke
     plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in footer)
     assert ui.labels('enter') in plain and 'SELECT' in plain
     assert all(t_mod._vis_len(line) <= width for line in footer)
+
+
+def test_row_shortcuts_ignore_disabled_and_preserve_static_shortcuts(t_mod):
+    rows = [('locked', 'Locked'), ('open', 'Open')]
+    ui = make_ui(t_mod, ['d', 'j', 'd'])
+    assert ui.pick('Rows', rows, disabled={'locked': 'Unavailable'},
+                   row_shortcuts={'d': ('delete', {'locked', 'open'})}) == ('delete', 'open')
+    ui = make_ui(t_mod, ['s'])
+    assert ui.pick('Rows', rows, shortcuts={'s': 'save'},
+                   row_shortcuts={'d': ('delete', {'open'})}) == 'save'

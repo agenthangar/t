@@ -102,7 +102,7 @@ def test_delete_editor_transaction(workflow, t_mod, monkeypatch, tmp_path, repla
     document = workflow.action(document, 'use', 'fast')
     workflow.save(document, None)
     original = workflow.load()[0]
-    picks = ['delete', replacement] + (['back'] if replacement is None else [])
+    picks = ['delete', replacement] + (['back'] if replacement is None else ['delete'])
     picks += ['save'] if save else ['back', 'back', *(['discard'] if replacement else [])]
     ui = HubMenu(picks)
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
@@ -118,7 +118,7 @@ def test_delete_editor_transaction(workflow, t_mod, monkeypatch, tmp_path, repla
 def test_delete_menu_unassigned_and_last(workflow, t_mod, monkeypatch):
     monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
     cfg = SimpleNamespace(repos={}, _workflow_document=workflow.action(workflow.defaults(), 'add', 'fast'))
-    t_mod._workflow_policy_menu(Menu(['delete']), cfg, vars(workflow), name='fast')
+    t_mod._workflow_policy_menu(Menu(['delete', 'delete']), cfg, vars(workflow), name='fast')
     assert 'fast' not in cfg._workflow_document['workflows']
     original = copy.deepcopy(cfg._workflow_document)
     t_mod._workflow_policy_menu(Menu(['delete', 'back']), cfg, vars(workflow), name='standard')
@@ -179,3 +179,100 @@ def test_launch_controls_are_per_type_and_preserve_legacy(workflow, t_mod):
     assert not any('Open/run preview' in line for line in lines)
     assert 'Frontend — Open in browser: Automatically' in lines
     assert 'CLI — Run command: Automatically' in lines
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('target', ['standard', 'fast', 'customize'])
+def test_catalogue_delete_hotkey_replaces_and_confirms(workflow, t_mod, monkeypatch, tmp_path, width, height, target):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document = workflow.action(workflow.defaults(), 'add', target if target != 'standard' else 'fast')
+    repository = str(tmp_path / 'excluded')
+    document['repositories'][repository] = {'workflow': target, 'excluded': True}
+    original = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos={'excluded': repository}, _workflow_tool='codex',
+                          _workflow_document=document, _workflow_initial=copy.deepcopy(document),
+                          _workflow_activate=False, _workflow_before=None)
+    keys = ([] if target == 'standard' else ['j']) + ['d', 'enter', 'j', 'enter', 'q']
+    ui = make_ui(t_mod, keys, width, height)
+    assert t_mod._workflow_tool_hub(ui, cfg) is None
+    after = cfg._workflow_document
+    replacement = 'fast' if target == 'standard' else 'standard'
+    assert target not in after['workflows']
+    assert after['default'] == replacement
+    assert after['repositories'][repository] == {'workflow': replacement, 'excluded': True}
+    assert original == document and not workflow.config_path().exists()
+    frames = ['\n'.join(t_mod._ANSI_RE.sub('', line) for line in frame) for frame in ui.frames]
+    assert any('d delete' in frame for frame in frames)
+    assert any('Delete ' + target + '?' in frame for frame in frames)
+    assert any('Replace with ' + replacement in frame for frame in frames)
+    assert '▸ standard' in frames[-1] or '▸ fast' in frames[-1]
+    for frame in ui.frames:
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+        assert all(t_mod._vis_len(line) <= width for line in frame)
+        assert any('▸' in line for line in frame)
+
+
+@pytest.mark.parametrize('assigned,decision', [(False, 'enter'), (False, 'esc'), (True, 'enter'), (True, 'esc'), (True, 'replacement-back')])
+def test_catalogue_delete_cancel_retains_focus(workflow, t_mod, monkeypatch, assigned, decision):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document = workflow.action(workflow.defaults(), 'add', 'fast')
+    if assigned:
+        document['repositories']['/sample'] = {'workflow': 'fast'}
+    before = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos={}, _workflow_document=document,
+                          _workflow_initial=copy.deepcopy(document), _workflow_activate=False, _workflow_before=None)
+    keys = ['j', 'd'] + ([] if not assigned or decision == 'replacement-back' else ['enter'])
+    keys += ['esc' if decision == 'replacement-back' else decision, 'q']
+    ui = make_ui(t_mod, keys)
+    t_mod._workflow_tool_hub(ui, cfg)
+    assert cfg._workflow_document == before
+    assert any('▸' in line and 'fast' in line for line in ui.frames[-1])
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('row', range(2, 7))
+def test_catalogue_delete_ignores_other_rows(workflow, t_mod, monkeypatch, row):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    document = workflow.action(workflow.defaults(), 'add', 'fast')
+    before = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos={}, _workflow_document=document,
+                          _workflow_initial=copy.deepcopy(document), _workflow_activate=False, _workflow_before=None)
+    ui = make_ui(t_mod, ['j'] * row + ['d', 'q'])
+    t_mod._workflow_tool_hub(ui, cfg)
+    assert cfg._workflow_document == before
+    assert not any('Delete fast?' in line for frame in ui.frames for line in frame)
+
+
+def test_catalogue_delete_last_workflow_guard(workflow, t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    cfg = SimpleNamespace(repos={}, _workflow_document=workflow.defaults(),
+                          _workflow_initial=workflow.defaults(), _workflow_activate=False, _workflow_before=None)
+    ui = make_ui(t_mod, ['d', 'q'])
+    t_mod._workflow_tool_hub(ui, cfg)
+    assert any('Cannot delete the last workflow' in line for frame in ui.frames for line in frame)
+    assert cfg._workflow_document == workflow.defaults()
+    assert not workflow.config_path().exists()
+
+
+@pytest.mark.parametrize('tool', ['codex', 'claude', 'cursor'])
+@pytest.mark.parametrize('save', [False, True])
+def test_catalogue_hotkey_save_discard_tool_isolation(workflow, t_mod, monkeypatch, tmp_path, tool, save):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    cfg.agent_default = tool
+    full = workflow.defaults()
+    scoped = workflow.action(workflow.tool_document(full, tool), 'add', 'fast')
+    workflow.save(workflow.with_tool_document(full, tool, scoped), None)
+    original = workflow.load()[0]
+    keys = ['enter', 'j', 'd', 'j', 'enter'] + (['s', 'enter'] if save else ['q', 'q', 'j', 'j', 'enter'])
+    ui = make_ui(t_mod, keys)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    args = t_mod.build_parser().parse_args(['workflow'])
+    assert t_mod.cmd_config(cfg, args) == (0 if save else 130)
+    after = workflow.load()[0]
+    assert ('fast' not in workflow.tool_document(after, tool)['workflows']) is save
+    for other in workflow.TOOLS:
+        if other != tool:
+            assert workflow.tool_document(after, other) == workflow.tool_document(original, other)
+    if not save:
+        assert after == original
+    assert ui.restored and local.read_text() == '# unchanged\n'
