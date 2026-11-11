@@ -102,7 +102,7 @@ def test_workflow_stage_picker_one_model_reset_uses_real_checkboxes(workflow, t_
     policy = workflow.select_model_stages(document['workflows']['standard'], selected)
     document = workflow.update(document, policy, name='standard')
     cfg = SimpleNamespace(repos={}, _workflow_document=document)
-    ui = make_ui(t_mod, ['j', 'enter', *keys, 'q'], width, height)
+    ui = make_ui(t_mod, ['j', 'j', 'enter', *keys, 'q'], width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
     actual = cfg._workflow_document['workflows']['standard']
     assert workflow.model_stages(actual) == expected
