@@ -7881,8 +7881,11 @@ def _t_offer_update(installation=None):
         return 0
     # The existing updater owns checksum checks, Homebrew, fast-forward safety,
     # links and hooks. Its subprocesses must not prompt recursively.
+    # Reuse the accepted offer rather than making a second network check that
+    # can contradict it. The installer still validates the downloaded payload.
     os.environ["T_UPDATE_PROMPTED"] = str(os.getpid())
-    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False)):
+    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False,
+                                          _update_available=True)):
         print("t update failed; your original command was not run. Retry it when ready.", file=sys.stderr)
         return 11
     print("t updated. Continuing your command.\n", file=sys.stderr)
@@ -8234,8 +8237,9 @@ def cmd_update(cfg, args):
         retry_setup = pending.exists()
         try:
             with _spinner("Checking Homebrew"):
-                state = _t_updates()["check"]({"kind": "brew", "source": opt,
-                    "current": previous, "brew": brew["brew"], "formula": brew["formula"]}, force=True)
+                state = ({"available": True} if getattr(args, "_update_available", False) else
+                         _t_updates()["check"]({"kind": "brew", "source": opt,
+                             "current": previous, "brew": brew["brew"], "formula": brew["formula"]}, force=True))
             if (state.get("checked") and not state.get("error") and
                     not state.get("available") and not retry_setup):
                 return _t_update_result(args, "up to date")
@@ -8270,8 +8274,9 @@ def cmd_update(cfg, args):
             return 1
         try:
             with _spinner("Checking release"):
-                state = _t_updates()["check"]({"kind": "release", "source": active,
-                                               "current": release}, force=True)
+                state = ({"available": True} if getattr(args, "_update_available", False) else
+                         _t_updates()["check"]({"kind": "release", "source": active,
+                                                "current": release}, force=True))
             if state.get("checked") and not state.get("error") and not state.get("available"):
                 return _t_update_result(args, "up to date")
             linked_before = _t_update_linked(active)
