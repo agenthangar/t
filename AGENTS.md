@@ -17,6 +17,10 @@ Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
 
 Before changing user-facing behavior, read [the repository design system](DESIGN.md).
+For session-picker filtering or sorting requests, inspect the existing hotkeys
+in that design system and the shared picker before proposing an interaction.
+Extend the hotkey controls and preserve existing filter/sort choices. Add CLI
+flags only when the user explicitly requests flags or noninteractive control.
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use
