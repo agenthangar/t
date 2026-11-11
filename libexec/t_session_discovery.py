@@ -185,6 +185,10 @@ def event(targets=None, *, event='changed', row=None):
     return request('event', payload)
 
 
+def invalidate(targets=None):
+    return _CACHE['invalidate'](targets)
+
+
 class SnapshotStore:
     """Read-only view returned by the service; no persistence or cache policy."""
     def __init__(self, view):

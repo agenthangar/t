@@ -469,9 +469,17 @@
       "kind": "background",
       "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
     },
-    "libexec/t_lifecycle.py:_discovery_changed:subprocess.run": {
-      "kind": "protocol",
-      "reason": "A bounded private cache invalidation runs after lifecycle effects; it must preserve action protocol output and cannot roll back a completed operation."
+    "libexec/t_lifecycle.py:_discovery_changed:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Post-lifecycle invalidation is detached with closed terminal descriptors; no cache acknowledgement delays the completed action."
+    },
+    "libexec/t_history.py:defer_association:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Launch Git evidence is captured before spawning detached history publication. Database locks, transcript enrichment and cache requests do not hold up the hook or attachment."
+    },
+    "libexec/t_session_cache.py:invalidate:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Invalidation workers have no terminal and cannot publish live-row overlays. Callers return without waiting for the cache service."
     },
     "libexec/t_eval.py:create_run:subprocess.run": {
       "kind": "protocol",

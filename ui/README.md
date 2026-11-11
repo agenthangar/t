@@ -301,6 +301,15 @@ Terminal session launch and resume use the native-directory fallback while prese
 PATH and shell-wrapper precedence, argument quoting, and ownership checks.
 Fresh and resumed tmux panes start without echoing internal launch commands or
 exit instructions. Agent output is logged from startup; failures retain diagnostics.
+Launch hooks capture local revision evidence and usage-policy attribution before
+returning. History database writes, transcript enrichment and session-cache
+notifications are detached from attachment and hook completion. Deferred discovery
+only invalidates snapshots; it never publishes an old live-row overlay after a
+slot closes or is reused. Ownership, launch readiness and worktree preparation
+remain synchronous. No background task changes the active branch or checkout.
+Try `t open --codex --new` from a registered repository. The isolated
+`python3 scripts/preview_session_start.py` demonstrates history contention without
+starting an agent, touching personal settings or opening a desktop window.
 
 The config hub groups Session defaults, Agents, Workflows, Runners, MCP server, Repositories &
 worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep agent settings and local worker/model
