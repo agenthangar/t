@@ -3957,6 +3957,9 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
     _workflow_session(cfg)
     edited = copy.deepcopy(cfg)
     initial = _config_state(cfg)
+    before = getattr(cfg, "_config_before", None)
+    if before is None:
+        before = _config_read(_current_local_rc())
     catalogs = {}
     st = Style()
     if not workflows_only:
@@ -4014,7 +4017,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         if choice in (None, "keep"):
                             continue
                     if choice != "save":
-                        ui.done("cancelled", "nothing written")
+                        ui.done("cancelled", "earlier saves kept; no pending changes saved" if getattr(cfg, "_config_saved", False) else "nothing written")
                         return None
                 last = choice if choice in dict(rows) else last
                 if choice == "mcp":
@@ -4032,17 +4035,28 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     continue
                 if choice == "local":
                     if pending:
-                        ui.done("pending", "Save or discard pending settings before local worker setup.")
+                        action = ui.pick("Continue to local worker setup?", [
+                            ("save", "Review and save, then continue"),
+                            ("discard", "Discard changes and continue"),
+                            ("back", "Back to settings")],
+                            context=[f"{pending} unsaved change{'s' if pending != 1 else ''}."],
+                            accents={"save": "g", "discard": "w"})
+                        if action == "save":
+                            choice = "save-local"
+                        elif action == "discard":
+                            edited = copy.deepcopy(cfg)
+                        else:
+                            continue
+                    if choice == "local":
+                        runtime_ui = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))
+                        runtime_ui["hub"](ui, globals())
                         continue
-                    runtime_ui = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))
-                    runtime_ui["hub"](ui, globals())
-                    continue
                 if choice == "edit":
                     if pending:
                         ui.done("pending", "Save or cancel your menu changes before opening the editor.")
                         continue
                     return "edit"
-                if choice == "save":
+                if choice in ("save", "save-local"):
                     changes = _config_diff(initial, _config_state(edited))
                     try:
                         lines = [f"      {st.c}{_config_assignment(k, v)}{st.r}" for k, v in changes.items()]
@@ -4059,12 +4073,59 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                             edited._workflow_document, before=edited._workflow_initial,
                             activate=edited._workflow_activate)]
                     if changes or _workflow_pending(edited):
+                        if choice == "save-local":
+                            lines.append("      After saving: open Local worker & models.")
                         answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
-                                         keys="y save · n / esc / q back", primary=("enter", "SAVE CHANGES", f"{pending} pending"))
+                                         keys="y save · n / esc / q back", primary=("enter", "SAVE AND CONTINUE" if choice == "save-local" else "SAVE CHANGES", f"{pending} pending"))
                         if answer == "abort":
                             raise KeyboardInterrupt
                         if answer not in ("enter", "y"):
+                            if choice == "save-local":
+                                next_choice = "local"
                             continue
+                    if choice == "save-local":
+                        while True:
+                            try:
+                                after, shell_changed, workflow_changed, targets = _config_persist_changes(cfg, edited, before)
+                                break
+                            except (OSError, ValueError) as exc:
+                                retry = ui.pick("Settings not saved", [("retry", "Retry save"), ("back", "Back to review")],
+                                                context=[str(exc), "Pending edits kept; local worker setup has not opened."])
+                                if retry != "retry":
+                                    next_choice = "save-local"
+                                    break
+                        if next_choice:
+                            continue
+                        # Rebase immediately after commit, before fallible follow-up work.
+                        # Keep the caller's cfg current so a later ordinary save uses this baseline.
+                        cfg.__dict__.update(copy.deepcopy(edited.__dict__))
+                        cfg._config_before = before = after
+                        cfg._config_saved = True
+                        cfg._workflow_initial = copy.deepcopy(cfg._workflow_document)
+                        cfg._workflow_activate = False
+                        initial = _config_state(cfg)
+                        edited = copy.deepcopy(cfg)
+                        ui.commit([])
+                        ui.restore()
+                        try:
+                            document, stored = _workflow()["load"]()
+                            cfg._workflow_document = document
+                            cfg._workflow_initial = copy.deepcopy(document)
+                            cfg._workflow_before = stored
+                            edited = copy.deepcopy(cfg)
+                            rc = _config_finish_save(cfg, edited, initial, shell_changed, workflow_changed, targets)
+                        except (OSError, ValueError) as exc:
+                            print(f"t config: settings saved; follow-up incomplete: {exc}", file=sys.stderr)
+                            rc = 1
+                        finally:
+                            ui.raw()
+                        if rc:
+                            ui.page("Settings saved", ["      Follow-up incomplete; saved changes are kept.",
+                                                      "      Review the diagnostic above before continuing."],
+                                    ("enter", "q", "esc"), keys="enter / esc / q back")
+                            continue
+                        next_choice = "local"
+                        continue
                     return edited
                 if choice == "hosts":
                     _config_hosts(ui, edited)
@@ -4768,6 +4829,85 @@ def _local_setup(args):
     return helper["run"](args, globals())
 
 
+def _config_persist_changes(cfg, result, before):
+    """Use the same atomic settings transaction for save-and-exit and continuation."""
+    current = _config_state(cfg)
+    changes = _config_diff(current, _config_state(result))
+    shell_changed = bool(changes)
+    workflow_changed = _workflow_pending(result)
+    after = _config_text(before, changes, current)
+    helper = _workflow()
+    sync = helper["propagation"]()
+    effective_after = _config_state(result)
+    main_settings = sync["settings_delta"](current, effective_after)
+    rebound = (sync["rebind_source"](_current_local_rc(), before, after, current, effective_after)
+               if changes and not main_settings else None)
+    if workflow_changed or main_settings or rebound:
+        extra = []
+        if main_settings:
+            extra, defaults_pending = sync["native_defaults"](main_settings)
+            if defaults_pending:
+                raise ValueError(defaults_pending)
+        if changes:
+            target = Path(os.path.realpath(_current_local_rc()))
+            local_before = helper["snapshot"](target)
+            if (local_before[0] if local_before else "") != before:
+                raise ValueError("local config changed while editing; retry")
+            extra.append((target, local_before, after))
+        workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
+        context = {"repos": result.repos, "hosts": getattr(result, "hosts", {})}
+        if main_settings:
+            context["settings_source"] = {"path": os.path.realpath(_current_local_rc()), "hash": sync["digest"](after)}
+        elif rebound:
+            context["settings_source"] = rebound
+        helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
+                       refresh_source=bool(rebound), propagation_context=context)
+    else:
+        _config_write(_current_local_rc(), before, after)
+    targets = _host_new_targets(cfg.hosts, result.hosts)
+    return after if shell_changed else before, shell_changed, workflow_changed, targets
+
+
+def _config_finish_save(cfg, result, initial_settings, shell_changed, workflow_changed, targets):
+    """Post-commit effects. A failure here never means the settings were discarded."""
+    if shell_changed:
+        try:
+            zsh_capture("_t_sync_config")
+            if result == "edit":
+                helper = _workflow()
+                sync = helper["propagation"]()
+                settings = sync["settings_delta"](initial_settings, _config_state(Config()))
+                if settings:
+                    extra, defaults_pending = sync["native_defaults"](settings)
+                    if defaults_pending:
+                        raise ValueError(defaults_pending)
+                    document, stored = helper["load"]()
+                    helper["save"](document, stored, extra, main_settings=settings,
+                                   propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
+                                                        "settings_source": {"path": os.path.realpath(_current_local_rc()),
+                                                                            "hash": sync["digest"](_config_read(_current_local_rc()))}})
+        except (OSError, ValueError) as exc:
+            print(f"t config: local settings saved; native defaults or propagation incomplete: {exc}", file=sys.stderr)
+            return 1
+    if workflow_changed:
+        print("✓ saved agent workflow and native instructions")
+    if not shell_changed:
+        return 0
+    print("✓ saved local settings to T_LOCAL_RC")
+    try:
+        _host_verify_offer(targets)
+    except (EOFError, KeyboardInterrupt):
+        print("Settings saved; SSH verification canceled.", file=sys.stderr)
+        return 130
+    if not os.environ.get("T_SETUP_SHIM"):
+        rc_file, rc_state = _shell_setup_helpers()["state"](HOME, os.environ)
+        if rc_state != "configured":
+            print("run `t doctor --repair`, then source the reported rc file to use these settings")
+        else:
+            print(f"run `source {shlex.quote(str(rc_file))}` (or open a new shell) to use these settings")
+    return 0
+
+
 def cmd_config(cfg, args):
     if getattr(args, "models_action", None) in ("runtime", "requests"):
         try:
@@ -4846,6 +4986,7 @@ def cmd_config(cfg, args):
     targets = []
     try:
         before = _config_read(_current_local_rc())
+        cfg._config_before = before
         result = (_config_wizard(cfg, workflows_only=True, workflow_target=workflow_target) if workflow_target else
                   "edit" if getattr(args, "edit", False) else
                   _config_wizard(cfg, workflows_only=True) if getattr(args, "workflows_ui", False) else _config_wizard(cfg))
@@ -4861,84 +5002,18 @@ def cmd_config(cfg, args):
                 print("t config: editor or syntax check failed; local config was not reloaded", file=sys.stderr)
                 return rc
         else:
-            current = _config_state(cfg)
-            changes = _config_diff(current, _config_state(result))
-            shell_changed = bool(changes)
-            workflow_changed = _workflow_pending(result)
-            if not changes and not workflow_changed:
-                print("Settings unchanged — nothing written")
+            before = getattr(cfg, "_config_before", before)
+            if not _config_diff(_config_state(cfg), _config_state(result)) and not _workflow_pending(result):
+                print("No pending changes — earlier saves kept" if getattr(cfg, "_config_saved", False)
+                      else "Settings unchanged — nothing written")
                 return 0
-            after = _config_text(before, changes, current)
-            helper = _workflow()
-            sync = helper["propagation"]()
-            effective_after = _config_state(result)
-            main_settings = sync["settings_delta"](current, effective_after)
-            rebound = (sync["rebind_source"](_current_local_rc(), before, after, current, effective_after)
-                       if changes and not main_settings else None)
-            if workflow_changed or main_settings or rebound:
-                extra = []
-                if main_settings:
-                    extra, defaults_pending = sync["native_defaults"](main_settings)
-                    if defaults_pending:
-                        raise ValueError(defaults_pending)
-                if changes:
-                    target = Path(os.path.realpath(_current_local_rc()))
-                    local_before = helper["snapshot"](target)
-                    if (local_before[0] if local_before else "") != before:
-                        raise ValueError("local config changed while editing; retry")
-                    extra.append((target, local_before, after))
-                workflow_doc, workflow_before = (result._workflow_document, result._workflow_before) if workflow_changed else helper["load"]()
-                context = {"repos": result.repos, "hosts": getattr(result, "hosts", {})}
-                if main_settings:
-                    context["settings_source"] = {"path": os.path.realpath(_current_local_rc()), "hash": sync["digest"](after)}
-                elif rebound:
-                    context["settings_source"] = rebound
-                helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
-                               refresh_source=bool(rebound), propagation_context=context)
-            else:
-                _config_write(_current_local_rc(), before, after)
-            targets = _host_new_targets(cfg.hosts, result.hosts)
+            _, shell_changed, workflow_changed, targets = _config_persist_changes(cfg, result, before)
     except (OSError, ValueError) as exc:
         print(f"t config: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
-    if shell_changed:
-        try:
-            zsh_capture("_t_sync_config")
-            if result == "edit":
-                helper = _workflow()
-                sync = helper["propagation"]()
-                settings = sync["settings_delta"](initial_settings, _config_state(Config()))
-                if settings:
-                    extra, defaults_pending = sync["native_defaults"](settings)
-                    if defaults_pending:
-                        raise ValueError(defaults_pending)
-                    document, stored = helper["load"]()
-                    helper["save"](document, stored, extra, main_settings=settings,
-                                   propagation_context={"repos": cfg.repos, "hosts": getattr(cfg, "hosts", {}),
-                                                        "settings_source": {"path": os.path.realpath(_current_local_rc()),
-                                                                            "hash": sync["digest"](_config_read(_current_local_rc()))}})
-        except (OSError, ValueError) as exc:
-            print(f"t config: local settings saved; native defaults or propagation incomplete: {exc}", file=sys.stderr)
-            return 1
-    if workflow_changed:
-        print("✓ saved agent workflow and native instructions")
-    if not shell_changed:
-        return 0
-    print("✓ saved local settings to T_LOCAL_RC")
-    try:
-        _host_verify_offer(targets)
-    except (EOFError, KeyboardInterrupt):
-        print("Settings saved; SSH verification canceled.", file=sys.stderr)
-        return 130
-    if not os.environ.get("T_SETUP_SHIM"):
-        rc_file, rc_state = _shell_setup_helpers()["state"](HOME, os.environ)
-        if rc_state != "configured":
-            print("run `t doctor --repair`, then source the reported rc file to use these settings")
-        else:
-            print(f"run `source {shlex.quote(str(rc_file))}` (or open a new shell) to use these settings")
-    return 0
+    return _config_finish_save(cfg, result, initial_settings, shell_changed, workflow_changed, targets)
 
 
 class _RailUI:
@@ -13408,6 +13483,10 @@ EXAMPLES
   macOS Location permission and hotspot credentials. Save or discard hub edits first.
 
   Save changes reviews then writes a managed block in T_LOCAL_RC.
+
+  Local worker & models offers Review and save, then continue / Discard changes
+  and continue / Back when hub edits are pending. For example, change Codex effort,
+  open Local worker & models, then review and save to continue without restarting.
 
   New or changed SSH targets then offer Verify SSH now or Later; native OpenSSH asks
   before trusting keys.
