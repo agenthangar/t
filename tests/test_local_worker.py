@@ -441,7 +441,8 @@ def test_availability_tool_exposes_limits_without_snapshot(worker, repo, monkeyp
 @pytest.mark.parametrize('outcome,phase,expected_status,reason', [
     ('busy', None, 'busy', 'busy'), ('timed_out', 'queue', 'failed', 'queue_timeout'),
     ('timed_out', 'execution', 'timed_out', 'execution_timeout'),
-    ('failed', None, 'failed', 'failed'), (None, None, 'failed', 'failed')])
+    ('failed', None, 'failed', 'failed'), ('failed', None, 'completed', None),
+    (None, None, 'failed', 'failed')])
 def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monkeypatch, outcome, phase, expected_status, reason):
     worker.save_settings({'enabled': True, 'model': 'test'})
     original = worker.inference
@@ -461,7 +462,7 @@ def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monke
         (job / 'workspace/file.py').write_text('partial\n')
         progress.observed = {'completed_commands': 1, 'execution_seconds': 8}
         progress()
-        return 'cancelled'
+        return 'completed' if expected_status == 'completed' else 'failed' if outcome == 'failed' else 'cancelled'
     monkeypatch.setattr(worker, 'run_worker', run)
     manager = worker.Worker()
     task = manager.start({'workspace': str(repo), 'assignment': 'patch', 'mode': 'patch'})
@@ -469,7 +470,7 @@ def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monke
     result = manager.call('wait_task', {'task_id': task['task_id'], 'timeout_seconds': 1})
     # wait_task returns the durable terminal task directly.
     assert result['status'] == expected_status
-    assert result['failure_reason'] == reason and result['partial_patch_available']
+    assert result.get('failure_reason') == reason and result['partial_patch_available']
     assert '+partial' in result['patch'] and result['completed_commands'] == 1
     assert result['queue_seconds'] == 2 and result['loading_seconds'] == 3
     if outcome is None: assert result['error'] == 'Runtime connection lost'

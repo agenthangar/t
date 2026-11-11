@@ -253,10 +253,17 @@ def test_automatic_memory_contention_returns_busy_without_retry(manager, monkeyp
     engine = manager.Engine(Providers)
     lease = automatic(engine)
     class WaitingForMemory(ValueError): pass
-    monkeypatch.setattr(engine.providers, 'get', lambda *a: (_ for _ in ()).throw(WaitingForMemory('memory busy')))
-    engine.thread.start()
+    calls = []
+    def unavailable(*args):
+        calls.append(args)
+        raise WaitingForMemory('memory busy')
+    monkeypatch.setattr(engine.providers, 'get', unavailable)
     job = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    second = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    engine.thread.start()
     assert job['done'].wait(2) and job['state'] == 'busy'
+    assert second['done'].wait(2) and second['state'] == 'busy'
+    assert len(calls) == 1
     assert engine.client_status(engine.clients[lease['id']])['outcome'] == 'busy'
     assert engine.providers.loaded == 0
     engine.close()
@@ -384,8 +391,8 @@ def test_maintenance_reports_execution_deadline_without_cancelling_other_client(
     engine.close()
 
 
-@pytest.mark.parametrize('kind,stopped', [('worker', True), ('session', False)])
-def test_worker_busy_heartbeat_does_not_change_native_sessions(manager, monkeypatch, kind, stopped):
+@pytest.mark.parametrize('kind,outcome,stopped', [('worker', 'busy', True), ('session', 'busy', False), ('worker', 'failed', False)])
+def test_worker_busy_heartbeat_does_not_change_native_sessions(manager, monkeypatch, kind, outcome, stopped):
     client = manager.Client(chosen(), kind)
     class Once:
         count = 0
@@ -393,9 +400,31 @@ def test_worker_busy_heartbeat_does_not_change_native_sessions(manager, monkeypa
             self.count += 1
             return self.count > 1
     client.closed = Once()
-    monkeypatch.setattr(client, 'call', lambda action: {'state': 'working', 'outcome': 'busy'})
+    monkeypatch.setattr(client, 'call', lambda action: {'state': 'working', 'outcome': outcome})
     client.heartbeat()
     assert client.cancel_event.is_set() is stopped
+
+
+def test_recovered_provider_failure_does_not_poison_later_requests(manager):
+    engine = manager.Engine(Providers)
+    lease = register(engine)
+    client = engine.clients[lease['id']]
+    first = engine.submit(client, '/v1/responses', {}, handler())
+    engine.finish(first, 'failed', 'Provider rejected the request (HTTP 500)')
+    assert engine.client_status(client)['outcome'] == 'failed'
+    second = engine.submit(client, '/v1/responses', {}, handler())
+    assert engine.client_status(client)['outcome'] is None
+    engine.finish(second, 'completed')
+    assert engine.client_status(client)['outcome'] is None
+    # A budget failure is terminal for a worker even if its native client retries.
+    third = engine.submit(client, '/v1/responses', {}, handler())
+    third['timeout_phase'] = 'queue'
+    engine.finish(third, 'timed_out', 'Queue budget expired')
+    with pytest.raises(ValueError, match='task has ended'):
+        engine.submit(client, '/v1/responses', {}, handler())
+    view = engine.client_status(client)
+    assert view['outcome'] == 'timed_out' and view['timeout_phase'] == 'queue'
+    engine.close()
 
 
 @pytest.mark.parametrize('reason', ['legacy', 'loading'])

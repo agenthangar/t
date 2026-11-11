@@ -369,13 +369,14 @@ class Engine:
         # Concurrent requests can overlap: exclude wall time once, never per request.
         wait = duration((j['created'], j.get('execution_started') or j.get('finished') or now) for j in jobs)
         queue = duration((j['created'], j.get('started') or j.get('finished') or now) for j in jobs)
-        failure = next((j for j in reversed(jobs) if j['state'] in ('busy', 'failed', 'timed_out')), None)
+        latest = jobs[-1] if jobs else None
+        failure = latest if latest and latest['state'] in ('busy', 'failed', 'timed_out') else None
         return dict(id=client['id'], protocol=VERSION, model=client['chosen']['model'], provider=client['chosen']['provider'],
                     state=current['state'] if current else 'working', wait_seconds=wait,
                     queue_seconds=queue, loading_seconds=max(0, wait - queue),
                     outcome=client.get('outcome') or (failure['state'] if failure else None),
                     failure_reason=client.get('failure_reason') or (failure.get('error') if failure else None),
-                    timeout_phase=failure.get('timeout_phase') if failure else None,
+                    timeout_phase=client.get('timeout_phase') or (failure.get('timeout_phase') if failure else None),
                     request_ids=[j['id'] for j in jobs][-200:],
                     generation_events=client.get('generation_events', 0),
                     request_id=current['id'] if current else None, identity_verified=client.get('identity_verified', False),
@@ -607,9 +608,11 @@ class Engine:
         with self.condition:
             if client.get('interrupted'):
                 raise ValueError('This local worker was interrupted for a model test')
+            if client.get('outcome') in ('busy', 'timed_out'):
+                raise ValueError('Local task has ended; lead continuing')
             if client.get('fail_fast'):
                 admission = self.availability(client['id'])
-                if client.get('outcome') == 'busy' or admission['state'] != 'available':
+                if admission['state'] != 'available':
                     client.update(outcome='busy', failure_reason=admission['reason'])
                     raise ValueError('Local runtime busy; lead continuing')
             if self.blocked:
@@ -636,6 +639,9 @@ class Engine:
         if job.get('timeout_phase') and state == 'cancelled':
             state, error = 'timed_out', job['timeout_phase'].capitalize() + ' budget expired'
         job.update(state=state, finished=time.time(), error=error)
+        client = self.clients.get(job['client'])
+        if client and client['kind'] == 'worker' and state in ('busy', 'timed_out'):
+            client.update(outcome=state, failure_reason=error, timeout_phase=job.get('timeout_phase'))
         job.pop('payload', None)
         job.pop('connection', None)
         job.pop('upstream_socket', None)
@@ -666,6 +672,11 @@ class Engine:
                     continue
                 self.active = job
             try:
+                client = self.clients.get(job['client'])
+                if client and client.get('outcome') in ('busy', 'timed_out'):
+                    job['timeout_phase'] = client.get('timeout_phase')
+                    self.finish(job, client['outcome'], client.get('failure_reason'))
+                    continue
                 if not self.legacy_lock():
                     if self.clients.get(job['client'], {}).get('fail_fast'):
                         self.finish(job, 'busy', 'An older worker holds the shared runtime lock')
@@ -1064,7 +1075,7 @@ class Client:
                     self.call('close')
                     return
                 self.last = self.call('heartbeat')
-                if self.last.get('interrupted') or (self.kind == 'worker' and self.last.get('outcome') in ('busy', 'timed_out', 'failed')):
+                if self.last.get('interrupted') or (self.kind == 'worker' and self.last.get('outcome') in ('busy', 'timed_out')):
                     self.cancel_event.set()
                 if self.activity:
                     state = self.last['state']

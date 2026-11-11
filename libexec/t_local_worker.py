@@ -529,8 +529,8 @@ class Worker:
                         if client.error:
                             task['error'] = client.error
                             status = 'failed'
-                        if client.last.get('outcome'):
-                            outcome = client.last['outcome']
+                        outcome = client.last.get('outcome')
+                        if outcome in ('busy', 'timed_out') or (outcome == 'failed' and status == 'failed'):
                             phase = client.last.get('timeout_phase') or 'queue'
                             status = 'busy' if outcome == 'busy' else 'timed_out' if outcome == 'timed_out' and phase == 'execution' else 'failed'
                             task['failure_reason'] = phase + '_timeout' if outcome == 'timed_out' else outcome
