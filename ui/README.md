@@ -45,6 +45,25 @@ Group the main workflow editor into Models, Behavior and Manage using shared
 RailUI sections. Use this workflow stays above the groups. Keep focus on the
 selected row when returning, including after a reset; headings are not selectable.
 
+Named workflow editors include Repositories directly below Use this workflow.
+Group registered repositories into Using this workflow and Other repositories,
+including inherited global assignments without materializing them. Distinguish
+explicit assignments, inheritance, custom inline settings, exclusions and disabled
+definitions. Assign repositories uses the shared multi-picker with no initial
+marks; Space marks and Enter stages the entire selection. Back cancels those marks.
+Already using this workflow is omitted from the batch picker; no registered or
+available repositories is an explicit disabled-action state, never an empty picker.
+Individual repository actions offer this workflow, global inheritance, another
+workflow, disable, and the existing design-source picker.
+
+Assignments remain tool-scoped in the existing transaction. Use the shared action
+semantics: explicit assignment replaces custom overrides and clears exclusion,
+while retaining the design source. Build batches before replacing staged state.
+Refresh membership and preserve focus on return; all assignment changes appear in
+the final before/after review. Browsing never scans repositories or writes settings.
+An explicit Design system choice opens the existing read-only discovery picker.
+These extend the existing workflow wizard/single/multiple-selection modes.
+
 Every settings page offers Reset to defaults, and individual selectors offer a
 resolved default or inheritance choice, including binary toggles. The multiple-model
 checklist offers an exclusive Use default preset alongside the exclusive one-model
@@ -1335,6 +1354,10 @@ without pickers, OS service registration, remediation or update prompts.
 `t config local` and the settings hub's **Local worker & models** entry use the
 shared Rail UI to review prerequisite installation, model downloads, and Codex MCP
 registration. Pending hub edits must be saved or discarded before opening setup.
+Clear the hub's painted frame before handing off to setup. Keep the current
+delegation state, provider and exact configured model inside the local-worker
+menu, not in a completed-step notice. Model selection starts on that worker's
+provider/model identity. Browsing and cancelling never change worker settings.
 `t config local --model NAME --yes` applies explicit setup without prompting;
 `--disable --yes` disables delegation while retaining models and registration.
 `t config local --show` is a read-only detail mode: no server startup, download,
@@ -1415,24 +1438,68 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **On cloud connection failure** stages Pause and retry (default), Ask which local
-model, or Continue locally with selected model. Only new native CLI launches opt into the
-owned runtime supervisor; the native client supplies progress and approvals.
-The transition displays the connection-failure reason, exact provider/model and
-private checkpoint path, then stays local. It never downloads weights or treats
-authentication, quota, HTTP application failures, auxiliary threads or cancellation
-as an outage. Unsupported resume/fork/exec/review or remote/profile/OSS/worktree
-overrides fail before launch and explain how to select Pause. These are conditional
-launch modes, not new public command families. These are staged workflow choices. The shared model picker keeps
-Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
-and inspectable; disabled Use/Install actions explain why and never execute.
-Benchmark suite selection is explicit; missing scores and speed are not invented.
-Every model list follows the model comparison summary contract below; do not hide
-all benchmark context in model details.
-Installation and measurement are explicit immediate actions with model selection;
-model download review precedes installation. `t config models show` is read-only;
-`install` and `measure` are direct explicit-artifact actions. `--download-only`
-does not claim inference readiness. No list/show mode starts a runtime or picker.
+task limit (15 minutes by default), maximum task limit (30 minutes), inactivity
+timeout (5 minutes) and queue wait (5 minutes). Reset time limits changes only
+these four values. **Cloud connection failure** opens grouped Cloud retries and Local
+fallback settings: **Retry cloud for** defaults to **Up to 5 minutes**, with
+15 seconds, 30 seconds, 1 minute, 2 minutes and 5 minutes available. **Then**
+defaults to **Pause**; **Continue locally** reveals the selected local model and
+readiness with direct access to its existing verification actions. Reset on this
+page changes only retry duration and the after-retries action; it preserves the
+model, context and task budget. All settings use the shared review/save/discard
+transaction, including completed changes before interruption. Readiness checks,
+installation and verification remain explicit immediate machine actions.
+
+The owned runtime supervisor observes native transport retries without replaying
+whole turns or replacing native backoff. The configured limit starts at the first
+typed connection failure; native exhaustion can end retries sooner. Recovery
+resets the clock. Pause interrupts only the owned cloud turn and retains the
+native client; successful interrupt acknowledgement confirms the paused state.
+A rejected or unacknowledged interrupt stops the owned runtime instead of claiming
+that it paused. Local fallback stops all owned cloud processes before starting a
+fresh local session from the bounded private checkpoint, displaying provider/model
+and checkpoint path. It stays local until the user starts a cloud session.
+Unavailable readiness or incomplete checkpoints pause the cloud turn visibly.
+It never downloads weights or treats authentication, quota, HTTP application
+failures, auxiliary threads or cancellation as an outage. Only fresh native CLI
+launches without remote/profile/OSS/worktree overrides support supervision.
+Unsupported resume/fork/exec/review or overridden launches reject local fallback;
+Pause launches use native retry behavior and explicitly report that the configured
+retry limit is unavailable. Local-only workflows disable this cloud settings row.
+These are conditional launch modes, not new public command families.
+The model chooser uses the shared RailUI comparison table with identity, size,
+provider, memory fit, readiness and a sourced benchmark score. Prefer SWE Pro when
+available, otherwise another published suite; show missing scores as —. A shared
+legend retains suite/version and base-model provenance. Number keys open the
+available publisher source/version/harness for the focused model; m opens optional
+model tools. Scores remain original-model publisher results, never local
+quantization or speed measurements.
+
+Model labels, metadata and actions align at the shared row text column. Wide
+terminals align numeric comparison columns; narrow terminals shorten labels and
+omit the same optional columns for every model, preserving one line per model. Keep the cursor and navigation inside the existing
+windowed frame. Distinguish the configured model from keyboard focus and disambiguate
+provider/model identities. Context includes file state, verification context and
+the next Enter action. Missing configured models, empty discovery and discovery
+errors have explicit refresh/back states. Browsing never downloads or loads models.
+
+Enter on a ready model stages its exact provider/model and returns to the workflow.
+Otherwise show one preparation screen: Verify & use for downloaded files, or
+Download, verify & use with size and location before downloading. Reuse existing
+reservation, context/hardware validation and runtime guardrails. Stage only after
+a refreshed exact-identity catalogue row confirms readiness. Failure, busy runtime,
+missing refreshed identity and cancellation preserve the workflow selection and
+retain downloaded files. Retries require another explicit choice. Compatibility
+or disk-space blocks show their reason and return to choosing another model.
+Use default and resets remain configuration-only and do not run/download a model.
+
+`t config models show` remains read-only; install and measure are explicit-artifact
+actions. `--download-only` does not claim inference readiness. No list/show mode
+starts a runtime or picker. Workflow configuration keeps its existing staged
+review/save/discard transaction; preparation is an explicit immediate machine action.
+
+Retain **Ask which local model** alongside Pause and Continue locally. Preserve
+queue wait, owned model unloading and cloud-return recovery from main.
 
 ## Standalone companion: nosleep
 
@@ -1459,12 +1526,40 @@ sleep hold is taken; subsequent checks run approximately every 10 seconds.
 
 `t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
 returning to the hub afterward. Save or discard hub edits before opening the
-independently saved editor. Blank, nonselectable rail rows separate its sections.
-Nearby-network selection includes refresh, the saved network and manual entry.
-Explicit **Enable network discovery** builds the local CoreWLAN/CoreLocation app
-and requests Location permission; browsing and monitoring never request it.
-Password setup stays pending until review, then uses a private Keychain prompt.
+independently saved editor. On close, Automatic checks, Battery protection,
+Hotspot fallback and nested Retries share one staged transaction and retained
+focus. Blank nonselectable rail rows separate groups.
+
+Choose fallback starts with saved Wi-Fi names from narrowly scoped Keychain
+metadata. Opening it never scans or reads passwords. Nearby networks is a
+separate page; explicit Allow Wi-Fi discovery builds the CoreWLAN/CoreLocation
+helper and requests Location access. Scan progress and bounded timeouts remain
+visible. Both lists filter inline as the user types; arrows/Return navigate,
+Backspace edits, Esc clears then backs out, Ctrl-H optionally hides connected.
+Connected networks are visible initially and labeled on their selectable row.
+No separate Search or Filters section precedes the choices.
+
+Manual entry immediately prompts privately for a password, or offers a matching
+saved credential. Stage the candidate only after this step succeeds. Cancel
+retains the previous fallback; save errors retain the draft. Secrets stay out of
+JSON, argv, files, logs and review; explicit Save alone writes the selected
+credential to the nosleep Keychain service. Clearing a fallback disables it and
+drops its pending credential, never deleting known Wi-Fi or Keychain entries.
 `nosleep hotspot setup` remains a compatibility route.
+
+Hotspot retry limits offer elapsed time (60 minutes for new defaults) or total
+attempts, with 300 seconds between attempts and a 30-second attempt timeout.
+The window begins with the first attempt and includes cooldowns; attempts never
+overlap. Recovery resets the window; expiry returns to normal sleep checks.
+Legacy configured fallback retains its bounded attempt limit. Battery protection
+still overrides hotspot holds and `--forever`.
+
+The Local inference hub shows a compact worker/selected-model summary and puts
+Configure before Inspect. Runtime details retains endpoints, scheduler policy,
+loaded-model ownership and memory estimates without crowding the overview.
+Models, providers, machine settings, worker setup, requests and monitoring remain
+reachable even when the manager is unavailable. Workflow inference and its task,
+inactivity and queue budgets remain workflow-scoped.
 
 The runtime observes the selected SSID asynchronously even when fallback or
 checks are disabled. The dashboard separates fallback policy from association and
@@ -1556,7 +1651,7 @@ different evaluation methods and narrow terminal sizes with labeled sample data.
 
 ### Workflow model overview
 
-The existing local-model single-selection mode opens a compact RailUI overview
+The optional local-model tools view opens a compact RailUI overview
 with model identity, readiness, file size, memory fit, context and the next action.
 Use shared nonselectable context rows and the shared viewport; keep the focused
 action and footer visible at 80×24, 44×20 and 32×12. Include the same concise

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Machine defaults for nosleep. The file is data, never shell code."""
 
+import getpass
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import tempfile
 import termios
 import tty
 import unicodedata
+import warnings
 
 
 
@@ -36,6 +38,10 @@ DEFAULTS = {
     "hotspot_timeout": 30,
     "battery_protection": False,
     "battery_below": 20,
+    "hotspot_attempts": 3,
+    "hotspot_retry_delay": 300,
+    "hotspot_retry_mode": "duration",
+    "hotspot_retry_minutes": 60,
 }
 LABELS = {
     "dim": "Display when lid closes",
@@ -51,9 +57,13 @@ LABELS = {
     "battery_protection": "Battery protection",
     "battery_below": "Exit below",
     "hotspot": "Hotspot fallback",
-    "hotspot_ssid": "Hotspot Wi-Fi name",
+    "hotspot_ssid": "Hotspot network",
     "hotspot_after": "Hotspot outage delay",
-    "hotspot_timeout": "Hotspot attempt limit",
+    "hotspot_retry_mode": "Retry limit",
+    "hotspot_retry_minutes": "Retry for (minutes)",
+    "hotspot_attempts": "Hotspot attempts",
+    "hotspot_retry_delay": "Hotspot retry delay",
+    "hotspot_timeout": "Hotspot attempt timeout",
 }
 
 
@@ -77,6 +87,11 @@ def validate(data):
         raise ValueError("unknown setting: " + ", ".join(sorted(unknown)))
     result = DEFAULTS.copy()
     result.update(data)
+    # Do not silently extend the hold for an existing configured fallback.
+    if 'hotspot_retry_mode' not in data and (data.get('hotspot') or 'hotspot_attempts' in data):
+        result['hotspot_retry_mode'] = 'attempts'
+    if result['hotspot_retry_mode'] not in ('attempts', 'duration'):
+        raise ValueError('hotspot_retry_mode must be attempts or duration')
     for key in ("dim", "display_on", "lock", "forever", "agent", "internet", "hotspot", "battery_protection"):
         if type(result[key]) is not bool:
             raise ValueError(f"{key} must be true or false")
@@ -87,7 +102,9 @@ def validate(data):
     limits = {"grace": (0, None), "every": (1, None),
               "retries": (0, 10), "backoff": (1, 300),
               "hotspot_after": (0, 2147483647), "hotspot_timeout": (1, 300),
-              "battery_below": (1, 100)}
+              "battery_below": (1, 100),
+              "hotspot_attempts": (1, 10), "hotspot_retry_delay": (1, 300),
+              "hotspot_retry_minutes": (1, 1440)}
     for key, (minimum, maximum) in limits.items():
         value = result[key]
         if type(value) is not int or value < minimum or (maximum is not None and value > maximum):
@@ -190,9 +207,13 @@ def describe(values):
         f"  Below     {_choice('battery_below', values)}",
         "", "Hotspot fallback",
         f"  Hotspot   {_choice('hotspot', values)}",
-        f"  Wi-Fi     {values['hotspot_ssid'] or 'Not configured; run nosleep hotspot setup'}",
+        f"  Wi-Fi     {values['hotspot_ssid'] or 'Not configured; choose Hotspot network in t config → Nosleep'}",
         f"  Delay     {values['hotspot_after']}s of continuous outage",
-        f"  Limit     {values['hotspot_timeout']}s per attempt",
+        f"  Limit     {_choice('hotspot_retry_mode', values)}",
+        (f"  Window    {values['hotspot_retry_minutes']}m from first attempt" if values['hotspot_retry_mode'] == 'duration'
+         else f"  Attempts  {values['hotspot_attempts']} total (including first try)"),
+        f"  Retry     {values['hotspot_retry_delay']}s between attempts",
+        f"  Timeout   {values['hotspot_timeout']}s per attempt",
     ]
 
 
@@ -208,7 +229,12 @@ def key():
             if ready:
                 return {b"A": "up", b"B": "down"}.get(os.read(sys.stdin.fileno(), 1), "esc")
         return "esc"
-    return {b"\r": "enter", b"\n": "enter", b"\x03": "cancel"}.get(char, char.decode("utf-8", "ignore"))
+    if char and char[0] >= 0xc0:
+        size = 2 if char[0] < 0xe0 else 3 if char[0] < 0xf0 else 4
+        for _ in range(size - 1):
+            char += os.read(sys.stdin.fileno(), 1)
+    return {b"\r": "enter", b"\n": "enter", b"\x03": "cancel",
+            b"\x08": "hide", b"\x7f": "backspace", b"": "cancel"}.get(char, char.decode("utf-8", "ignore"))
 
 
 class Rail:
@@ -233,7 +259,7 @@ class Rail:
     def commit(self, lines):
         self.ui.commit(lines)
 
-    def frame(self, title, body, focus, pending=0, hint="↑↓/jk move · enter change · q back", flash="", primary="s  SAVE CHANGES", sections=None):
+    def frame(self, title, body, focus, pending=0, hint="↑↓/jk move · enter change · q back", flash="", primary="s  SAVE CHANGES", sections=None, details=None):
         display = []
         label_width = max((len(label) for _, label, _ in body), default=0)
         for index, (name, label, value) in enumerate(body):
@@ -244,6 +270,9 @@ class Rail:
                 display.append((self.ui.section(section), None))
             display.extend((line, index) for line in self.ui.row(
                 label, value, selected=index == focus, label_width=label_width))
+            for detail_label, detail_value in (details or {}).get(name, []):
+                display.extend((line, None) for line in self.ui.row(
+                    detail_label, detail_value, selected=False, label_width=label_width))
         action = None
         if primary:
             parts = primary.split(maxsplit=1)
@@ -271,15 +300,15 @@ class Rail:
             return value, str(exc)
 
     def prompt_ssid(self, value):
-        self.commit(["  ◇  Hotspot Wi-Fi name (password will be requested when saving)", "  │"])
+        self.commit(["  ◇  Hotspot Wi-Fi name · password next", "  │"])
         termios.tcsetattr(self.fd, termios.TCSADRAIN, self.original)
         sys.stdout.write("\x1b[?25h")
         sys.stdout.flush()
         try:
-            entered = input("      Wi-Fi name (blank keeps current): ")
-            return validate_ssid(entered) if entered else value, ""
+            entered = input("      Wi-Fi name (blank cancels): ")
+            return validate_ssid(entered) if entered else None, ""
         except (EOFError, KeyboardInterrupt):
-            return value, ""
+            return None, ""
         except ValueError as exc:
             return value, str(exc)
         finally:
@@ -288,55 +317,188 @@ class Rail:
             sys.stdout.flush()
 
 
-def network_picker(ui, current):
-    from nosleep_wifi import observe, MESSAGES
-    ui.commit(['  ◇  Scanning nearby networks…'])
-    data = observe()
-    while True:
-        rows = [(str(i), row['ssid']) for i, row in enumerate(data['networks'])]
-        values = {str(i): ('connected' if row['ssid'] == data['current'] else f"{row['rssi']} dBm")
-                  for i, row in enumerate(data['networks'])}
-        if current and not any(row['ssid'] == current for row in data['networks']):
-            rows.insert(0, ('current', current))
-            values['current'] = 'configured · not observed'
-        rows += [('refresh', 'Refresh networks'), ('authorize', 'Enable network discovery'),
-                 ('manual', 'Enter Wi-Fi name manually'), ('back', 'Back')]
-        picked = ui.ui.pick(MESSAGES[data['state']], rows, values=values)
-        if picked in (None, 'back'):
-            return current
-        if picked == 'current':
-            return current
-        if picked == 'manual':
-            selected, error = ui.prompt_ssid(current)
-            if not error:
-                return selected
-            ui.commit(['  ◇  ' + error])
-            continue
-        if picked in ('refresh', 'authorize'):
-            ui.commit(['  ◇  ' + ('Setting up network discovery…' if picked == 'authorize' else 'Scanning nearby networks…')])
-            ui.stop()
-            try:
-                data = observe(authorize=picked == 'authorize')
-            except ValueError as exc:
-                ui.commit(['  ◇  ' + str(exc)])
-            finally:
-                ui.start()
-        else:
-            return data['networks'][int(picked)]['ssid']
-
-
-def store_password(ui, ssid):
-    from nosleep_hotspot import save_password, HotspotError
-    ui.commit(['  ◇  Save hotspot password in Keychain', ''])
+def prompt_password(ui, ssid):
+    """Collect a secret privately now; only Review → Save may persist it."""
+    ui.commit(['  ◇  Hotspot password · ' + ssid, ''])
     ui.stop()
     try:
-        save_password(ssid)
-        ui.commit(['  ◇  Hotspot password saved in Keychain', ''])
-        return ''
-    except (HotspotError, OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
-        return 'Password was not saved; configuration unchanged. Retry or cancel.'
+        while True:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', getpass.GetPassWarning)
+                password = getpass.getpass('      Password (blank cancels): ')
+            if not password:
+                return None
+            try:
+                encoded = password.encode('utf-8')
+                valid = len(encoded) <= 1024 and not any(c in encoded for c in (b'\0', b'\n', b'\r'))
+            except UnicodeEncodeError:
+                valid = False
+            if valid:
+                return password
+            ui.commit(['  ◇  Enter a password of at most 1024 bytes without line breaks or NUL.', ''])
+    except (EOFError, KeyboardInterrupt):
+        return None
+    except (getpass.GetPassWarning, OSError):
+        ui.commit(['  ◇  Private password entry unavailable; try again in a terminal.', ''])
+        return None
     finally:
         ui.start()
+
+
+def credential_choice(ui, ssid, saved, *, choose=False):
+    source = next((row['source'] for row in saved if row['ssid'] == ssid), None)
+    if source and choose:
+        picked = ui.ui.pick('Hotspot password', [('saved', 'Use saved password'),
+                            ('new', 'Enter a new password'), ('back', 'Back')],
+                            values={'saved': 'Keychain', 'new': 'Store in Keychain on save'})
+        if picked in (None, 'back'):
+            return None
+        if picked == 'new':
+            source = None
+    if source:
+        return {'ssid': ssid, 'source': source, 'password': None}
+    password = prompt_password(ui, ssid)
+    return {'ssid': ssid, 'source': None, 'password': password} if password is not None else None
+
+
+def network_picker(ui, current):
+    """Browse saved names first. Nearby discovery is an explicit separate page."""
+    from nosleep_credentials import saved_networks
+    from nosleep_wifi import observe, message
+
+    def progress(phase, elapsed):
+        title, detail, limit = {
+            'preparing': ('Preparing Wi-Fi discovery…', 'Setting up access', 120),
+            'checking': ('Checking Wi-Fi access…', 'Waiting for macOS', None),
+            'permission': ('Allow Location access to find nearby Wi-Fi', 'Approve the macOS prompt', 120),
+            'scanning': ('Scanning nearby Wi-Fi…', 'Location access granted', 30),
+        }[phase]
+        duration = f'{elapsed}s · up to {limit}s' if limit else f'{elapsed}s'
+        ui.frame(title, [('progress', detail, duration)], 0, hint='Ctrl-C cancel', primary='')
+
+    saved = saved_networks()
+    ui.wifi_current = saved.get('current') or getattr(ui, 'wifi_current', '')
+    page = 'saved'
+    data = None
+    queries = {'saved': '', 'nearby': ''}
+    focuses = {'saved': 0, 'nearby': 0}
+    hidden_connected = {'saved': False, 'nearby': False}
+    flash = ''
+    while True:
+        snapshot = saved if page == 'saved' else data
+        query = queries[page]
+        connected = snapshot.get('current') or getattr(ui, 'wifi_current', '')
+        networks = snapshot.get('networks', [])
+        shown = [(str(i), row) for i, row in enumerate(networks)
+                 if query.casefold() in row['ssid'].casefold()
+                 and not (hidden_connected[page] and row['ssid'] == connected)]
+        rows = [(i, row['ssid'], ' · '.join(filter(None, [
+                    'Selected fallback' if row['ssid'] == current else '',
+                    'Connected' if row['ssid'] == connected else '',
+                    'Saved password' if page == 'saved' else f"{row['rssi']} dBm"])))
+                for i, row in shown]
+        sections = {rows[0][0]: 'SAVED WI-FI NETWORKS' if page == 'saved' else 'NEARBY NETWORKS'} if rows else {}
+        status = []
+        if page == 'saved':
+            if saved['state'] != 'ok':
+                status.append('Saved network names unavailable · check Keychain access')
+            elif not networks:
+                status.append('No saved networks found')
+            rows += [('saved_refresh', 'Try saved networks again', None)] if saved['state'] != 'ok' else []
+            rows += [('nearby', 'Nearby networks…', 'Scan live Wi-Fi')]
+            sections['nearby'] = 'OTHER OPTIONS'
+        else:
+            needs_access = data['state'] in ('setup', 'permission') or data.get('reason') == 'access_timeout'
+            status.append(message(data))
+            if data['state'] != 'unsupported':
+                action = 'authorize' if needs_access else 'refresh'
+                label = ('Allow Wi-Fi discovery' if needs_access else
+                         'Refresh networks' if data['state'] == 'ok' else 'Check Wi-Fi access again')
+                rows += [(action, label, 'macOS Location permission' if needs_access else None)]
+                sections[action] = 'WI-FI ACCESS'
+        if not shown and networks:
+            status.append('No matching networks · Esc clears the filter')
+        status += [f"Connected: {connected or 'unknown'} · Saved fallback: {current or 'none'}",
+                   f"{len(shown)} shown · {len(networks) - len(shown)} hidden" +
+                   (f' · Filter: {query}' if query else '')]
+        rows += [('manual', 'Enter Wi-Fi name manually', None),
+                 ('clear', 'Clear fallback', 'Disable fallback · keep saved Wi-Fi'),
+                 ('back', 'Back to hotspot settings' if page == 'saved' else 'Back to saved networks', None)]
+        sections.setdefault('manual', 'OTHER OPTIONS')
+        focuses[page] = min(focuses[page], len(rows) - 1)
+        ui.frame('Choose fallback' if page == 'saved' else 'Nearby Wi-Fi networks', rows,
+                 focuses[page], hint='↑↓ move · enter select · type to filter · Esc back · Ctrl-H hide connected',
+                 flash=flash or ' · '.join(status), primary='', sections=sections)
+        flash = ''
+        pressed = key()
+        if pressed in ('up', 'down'):
+            focuses[page] = (focuses[page] + (1 if pressed == 'down' else -1)) % len(rows)
+            continue
+        if pressed == 'hide':
+            hidden_connected[page] = not hidden_connected[page]
+            focuses[page] = 0
+            continue
+        if pressed == 'backspace':
+            queries[page] = query[:-1]
+            focuses[page] = 0
+            continue
+        if pressed == 'esc' and query:
+            queries[page] = ''
+            focuses[page] = 0
+            continue
+        if pressed == 'cancel':
+            return None
+        if pressed == 'esc':
+            picked = 'back'
+        elif pressed == 'enter':
+            picked = rows[focuses[page]][0]
+        elif len(pressed) == 1 and unicodedata.category(pressed)[0] != 'C':
+            queries[page] += pressed
+            focuses[page] = 0
+            continue
+        else:
+            continue
+        if picked == 'back':
+            if page == 'saved':
+                return None
+            page = 'saved'
+        elif picked == 'clear':
+            return {'ssid': '', 'source': None, 'password': None}
+        elif picked == 'manual':
+            ssid, error = ui.prompt_ssid(current)
+            if error:
+                flash = error
+            elif ssid is not None:
+                candidate = credential_choice(ui, ssid, saved['networks'], choose=True)
+                if candidate is not None:
+                    return candidate
+        elif picked == 'saved_refresh':
+            saved = saved_networks()
+            ui.wifi_current = saved.get('current') or getattr(ui, 'wifi_current', '')
+        elif picked in ('nearby', 'refresh', 'authorize'):
+            try:
+                data = observe(authorize=picked == 'authorize', progress=progress)
+                ui.wifi_observation = data
+                ui.wifi_current = data.get('current', '')
+                page = 'nearby'
+            except ValueError:
+                flash = 'Wi-Fi discovery unavailable; retry or enter a name manually'
+            except KeyboardInterrupt:
+                return None
+        else:
+            row = networks[int(picked)]
+            candidate = credential_choice(ui, row['ssid'], saved['networks'])
+            if candidate is not None:
+                return candidate
+
+
+def store_password(ui, ssid, *, password=None, source=None):
+    from nosleep_credentials import save_credentials
+    try:
+        save_credentials(ssid, password=password, source=source)
+        return ''
+    except (ValueError, OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
+        return 'Password was not saved; changes remain pending. Retry or cancel.'
 
 
 def display_mode(values):
@@ -360,9 +522,15 @@ def _choice(name, values):
     if name == "hotspot":
         return ("on" if value else "off") + (" (inactive)" if not monitoring(values) or not values["internet"] else "")
     if name == "hotspot_ssid":
-        return value or "select a nearby network"
+        return value or "none · choose or enter a Wi-Fi name"
     if name.startswith("hotspot_"):
-        return f"{value}s" + (" (inactive)" if not values["hotspot"] or not monitoring(values) or not values["internet"] else "")
+        if name == 'hotspot_retry_mode':
+            text = 'Elapsed time' if value == 'duration' else 'Number of attempts'
+        elif name == 'hotspot_retry_minutes':
+            text = f'{value}m from first attempt'
+        else:
+            text = f"{value} total · includes first try" if name == 'hotspot_attempts' else f"{value}s"
+        return text + (" (inactive)" if not values["hotspot"] or not monitoring(values) or not values["internet"] else "")
     inactive = not monitoring(values)
     return f"{value}{'s' if name != 'retries' else ''}" + (" (inactive)" if inactive else "")
 
@@ -375,151 +543,203 @@ def changed(name, before, after):
     return before[name] != after[name]
 
 
-def menu(values):
+def visible_names(values):
+    hidden = 'hotspot_attempts' if values['hotspot_retry_mode'] == 'duration' else 'hotspot_retry_minutes'
+    return [name for name in LABELS if name != hidden]
+
+
+def page_names(page, values):
+    if page == 'on_close':
+        return ['dim', 'lock']
+    if page == 'checks':
+        return ['forever', 'agent', 'internet', 'requirement', 'grace', 'every', 'retries', 'backoff']
+    if page == 'battery':
+        return ['battery_protection', 'battery_below']
+    if page == 'hotspot':
+        return ['hotspot', 'hotspot_ssid', 'retry', 'hotspot_after', 'password', 'remove_hotspot', 'save']
+    if page == 'retry':
+        return ['hotspot_retry_mode', 'hotspot_retry_minutes' if values['hotspot_retry_mode'] == 'duration'
+                else 'hotspot_attempts', 'hotspot_retry_delay', 'hotspot_timeout']
+    return ['on_close', 'checks', 'battery', 'hotspot', 'defaults', 'save']
+
+
+def availability(ui, ssid):
+    if not ssid:
+        return 'No saved network'
+    if getattr(ui, 'wifi_current', '') == ssid:
+        return 'Connected now'
+    observation = getattr(ui, 'wifi_observation', None)
+    if observation and observation['state'] == 'ok':
+        return ('Available nearby' if any(row['ssid'] == ssid for row in observation['networks'])
+                else 'Not seen in last scan')
+    return 'Unknown · open Nearby networks to check'
+
+
+def menu(values, *, before_save=None, save_values=None, on_credentials_saved=None):
     edited = values.copy()
-    names = list(LABELS) + ["password", "discovery", "defaults", "save", "cancel"]
-    password_pending = False
-    selected = 0
+    credentials = None
+    page, stack = 'hub', []
+    focuses = {}
     ui = Rail()
     sys.stdout.write("\n  nosleep config\n      Settings for this Mac · changes stay pending until saved.\n\n")
     ui.start()
     try:
-        flash = ""
+        flash = ''
         while True:
-            pending = sum(changed(name, values, edited) for name in LABELS) + int(password_pending)
-            body = [(name, LABELS[name], _choice(name, edited)) for name in LABELS]
-            body += [("password", "Set/change hotspot password", "on save" if password_pending else "Keychain"),
-                     ("discovery", "Enable network discovery", "macOS Location permission"),
-                     ("defaults", "Restore defaults", None),
-                     ("save", "Save changes", f"{pending} pending"),
-                     ("cancel", "Cancel", None)]
-            inactive = not monitoring(edited)
-            sections = {"dim": "ON CLOSE", "forever": "CHECKS",
-                        "grace": "CHECK SETTINGS" + (" (inactive)" if inactive else ""),
-                        "battery_protection": "BATTERY PROTECTION",
-                        "hotspot": "HOTSPOT FALLBACK",
-                        "defaults": "FINISH"}
-            ui.frame("Local settings", body, selected, pending, flash=flash, sections=sections)
-            flash = ""
+            pending = sum(changed(name, values, edited) for name in LABELS) + int(credentials is not None)
+            names = page_names(page, edited) + ['back']
+            focus = min(focuses.get(page, 0), len(names) - 1)
+            focuses[page] = focus
+            summaries = {
+                'on_close': ('On close ›', display_mode(edited) + ' · ' + ('lock' if edited['lock'] else 'no lock')),
+                'checks': ('Automatic checks ›', monitoring_mode(edited)),
+                'battery': ('Battery protection ›', _choice('battery_protection', edited)),
+                'hotspot': ('Hotspot fallback ›', edited['hotspot_ssid'] if edited['hotspot'] else 'Off'),
+                'retry': ('Retries ›', f"Every {edited['hotspot_retry_delay']}s · " +
+                          (f"up to {edited['hotspot_retry_minutes']}m" if edited['hotspot_retry_mode'] == 'duration'
+                           else f"{edited['hotspot_attempts']} total attempts")),
+                'password': ('Set/change hotspot password', 'Pending save' if credentials else 'Keychain'),
+                'remove_hotspot': ('Remove hotspot network', 'Clear network and disable fallback'),
+                'defaults': ('Restore defaults', None),
+                'save': ('Review and save', f'{pending} pending'),
+                'back': ('Back' if stack else 'Back to t config', None),
+            }
+            body = [(name, *(summaries[name] if name in summaries and not (name == 'hotspot' and page == 'hotspot')
+                             else (LABELS[name], _choice(name, edited)))) for name in names]
+            titles = {'hub': 'Nosleep', 'on_close': 'On close', 'checks': 'Automatic checks',
+                      'battery': 'Battery protection', 'hotspot': 'Hotspot fallback', 'retry': 'Hotspot retries'}
+            sections = {'defaults': 'MANAGE', 'save': 'FINISH', 'back': 'NAVIGATION'}
+            if page == 'checks':
+                sections['grace'] = 'CHECK SETTINGS' + (' (inactive)' if not monitoring(edited) else '')
+            elif page == 'hotspot':
+                sections.update(retry='RETRY POLICY', password='MANAGE')
+            details = {'hotspot_ssid': [('Availability', availability(ui, edited['hotspot_ssid']))]} if page == 'hotspot' else {}
+            ui.frame(titles[page], body, focus, pending, flash=flash, sections=sections, details=details,
+                     hint='↑↓/jk move · enter change · s review/save · q back', primary='s REVIEW AND SAVE')
+            flash = ''
             pressed = key()
-            if pressed in ("up", "k"):
-                selected = (selected - 1) % len(names)
+            if pressed in ('up', 'k', 'down', 'j'):
+                focuses[page] = (focus + (1 if pressed in ('down', 'j') else -1)) % len(names)
                 continue
-            if pressed in ("down", "j"):
-                selected = (selected + 1) % len(names)
-                continue
-            name = "save" if pressed == "s" else names[selected] if pressed == "enter" else "cancel" if pressed in ("q", "esc", "cancel") else None
+            name = ('save' if pressed == 's' else names[focus] if pressed == 'enter' else
+                    'exit' if pressed == 'cancel' else 'back' if pressed in ('q', 'esc') else None)
             if name is None:
-                flash = "No binding for that key"
-            elif name == "dim":
-                mode = display_mode(edited)
-                edited["display_on"] = mode != "Dim"
-                edited["dim"] = mode == "On"
-            elif name in ("lock", "forever", "agent", "internet", "battery_protection"):
-                edited[name] = not edited[name]
-            elif name == "requirement":
-                choices = ("all", "none", 1, 2)
-                edited[name] = (choices[(choices.index(edited[name]) + 1) % len(choices)]
-                                if edited[name] in choices else "all")
-            elif name == "hotspot":
-                if not edited["hotspot"] and not edited["hotspot_ssid"]:
-                    edited['hotspot_ssid'] = network_picker(ui, '')
-                    if edited['hotspot_ssid']:
-                        edited['hotspot'] = True
-                        password_pending = True
-                else:
-                    edited[name] = not edited[name]
-            elif name == "hotspot_ssid":
-                previous = edited[name]
-                edited[name] = network_picker(ui, previous)
-                if edited[name] != previous:
-                    password_pending = True
-            elif name == "password":
-                if edited['hotspot_ssid']:
-                    password_pending = not password_pending
-                else:
-                    flash = 'Select a hotspot Wi-Fi network first'
-            elif name == "discovery":
-                from nosleep_wifi import observe, MESSAGES
-                ui.commit(['  ◇  Setting up network discovery…'])
-                ui.stop()
-                try:
-                    flash = MESSAGES[observe(authorize=True)['state']]
-                except ValueError as exc:
-                    flash = str(exc)
-                finally:
-                    ui.start()
-            elif name in DEFAULTS:
-                edited[name], flash = ui.prompt_int(name, edited[name])
-            elif name == "defaults":
-                edited = DEFAULTS.copy()
-                password_pending = False
-            elif name == "cancel":
+                continue
+            if name == 'back' and stack:
+                page = stack.pop()
+                continue
+            if name in ('back', 'exit'):
                 if not pending:
-                    ui.commit(["  ◇  cancelled", "      nothing written", ""])
+                    ui.commit(['  ◇  cancelled', '      nothing written', ''])
                     return None
-                options = [("keep", "Keep editing", None),
-                           ("save", "Review and save", None),
-                           ("discard", "Discard changes and exit", None)]
+                options = [('keep', 'Keep editing', None), ('save', 'Review and save', None),
+                           ('discard', 'Discard changes and exit', None)]
                 confirm_focus = 0
                 while True:
-                    ui.frame("Unsaved changes", options, confirm_focus,
-                             hint="↑↓/jk move · enter select · q/esc keep",
-                             primary="s SAVE · d DISCARD")
+                    ui.frame('Unsaved changes', options, confirm_focus,
+                             hint='↑↓/jk move · enter select · q/esc keep', primary='s SAVE · d DISCARD')
                     answer = key()
-                    if answer in ("up", "k"):
-                        confirm_focus = (confirm_focus - 1) % len(options)
-                    elif answer in ("down", "j"):
-                        confirm_focus = (confirm_focus + 1) % len(options)
-                    elif answer in ("q", "esc", "cancel"):
+                    if answer in ('up', 'k', 'down', 'j'):
+                        confirm_focus = (confirm_focus + (1 if answer in ('down', 'j') else -1)) % len(options)
+                    elif answer in ('q', 'esc', 'cancel'):
+                        name = 'keep'
                         break
-                    elif answer == "s" or (answer == "enter" and confirm_focus == 1):
-                        name = "save"
+                    elif answer in ('s', 'd', 'enter'):
+                        name = 'save' if answer == 's' else 'discard' if answer == 'd' else options[confirm_focus][0]
                         break
-                    elif answer == "d" or (answer == "enter" and confirm_focus == 2):
-                        name = "discard"
-                        break
-                    elif answer == "enter":
-                        break
-                if name == "discard":
-                    ui.commit(["  ◇  cancelled", "      nothing written", ""])
+                if name == 'discard':
+                    ui.commit(['  ◇  cancelled', '      nothing written', ''])
                     return None
-                if name != "save":
+                if name != 'save':
                     continue
-            if name == "save":
+            if name == 'save':
                 if not pending:
-                    ui.commit(["  ◇  settings unchanged", ""])
+                    ui.commit(['  ◇  settings unchanged', ''])
                     return edited
-                changes = [(name, LABELS[name], f"{_choice(name, values)} → {_choice(name, edited)}")
+                changes = [(name, LABELS[name], f'{_choice(name, values)} → {_choice(name, edited)}')
                            for name in LABELS if changed(name, values, edited)]
-                if password_pending:
-                    changes.append(('password', 'Hotspot password', 'Store in Keychain (private prompt follows)'))
+                if credentials is not None:
+                    changes.append(('password', 'Hotspot password', 'Store in Keychain on save'))
                 review_focus = 0
                 while True:
-                    ui.frame("Review changes", changes, review_focus, pending,
-                             hint="↑↓/jk scroll · y / enter save · n / esc back · q cancel",
-                             primary="y  SAVE CHANGES")
+                    ui.frame('Review changes', changes, review_focus, pending,
+                             hint='↑↓/jk scroll · y / enter save · n / esc back', primary='y SAVE CHANGES')
                     answer = key()
-                    if answer in ("up", "k"):
-                        review_focus = max(0, review_focus - 1)
-                    elif answer in ("down", "j"):
-                        review_focus = min(len(changes) - 1, review_focus + 1)
-                    elif answer in ("y", "enter"):
-                        if password_pending:
-                            flash = store_password(ui, edited['hotspot_ssid'])
+                    if answer in ('up', 'k', 'down', 'j'):
+                        review_focus = max(0, min(len(changes) - 1, review_focus + (1 if answer in ('down', 'j') else -1)))
+                    elif answer in ('y', 'enter'):
+                        if before_save is not None:
+                            try:
+                                before_save()
+                            except (OSError, ValueError):
+                                flash = 'Configuration changed or could not be checked; changes remain pending. Reopen settings to retry.'
+                                break
+                        if credentials is not None:
+                            flash = store_password(ui, edited['hotspot_ssid'], password=credentials['password'], source=credentials['source'])
                             if flash:
                                 break
-                        ui.commit(["  ◇  saving settings", ""])
+                        if save_values is not None:
+                            try:
+                                save_values(edited)
+                            except (OSError, ValueError):
+                                flash = 'Settings were not saved; changes remain pending. Check configuration access and retry.'
+                                break
+                        if credentials is not None and on_credentials_saved is not None:
+                            on_credentials_saved()
+                        ui.commit(['  ◇  saving settings', ''])
                         return edited
-                    elif answer in ("q", "cancel"):
-                        ui.commit(["  ◇  cancelled", "      nothing written", ""])
-                        return None
-                    elif answer in ("n", "esc"):
+                    elif answer in ('n', 'esc', 'q', 'cancel'):
                         break
+                continue
+            if name in ('on_close', 'checks', 'battery', 'retry') or (name == 'hotspot' and page == 'hub'):
+                stack.append(page)
+                page = name
+            elif name == 'dim':
+                mode = display_mode(edited)
+                edited['display_on'], edited['dim'] = mode != 'Dim', mode == 'On'
+            elif name in ('lock', 'forever', 'agent', 'internet', 'battery_protection'):
+                edited[name] = not edited[name]
+            elif name == 'requirement':
+                choices = ('all', 'none', 1, 2)
+                edited[name] = choices[(choices.index(edited[name]) + 1) % len(choices)] if edited[name] in choices else 'all'
+            elif name == 'hotspot_retry_mode':
+                picked = ui.ui.pick('Retry limit', [('duration', 'Elapsed time'), ('attempts', 'Number of attempts')],
+                                    values={'duration': 'Retry periodically for a set duration', 'attempts': 'Stop after a fixed number of tries'})
+                if picked is not None:
+                    edited[name] = picked
+            elif name == 'hotspot' and (edited['hotspot'] or edited['hotspot_ssid']):
+                edited[name] = not edited[name]
+            elif name in ('hotspot', 'hotspot_ssid'):
+                candidate = network_picker(ui, edited['hotspot_ssid'])
+                if candidate is not None:
+                    edited['hotspot_ssid'] = candidate['ssid']
+                    if not candidate['ssid']:
+                        edited['hotspot'], credentials = False, None
+                    else:
+                        credentials = candidate
+                        if name == 'hotspot':
+                            edited['hotspot'] = True
+            elif name == 'remove_hotspot':
+                edited['hotspot_ssid'], edited['hotspot'], credentials = '', False, None
+                flash = 'Hotspot network removed · save to apply'
+            elif name == 'password':
+                if edited['hotspot_ssid']:
+                    from nosleep_credentials import saved_networks
+                    candidate = credential_choice(ui, edited['hotspot_ssid'], saved_networks()['networks'], choose=True)
+                    if candidate is not None:
+                        credentials = candidate
+                else:
+                    flash = 'Select a hotspot Wi-Fi network first'
+            elif name == 'defaults':
+                edited, credentials = DEFAULTS.copy(), None
+            elif name in DEFAULTS:
+                edited[name], flash = ui.prompt_int(name, edited[name])
     except KeyboardInterrupt:
-        ui.commit(["  ◇  cancelled", "      nothing written", ""])
+        # The normal Ctrl-C key path offers the unsaved confirmation.
+        ui.commit(['  ◇  cancelled', '      nothing written', ''])
         return None
     finally:
+        credentials = None
         ui.stop()
 
 
@@ -584,11 +804,20 @@ def main(argv=None):
         if mode == "--edit":
             changed = edit(path, before, values)
         else:
-            updated = menu(values)
+            credentials_saved = []
+            def check_snapshot():
+                try:
+                    current = path.read_bytes()
+                except FileNotFoundError:
+                    current = None
+                if current != before:
+                    raise ValueError('config changed while editing')
+            updated = menu(values, before_save=check_snapshot,
+                           save_values=lambda updated: write(path, before, updated) if updated != values else None,
+                           on_credentials_saved=lambda: credentials_saved.append(True))
             changed = updated is not None and updated != values
-            if changed:
-                write(path, before, updated)
-        print("Saved nosleep defaults. They apply to the next run." if changed else "Settings unchanged.")
+        saved = changed or (mode != '--edit' and bool(credentials_saved))
+        print("Saved nosleep defaults. They apply to the next run." if saved else "Settings unchanged.")
         return 0
     except (OSError, ValueError) as exc:
         print(f"nosleep config: {exc}", file=sys.stderr)

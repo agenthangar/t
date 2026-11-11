@@ -35,6 +35,7 @@ _nosleep_fallback_observe() {
   if (( online )); then
     _nosleep_fallback_cancel
     fallback_outage_at=-1 fallback_started_at=-1 fallback_deadline=0 fallback_done=0
+    fallback_attempts=0 fallback_retry_at=0 fallback_window_deadline=0
   elif (( fallback_outage_at < 0 )); then
     # Begin at the first observed failure, independently of startup/grace and the
     # last success. A recovered connection starts a fresh outage next time.
@@ -42,41 +43,81 @@ _nosleep_fallback_observe() {
   fi
 }
 
+_nosleep_fallback_finish_attempt() {
+  _nosleep_fallback_cancel
+  fallback_started_at=-1 fallback_deadline=0
+  _nosleep_status_clear
+  if [[ $hotspot_retry_mode == duration ]] && (( now >= fallback_window_deadline )); then
+    fallback_done=1 fallback_retry_at=0
+    print -r -- "nosleep: hotspot retry window expired (${hotspot_retry_minutes}m) — no verified internet recovery"
+  elif [[ $hotspot_retry_mode != duration ]] && (( fallback_attempts >= hotspot_attempts )); then
+    fallback_done=1
+    print -r -- "nosleep: hotspot attempts exhausted ($fallback_attempts/$hotspot_attempts) — no verified internet recovery"
+  else
+    fallback_retry_at=$(( now + hotspot_retry_delay ))
+    local attempt_label="$(( fallback_attempts + 1 ))"
+    [[ $hotspot_retry_mode != duration ]] && attempt_label+="/$hotspot_attempts"
+    print -r -- "nosleep: hotspot retry $attempt_label in ${hotspot_retry_delay}s"
+  fi
+  # A completed join is not internet recovery. Probe again before either retrying
+  # or allowing a pending sleep release, even with a long normal check interval.
+  next_check=$now
+  show_snapshot=1
+}
+
 _nosleep_fallback_tick() {
   (( _NOSLEEP_DONE )) && return 0
   (( hotspot && monitoring && internet && ! online && fallback_outage_at >= 0 && ! fallback_done )) || return 0
-  if (( fallback_started_at < 0 && now - fallback_outage_at >= hotspot_after )); then
-    # A stale failed probe must not trigger network switching after recovery.
-    # Request a fresh probe first, even when --every/backoff is much longer.
-    next_check=$now
-    [[ $1 == observed ]] || return 0
-    fallback_started_at=$now
-    fallback_deadline=$(( now + hotspot_timeout ))
-    _nosleep_status_clear
-    print -r -- 'nosleep: connection still down — attempting hotspot fallback'
-    if (( $+functions[_nosleep_hotspot_connect] )); then
-      # Clear inherited teardown traps: this child owns no power assertions.
-      ( trap - EXIT INT TERM; _nosleep_hotspot_connect "$hotspot_timeout" ) >/dev/null 2>&1 &
-      _NOSLEEP_HOTSPOT_PID=$!
-      # A trap may have fired between starting the child and registering its PID.
-      (( _NOSLEEP_DONE )) && { _nosleep_fallback_cancel; return 0; }
-    fi
+  # The overall window includes attempts and cooldowns, and cannot be extended
+  # by either a slow probe or another attempt. Recovery resets it separately.
+  if [[ $hotspot_retry_mode == duration ]] && (( fallback_window_deadline > 0 && now >= fallback_window_deadline )); then
+    _nosleep_fallback_finish_attempt
+    return 0
   fi
   if (( fallback_started_at >= 0 )); then
     if [[ -n $_NOSLEEP_HOTSPOT_PID ]] && ! _nosleep_fallback_owned; then
       wait "$_NOSLEEP_HOTSPOT_PID" 2>/dev/null
-      if (( $? != 0 )); then
-        _nosleep_status_clear
-        print -r -- 'nosleep: hotspot join failed — confirm broadcasting Wi-Fi, permissions and unlocked Keychain; open nosleep config'
-      fi
+      local join_result=$?
       _NOSLEEP_HOTSPOT_PID=''
       next_check=$now
+      if (( join_result != 0 )); then
+        _nosleep_status_clear
+        print -r -- 'nosleep: hotspot join failed — confirm broadcasting Wi-Fi, permissions and unlocked Keychain; open nosleep config'
+        _nosleep_fallback_finish_attempt
+      fi
     fi
-    if (( now >= fallback_deadline )); then
-      _nosleep_fallback_cancel
-      fallback_done=1
-      # Always verify internet once more before a pending automatic release.
-      next_check=$now
+    if (( fallback_started_at >= 0 && now >= fallback_deadline )); then
+      _nosleep_fallback_finish_attempt
+    fi
+  fi
+  (( fallback_done )) && return 0
+  if (( fallback_started_at < 0 &&
+        (fallback_attempts == 0 ? now - fallback_outage_at >= hotspot_after : now >= fallback_retry_at) )); then
+    # A stale failed probe must not trigger network switching after recovery.
+    # Request a fresh probe first, even when --every/backoff is much longer.
+    next_check=$now
+    [[ $1 == observed ]] || return 0
+    if [[ $hotspot_retry_mode == duration ]] && (( fallback_attempts == 0 )); then
+      fallback_window_deadline=$(( now + hotspot_retry_minutes * 60 ))
+    fi
+    local attempt_timeout=$hotspot_timeout attempt_label
+    if [[ $hotspot_retry_mode == duration ]] && (( attempt_timeout > fallback_window_deadline - now )); then
+      attempt_timeout=$(( fallback_window_deadline - now ))
+    fi
+    (( ++fallback_attempts ))
+    fallback_started_at=$now
+    fallback_deadline=$(( now + attempt_timeout ))
+    attempt_label=$fallback_attempts
+    [[ $hotspot_retry_mode != duration ]] && attempt_label+="/$hotspot_attempts"
+    _nosleep_status_clear
+    print -r -- "nosleep: connection still down — attempting hotspot fallback ($attempt_label)"
+    show_snapshot=1
+    if (( $+functions[_nosleep_hotspot_connect] )); then
+      # Clear inherited teardown traps: this child owns no power assertions.
+      ( trap - EXIT INT TERM; _nosleep_hotspot_connect "$attempt_timeout" ) >/dev/null 2>&1 &
+      _NOSLEEP_HOTSPOT_PID=$!
+      # A trap may have fired between starting the child and registering its PID.
+      (( _NOSLEEP_DONE )) && { _nosleep_fallback_cancel; return 0; }
     fi
   fi
   # Observe recovery during a long --every or exponential retry interval. The

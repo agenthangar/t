@@ -187,13 +187,18 @@ def test_startup_picker_keeps_retry_and_cancel_accessible(offline, t_mod, width,
     assert all(len(frame) <= height for frame in ui.frames)
 
 
-def test_saved_pause_policy_keeps_native_launch(offline, monkeypatch):
+def test_saved_pause_policy_uses_owned_supervisor(offline, monkeypatch):
     local = load_script(ROOT/'libexec/t_local_inference.py', 'startup_policy_test')
     calls = []
-    monkeypatch.setattr(local.subprocess, 'call', lambda argv: calls.append(argv) or 17)
-    monkeypatch.setattr(local, 'helper', lambda name: pytest.fail('Pause must not start recovery'))
+    monkeypatch.setattr(local.subprocess, 'call', lambda argv: pytest.fail('Fresh Pause launch must be supervised'))
+    def supervise(argv, chosen, cwd):
+        calls.append((argv, chosen))
+        return 17
+    monkeypatch.setattr(local, 'helper', lambda name: {
+        'launch_options': lambda *args: None, 'supervise': supervise})
     assert local.lead(['codex'], chosen=dict(policy(), on_cloud_failure='pause')) == 17
-    assert calls == [['codex']]
+    assert calls[0][0] == ['codex'] and calls[0][1]['on_cloud_failure'] == 'pause'
+    assert calls[0][1]['cloud_retry_seconds'] == 300
 
 
 @pytest.mark.parametrize('task', ['Original task', 'x'*32000])

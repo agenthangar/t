@@ -62,7 +62,7 @@ def test_primary_checkpoint_and_retry(offline,tmp_path,monkeypatch):
     event(c,'error',turnId='old',error=error())
     assert not c.due()
     event(c,'error',error=error());assert not c.due()
-    now[0]+=31;assert c.due()
+    now[0]+=301;assert c.due()
     event(c,'item/agentMessage/delta',delta='working');assert not c.due()
     event(c,'error',error=error())
     event(c,'error',error=error(status=401));assert c.network_since is None
@@ -74,7 +74,7 @@ def test_primary_checkpoint_and_retry(offline,tmp_path,monkeypatch):
     event(c,'turn/completed',turn={'id':'turn','status':'failed','error':error()})
     assert not c.due()
     c.client({'method':'turn/steer','params':{'threadId':'main','input':[{'type':'text','text':'Also preserve comments.'}]}})
-    event(c,'error',error=error());now[0]+=31;assert c.due()
+    event(c,'error',error=error());now[0]+=301;assert c.due()
     event(c,'turn/completed',turn={'id':'turn','status':'interrupted'})
     assert not c.due()
     event(c,'item/completed',item={'type':'commandExecution','command':'python tests.py','status':'completed','exitCode':0,'aggregatedOutput':None})
@@ -182,13 +182,16 @@ if role=='backend':
   elif msg.get('method')=='turn/start':
    send({'method':'turn/started','params':{'threadId':'main','turn':{'id':'turn'}}})
    send({'id':'approve','method':'item/commandExecution/requestApproval','params':{'threadId':'main','command':'fixture'}})
+  elif msg.get('method')=='turn/interrupt' and 'id' in msg:
+   (root/'interrupted.json').write_text(json.dumps(msg))
+   send({'id':msg['id'],**({'error':{'message':'fixture rejection'}} if mode=='pause_error' else {'result':{}})})
   elif msg.get('id')=='approve':
    (root/'approval.json').write_text(json.dumps(msg))
    err={'codexErrorInfo':{'responseStreamDisconnected':{'httpStatusCode':None}}}
    if mode=='auth':err={'codexErrorInfo':'unauthorized'}
    if mode=='transport':sys.exit(1)
    send({'method':'error','params':{'threadId':'main','turnId':'turn','error':err,'willRetry':True}})
-   if mode!='retry':send({'method':'turn/completed','params':{'threadId':'main','turn':{'id':'turn','status':'failed','error':err}}})
+   if mode not in ('retry','pause','pause_error'):send({'method':'turn/completed','params':{'threadId':'main','turn':{'id':'turn','status':'failed','error':err}}})
 else:
  if mode=='quit':sys.exit(0)
  sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);sock.connect(sys.argv[2].removeprefix('unix://'))
@@ -207,7 +210,7 @@ else:
     script.chmod(0o700);return script
 
 
-@pytest.mark.parametrize('mode', ['outage','retry','auth','cancel','quit','missing','transport','local_failure'])
+@pytest.mark.parametrize('mode', ['outage','retry','auth','cancel','quit','missing','transport','local_failure','pause','pause_exhausted','pause_error','catalogue_error','handoff_cancelled','shutdown_completion'])
 def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
     m=offline;calls=[]
     monkeypatch.setenv('FIXTURE_ROOT',str(tmp_path));monkeypatch.setenv('FIXTURE_MODE',mode)
@@ -224,19 +227,39 @@ def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
         assert kwargs['chosen']['mode']=='local-only' and kwargs['chosen']['on_cloud_failure']=='pause'
         assert 'Fix fixture' in argv[-1] and 'untrusted' in argv[-1]
         calls.append(argv)
+        if mode=='shutdown_completion':assert 'late evidence' in argv[-1]
         if mode=='local_failure':raise ValueError('fixture local failure')
         return 0
     local={'leased_runtime':lambda chosen:None,'helper':lambda n:{'state_root':lambda:tmp_path/'state'},'catalogue':lambda **kw:{'models':[{'model':'local-fixture','provider':'lmstudio','ready':mode!='missing'}]},'lead':lead}
+    if mode == 'catalogue_error':
+        local['catalogue'] = lambda **kw: (_ for _ in ()).throw(OSError('fixture catalog unavailable'))
     monkeypatch.setattr(m,'inference',lambda:local)
-    chosen={'context_tokens':32768,'model':'local-fixture','provider':'lmstudio','mode':'automatic','on_cloud_failure':'local'}
-    if mode in ('transport','local_failure'):
+    if mode in ('handoff_cancelled', 'shutdown_completion'):
+        original_checkpoint, original_stop = m.Checkpoint, m.stop_runtime
+        captured = []
+        def capture(*args):
+            c = original_checkpoint(*args); captured.append(c); return c
+        def stop_and_cancel(process):
+            original_stop(process)
+            if mode == 'handoff_cancelled':
+                captured[0].client({'method':'turn/interrupt','params':{'threadId':'main'}})
+            else:
+                event(captured[0], 'item/completed', item={'type':'agentMessage','text':'late evidence'})
+                event(captured[0], 'turn/completed', turn={'id':'turn','status':'interrupted'})
+        monkeypatch.setattr(m, 'Checkpoint', capture)
+        monkeypatch.setattr(m, 'stop_runtime', stop_and_cancel)
+    chosen={'context_tokens':32768,'model':'local-fixture','provider':'lmstudio','mode':'automatic','on_cloud_failure':'pause' if mode.startswith('pause') else 'local'}
+    if mode in ('transport','local_failure','pause_error'):
         with pytest.raises(ValueError):m.supervise([str(fake_codex),'--no-daemon','--','task'],chosen,str(tmp_path))
-    else:assert m.supervise([str(fake_codex),'--no-daemon','--','task'],chosen,str(tmp_path))==0
-    assert bool(calls)==(mode in ('outage','retry','local_failure'))
+    else:assert m.supervise([str(fake_codex),'--no-daemon','--','task'],chosen,str(tmp_path))==(130 if mode=='handoff_cancelled' else 0)
+    assert bool(calls)==(mode in ('outage','retry','local_failure','shutdown_completion'))
     assert all(p.poll() is not None for p in processes)
     if mode!='quit':assert json.loads((tmp_path/'approval.json').read_text())=={'id':'approve','result':{'decision':'accept'}}
     root=next((tmp_path/'state').iterdir());assert root.stat().st_mode & 0o777 == 0o700
-    if mode=='missing':assert json.loads((root/'status.json').read_text())['state']=='paused'
+    if mode in ('missing','pause','pause_exhausted','catalogue_error'):assert json.loads((root/'status.json').read_text())['state']=='paused'
+    if mode in ('pause','pause_error'):
+        assert json.loads((tmp_path/'interrupted.json').read_text())['params']=={'threadId':'main','turnId':'turn'}
+    if mode=='pause_exhausted':assert not (tmp_path/'interrupted.json').exists()
     if mode=='local_failure':assert json.loads((root/'status.json').read_text())['state']=='local_stopped'
 
 
@@ -308,3 +331,47 @@ def test_interactive_resume_cannot_use_partial_history(offline,tmp_path):
     c.server({'id':3,'result':{'thread':{'id':'old','cwd':str(tmp_path),'turns':[]}}})
     c.user([{'type':'text','text':'Continue'}])
     with pytest.raises(ValueError,match='history may be incomplete'):c.prompt()
+
+
+@pytest.mark.parametrize('limit', [15, 30, 60, 120, 300])
+def test_configured_retry_window_and_pause(offline, tmp_path, monkeypatch, limit):
+    now = [0]
+    monkeypatch.setattr(offline.time, 'monotonic', lambda: now[0])
+    c = started(offline, tmp_path)
+    assert c.retry_seconds == 300
+    c.retry_seconds = limit
+    event(c, 'error', error=error())
+    token=c.outage()
+    now[0] = limit - .01
+    assert not c.due()
+    now[0] = limit
+    assert c.due()
+    sent=[]
+    c.pause(sent.append)
+    assert sent == [{'method':'turn/interrupt','params':{'threadId':'main','turnId':'turn'}}]
+    assert not c.due() and c.outage() != token
+    event(c, 'error', error=error())
+    assert not c.due()
+    c.client({'method':'turn/start','params':{'threadId':'main','input':[{'type':'text','text':'Try again'}]}})
+    event(c, 'error', error=error())
+    now[0] += limit
+    assert c.due()
+    event(c, 'item/agentMessage/delta', delta='recovered')
+    assert not c.due()
+    event(c, 'error', error=error())
+    event(c, 'turn/completed', turn={'id':'turn','status':'failed','error':error()})
+    assert c.due()
+    c.pause(sent.append)
+    assert len(sent) == 1 and not c.due()
+
+
+def test_new_input_invalidates_exhausted_outage(offline, tmp_path):
+    c = started(offline, tmp_path)
+    event(c, 'turn/completed', turn={'id':'turn','status':'failed','error':error()})
+    previous = c.outage()
+    c.client({'method':'turn/steer','params':{'threadId':'main','input':[{'type':'text','text':'New request'}]}})
+    event(c, 'turn/completed', turn={'id':'turn','status':'failed','error':error()})
+    assert c.due() and c.outage() != previous
+    event(c, 'turn/started', turn={})
+    event(c, 'error', error=error())
+    assert c.network_since is None

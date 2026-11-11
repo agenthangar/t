@@ -375,24 +375,51 @@ def monitor_gui():
 
 
 def hub(ui, api):
-    focus = 'requests'
+    focus = 'models'
     while True:
-        view = manager()['status']()
-        choices = [('monitor', 'Monitor usage'), ('requests', 'Requests'), ('models', 'Models'),
-                   ('provider', 'Configure provider & model'), ('machine', 'Machine settings'),
-                   ('worker', 'Install / configure local worker'), ('back', 'Back to t config')]
-        action = ui.pick('Local worker & models', choices, context=status_lines(view),
-                         sections={'monitor': 'Inspect', 'provider': 'Configure'},
+        try:
+            view = manager()['status']()
+        except (OSError, ValueError) as exc:
+            view = {'manager': 'unavailable', 'error': str(exc)}
+        try:
+            config = helper('t_local_worker')['settings']()
+            worker = 'enabled' if config.get('enabled') else 'disabled'
+        except (OSError, ValueError) as exc:
+            config = {}
+            worker = 'settings unavailable'
+            view = dict(view, error=' · '.join(filter(None, [view.get('error'), str(exc)])))
+        provider = config.get('provider', 'ollama') if config else 'Unavailable'
+        model = clean(config.get('model', 'Not selected')).split('/')[-1]
+        if hasattr(ui, 'clip'):
+            model = ui.clip(model, max(8, ui.cols() - 25))
+        else:
+            model = model[:48]
+        context = [('Manager', clean(view['manager']) + ' · worker ' + worker),
+                   ('Selected model', model)]
+        choices = [('models', 'Local model'), ('provider', 'Providers'), ('machine', 'Machine settings'),
+                   ('worker', 'Install / configure worker'), ('monitor', 'Monitor usage'),
+                   ('requests', 'Requests'), ('runtime', 'Runtime details'), ('back', 'Back to t config')]
+        action = ui.pick('Local inference', choices, context=context,
+                         values={'models': {'lmstudio': 'LM Studio', 'ollama': 'Ollama'}.get(provider, provider)},
+                         sections={'models': 'Configure', 'monitor': 'Inspect'},
                          default=next((i for i, (k, _) in enumerate(choices) if k == focus), 0))
         if action in (None, 'back'):
             return
         focus = action
         try:
-            if action == 'requests':
+            if action == 'runtime':
+                page(ui, 'Runtime details', [*status_lines(view), '',
+                     'Selected worker model   ' + clean(config.get('model', 'Not selected')),
+                     'Selected provider       ' + clean(provider)])
+            elif action == 'requests':
                 requests_menu(ui)
             elif action == 'models':
                 local = helper('t_local_inference')
-                selected = local['select_model'](ui, use_label='Select for local worker')
+                selection_args = {'use_label': 'Select for local worker'}
+                if config.get('model'):
+                    selection_args.update(current=config['model'], provider=config.get('provider'),
+                                          context=config.get('context_tokens', 32768))
+                selected = local['select_model'](ui, **selection_args)
                 if selected and ui.pick('Review worker model', [('save', 'Save selection'), ('back', 'Keep current model')],
                                         context=[selected['model'], selected['provider']]) == 'save':
                     worker = helper('t_local_worker')
@@ -400,7 +427,7 @@ def hub(ui, api):
             elif action == 'machine':
                 machine_menu(ui)
             elif action == 'provider':
-                provider = ui.pick('Configure provider & model', [('lmstudio', 'LM Studio'), ('ollama', 'Ollama'), ('back', 'Back')])
+                provider = ui.pick('Providers', [('lmstudio', 'LM Studio'), ('ollama', 'Ollama'), ('back', 'Back')])
                 if provider not in (None, 'back'):
                     provider_menu(ui, provider)
             elif action == 'worker':
