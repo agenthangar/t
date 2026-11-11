@@ -100,21 +100,21 @@ def test_open_repo_filter_keeps_desktop_and_cli(zsh, tmp_path):
     assert 'UNEXPECTED' not in result.stdout
 
 
-def test_open_mixed_batch_routes_each_interface_before_first_attach(zsh, tmp_path):
+def test_open_mixed_batch_opens_valid_selections_in_windows(zsh, tmp_path):
     env = picker_stub(tmp_path, 'api-2,api-4,web-6,web:abcdef12')
     result = zsh(ROWS + r'''
       DEV_OPEN_MODE_DEFAULT=app
       _t_open_app() { print -r -- "APP $*"; }
       _t_dev() { print -r -- "CLI $*"; }
-      _dev_open_tab() { print -r -- "TAB $*"; }
+      _dev_open_window() { print -r -- "WINDOW $*"; }
       _t_open --attached
     ''', _tty=True, **env)
     assert result.returncode == 1, result.stdout
     assert 'retired integration' in result.stdout
-    assert 'TAB t open web 6 --cli --local' in result.stdout
-    assert 'TAB t open web:abcdef12 --cli --local' in result.stdout
-    assert 'CLI api 2 --local' in result.stdout
-    assert result.stdout.index('TAB') < result.stdout.index('CLI')
+    assert 'WINDOW t open web 6 --cli --local' in result.stdout
+    assert 'WINDOW t open web:abcdef12 --cli --local' in result.stdout
+    assert 'WINDOW t open api 2 --cli --local' in result.stdout
+    assert 'CLI ' not in result.stdout
 
 
 @pytest.mark.parametrize('args', ['api 2', '2', 'api --new', '--new', 'api --fg'])
@@ -203,7 +203,7 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
         printf 'local\tsid3\t%s\tapi-3\tdetached\tactive\tLocal included\tcodex\tgpt-test-astra\n' "$HOME/code/api"
       }
       _dev_remote_open() { print -r -- "REMOTE $*"; }
-      _dev_open_tab() { print -r -- "TAB $*"; }
+      _dev_open_window() { print -r -- "WINDOW $*"; }
       COLUMNS=200
       _t_open -r --attached
     ''', _tty=True, TZ='UTC', **env)
@@ -212,8 +212,9 @@ def test_open_remote_picker_retains_model_and_selected_host(zsh, tmp_path):
     assert 'mini' in rows and 'studio' in rows and 'claude-test-model' in rows
     assert 'Local included' in rows
     assert 'Last turn' in rows and '2026-10-23' in rows
-    assert 'TAB t open web 4 --cli --host studio' in result.stdout
-    assert 'REMOTE mini alias 2 --cli' in result.stdout
+    assert 'WINDOW t open web 4 --cli --host studio' in result.stdout
+    assert 'WINDOW t open alias 2 --cli --host mini' in result.stdout
+    assert 'REMOTE ' not in result.stdout
 
 
 def test_open_hides_attached_and_loaded_desktop_by_default(zsh, tmp_path):
@@ -255,15 +256,46 @@ def test_open_attached_flag_with_explicit_slot_stays_direct(zsh):
     assert result.stdout.strip() == 'DIRECT api 2'
 
 
-def test_open_batch_tab_failure_reports_exact_attach_command(zsh):
+def test_open_batch_window_failure_reports_every_exact_attach_command(zsh):
     result = zsh(r'''
-      _dev_open_tab() { return 1; }
+      _dev_open_window() { return 1; }
       _t_open() { print -r -- "OPEN $*"; }
       _t_open_selected $'local\tapi-2\tdetached\tFirst\nlocal\tapi-4\tdetached\tSecond' '' ''
     ''')
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'Attach with: t open api 4 --cli --local' in result.stderr
-    assert 'OPEN api 2 --cli --local' in result.stdout
+    assert 'Attach with: t open api 2 --cli --local' in result.stderr
+    assert 'OPEN ' not in result.stdout
+
+
+@pytest.mark.parametrize('tmux', ['', 'isolated-stub'])
+def test_open_single_selection_keeps_existing_attachment_behavior(zsh, tmux):
+    result = zsh(r'''
+      _dev_open_window() { print UNEXPECTED_WINDOW; }
+      _t_open() { print -r -- "OPEN $*"; }
+      _t_open_selected $'local\tapi-2\tdetached\tOnly' '' ''
+    ''', TMUX=tmux, FAKE_HAS_SESSION='1')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'UNEXPECTED_WINDOW' not in result.stdout
+    if tmux:
+        assert 'switch-client -t =dev-api-2:' in zsh.log.read_text()
+        assert 'OPEN ' not in result.stdout
+    else:
+        assert 'OPEN api 2 --cli --local' in result.stdout
+
+
+def test_open_batch_continues_after_first_window_fails(zsh):
+    result = zsh(r'''
+      _dev_open_window() { print -r -- "WINDOW $*"; [[ $1 != *'api 2 '* ]]; }
+      _t_open() { print UNEXPECTED_ATTACH; }
+      _t_open_selected $'local\tapi-2\tdetached\tFirst\nmini\tapi-4\tdetached\tSecond' '' ''
+    ''')
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'WINDOW t open api 2 --cli --local' in result.stdout
+    assert 'WINDOW t open api 4 --cli --host mini' in result.stdout
+    assert 'Attach with: t open api 2 --cli --local' in result.stderr
+    assert result.stderr.count('Attach with:') == 1
+    assert 'UNEXPECTED_ATTACH' not in result.stdout
 
 
 def test_open_help_describes_simple_picker(t_mod):
@@ -275,6 +307,8 @@ def test_open_help_describes_simple_picker(t_mod):
     assert '--new' in help_text
     assert 'Alt-N' not in help_text and 'LAST TURN' in help_text
     assert 'Ctrl-/' not in help_text
+    assert 'including the first' in help_text
+    assert 'each open in a new window' in help_text
 
 
 @pytest.mark.parametrize('width', [200, 120, 80, 44, 32])
@@ -331,13 +365,14 @@ def test_open_default_and_remote_keep_local_and_remote_duplicate_slots(zsh, tmp_
         printf 'mini\tsid2\t%s\tapi-2\tdetached\tactive\tRemote task\tcodex\tmodel\n' "$HOME/code/api"
       }
       _t_dev() { print -r -- "CLI $*"; }
-      _dev_open_tab() { print -r -- "TAB $*"; }
+      _dev_open_window() { print -r -- "WINDOW $*"; }
       _t_open ''' + flag, _tty=True, **env)
     assert result.returncode == 0, result.stdout + result.stderr
     rows = (tmp_path / 'picker.log').read_text().splitlines()
     assert [row.split('\t')[:2] for row in rows] == [['local', 'api-2'], ['mini', 'api-2']]
-    assert 'CLI api 2 --local' in result.stdout
-    assert 'TAB t open api 2 --cli --host mini' in result.stdout
+    assert 'WINDOW t open api 2 --cli --local' in result.stdout
+    assert 'WINDOW t open api 2 --cli --host mini' in result.stdout
+    assert 'CLI ' not in result.stdout
 
 
 @pytest.mark.parametrize('width', [32, 44, 80])
