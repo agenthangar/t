@@ -125,6 +125,24 @@ def request(operation, payload=None, *, deadline=None):
             'message': 'Session discovery unavailable; retry shortly.'}
 
 
+def invalidate(targets=None):
+    """Schedule optional invalidation without waiting for the cache service.
+
+    Never defer a live-row overlay: a delayed launch row could resurrect a slot
+    that has since closed or been reused. An invalidation only requests a fresh
+    observation, so delivery order cannot invent an owner.
+    """
+    try:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'invalidate',
+                          json.dumps(list(dict.fromkeys(targets or ['local'])))],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True,
+                         cwd='/', env={k: v for k, v in os.environ.items()
+                                       if not k.startswith('COV_CORE_')})
+    except OSError:
+        pass  # Discovery expiry remains a fallback; never fail an agent launch.
+
+
 def _collect(spec):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     env['T_DISCOVERY_COLLECTOR'] = '1'
@@ -420,3 +438,5 @@ def _serve():
 if __name__ == '__main__':
     if sys.argv[1:] == ['serve']:
         _serve()
+    elif len(sys.argv) == 3 and sys.argv[1] == 'invalidate':
+        request('event', {'targets': json.loads(sys.argv[2])})
