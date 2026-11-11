@@ -88,9 +88,12 @@ def instructions(value):
         return 'Local delegation is disabled in this workflow.'
     identity = f"{p['provider']} / {p['model']}"
     base = (f"Local inference: {identity}; context {p['context_tokens']}; task budget {p['timeout_seconds']} seconds; maximum explicit task {p['max_timeout_seconds']} seconds; inactivity {p['inactivity_timeout_seconds']} seconds; separate queue wait {p['queue_timeout_seconds']} seconds. Omitted limits inherit this workflow; activity resets inactivity, never the task deadline. "
-            'Use the t-local-worker MCP start_task/task_status/cancel_task tools for local delegation. '
+            'Use the t-local-worker MCP check_availability/start_task/task_status/wait_task/cancel_task tools for local delegation. '
+            'Check availability before delegation. Missing check_availability or adapter version/limit fields means an older adapter: '
+            'refresh its MCP connection when safe; never restart active sessions automatically. '
             'Announce Local requested with provider, model and reason before delegating. '
-            'Say Local accepted only after start_task succeeds; a request is not proof of inference. '
+            'Say Local accepted only when start_task returns accepted: true; accepted: false is Local unavailable. '
+            'Acceptance is not proof of inference. '
             'Label returned findings Local result with the verified model, and label your own validation Lead checked. '
             'If busy or unavailable, say Local unavailable; lead continuing. '
             'The adapter snapshots the repository; review its patch and observed command evidence before applying. '
@@ -110,7 +113,12 @@ def instructions(value):
                    'Automatically delegate bounded investigations, mechanical edits and small patches with concrete acceptance checks. '
                    'Keep architecture, ambiguous cross-system debugging and final acceptance in the lead. '
                    'Supply routing_reason, relevant paths and acceptance checks in start_task. '
-                   'Poll while doing independent work; wait up to five seconds between polls when otherwise idle. '
+                   'Supply implementation context; avoid assignments requiring broad repository exploration. '
+                   'Omit timeout_seconds unless a deliberate override is necessary; inherit the workflow budget. '
+                   'Busy or unknown runtime means skip local delegation and continue in the lead. '
+                   'Only observed completed generation awaiting release permits a single wait of at most 15 seconds; '
+                   'elapsed time or recent tokens never prove a task is almost done. Never interrupt another session. '
+                   'Use wait_task for bounded waits while doing independent work; inspect execution, loading, queue time and partial progress. '
                    'After delegating a patch, wait for its terminal result before editing the assigned source; do not duplicate its work. '
                    'If busy, unavailable, incorrect, failed or timed out, '
                    'use partial evidence and continue in the lead; explain escalation and do not repeat the same failed assignment. '
@@ -131,10 +139,10 @@ def trusted_connection():
 
 
 def approval_args(value):
-    """Only the three reviewed, snapshot-only worker operations are preapproved."""
+    """Only the reviewed worker operations and read-only observation are preapproved."""
     if policy(value)['mode'] != 'automatic':
         return []
-    return [word for name in ('start_task', 'task_status', 'cancel_task')
+    return [word for name in ('check_availability', 'start_task', 'task_status', 'wait_task', 'cancel_task')
             for word in ('-c', f'mcp_servers.t-local-worker.tools.{name}.approval_mode="approve"')]
 
 
