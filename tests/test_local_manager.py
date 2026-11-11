@@ -60,6 +60,100 @@ def handler():
                            send_header=lambda *a: None, end_headers=lambda: None)
 
 
+def test_model_test_reserves_exact_owners_and_cancels_only_reviewed_work(manager):
+    m=manager;engine=m.Engine(Providers);engine.needs_recovery=False
+    first=register(engine);second=register(engine,'another')
+    jobs=[engine.submit(engine.clients[c['id']],'/v1/responses',{},handler()) for c in (first,second)]
+    engine.active=jobs[0];jobs[0]['state']='loading'
+    assert engine.control({'action':'test-preflight'})['activities'][first['id']]=='Loading'
+    engine.active=None;jobs[0]['state']='queued'
+    snapshot=engine.control({'action':'test-preflight'})
+    token=engine.control(dict(action='test-reserve',generation=snapshot['generation'],owners=snapshot['owners'],pid=os.getpid()))['token']
+    with pytest.raises(ValueError,match='changed'):
+        engine.control(dict(action='test-reserve',generation=snapshot['generation'],owners=[],pid=os.getpid()))
+    with pytest.raises(ValueError,match='expired'):
+        engine.control(dict(action='test-ready',token='wrong'))
+    assert engine.control(dict(action='test-interrupt',token=token))['interrupt_requested']
+    assert all(job['state']=='cancelled' for job in jobs)
+    assert all(c.get('interrupted') for c in engine.clients.values())
+    with pytest.raises(ValueError,match='interrupted'):
+        engine.submit(engine.clients[first['id']],'/v1/responses',{},handler())
+    assert engine.control(dict(action='test-ready',token=token))['ready']
+    test=engine.control(dict(action='register',chosen=chosen('test'),pid=os.getpid(),kind='verification',test_token=token))
+    assert engine.test_lease['client']==test['id']
+    with pytest.raises(ValueError,match='already in use'):
+        engine.control(dict(action='register',chosen=chosen(),pid=os.getpid(),test_token=token))
+    assert engine.control(dict(action='test-heartbeat',token=token))['reserved']
+    assert engine.control(dict(action='test-release',token=token))['released']
+    assert engine.test_lease is None
+    engine.close()
+
+
+def test_model_test_changed_owner_guard_pin_release_and_busy_state(manager,monkeypatch):
+    m=manager;engine=m.Engine(Providers);lease=register(engine,kind='session');client=engine.clients[lease['id']]
+    client['pinned_alias']='pinned';engine.responses['response']={'client':client['id'],'alias':'pinned'}
+    snapshot=engine.control({'action':'test-preflight'})
+    with pytest.raises(ValueError,match='changed'):
+        engine.control(dict(action='test-reserve',generation='old',owners=snapshot['owners'],pid=os.getpid()))
+    monkeypatch.setattr(m,'process_identity',lambda pid:None)
+    with pytest.raises(ValueError,match='identity'):
+        engine.control(dict(action='test-reserve',generation=engine.generation,owners=snapshot['owners'],pid=os.getpid()))
+    monkeypatch.setattr(m,'process_identity',lambda pid:'identity')
+    token=engine.control(dict(action='test-reserve',generation=engine.generation,owners=snapshot['owners'],pid=os.getpid()))['token']
+    other=register(engine);job=engine.submit(engine.clients[other['id']],'/v1/responses',{},handler())
+    with pytest.raises(ValueError,match='changed'):engine.control(dict(action='test-interrupt',token=token))
+    engine.cancel(job)
+    engine.control(dict(action='test-interrupt',token=token))
+    assert not client.get('interrupted')  # Native session remains usable after its turn interruption.
+    engine.active=job
+    assert not engine.control(dict(action='test-ready',token=token))['ready']
+    engine.active=None
+    assert engine.control(dict(action='test-ready',token=token))['ready']
+    assert not engine.responses and not client.get('pinned_alias')
+    with pytest.raises(ValueError,match='Unknown model'):engine.control(dict(action='test-unknown',token=token))
+    engine.control(dict(action='test-release',token=token));engine.close()
+
+
+def test_model_test_reservation_stops_other_admission(manager,monkeypatch):
+    m=manager;engine=m.Engine(Providers);engine.needs_recovery=False
+    token=engine.control(dict(action='test-reserve',generation=engine.generation,owners=[],pid=os.getpid()))['token']
+    other=register(engine);job=engine.submit(engine.clients[other['id']],'/v1/responses',{},handler())
+    engine.thread.start()
+    try:
+        assert not job['done'].wait(.05)
+        assert job['state']=='queued' and not engine.providers.loaded
+    finally:
+        engine.control(dict(action='test-release',token=token));engine.close()
+
+
+def test_cancellation_during_model_load_never_starts_generation(manager,monkeypatch):
+    engine=manager.Engine(Providers);engine.needs_recovery=False;lease=register(engine)
+    job=engine.submit(engine.clients[lease['id']],'/v1/responses',{},handler())
+    get=engine.providers.get
+    def cancel_during_load(*args):
+        engine.cancel(job)
+        return get(*args)
+    monkeypatch.setattr(engine.providers,'get',cancel_during_load)
+    monkeypatch.setattr(engine,'forward',lambda *a:pytest.fail('cancelled load started inference'))
+    engine.thread.start()
+    try:
+        assert job['done'].wait(2) and job['state']=='cancelled'
+    finally:engine.close()
+
+
+def test_test_client_cannot_register_before_release_or_after_expiry(manager):
+    engine=manager.Engine(Providers)
+    token=engine.control(dict(action='test-reserve',generation=engine.generation,owners=[],pid=os.getpid()))['token']
+    with pytest.raises(ValueError,match='expired or already'):
+        engine.control(dict(action='register',chosen=chosen(),pid=os.getpid(),test_token=token))
+    engine.test_lease['heartbeat']=0
+    engine.maintenance.start()
+    deadline=time.monotonic()+3
+    while engine.test_lease and time.monotonic()<deadline:time.sleep(.02)
+    assert engine.test_lease is None
+    engine.close()
+
+
 def test_settings_private_files_and_stopped_status(manager):
     m = manager
     assert m.status()['manager'] == 'stopped'

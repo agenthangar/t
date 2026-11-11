@@ -576,6 +576,14 @@
     "libexec/t_workflow_install.py:repositories:subprocess.run": {
       "kind": "phase",
       "reason": "Bounded local worktree inventory before listing the affected files for installer confirmation."
+    },
+    "bin/t:_RailUI.pick:select.select": {
+      "kind": "passthrough",
+      "reason": "The shared picker owns the terminal and polls input to repaint asynchronous progress without losing focus."
+    },
+    "libexec/t_model_preflight.py:legacy_owners:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded read-only lock-holder discovery runs within model-test preflight; RailUI owns feedback and no session is interrupted during discovery."
     }
   },
   "shell": [
