@@ -625,7 +625,7 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
             return ((measure(name, context, cancel=cancel) if action == 'measure' else
                      install(name, action == 'download', context, cancel=cancel)) if row['provider'] == 'lmstudio' else
                     ollama_action(name, action, action == 'download', context, cancel=cancel))
-        helper('t_local_runtime_ui')['run_model_action'](ui, operation, name)
+        helper('t_local_runtime_ui')['run_model_action'](ui, operation, name, preflight=action != 'download')
         row = next(r for r in catalogue(context=context)['models'] if r['model'] == row['model'])
 
 

@@ -166,6 +166,48 @@ def test_actions_success_failure_cancel_and_monitor(ui_module,monkeypatch):
     ui=Monitor();m.monitor_cli(ui);assert ui.pages[0][0]=='Local model usage'
 
 
+def test_preflight_cancel_never_executes_and_reserved_action_is_quiet(ui_module,monkeypatch):
+    m=ui_module;original=m.helper;closed=[];lease=SimpleNamespace(token='test',error=None,close=lambda:closed.append(True))
+    monkeypatch.setattr(m,'manager',lambda:{'status':lambda:{'requests':[]}})
+    monkeypatch.setattr(m,'helper',lambda name:{'prepare':lambda *a:False} if name=='t_model_preflight' else original(name))
+    assert m.run_model_action(UI(),lambda c:pytest.fail('cancelled preflight ran'),'model',preflight=True) is None
+    monkeypatch.setattr(m,'helper',lambda name:{'prepare':lambda *a:lease} if name=='t_model_preflight' else original(name))
+    def operation(cancel):
+        assert cancel.test_token=='test'
+        assert original('t_progress')['_state'].local.quiet
+        return {'ready':True}
+    assert m.run_model_action(UI(),operation,'model',preflight=True)['ready']
+    assert closed==[True]
+
+
+@pytest.mark.parametrize('failed',[False,True])
+def test_background_action_shows_result_without_refresh_key(ui_module,t_mod,monkeypatch,failed):
+    import threading
+    from test_tui import make_ui
+    m=ui_module;finish=threading.Event();done=threading.Event();begun=threading.Event()
+    ui=make_ui(t_mod,['enter'])  # Only the final result page consumes a key.
+    def operation(cancel):
+        cancel.client_id='owned-test';begun.set()
+        try:
+            assert finish.wait(2)
+            if failed:raise ValueError('generic HTTP error')
+            return {'ready':True}
+        finally:done.set()
+    def status():
+        assert begun.wait(2)
+        return {'requests':[dict(client='owned-test',created=m.time.time(),state='timed_out' if failed else 'running',
+                                  queue_seconds=300 if failed else 0,error='Queue wait expired' if failed else None)]}
+    monkeypatch.setattr(m,'manager',lambda:{'status':status})
+    def poll(*args):
+        finish.set();assert done.wait(2)
+        return [],[],[]
+    monkeypatch.setattr(t_mod.select,'select',poll)
+    result=m.run_model_action(ui,operation,'model')
+    frames='\n'.join(line for frame in ui.frames for line in frame)
+    assert ('Queue wait expired' in frames) if failed else result['ready']
+    assert ('Model action failed' if failed else 'Model test complete') in frames
+
+
 def test_hub_all_branches_and_command_errors(ui_module,monkeypatch,capsys):
     m=ui_module;calls=[]
     monkeypatch.setattr(m,'manager',lambda:{'status':lambda:view()})

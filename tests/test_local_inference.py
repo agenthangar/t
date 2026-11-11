@@ -374,7 +374,7 @@ def test_runtime_rejects_ambiguous_or_wrong_artifact(local,monkeypatch):
 def test_picker_install_measure_and_unavailable(local,monkeypatch):
     m=local;row=dict(m.artifact(m.DEFAULT_MODEL),provider='lmstudio',fit=True,installed=True,ready=True,benchmark=None,reason='fit',disk_fit=True)
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row]})
-    def run_action(ui, operation, model):
+    def run_action(ui, operation, model, **kwargs):
         try: operation(None)
         except ValueError: pass
     original_helper=m.helper
