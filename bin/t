@@ -572,6 +572,7 @@ def cmd_ls(cfg, args):
         print(e, file=sys.stderr)
         return 1
     st = Style()
+    view = None
     _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
     command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
     if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
@@ -579,12 +580,18 @@ def cmd_ls(cfg, args):
     else:
         cache = _session_discovery()
         view = cache['discover'](cfg, local=not args.remote, fields=['rows'])
+        if getattr(args, 'wait', False):
+            view = cache['wait_for_refresh'](cfg, view, local=not args.remote)
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
         text = cache['rows'](view, prefixed=args.remote)
     rows = _scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope)
     if not rows:
+        if view and any(h.get('value') is None or h.get('refreshing') or h.get('error')
+                        for h in view.get('hosts', [])):
+            print('No sessions in the available snapshot; discovery is incomplete.')
+            return 0
         if args.remote:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
             print(f"No dev sessions running{where} on this machine or any reachable host.")
@@ -13120,7 +13127,7 @@ REMOTE SESSIONS
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List cached live sessions across repositories and registered hosts without prompting. '
             'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
-            'Cold or expired entries refresh in the background; run again for updated results. '
+            'Cold or expired entries refresh in the background; --wait observes refresh for up to 30 seconds. '
             'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
 
@@ -13132,6 +13139,11 @@ REMOTE SESSIONS
   `t session list <repo>`. `-a` explicitly selects every repo (the default).
   Registered hosts are included by default with a HOST column; --local limits
   the view to this machine. -r retains the default.
+
+  Results return immediately by default. Use `t session list --wait` to wait up
+  to 30 seconds for the current refresh, then print available results with their
+  freshness. Ctrl-C cancels this wait; shared background refresh keeps running.
+  Redirected --wait is bounded and silent until results; it never prompts.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
   NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
@@ -13153,6 +13165,7 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", dest="remote", action="store_false",
                           help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '

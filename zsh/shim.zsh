@@ -1004,7 +1004,7 @@ _t() {
       _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -l --local -a --all -h --help; fi ;;
+      else _values 'flag' -r --remote -l --local -a --all --wait -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)
