@@ -127,30 +127,29 @@ _t_fzf_paginated() (
   _t_paged_page=$1 _t_paged_rows=$2 _t_paged_helper=$3
   _t_paged_preview=$4 _t_paged_query=$5 _t_paged_prompt=$6
   _t_paged_size=$(stty size </dev/tty 2>/dev/null) || _t_paged_size='24 80'
-  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size#* }" -le 44 ]; then
-    T_PICKER_PAGED_CONTROLS='Enter resume · Esc
-Ctrl-F/B pg · Ctrl-R
-Ctrl-/ details'
-  else
-    T_PICKER_PAGED_CONTROLS='Enter resume · Esc · Ctrl-F/B pages · Ctrl-R refresh · Ctrl-/ details'
-  fi
   export T_PICKER_HEADER_HEIGHT="${_t_paged_size%% *}"
   export T_PICKER_HEADER_WIDTH=$(( ${_t_paged_size#* } - 8 ))
+  _t_paged_marks=
   _t_paged_cardinality=--no-multi
   _t_paged_keys='tab:down,shift-tab:up'
   if [ "${7:-}" = multi ]; then
     _t_paged_cardinality=--multi
     _t_paged_keys='space:put,tab:toggle+down,shift-tab:toggle+up'
-    T_PICKER_PAGED_CONTROLS="$T_PICKER_PAGED_CONTROLS
-Tab mark · page/search clears marks"
+    _t_paged_marks=' · Tab✓'
   fi
-  _t_paged_preview_window='hidden:wrap:down:40%:~1'
+  T_PICKER_PAGED_CONTROLS="Enter resume/Esc${_t_paged_marks} · Ctrl-/ details
+Ctrl-F/B pages · Ctrl-R refresh"
+  if [ "${_t_paged_size%% *}" -le 14 ] || [ "${_t_paged_size#* }" -le 44 ]; then
+    T_PICKER_PAGED_CONTROLS="Enter resume/Esc${_t_paged_marks}
+Ctrl-F/B pg · Ctrl-R · Ctrl-/"
+  fi
+  _t_paged_preview_window='hidden:wrap:down:4:border-top:~1'
   _t_paged_margin='1,2' _t_paged_info=default
   if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -le 14 ]; then
     _t_paged_margin='0,2' _t_paged_info=inline
     _t_paged_preview_window='hidden:wrap:down:3:border-none:~1'
   fi
-  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -ge 22 ] && [ "${_t_paged_size#* }" -ge 70 ]; then
+  if [ -n "$_t_paged_size" ] && [ "${_t_paged_size%% *}" -ge 28 ] && [ "${_t_paged_size#* }" -ge 70 ]; then
     _t_paged_preview_window='wrap:down:35%:border-top:~1'
   fi
   T_PICKER_PAGED_PAGE=$_t_paged_page T_PICKER_PAGED_ROWS=$_t_paged_rows
@@ -162,7 +161,7 @@ Tab mark · page/search clears marks"
   T_PICKER_PAGED_RENDER=$_t_paged_dir/header
   export T_PICKER_PAGED_RENDER
   cat > "$T_PICKER_PAGED_RENDER" <<'SH'
-printf '%s\n' "$T_PICKER_PAGED_CONTROLS"
+printf '%s\n\n' "$T_PICKER_PAGED_CONTROLS"
 cat "$T_PICKER_PAGED_PAGE"
 SH
   # Render labels identically initially and after each page/search reload.
@@ -182,6 +181,12 @@ SH
   # shellcheck disable=SC2016
   _t_paged_header_command='sh "$T_PICKER_PAGED_RENDER"'
   _t_paged_bind="change:deselect-all+execute-silent($_t_paged_helper show {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-f:deselect-all+execute-silent($_t_paged_helper next {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command),ctrl-b:deselect-all+execute-silent($_t_paged_helper previous {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
+  if [ "${T_PICKER_HISTORY_SORT:-}" = 1 ]; then
+    for _t_paged_spec in ctrl-s:toggle-sort ctrl-y:next-sort; do
+      _t_paged_key=${_t_paged_spec%:*} _t_paged_action=${_t_paged_spec#*:}
+      _t_paged_bind="${_t_paged_bind},${_t_paged_key}:deselect-all+execute-silent($_t_paged_helper $_t_paged_action {q})+reload-sync($_t_paged_rows_command)+transform-header($_t_paged_header_command)"
+    done
+  fi
   _t_fzf --height=100% --margin="$_t_paged_margin" --info="$_t_paged_info" --disabled --sync "$_t_paged_cardinality" --delimiter="$(printf '\t')" --with-nth=2 --no-hscroll \
     --print-query --expect=enter,ctrl-r --query="$_t_paged_query" --prompt="$_t_paged_prompt" \
     --header="$(sh "$T_PICKER_PAGED_RENDER")" \
