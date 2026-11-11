@@ -182,6 +182,51 @@ class _Memory:
                     self.artifacts[key] = payload['value']
                     self.persist()
                 return {'value': copy.deepcopy(self.artifacts.get(key))}
+            if operation == 'forget':
+                target = payload.get('target', 'local')
+                workspace, sid = payload.get('workspace'), payload.get('sid', '')
+                if not isinstance(target, str) or not target or not isinstance(workspace, str) or not os.path.isabs(workspace) or not isinstance(sid, str):
+                    raise ValueError('invalid session cache reset target')
+                if self.loading:
+                    raise ValueError('session cache is still loading; retry reset')
+                def matches(row, resume=False):
+                    if isinstance(row, str):
+                        fields = row.split('\t')
+                        if resume:
+                            return len(fields) >= 5 and (bool(sid and fields[3] == sid) or fields[4] == workspace)
+                        return len(fields) >= 2 and (bool(sid and fields[0] == sid) or fields[1] == workspace)
+                    if not isinstance(row, dict):
+                        return False
+                    return bool(sid and row.get('sid', row.get('id')) == sid) or row.get('cwd') == workspace or any(
+                        a.get('workspace') == workspace for a in row.get('associations', []) if isinstance(a, dict))
+                count = 0
+                self.generations[target] = self.generations.get(target, 0) + 1
+                for entry in self.entries.values():
+                    if entry['spec']['target'] != target:
+                        continue
+                    entry['checked'] = entry['retry'] = 0
+                    value = entry.get('value', {})
+                    rows = value.get('rows', '').splitlines()
+                    kept = [row for row in rows if not matches(row)]
+                    count += len(rows) - len(kept)
+                    value['rows'] = '\n'.join(kept) + ('\n' if kept else '')
+                    rows = value.get('resume', [])
+                    value['resume'] = [row for row in rows if not matches(row, resume=True)]
+                    count += len(rows) - len(value['resume'])
+                    catalog = value.get('catalog', {})
+                    if 'conversations' in catalog:
+                        catalog['conversations'] = [r for r in catalog['conversations'] if not matches(r)]
+                    mcp = value.get('mcp', {})
+                    if 'recs' in mcp:
+                        mcp['recs'] = [r for r in mcp['recs'] if not matches(r)]
+                    for field in ('live', 'registry'):
+                        if isinstance(mcp.get(field), dict):
+                            mcp[field] = {key: row for key, row in mcp[field].items()
+                                          if not (sid and key == sid) and not matches(row)}
+                self.overlays[target] = {key: value for key, value in self.overlays.get(target, {}).items()
+                                         if not matches(value['row'])}
+                self.persist()
+                return {'forgotten': count}
             if operation == 'event':
                 targets = payload.get('targets', ['local'])
                 for target in targets:

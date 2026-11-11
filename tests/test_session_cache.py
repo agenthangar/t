@@ -162,6 +162,43 @@ def test_artifacts_and_invalid_operations(engine):
     with pytest.raises(ValueError): discover(memory, {'target': []})
 
 
+def test_forget_clears_target_across_views_and_rejects_inflight(engine):
+    memory, _, jobs, _ = engine
+    discover(memory, spec(), spec('remote')); drain(jobs); drain(jobs)
+    entry = next(e for e in memory.entries.values() if e['spec']['target'] == 'local')
+    other = 'other\t/other\tapi-2\tdetached\tactive\tOther\tclaude'
+    entry['value']['rows'] += other + '\n'
+    entry['value']['resume'] = ['1\tapi\t1\tsid\t/work\tdate\ttitle\tlocal\tcodex\t-\torg/api\tNONE',
+                                '1\tapi\t2\tother\t/other\tdate\ttitle\tlocal\tcodex\t-\torg/api\tNONE']
+    entry['value']['catalog'] = {'conversations': [{'sid':'sid'}, {'sid':'other'}]}
+    entry['value']['mcp'] = {'recs':[{'id':'sid'}, {'id':'other'}], 'live':{'sid':{},'other':{}}}
+    memory.overlays['local'] = {'api-1':{'row':'sid\t/work\tapi-1', 'close':False}, 'api-2':{'row':other, 'close':False}}
+    old = memory.generations.get('local', 0)
+    result = memory.handle('forget', {'workspace':'/work', 'sid':'sid'})
+    assert result['forgotten'] == 2
+    assert entry['value']['rows'] == other + '\n'
+    assert len(entry['value']['resume']) == 1
+    assert entry['value']['catalog']['conversations'] == [{'sid':'other'}]
+    assert entry['value']['mcp']['recs'] == [{'id':'other'}]
+    assert entry['value']['mcp']['live'] == {'other':{}}
+    assert set(memory.overlays['local']) == {'api-2'}
+    key = next(k for k,e in memory.entries.items() if e is entry)
+    memory.refresh(key, old)
+    assert entry['value']['rows'] == other + '\n'
+    remote = next(e for e in memory.entries.values() if e['spec']['target'] == 'remote')
+    assert '/work' in remote['value']['rows']
+
+
+def test_forget_by_workspace_and_validation(engine):
+    memory, _, jobs, _ = engine
+    discover(memory); drain(jobs)
+    assert memory.handle('forget', {'workspace':'/work'})['forgotten'] == 1
+    for payload in ({}, {'workspace':'relative'}, {'workspace':'/work', 'sid':[]}, {'workspace':'/work', 'target':None}):
+        with pytest.raises(ValueError): memory.handle('forget', payload)
+    memory.loading=True
+    with pytest.raises(ValueError, match='loading'): memory.handle('forget', {'workspace':'/work'})
+
+
 def test_configuration_namespace_and_alias_dedup(engine):
     memory, _, jobs, _ = engine
     discover(memory, spec('remote', 'one'), spec('remote', 'two'))

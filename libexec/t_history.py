@@ -159,6 +159,42 @@ class Store:
     def records(self):
         return [json.loads(row[0]) for row in self.db.execute('select record from conversations')]
 
+    def forget_workspace(self, workspace, sid='', *, backup, evidence):
+        """Back up and reset only this session; native transcripts remain untouched."""
+        selected = []
+        for key, raw in self.db.execute('select key,record from conversations'):
+            row = json.loads(raw)
+            if (sid and row.get('sid') == sid) or any(
+                    a.get('host') == 'local' and a.get('workspace') == workspace
+                    for a in row.get('associations', [])):
+                selected.append((key, row))
+        records = [row for _, row in selected]
+        _LIFECYCLE['write_private'](backup, {**evidence, 'records': records})
+        # The single cache service owns RAM and disk, including refresh generations.
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                result = _CACHE_REQUEST('forget', {'target': 'local', 'workspace': workspace,
+                                                 'sid': sid})
+                if 'forgotten' not in result:
+                    raise HistoryError('session cache unavailable; no history reset')
+                break
+            except ValueError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.1)
+        with self.db:
+            self.db.executemany('delete from conversations where key=?', [(key,) for key, _ in selected])
+            for _, row in selected:
+                for source in row.get('sources', []):
+                    if source.get('host') != 'local' or not source.get('path'):
+                        continue
+                    for suffix in ('', '#resume'):
+                        key = source['path'] + suffix
+                        self.db.execute('delete from scans where path=?', (key,))
+                        _CACHE_REQUEST('artifact', {'key': str(self.directory) + ':scan:' + key, 'value': None})
+        return records
+
     def merge(self, record):
         validate(record)
         key = json.dumps([record['repo'], record['agent'], record['sid']])
@@ -1305,7 +1341,7 @@ class HistoryCommand:
         return associations[0] if associations else {}, ''
 
 
-    def source(self, row):
+    def source(self, row, *, required=True):
         for source in sorted(row['sources'], key=lambda source: (source.get('updated', 0), source.get('size', 0)), reverse=True):
             if source.get('host') == 'local' and Path(source.get('path', '')).is_file():
                 value = self.store.scan(Path(source['path']), row['agent'])
@@ -1330,7 +1366,9 @@ class HistoryCommand:
                 if not self.verify_source(self.store.scan(destination, row['agent']), row):
                     raise HistoryError('selected transcript identity changed; no session started')
                 return destination
-        raise HistoryError('selected transcript is missing; retained history is still available')
+        if required:
+            raise HistoryError('selected transcript is missing; retained history is still available')
+        return None
 
     def verify_source(self, value, row):
         if value['sid'] != row['sid'] or value.get('agent') != row['agent']:
