@@ -210,6 +210,19 @@ def test_automatic_admission_is_atomic_and_read_only(manager):
     engine.close()
 
 
+def test_automatic_admission_respects_reviewed_model_test_reservation(manager):
+    engine = manager.Engine(Providers)
+    lease = engine.control(dict(action='test-reserve', generation=engine.generation, owners=[], pid=os.getpid()))
+    view = engine.control({'action': 'availability'})
+    assert view['state'] == 'busy' and view['retry_after_seconds'] is None
+    assert 'model test' in view['reason']
+    assert automatic(engine)['admitted'] is False
+    assert not engine.clients and engine.providers.loaded == 0
+    engine.control(dict(action='test-release', token=lease['token']))
+    assert 'id' in automatic(engine)
+    engine.close()
+
+
 def test_automatic_rechecks_other_requests_and_preserves_manual_queue(manager):
     engine = manager.Engine(Providers)
     first = automatic(engine)

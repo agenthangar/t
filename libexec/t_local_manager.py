@@ -462,6 +462,8 @@ class Engine:
         state, reason, retry = 'available', 'Shared runtime is available', None
         if self.blocked or self.recovery_pending or (self.needs_recovery and read_json(root() / 'leases.json', {}).get('instances')):
             state, reason = 'unknown', self.blocked or 'Runtime ownership recovery is pending'
+        elif self.test_lease:
+            state, reason = 'busy', 'A model test holds the shared runtime reservation'
         elif blockers or leases or self.measurement_owner:
             state, reason = 'busy', 'Another local task is using the shared runtime'
             # Only an observed end of generation permits a bounded release wait.
