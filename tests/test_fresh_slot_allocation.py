@@ -1,4 +1,8 @@
 """Fresh local allocation skips remote desktop reservations from one snapshot."""
+from pathlib import Path
+import shlex
+import subprocess
+
 import pytest
 
 from test_agent_seam import zsh  # noqa: F401
@@ -88,3 +92,85 @@ t open t --new; print rc=$?
     assert 'LAUNCH dev-t-10' in result.stdout, result.stdout + result.stderr
     assert 'rc=0' in result.stdout
     assert (zsh.home / 'scans').read_text().splitlines() == ['scan']
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_reservation_scan_never_collects_local_display_and_supports_old_peers(zsh, legacy):
+    result = zsh(r'''
+REMOTE_HOSTS=(peer peer)
+_dev_session_rows() { print -u2 UNEXPECTED_LOCAL_INVENTORY; return 91; }
+_dev_remote_scan_with_timeout() {
+  local -a words; words=(${(z)2})
+  local script=${(Q)words[3]}
+  (
+    if [[ $LEGACY == 1 ]]; then
+      unfunction _dev_legacy_workspace_reserved
+      _dev_session_rows() { printf 'id\t/remote/api\tapi-8\tapp\tactive\tLegacy\tcodex\n'; }
+    fi
+    eval "$script"
+  )
+}
+_dev_rows_all --reservations api
+''', LEGACY=str(int(legacy)))
+    assert result.returncode == 0, result.stderr
+    assert 'UNEXPECTED_LOCAL_INVENTORY' not in result.stderr
+    assert ('peer\tid\t/remote/api\tapi-8\tapp' in result.stdout) == legacy
+
+
+def test_reservations_read_only_matching_worktree_markers(zsh, tmp_path):
+    repo = zsh.home / 'code/api'
+    repo.mkdir(parents=True)
+    root = tmp_path / 'worktrees'
+    for command in (['init', '-q'], ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                                     'commit', '-q', '--allow-empty', '-m', 'base']):
+        subprocess.run(['git', '-C', str(repo), *command], check=True, capture_output=True)
+    for leaf in ('1', 'api-2', 'api-3'):
+        wt = root / 'api' / leaf
+        subprocess.run(['git', '-C', str(repo), 'worktree', 'add', '-q', '-b', leaf, str(wt)],
+                       check=True, capture_output=True)
+        if leaf != 'api-3':
+            gitdir = subprocess.check_output(['git', '-C', str(wt), 'rev-parse', '--absolute-git-dir'], text=True).strip()
+            (Path(gitdir) / 't-app-slot').write_text('codex-app\n')
+    result = zsh(f'''
+DEV_WORKTREE_ROOT={shlex.quote(str(root))}
+DEV_REPOS[alias]="$HOME/code/api"
+_dev_session_rows() {{ print -u2 UNEXPECTED_INVENTORY; return 91; }}
+_dev_slot_reservation_rows api
+_dev_slot_reservation_rows unrelated
+''')
+    assert result.returncode == 0, result.stderr
+    rows = [row.split('\t') for row in result.stdout.splitlines()]
+    assert sorted(row[1] for row in rows) == sorted(str(root / 'api' / leaf) for leaf in ('1', 'api-2'))
+    assert all(row[3] == 'app' for row in rows)
+    assert 'UNEXPECTED_INVENTORY' not in result.stderr
+
+
+def test_fresh_allocation_requests_reservations_and_honors_cancellation(zsh):
+    (zsh.home / 'code/api').mkdir(parents=True)
+    result = zsh(SETUP + r'''
+_dev_rows_all() {
+  [[ $* == '--reservations api' ]] || return 91
+  return 130
+}
+_t_dev api new
+''')
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert 'LAUNCH' not in result.stdout
+
+
+def test_foreground_preflight_keeps_conflict_without_display_work(zsh, tmp_path):
+    (tmp_path / 'ps.txt').write_text('1 0 launchd\n70001 1 claude\n')
+    registry = zsh.home / '.cache/claude-sessions'
+    registry.mkdir()
+    (registry / '70001').write_text(f'known-session\t{zsh.home}/code/api\n')
+    result = zsh(r'''
+_dev_legacy_workspace_reserved() { return 1; }
+_dev_repo_of_dir() { print -u2 UNEXPECTED_LABEL; return 91; }
+_dev_agent_transcript() { print -u2 UNEXPECTED_TRANSCRIPT; return 91; }
+_dev_fg_rows --ownership
+_dev_launch_preflight dev-api-1 "$HOME/code/api"
+''')
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'known-session\t' in result.stdout
+    assert 'foreground agent already owns' in result.stderr
+    assert 'UNEXPECTED' not in result.stderr

@@ -13167,6 +13167,8 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  Fresh allocation checks remote reservations without rebuilding the local
+  session list. Older hosts retain their live reservation scan.
   Session-cache refresh and history indexing run in the background. Worktree
   preparation, ownership checks and launch settings finish before you enter.
   Unidentified Codex writers do not block newly allocated worktrees globally.
