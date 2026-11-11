@@ -791,6 +791,12 @@ Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
 
+Session-picker filtering and sorting are hotkey interactions. Improvements to
+these controls extend the existing picker and preserve its filter and sort
+choices. Do not introduce CLI flags for these interactions unless the user
+explicitly requests flags or noninteractive control. Inspect the existing
+bindings before proposing changes; history keeps its distinct pagination keys.
+
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
@@ -1034,6 +1040,14 @@ Repositories without a GitHub origin retain their exact local registration
 identity through selection and launch; an unregistered or changed path is refused.
 Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
+Slot history uses the same five sort choices as open/resume: last turn, repository,
+agent, host, and session. Ctrl-S toggles sorting; Ctrl-Y cycles choices.
+The highlighted `Sort: last turn ↓` label means newest actual user turn first,
+unknown times last. Text modes show ↑ and use natural ascending order.
+History sorts the complete search result before pagination; changing sort clears
+marks and returns to page 1. Search, paging, and refresh retain the sort choice.
+Sorting off restores snapshot order. Row timestamps use local time; full dates
+and timezone remain available in details. No new command or launch mode is added.
 Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,
 including the recency limit and nonterminal saved selection. Internal resume
@@ -1180,8 +1194,13 @@ The preview includes the complete working-on text, status/context, UI, agent and
 model, host/session, date, repository and full conversation ID, every workspace
 association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
-default at 70 or more columns and 22 or more rows, in a bottom preview occupying
-35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
+default at 70 or more columns and 28 or more rows, in a bottom preview occupying
+35% of the full-height picker; Ctrl-/ toggles it at every size. Smaller terminals
+start with details hidden and use a four-row pane when toggled (three rows at
+14 or fewer terminal rows), preserving the focused result. Match `t open` with
+the shared two-line sort block, blank rows between header sections, and
+two-space table gutters at 60 or more content columns. Compact layouts reclaim
+section gaps before hiding controls or results. Use the shared
 paginated multi-picker: Tab marks exact conversations, Enter accepts marks
 or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
 or refresh. Slot and revision choices remain single-selection.
