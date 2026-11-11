@@ -17,8 +17,13 @@ each meaningful subtask. Bounded investigations, mechanical changes and small
 patches are candidates. Architecture, ambiguous debugging and final acceptance
 stay with the lead. The lead announces the model and routing reason, calls MCP,
 then receives a proposed patch and observed command evidence. Failed, busy or
-incorrect work is reported and continues in the lead. No hidden retry loop or
-full conversation transfer occurs. Automatic native CLI launches preapprove only this adapter’s start/status/cancel
+incorrect work is reported and continues in the lead. Automatic workers check
+shared-runtime availability before snapshotting and revalidate atomically before
+acceptance. Busy or unknown availability skips delegation immediately. A later
+request encountering another task returns partial evidence to the lead instead
+of queueing. Manual workers and native local-only sessions retain fair queueing.
+No hidden retry loop or
+full conversation transfer occurs. Automatic native CLI launches preapprove only this adapter’s availability/start/status/wait/cancel
 tools when setup is enabled; other MCP tools and managed approval constraints
 remain unchanged. Existing conversations need refreshed MCP
 tools and instructions; saving cannot hot-switch their underlying provider.
@@ -301,8 +306,10 @@ The dedicated `t-local-worker` MCP server exposes:
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `start_task` | Absolute repository-root `workspace`, `assignment`, optional `mode` (`investigate` or `patch`), optional `timeout_seconds` | Task ID and running status |
+| `check_availability` | Absolute repository-root `workspace` | Effective model/limits, adapter version, runtime freshness and available/busy/unknown reason; blockers with verified owner information when available |
+| `start_task` | Absolute repository-root `workspace`, `assignment`, optional `mode` (`investigate` or `patch`), optional `timeout_seconds` | Accepted task ID/status, or `accepted: false`, `status: busy` and availability reason |
 | `task_status` | `task_id` | Status; when finished, findings, observed command evidence, proposed patch and artifact paths |
+| `wait_task` | `task_id`, optional `timeout_seconds` (1–60) | Terminal evidence or pending; stopping observation does not cancel work |
 | `cancel_task` | `task_id` | Cancellation request; poll until the task reaches a terminal state |
 
 Investigation is the default and runs in Codex's read-only sandbox. Patch tasks
@@ -319,11 +326,31 @@ are configured in `t workflow` → Inference & routing, also accessible through
 explicit limits are retained when defaults change. Limits accept 10–1800 seconds. The snapshot is captured before acceptance.
 Queue wait has a separate budget, including admission/model loading; it does not consume execution or inactivity time. Failed or timed-out tasks return to the lead without automatic
 cloud fallback or retries. Terminal statuses are `completed`, `failed`, `cancelled`,
-`timed_out`, `inactivity_timed_out`, and `output_limit`. Completion means the worker process exited
+`timed_out`, `inactivity_timed_out`, `busy`, and `output_limit`. Completion means the worker process exited
 successfully, not that the proposed fix is correct.
 
-Multiple workers can be accepted across MCP connections; their model requests
-take fair turns through the shared manager. Tasks belong to the connection that started them.
+Manual workers can be accepted across MCP connections; their model requests
+take fair turns through the shared manager. Automatic admission permits one
+automatic worker at a time and skips other active requests, even for another
+model. Preflight never starts the manager or inference. It does not reserve the
+runtime: admission rechecks after snapshot preparation and every model request.
+An idle cached model alone does not block admission; legacy exclusive locks,
+memory blockers and uncertain ownership do. Availability is about managed
+contention, not proof that an external provider is ready or idle.
+
+The only automatic contention wait is at most 15 seconds when generation has
+observably finished and the runtime is releasing it. Elapsed runtime and recent
+tokens do not establish that a task is almost done. No other session is interrupted.
+Status/results separate queue, loading and execution time, include request IDs,
+effective limits, command counts and partial-patch availability, and retain a
+failure reason. Old receipts lacking these fields remain unknown. Missing
+`check_availability` or version/limit fields indicates an older adapter; refresh
+its MCP connection when safe. Active sessions are never restarted automatically.
+
+Omit a task timeout to inherit the workflow budget. Provide narrow paths,
+implementation context and concrete checks; ask for partial findings if context
+is missing rather than broad repository exploration. Progress never extends the
+hard execution deadline. Tasks belong to the connection that started them.
 Closing the MCP connection cancels its work and reaps its child processes. Poll
 for progress; the adapter does not promise push notifications or automatic turns
 in the lead client.

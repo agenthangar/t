@@ -25,9 +25,9 @@ import urllib.parse
 import uuid
 
 LIB = Path(__file__).resolve().parent
-VERSION = 2
+VERSION = 3
 LIMIT = 16 * 1024**2
-TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out'}
+TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out', 'busy'}
 DEFAULTS = {'memory_percent': 80, 'idle_seconds': 300,
             'providers': {'lmstudio': {'mode': 'headless', 'url': 'http://127.0.0.1:1234'},
                           'ollama': {'mode': 'headless', 'url': 'http://127.0.0.1:11434'}}}
@@ -105,10 +105,10 @@ def settings(value=None):
     return result
 
 
-def rpc(action, **fields):
+def rpc(action, *, _timeout=5, **fields):
     path = root() / 'control.sock'
     with socket.socket(socket.AF_UNIX) as conn:
-        conn.settimeout(5)
+        conn.settimeout(_timeout)
         conn.connect(str(path))
         conn.sendall(json.dumps(dict(action=action, **fields)).encode() + b'\n')
         with conn.makefile('rb') as stream:
@@ -136,12 +136,60 @@ def status():
                     clients=[], settings=saved.get('settings', settings()))
 
 
+def legacy_busy():
+    """Probe an existing lock without creating runtime state or retaining a lease."""
+    path = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 't/local-worker/worker.lock'
+    try:
+        with path.open('r') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        pass
+    return False
+
+
+def availability(deadline=None):
+    """Never start the manager, a provider, or inference for a preflight."""
+    try:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Release wait expired')
+            return rpc('availability', _timeout=min(5, remaining))
+        view = status()
+        if view.get('manager') == 'running' and view.get('protocol') == VERSION:
+            return rpc('availability')
+        state, reason = 'unknown', 'Runtime state is stale or incompatible; refresh the MCP connection after active sessions finish'
+        if (view.get('manager') == 'running' and view.get('protocol') in (1, 2) and
+                view.get('clients') == [] and
+                all(j.get('state') in TERMINAL for j in view.get('requests', []))):
+            # ensure() upgrades only after the old manager atomically confirms it
+            # has no clients or active generation. This read does not restart it.
+            state, reason = 'available', 'Idle older manager can be upgraded at admission'
+        elif view.get('manager') == 'stopped':
+            if legacy_busy():
+                state, reason = 'busy', 'An older worker holds the shared runtime lock'
+            elif read_json(root() / 'leases.json', {}).get('instances'):
+                reason = 'Previous runtime instances require ownership recovery'
+            else:
+                state, reason = 'available', 'No managed inference is active; readiness is checked at admission'
+        return dict(state=state, reason=reason, blockers=[], manager=view.get('manager'),
+                    protocol=view.get('protocol'), checked_at=time.time(), retry_after_seconds=None)
+    except (OSError, ValueError):
+        return dict(state='unknown', reason='Runtime availability could not be verified', blockers=[],
+                    checked_at=time.time(), retry_after_seconds=None)
+
+
 def ensure(testing=False):
     private_directory(root())
     try:
         view = rpc('status')
         if view.get('protocol') != VERSION or (testing and not view.get('test_preflight')):
-            if view.get('protocol') not in (1, VERSION) or view.get('clients') != []:
+            if view.get('protocol') not in (1, 2, VERSION) or view.get('clients') != []:
                 raise ValueError('Existing local manager uses a different protocol; let its sessions finish before restarting')
             # The old manager rechecks attached clients under its lock. Never
             # replace a runtime serving a live session, even if admission races.
@@ -290,10 +338,11 @@ class Engine:
                 queued.append(item)
             positions = {j['id']: i + 1 for i, j in enumerate(queued)}
             requests = [dict({k: j.get(k) for k in ('id', 'client', 'owner', 'owner_label', 'model', 'provider', 'kind', 'state',
-                                                   'created', 'started', 'finished', 'error', 'tokens', 'revision')},
+                                                   'created', 'started', 'execution_started', 'finished', 'error', 'timeout_phase', 'tokens', 'revision')},
                              queue_position=positions.get(j['id']),
                              queue_seconds=round((j.get('started') or j.get('finished') or now) - j['created'], 2),
-                             execution_seconds=round((j.get('finished') or now) - j['started'], 2) if j.get('started') else 0)
+                             loading_seconds=round((j.get('execution_started') or j.get('finished') or now) - j['started'], 2) if j.get('started') else 0,
+                             execution_seconds=round((j.get('finished') or now) - j['execution_started'], 2) if j.get('execution_started') else 0)
                         for j in self.jobs.values()]
             clients = [self.client_status(c) for c in self.clients.values()]
             models = [dict(provider=x['provider'], model=x['model'], revision=x['revision'], context=x['context'],
@@ -311,13 +360,24 @@ class Engine:
         now = time.time()
         jobs = [j for j in self.jobs.values() if j['client'] == client['id']]
         current = next((j for j in reversed(jobs) if j['state'] not in TERMINAL), None)
-        intervals = sorted((j['created'], j.get('started') or j.get('finished') or now) for j in jobs)
-        wait, end = 0, 0
-        for start, stop in intervals:
-            wait += max(0, stop - max(start, end))
-            end = max(end, stop)
-        return dict(id=client['id'], model=client['chosen']['model'], provider=client['chosen']['provider'],
+        def duration(intervals):
+            total, end = 0, 0
+            for start, stop in sorted(intervals):
+                total += max(0, stop - max(start, end))
+                end = max(end, stop)
+            return total
+        # Concurrent requests can overlap: exclude wall time once, never per request.
+        wait = duration((j['created'], j.get('execution_started') or j.get('finished') or now) for j in jobs)
+        queue = duration((j['created'], j.get('started') or j.get('finished') or now) for j in jobs)
+        latest = jobs[-1] if jobs else None
+        failure = latest if latest and latest['state'] in ('busy', 'failed', 'timed_out') else None
+        return dict(id=client['id'], protocol=VERSION, model=client['chosen']['model'], provider=client['chosen']['provider'],
                     state=current['state'] if current else 'working', wait_seconds=wait,
+                    queue_seconds=queue, loading_seconds=max(0, wait - queue),
+                    outcome=client.get('outcome') or (failure['state'] if failure else None),
+                    failure_reason=client.get('failure_reason') or (failure.get('error') if failure else None),
+                    timeout_phase=client.get('timeout_phase') or (failure.get('timeout_phase') if failure else None),
+                    request_ids=[j['id'] for j in jobs][-200:],
                     generation_events=client.get('generation_events', 0),
                     request_id=current['id'] if current else None, identity_verified=client.get('identity_verified', False),
                     revision=client.get('revision'), runtime_model=client.get('runtime_model'),
@@ -392,6 +452,37 @@ class Engine:
             return {'ready': lease['ready']}
         raise ValueError('Unknown model test control action')
 
+    def availability(self, client_id=None):
+        """Called under the scheduler lock, also used for atomic admission."""
+        blockers = [dict(request_id=j['id'], model=j['model'], provider=j['provider'],
+                         owner_label=j['owner_label'], state=j['state'],
+                         owner_verified=self.clients.get(j['client'], {}).get('owner_verified', False))
+                    for j in self.jobs.values() if j['client'] != client_id and j['state'] not in TERMINAL]
+        leases = [c for c in self.clients.values() if c['id'] != client_id and c.get('fail_fast')]
+        state, reason, retry = 'available', 'Shared runtime is available', None
+        if self.blocked or self.recovery_pending or (self.needs_recovery and read_json(root() / 'leases.json', {}).get('instances')):
+            state, reason = 'unknown', self.blocked or 'Runtime ownership recovery is pending'
+        elif self.test_lease:
+            state, reason = 'busy', 'A model test holds the shared runtime reservation'
+        elif blockers or leases or self.measurement_owner:
+            state, reason = 'busy', 'Another local task is using the shared runtime'
+            # Only an observed end of generation permits a bounded release wait.
+            if (self.active and self.active.get('backend_stopped') and
+                    all(b['request_id'] == self.active['id'] for b in blockers) and
+                    all(c['id'] == self.active['client'] for c in leases) and not self.measurement_owner):
+                retry = 15
+        elif not self.legacy and legacy_busy():
+            state, reason = 'busy', 'An older worker holds the shared runtime lock'
+        elif self.maintenance_busy:
+            state, reason = 'unknown', 'Runtime maintenance is in progress'
+        elif any(x.get('memory_bytes') is None for x in self.providers.external):
+            state, reason = 'unknown', 'External model memory use is unverified'
+        if leases and not blockers:
+            blockers = [dict(owner_label=c['owner_label'], owner_verified=c['owner_verified'],
+                             model=c['chosen']['model'], state='admitted') for c in leases]
+        return dict(state=state, reason=reason, blockers=blockers, protocol=VERSION,
+                    manager='running', checked_at=time.time(), retry_after_seconds=retry)
+
     def pins(self):
         return ({v['alias'] for v in self.responses.values() if v['client'] in self.clients} |
                 {c['pinned_alias'] for c in self.clients.values() if c.get('pinned_alias')})
@@ -418,10 +509,17 @@ class Engine:
                 return {'stopping': True}
             if action == 'status':
                 return self.snapshot()
+            if action == 'availability':
+                return self.availability()
             if action == 'register':
                 if len(self.clients) >= 64:
                     raise ValueError('Local client limit reached')
                 chosen = module('t_local_inference')['policy'](data['chosen'])
+                fail_fast = data.get('kind', 'session') == 'worker' and chosen['mode'] == 'automatic'
+                if fail_fast:
+                    admission = self.availability()
+                    if admission['state'] != 'available':
+                        return dict(admitted=False, availability=admission)
                 pid = data.get('pid')
                 identity = process_identity(pid)
                 if not identity:
@@ -429,7 +527,7 @@ class Engine:
                 owner, verified = owner_identity(pid, data.get('tmux', ''), data.get('pane', ''))
                 token = secrets.token_urlsafe(32)
                 client = dict(id=uuid.uuid4().hex, token=token, chosen=chosen, pid=pid, identity=identity, owner=owner,
-                              owner_verified=verified, owner_label=('Terminal pane ' + data.get('pane', '') if verified and data.get('pane') else 'Process ' + str(pid)), heartbeat=time.time(), kind=data.get('kind', 'session')[:32],
+                              fail_fast=fail_fast, owner_verified=verified, owner_label=('Terminal pane ' + data.get('pane', '') if verified and data.get('pane') else 'Process ' + str(pid)), heartbeat=time.time(), kind=data.get('kind', 'session')[:32],
                               tmux=data.get('tmux', ''), pane=data.get('pane', ''))
                 if data.get('test_token'):
                     lease = self.test_lease
@@ -440,7 +538,7 @@ class Engine:
                 if client['kind'] == 'measurement':
                     client['owner'] = 'measurement:' + client['id']
                 self.clients[client['id']] = client
-                return {'id': client['id'], 'token': token, 'base': f'http://127.0.0.1:{self.port}/{token}',
+                return {'id': client['id'], 'protocol': VERSION, 'token': token, 'base': f'http://127.0.0.1:{self.port}/{token}',
                         'generation': self.generation}
             if action in ('heartbeat', 'close', 'client'):
                 client = self.clients.get(data.get('client'))
@@ -512,6 +610,13 @@ class Engine:
         with self.condition:
             if client.get('interrupted'):
                 raise ValueError('This local worker was interrupted for a model test')
+            if client.get('outcome') in ('busy', 'timed_out'):
+                raise ValueError('Local task has ended; lead continuing')
+            if client.get('fail_fast'):
+                admission = self.availability(client['id'])
+                if admission['state'] != 'available':
+                    client.update(outcome='busy', failure_reason=admission['reason'])
+                    raise ValueError('Local runtime busy; lead continuing')
             if self.blocked:
                 raise ValueError(self.blocked)
             if len([j for j in self.jobs.values() if j['state'] not in TERMINAL]) >= 128:
@@ -533,7 +638,12 @@ class Engine:
             return job
 
     def finish(self, job, state, error=None):
+        if job.get('timeout_phase') and state == 'cancelled':
+            state, error = 'timed_out', job['timeout_phase'].capitalize() + ' budget expired'
         job.update(state=state, finished=time.time(), error=error)
+        client = self.clients.get(job['client'])
+        if client and client['kind'] == 'worker' and state in ('busy', 'timed_out'):
+            client.update(outcome=state, failure_reason=error, timeout_phase=job.get('timeout_phase'))
         job.pop('payload', None)
         job.pop('connection', None)
         job.pop('upstream_socket', None)
@@ -564,8 +674,16 @@ class Engine:
                     continue
                 self.active = job
             try:
+                client = self.clients.get(job['client'])
+                if client and client.get('outcome') in ('busy', 'timed_out'):
+                    job['timeout_phase'] = client.get('timeout_phase')
+                    self.finish(job, client['outcome'], client.get('failure_reason'))
+                    continue
                 if not self.legacy_lock():
-                    self.retry(job, 'waiting_for_legacy')
+                    if self.clients.get(job['client'], {}).get('fail_fast'):
+                        self.finish(job, 'busy', 'An older worker holds the shared runtime lock')
+                    else:
+                        self.retry(job, 'waiting_for_legacy')
                     continue
                 if self.needs_recovery:
                     self.recover()
@@ -585,13 +703,18 @@ class Engine:
                 if not client or job['cancel'].is_set():
                     self.finish(job, 'cancelled')
                     continue
+                if job['cancel'].is_set() or time.time() > job['deadline']:
+                    if time.time() > job['deadline']:
+                        job['timeout_phase'] = 'loading'
+                    self.finish(job, 'cancelled')
+                    continue
                 client.update(identity_verified=True, revision=instance['revision'], runtime_model=instance['alias'])
                 previous = job['payload'].get('previous_response_id')
                 if previous and self.responses[previous]['alias'] != instance['alias']:
                     raise ValueError('Conversation instance changed; start a new conversation')
                 if job['kind'] == 'measurement':
                     self.measurement_owner = job['client']
-                job['state'] = 'running'
+                job.update(state='running', execution_started=time.time())
                 self.forward(job, instance)
                 if job['cancel'].is_set():
                     if job.get('sent') and not job.get('backend_stopped'):
@@ -603,7 +726,10 @@ class Engine:
             except Exception as exc:
                 self.prune_history()
                 if type(exc).__name__ == 'WaitingForMemory' and not job['cancel'].is_set():
-                    self.retry(job, 'waiting_for_memory', str(exc))
+                    if self.clients.get(job['client'], {}).get('fail_fast'):
+                        self.finish(job, 'busy', str(exc))
+                    else:
+                        self.retry(job, 'waiting_for_memory', str(exc))
                 else:
                     # Once a request was sent, a broken stream is not proof that generation stopped.
                     if job.get('sent') and not job.get('backend_stopped'):
@@ -688,8 +814,10 @@ class Engine:
                     self.test_lease = None
                 for job in list(self.jobs.values()):
                     if job is not self.active and job['state'] not in TERMINAL and now > job['deadline']:
+                        job['timeout_phase'] = 'queue'
                         self.finish(job, 'timed_out', 'Queue wait expired; execution budget was not consumed')
-                    if job is self.active and job.get('started') and now - job['started'] > job['chosen']['timeout_seconds']:
+                    if job is self.active and job.get('execution_started') and now - job['execution_started'] > job['chosen']['timeout_seconds']:
+                        job['timeout_phase'] = 'execution'
                         self.cancel(job)
                 for client in list(self.clients.values()):
                     if now - client['heartbeat'] > 15 or (client is probe and identity != client['identity']):
@@ -923,10 +1051,16 @@ class Client:
         self.error = None
 
     def __enter__(self):
+        if self.info:
+            return self  # Admission may precede snapshot handoff to the worker thread.
         ensure()
         self.info = rpc('register', chosen=self.chosen, pid=os.getpid(), kind=self.kind,
                         tmux=os.environ.get('TMUX', '').rsplit(',', 2)[0], pane=os.environ.get('TMUX_PANE', ''),
                         test_token=getattr(self.cancel_event, 'test_token', ''))
+        if self.info.get('admitted') is False:
+            admission = self.info['availability']
+            self.info = {}
+            raise AdmissionDenied(admission)
         self.base = self.info['base']
         self.cancel_event.client_id = self.info['id']
         self.thread = threading.Thread(target=self.heartbeat, daemon=True)
@@ -943,7 +1077,7 @@ class Client:
                     self.call('close')
                     return
                 self.last = self.call('heartbeat')
-                if self.last.get('interrupted'):
+                if self.last.get('interrupted') or (self.kind == 'worker' and self.last.get('outcome') in ('busy', 'timed_out')):
                     self.cancel_event.set()
                 if self.activity:
                     state = self.last['state']
@@ -965,6 +1099,12 @@ class Client:
             self.call('close')
         except (OSError, ValueError):
             pass
+
+
+class AdmissionDenied(ValueError):
+    def __init__(self, availability):
+        self.availability = availability
+        super().__init__(availability['reason'])
 
 
 if __name__ == '__main__':

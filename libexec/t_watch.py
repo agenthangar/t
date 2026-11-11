@@ -17,7 +17,7 @@ import time
 import uuid
 
 TTL = 15
-TERMINAL = {'succeeded', 'failed', 'timed_out', 'cancelled', 'error', 'completed', 'inactivity_timed_out', 'output_limit'}
+TERMINAL = {'succeeded', 'failed', 'timed_out', 'cancelled', 'error', 'completed', 'inactivity_timed_out', 'output_limit', 'busy'}
 
 
 def helper(name):

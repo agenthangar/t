@@ -229,6 +229,10 @@
       "kind": "protocol",
       "reason": "Snapshot and patch operations run in the background local worker; task_status reports progress without terminal chrome."
     },
+    "libexec/t_local_worker.py:Worker.preflight:time.sleep": {
+      "kind": "protocol",
+      "reason": "MCP admission may wait once for at most 15 seconds only after observed generation completion. Preflight exposes release evidence; no spinner may enter the MCP wire. Busy or unknown inference otherwise returns immediately."
+    },
     "libexec/t_local_worker.py:run_worker:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts isolated Codex; its events are task artifacts and task_status provides status over MCP."
