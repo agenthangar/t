@@ -1761,6 +1761,12 @@ def _fg_world(zsh, tmp_path, *, panes=None, registered=None, siblings=()):
     extra env the fg helpers need. <panes> maps a pid to the tmux session it sits in;
     <siblings> are more unregistered agents (pid, comm) in the SAME cwd — the three idle
     codexes that all rendered as `ff:fg`."""
+    # Fixed fake PIDs can coincide with real Linux processes. Keep cwd discovery
+    # in the fake lsof table, rather than borrowing a real /proc/PID/cwd value.
+    readlink = tmp_path / 'stubbin' / 'readlink'
+    readlink.write_text('#!/bin/sh\ncase "$1" in /proc/*/cwd) exit 1 ;; esac\nexec ' +
+                        shlex.quote(shutil.which('readlink')) + ' "$@"\n')
+    readlink.chmod(0o755)
     cwd = f"{zsh.home}/{PR_WATCH_CWD}"
     pathlib.Path(cwd).mkdir(parents=True, exist_ok=True)
     table = ["1 0 launchd", "4200 1 zsh", "4242 4200 claude"]
