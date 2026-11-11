@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>t · Terminal screen gallery</title>
+<style>
+:root { color-scheme: dark; font: 15px/1.55 system-ui, sans-serif; color: #dce8e9; background: #111719; }
+* { box-sizing: border-box; }
+body { margin: 32px auto 80px; padding: 0 24px; max-width: 1600px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 8px 0 16px; }
+h2 { margin: 36px 0 14px; font-size: 22px; }
+h3 { font-size: 17px; margin: 0 0 6px; }
+p { max-width: 960px; color: #afc1c5; }
+a, code { color: #83dce1; }
+a { text-underline-offset: 3px; }
+.eyebrow { color: #65d5dc; letter-spacing: 2px; font-size: 12px; }
+nav { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 22px 0; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 670px), 1fr)); gap: 22px; align-items: start; }
+.card { min-width: 0; padding: 18px; background: #172023; border: 1px solid #34484d; border-radius: 9px; scroll-margin-top: 20px; }
+.meta, .caption, .notice { font-size: 12px; color: #a9bdc2; }
+.meta { margin: 0 0 12px; }
+.caption { margin: 9px 0; }
+.frame { overflow-x: auto; background: #0c1214; padding: 12px; border: 1px solid #30474c; border-radius: 5px; }
+.terminal { box-sizing: content-box; font: 13px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-ligatures: none; font-kerning: none; font-synthesis: none; color: #c5d0d2; background: #101618; overflow: hidden; white-space: nowrap; outline: none; }
+.terminal:focus-visible { outline: 2px solid #81f4ff; outline-offset: 3px; }
+.line { height: 20px; overflow: hidden; white-space: pre; }
+.heading { color: #4dc9ce; }
+.action { color: #ecf1f2; }
+.active { color: #81f4ff; font-weight: bold; text-decoration: underline; text-underline-offset: 3px; }
+.hint { color: #8e9da2; }
+.warning { color: #e8b969; }
+.primary, .mark { color: #69d28c; }
+.focus { color: #fff; background: #005f5f; }
+.result-row { display: grid; grid-template-columns: 4ch minmax(0, 1fr); height: 20px; }
+.gutter { display: grid; grid-template-columns: 2ch 2ch; }
+.cells { display: grid; gap: 0 2ch; min-width: 0; }
+.cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 20px; }
+.controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; align-items: center; }
+.controls label { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+input, button, select { font: inherit; font-size: 12px; color: #e4edef; background: #202d31; border: 1px solid #4a6268; border-radius: 4px; padding: 6px 8px; }
+input { width: 150px; }
+button { cursor: pointer; }
+button:hover { border-color: #83dce1; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #81f4ff; outline-offset: 2px; }
+.notice { min-height: 20px; margin-top: 8px; }
+#verification { padding: 12px 16px; border: 1px solid #4a6268; margin-top: 14px; color: #c3d6d9; white-space: pre-wrap; }
+@media (max-width: 600px) { body { padding: 0 12px; } .card { padding: 12px; } }
+</style>
+</head>
+<body>
+<div class="eyebrow">T / TERMINAL DESIGN / SAMPLE DATA ONLY</div>
+<h1>All terminal screens, together</h1>
+<p>Review the shared Air layouts in one page. Start with <code>t session open</code> and the proposed unified <code>t session resume</code> layout beside it. Try an API search, match the focused repository, change sort, then select. Repository and slot scopes keep the same resume controls; even one result waits for Return.</p>
+<p>This standalone planning gallery uses invented API and web data. Every action is simulated in memory. It reads no sessions, configuration, repository files or services, and launches no commands. The controls outside each terminal are gallery tools. All screen cards stay visible.</p>
+<nav aria-label="Gallery index">
+<a href="#sessions">Session profiles</a><a href="#selection">Selection profiles</a><a href="#inline">Inline and review</a><a href="#states">Scopes and states</a><a href="#sizes">Narrow and short</a><a href="#geometry">Geometry checks</a>
+</nav>
+<p class="caption">Labels use macOS keys. Focus a terminal to type a query or use its keys. Tab marks in multi-pickers; Space marks in inline checklists. Page Tab navigation remains native outside terminals. Escape returns to the sample command line; Reset reopens the screen. No global keyboard handlers.</p>
+<details><summary>Index of every screen</summary><nav id="screen-index" aria-label="Every screen"></nav></details>
+<main id="gallery"></main>
+<section id="geometry">
+<h2>Browser geometry checks</h2>
+<p>These checks compare actual DOM cell positions and widths with their column headings, including Unicode rows. They also check that each rendered terminal fits its declared width and height. Source inspection and JavaScript validation cannot establish visual fidelity.</p>
+<button id="verify" type="button">Measure rendered cells</button>
+<div id="verification" role="status">Not run. Open this file in a browser, then measure rendered cells. window.galleryVerify() exposes the same check.</div>
+</section>
+<script>
+'use strict';
+const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const sampleRows = [
+  {id: 'a', session: 'api-3', repo: 'api', agent: 'codex', host: 'local', task: 'Fix login · 界面 navigation', turn: '11-09 14:10', pr: 'OPEN', state: '○', model: 'gpt-6.1-sol', context: 'idle', progress: 'in progress', interface: 'cli'},
+  {id: 'b', session: 'web-14', repo: 'web', agent: 'claude', host: 'mini', task: 'Review dashboard keyboard flow', turn: '11-09 13:52', pr: 'MERGED', state: '●', model: 'opus', context: 'active', progress: 'not marked', interface: 'desktop'},
+  {id: 'c', session: 'api-8', repo: 'api', agent: 'codex', host: 'local', task: 'Document café and 日本語 clipping', turn: '11-08 18:23', pr: 'NONE', state: '○', model: 'gpt-6.1-sol', context: 'idle', progress: 'not marked', interface: 'cli'}
+];
+const groups = [
+  ['sessions', 'Session profiles', [
+    ['open', 'Open live sessions', 't session open', 'open'],
+    ['resume', 'Unified resume', 't session resume', 'resume'],
+    ['list', 'Shared list-picker renderer', 'scripts/preview_open_picker.py --profile list', 'list'],
+    ['close', 'Close selection', 't session close', 'close']
+  ]],
+  ['selection', 'Selection profiles', [
+    ['issues', 'Issue selection', 't issue start --repo api', 'issues'],
+    ['single', 'Single selection', 'shared renderer sample · no public command', 'single'],
+    ['multi', 'Multiple selection', 'shared renderer sample · no public command', 'multi'],
+    ['history', 'Paginated saved conversations', 't session history api 3 · retained-history command', 'history']
+  ]],
+  ['inline', 'Inline and review', [
+    ['inline-single', 'Inline single menu', 'shared renderer sample · no public command', 'inline-single'],
+    ['inline-checklist', 'Inline checklist', 'shared renderer sample · no public command', 'inline-checklist'],
+    ['review', 'Review staged choices', 'shared review renderer sample · no public command', 'review'],
+    ['table', 'Read-only session table', 't session list', 'table', 'normal', 160, 24]
+  ]],
+  ['states', 'Scopes and states', [
+    ['repo', 'Resume · repository scope', 't session resume api', 'resume', 'repo'],
+    ['slot', 'Resume · slot scope', 't session resume api 3', 'resume', 'slot'],
+    ['one', 'Resume · single result', 't session resume', 'resume', 'one'],
+    ['empty', 'Resume · no matches', 't session resume', 'resume', 'empty'],
+    ['warning', 'Resume · partial discovery', 't session resume', 'resume', 'warning'],
+    ['details', 'Full conversation details', 't session resume · Ctrl-/', 'resume', 'details'],
+    ['help', 'Picker key reference', 'gallery key reference · no new CLI help screen', 'help'],
+    ['cancelled', 'Cancellation', 't session resume → Esc', 'resume', 'cancelled'],
+    ['result', 'Selection result', 't session resume → Return', 'resume', 'result']
+  ]],
+  ['sizes', 'Narrow and short', [
+    ['narrow', 'Resume at 44 × 20', 't session resume', 'resume', 'normal', 44, 20],
+    ['small', 'Resume at 32 × 12', 't session resume', 'resume', 'normal', 32, 12],
+    ['short', 'Open at 120 × 12', 't session open', 'open', 'normal', 120, 12]
+  ]]
+];
+const cards = [];
+const sessionProfiles = new Set(['open', 'resume', 'close', 'list']);
+const multiProfiles = new Set(['open', 'resume', 'close', 'list', 'issues', 'multi', 'history', 'inline-checklist']);
+const keyLabel = (text, compact) => text.replace(/Ctrl-/g, '⌃').replace(/Alt-/g, '⌥').replace(/Enter/g, compact ? '↩' : '↩ Return').replace(/Esc/g, compact ? '⎋' : '⎋ Esc').replace(/Tab/g, compact ? '⇥' : '⇥ Tab');
+function displayWidth(text) { return [...text].reduce((total, char) => total + (/\p{Mark}/u.test(char) ? 0 : /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7af\uff01-\uff60]/u.test(char) ? 2 : 1), 0); }
+function clipText(text, available) {
+  if (displayWidth(text) <= available) return text;
+  let result = '';
+  for (const char of text) { if (displayWidth(result + char) > available - 1) break; result += char; }
+  return result + '…';
+}
+const span = (text, role = 'hint') => `<span class="${role}">${escapeHTML(text)}</span>`;
+function initialState(spec) {
+  return {query: '', focus: 0, marks: new Set(spec.profile === 'inline-checklist' ? ['default'] : []), filters: true, facets: {}, hideMerged: false, sort: 0, sortOn: true, page: 1, details: spec.scenario === 'details', phase: ['cancelled', 'result'].includes(spec.scenario) ? spec.scenario : 'active'};
+}
+function scopedRows(card) {
+  let rows = sampleRows;
+  if (card.scenario === 'repo') rows = rows.filter(row => row.repo === 'api');
+  if (card.scenario === 'slot') rows = rows.filter(row => row.session === 'api-3');
+  if (card.scenario === 'one') rows = rows.slice(0, 1);
+  if (card.scenario === 'empty') return [];
+  if (card.profile === 'table') return sampleRows.map(row => ({...row, usage: '—', tool: row.agent === 'codex' ? '⬡' : '✱', models: '★ ' + row.model, watcher: '—'}));
+  if (card.profile === 'issues') return sampleRows.map((row, index) => ({...row, session: '#' + (42 + index), task: '#' + (42 + index) + ' ' + row.task}));
+  if (card.profile.startsWith('inline-')) return [
+    {...sampleRows[0], id: 'default', task: 'Use default preset', agent: 'Inherited'},
+    {...sampleRows[0], id: 'codex', task: 'Codex', agent: 'gpt-6.1-sol'},
+    {...sampleRows[1], id: 'claude', task: 'Claude', agent: 'Opus'}
+  ];
+  return rows;
+}
+function visibleRows(card) {
+  const state = card.state;
+  let rows = scopedRows(card).filter(row => Object.values(row).join(' ').toLowerCase().includes(state.query.toLowerCase()));
+  if (state.filters) rows = rows.filter(row => (!state.hideMerged || row.pr !== 'MERGED') && Object.entries(state.facets).every(([key, value]) => row[key] === value));
+  const sortKeys = card.profile === 'close' ? ['repo', 'agent', 'host', 'session'] : ['turn', 'repo', 'agent', 'host', 'session'];
+  if (state.sortOn) {
+    const key = sortKeys[state.sort % sortKeys.length];
+    rows = [...rows].sort((a, b) => key === 'turn' ? b.turn.localeCompare(a.turn) : a[key].localeCompare(b[key], undefined, {numeric: true}));
+  }
+  if (card.profile === 'history' && !state.query) rows = state.page === 1 ? rows.slice(0, 2) : rows.slice(2);
+  return rows;
+}
+function columns(card) {
+  // Header and every result use these exact tracks. Text never supplies geometry.
+  const available = card.width - 8;
+  if (card.profile.startsWith('inline-') || card.profile === 'review') return [['task', 'CHOICE', Math.floor(available * .58)], ['agent', 'VALUE', available - Math.floor(available * .58) - 2]];
+  if (['single', 'multi', 'issues'].includes(card.profile)) return [['task', card.profile === 'issues' ? 'ISSUE' : 'CHOICE', available]];
+  if (card.profile === 'table') return [['state', 'STATUS', 6], ['session', 'SESSION', 10], ['task', 'WORKING ON', available - 94], ['usage', 'LOC/CLD TOKEN%', 14], ['tool', 'TOOL', 4], ['models', 'MODELS', 24], ['watcher', 'WATCHER', 11], ['turn', 'LAST TURN', 11]];
+  if (card.width < 60) return ['resume', 'open'].includes(card.profile) ? [['session', 'SLOT', 7], ['task', 'TASK', available - 16], ['turn', 'TURN', 5]] : [['session', 'SLOT', 7], ['task', 'TASK', available - 9]];
+  if (card.profile === 'open') return [['state', 'S', 2], ...(card.width >= 100 ? [['host', 'HOST', 7]] : []), ['session', 'SESSION', 9], ['task', 'WORKING ON', available - (card.width >= 100 ? 37 : 28)], ['turn', 'LAST TURN', 11]];
+  if (card.profile === 'close') return [['state', 'S', 2], ['host', 'HOST', 7], ['session', 'SESSION', 9], ['task', 'WORKING ON', available - 24]];
+  return [['session', 'SESSION', 9], ['task', 'WORKING ON', available - 24], ['turn', 'LAST TURN', 11]];
+}
+function gridRow(card, row, focused = false) {
+  const tracks = columns(card);
+  const cells = tracks.map(([key, title]) => `<span class="cell" data-column="${key}" title="${escapeHTML(row ? (key === 'turn' && card.width < 60 ? row[key].slice(-5) : row[key]) : title)}">${escapeHTML(row ? (key === 'turn' && card.width < 60 ? row[key].slice(-5) : row[key]) : title)}</span>`).join('');
+  return `<div class="result-row ${row ? focused ? 'focus' : '' : 'heading'}" data-result="${row ? 'row' : 'heading'}"><span class="gutter"><span>${focused ? '▸' : ''}</span><span class="mark">${row && card.state.marks.has(row.id) ? '✓' : ''}</span></span><span class="cells" style="grid-template-columns:${tracks.map(item => item[2] + 'ch').join(' ')}">${cells}</span></div>`;
+}
+function render(card) {
+  const state = card.state, compact = card.width <= 40 || card.height <= 14;
+  const lines = [], maxContent = card.height - 1;
+  const line = (text = '', role = 'hint') => lines.push(`<div class="line">${span(clipText(text, card.width - 4), role)}</div>`);
+  const keys = parts => {
+    let current = '';
+    for (const part of keyLabel(parts, compact).split(' · ')) {
+      if (current && displayWidth(current + ' · ' + part) > card.width - 4) { line(current, 'action'); current = part; }
+      else current += (current ? ' · ' : '') + part;
+    }
+    if (current) line(current, 'action');
+  };
+  const isSession = sessionProfiles.has(card.profile);
+  const isInline = card.profile.startsWith('inline-');
+  const actionName = card.profile === 'close' ? 'close' : card.profile === 'open' || card.profile === 'list' ? 'open' : card.profile === 'review' ? 'apply changes' : card.profile === 'resume' || card.profile === 'history' ? 'resume' : 'choose';
+  if (state.phase !== 'active') {
+    line('$ ' + card.command, 'action'); line();
+    line(state.phase === 'back' ? 'Returned to sample parent' : state.phase === 'cancelled' ? 'Cancelled · exit 130' : state.accepted || 'Selected api-3 · sample result', state.phase === 'cancelled' ? 'warning' : 'primary');
+    line('Simulation only · no command executed'); line('Reset reopens the sample screen');
+  } else if (card.profile === 'help') {
+    line('KEY REFERENCE · gallery aid', 'heading'); line();
+    keys('Enter accepts · Esc/Ctrl-C cancels');
+    keys('Tab marks searchable multi-pickers');
+    line('Space marks inline checklists');
+    keys('Ctrl-F filters · Ctrl-X reset');
+    keys('Ctrl-S sorting · Ctrl-Y next sort');
+    keys('History: Ctrl-F next · Ctrl-B previous');
+    keys('History: Ctrl-R refresh · Ctrl-/ details');
+    line('Resume has filters, not page bindings');
+    line('No proposed public help command');
+  } else if (card.profile === 'review') {
+    line('REVIEW CHANGES · sample', 'heading'); line();
+    line('AGENTS', 'heading'); line('Codex · gpt-6.1-sol', 'action');
+    line('REPOSITORIES', 'heading'); line('API 界面 · /demo/api', 'action');
+    line('Remote host · mini · example.invalid'); line();
+    keys('Esc back · q cancel');
+    line(keyLabel('Enter Apply changes · fixture only', compact), 'primary');
+  } else {
+    if (card.scenario === 'warning') line('mini unavailable · partial results', 'warning');
+    if (card.profile === 'table') {
+      line('SESSIONS · all sample repositories', 'heading');
+      line('Read-only output · no picker or prompt'); line();
+    } else if (isSession) {
+      if (!compact) line('HOTKEYS', 'heading');
+      keys(compact ? `Enter/Esc · Tab✓ · ${card.profile === 'open' ? 'Ctrl-K kill' : 'Ctrl-/'}` : `Enter ${actionName} · Esc · Tab ✓${card.profile === 'open' ? ' · Ctrl-K kill' : ' · Ctrl-/ details'}`);
+      if (card.profile === 'list') {
+        line('FILTERS', 'heading'); keys('Ctrl-A all · Ctrl-F reset');
+        keys('Ctrl-G agent · Ctrl-O host · Ctrl-R repo');
+        line('SORT', 'heading'); keys('Alt-T turn · Alt-R repo · Alt-V session');
+      } else {
+        if (!compact) line();
+        lines.push(`<div class="line">${span('Filters ')}${span(state.filters ? 'ON' : 'OFF', 'active')}${span(keyLabel(compact ? ' · Ctrl-F · Ctrl-X' : ' · Ctrl-F toggle · Ctrl-X reset', compact), 'action')}</div>`);
+        if (!compact) keys('Ctrl-T state · Ctrl-G agent · Ctrl-O host · Ctrl-R repo');
+        else keys('Ctrl-G agent · Ctrl-O host');
+        keys(compact ? `Ctrl-R repo · Ctrl-D ${card.profile === 'resume' ? 'merged' : 'UI'}` : card.profile === 'resume' ? 'Ctrl-D merged · Ctrl-/ details' : 'Ctrl-D interface');
+      }
+      const hidden = scopedRows(card).length - visibleRows(card).length;
+      line(`${compact ? keyLabel('Ctrl-T ', true) : ''}${Object.entries(state.facets).map(([key, value]) => key + '=' + value).join(' · ') || (state.filters ? 'Default state' : 'Saved filters paused')}${state.hideMerged ? ' · merged hidden' : ''} · ${hidden} hidden`, 'heading');
+      const sortNames = card.profile === 'close' ? ['repo', 'agent', 'host', 'session'] : ['last turn', 'repo', 'agent', 'host', 'session'];
+      lines.push(`<div class="line">${span('Sort: ')}${span(state.sortOn ? (compact && sortNames[state.sort] === 'last turn' ? 'turn' : sortNames[state.sort]) : 'OFF', 'active')}${span(keyLabel(compact ? ' · Ctrl-S · Ctrl-Y' : ' · Ctrl-S · Ctrl-Y next', compact), 'action')}</div>`);
+      if (!compact) line();
+    } else if (card.profile === 'history') {
+      line(`SAVED CONVERSATIONS · Page ${state.page} of 2`, 'heading');
+      keys('Enter resume · Esc · Tab ✓');
+      keys('Ctrl-F next · Ctrl-B previous');
+      keys('Ctrl-R refresh · Ctrl-/ details'); line();
+    } else if (isInline) {
+      line('CHOOSE AGENTS · shared-renderer sample', 'heading');
+      line('Standalone sample, not a config menu'); line();
+      keys(card.profile === 'inline-checklist' ? 'Space mark · Enter continue · Esc back' : 'Enter choose · Esc back'); line();
+    } else {
+      line(card.profile === 'issues' ? 'OPEN ISSUES · sample api repository' : 'CHOOSE · synthetic fixture', 'heading');
+      keys(`Enter choose · Esc${multiProfiles.has(card.profile) ? ' · Tab ✓' : ''}`);
+      if (card.profile === 'issues') keys('Ctrl-A show all · Ctrl-F defaults');
+      line();
+    }
+    lines.push(gridRow(card, null));
+    const rows = visibleRows(card);
+    state.focus = Math.max(0, Math.min(state.focus, rows.length - 1));
+    const detailLines = state.details ? (compact ? 2 : 5) : 0;
+    const capacity = Math.max(1, maxContent - lines.length - detailLines);
+    const start = Math.max(0, state.focus - capacity + 1);
+    for (let index = start; index < Math.min(rows.length, start + capacity); index++) {
+      if (isInline && index === 1) line();
+      lines.push(gridRow(card, rows[index], card.profile !== 'table' && index === state.focus));
+    }
+    if (!rows.length) line('No matching conversations', 'warning');
+    if (state.details) {
+      line('DETAILS · synthetic conversation', 'heading');
+      line(rows[state.focus]?.task || 'No focused result', 'action');
+      if (!compact) {
+        line('api · /demo/api · branch sample/login');
+        line('ID sample-a · PR #42 OPEN · transcript available');
+        line('Agent codex · model recorded · UI unknown');
+      }
+    }
+    while (lines.length < maxContent) line();
+    line(card.profile === 'table' ? '3 sample rows · read only' : isInline ? keyLabel('Enter Continue · fixture only', compact) : `${actionName} > ${state.query}`, card.profile === 'table' ? 'hint' : 'primary');
+  }
+  card.terminal.innerHTML = lines.slice(0, card.height).join('');
+  card.terminal.style.padding = '0 2ch';
+  card.terminal.style.width = (card.width - 4) + 'ch';
+  card.terminal.style.height = card.height * 20 + 'px';
+  card.query.value = state.query;
+}
+function act(card, action) {
+  const state = card.state;
+  let rows = visibleRows(card), row = rows[state.focus];
+  if (action === 'reset') {
+    card.state = initialState({...card, scenario: 'normal'});
+    card.notice.textContent = 'Sample screen reset. No external state changed.';
+    render(card); return;
+  }
+  if (state.phase !== 'active') return;
+  if (action === 'down') state.focus = Math.min(rows.length - 1, state.focus + 1);
+  if (action === 'up') state.focus = Math.max(0, state.focus - 1);
+  if (action === 'mark' && multiProfiles.has(card.profile) && row) {
+    state.marks.has(row.id) ? state.marks.delete(row.id) : state.marks.add(row.id);
+    if (card.profile === 'inline-checklist') {
+      if (row.id === 'default' && state.marks.has('default')) state.marks = new Set(['default']);
+      else if (row.id !== 'default') state.marks.delete('default');
+      if (!state.marks.size) state.marks.add('default');
+    }
+    if (!card.profile.startsWith('inline-')) state.focus = Math.min(rows.length - 1, state.focus + 1);
+  }
+  if (action === 'filters') state.filters = !state.filters;
+  if (action === 'defaults') { state.filters = true; state.facets = {}; state.hideMerged = false; }
+  if (action === 'all') { state.filters = false; state.facets = {}; }
+  if (action.startsWith('facet:') && row) {
+    const field = action.slice(6);
+    state.facets[field] === row[field] ? delete state.facets[field] : state.facets[field] = row[field];
+  }
+  if (action === 'state') state.facets.state ? delete state.facets.state : state.facets.state = row?.state;
+  if (action === 'merged') state.hideMerged = !state.hideMerged;
+  if (action === 'sort') state.sortOn = !state.sortOn;
+  if (action === 'next-sort') { state.sort = (state.sort + 1) % (card.profile === 'close' ? 4 : 5); state.sortOn = true; }
+  if (action.startsWith('sort:')) { state.sort = Number(action.slice(5)); state.sortOn = true; }
+  if (action === 'details') state.details = !state.details;
+  if (action === 'next-page' || action === 'previous-page') { state.page = action === 'next-page' ? 2 : 1; state.marks.clear(); state.focus = 0; }
+  if (action === 'refresh') { state.marks.clear(); card.notice.textContent = 'Simulated metadata refresh. No network request.'; }
+  if (action === 'kill') card.notice.textContent = `Simulated close request for ${row?.session || 'no selection'}. No action executed.`;
+  if (action === 'cancel') { state.phase = 'cancelled'; card.notice.textContent = 'Cancelled · exit 130 · no action executed.'; }
+  if (action === 'back') { state.phase = 'back'; card.notice.textContent = 'Returned to sample parent; pending sample choices retained. No action executed.'; }
+  if (action === 'accept' && (row || card.profile === 'review')) {
+    state.phase = 'result';
+    const selected = card.profile === 'review' ? 'Apply staged changes' : state.marks.size ? rows.filter(item => state.marks.has(item.id)).map(item => card.profile.startsWith('inline-') ? item.task : item.session).join(', ') : card.profile.startsWith('inline-') ? row?.task : row?.session;
+    state.accepted = 'Selected ' + selected + ' · sample result';
+    card.notice.textContent = 'Simulated selection: ' + selected + '. No command executed.';
+  }
+  const ids = new Set(visibleRows(card).map(item => item.id));
+  state.marks = new Set([...state.marks].filter(id => ids.has(id)));
+  render(card);
+}
+function handleKey(card, event) {
+  if (card.profile === 'table' || card.profile === 'help') return;
+  const profile = card.profile, inline = profile.startsWith('inline-');
+  let action = {ArrowDown: 'down', ArrowUp: 'up', Enter: 'accept', Escape: inline || profile === 'review' ? 'back' : 'cancel'}[event.key];
+  if (event.key === 'Tab') action = multiProfiles.has(profile) && !inline ? 'mark' : event.shiftKey ? 'up' : 'down';
+  if (event.key === ' ' && profile === 'inline-checklist') action = 'mark';
+  if (event.key === 'q' && (inline || profile === 'review')) action = 'cancel';
+  if (event.ctrlKey) {
+    const key = event.key.toLowerCase();
+    action = key === 'c' ? 'cancel' : undefined;
+    if (profile === 'history') action = ({f: 'next-page', b: 'previous-page', r: 'refresh', '/': 'details', c: 'cancel'})[key];
+    else if (sessionProfiles.has(profile)) {
+      action = ({f: 'filters', x: 'defaults', s: 'sort', y: 'next-sort', t: 'state', g: 'facet:agent', o: 'facet:host', r: 'facet:repo', d: profile === 'resume' ? 'merged' : 'facet:interface', '/': 'details', c: 'cancel'})[key];
+      if (profile === 'open') action = ({k: 'kill', p: 'facet:progress', b: 'facet:model', v: 'facet:session', e: 'facet:context', w: 'facet:task'})[key] || action;
+      if (profile === 'list') action = ({a: 'all', f: 'defaults', g: 'facet:agent', o: 'facet:host', r: 'facet:repo', d: 'facet:interface', '/': 'details', c: 'cancel'})[key];
+    } else if (profile === 'issues') action = ({a: 'all', f: 'defaults', c: 'cancel'})[key];
+  }
+  if (event.altKey && profile === 'list') action = ({t: 'sort:0', r: 'sort:1', g: 'sort:2', o: 'sort:3', v: 'sort:4'})[event.key.toLowerCase()];
+  if (action) { event.preventDefault(); act(card, action); return; }
+  if (!inline && profile !== 'review' && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || event.key === 'Backspace')) {
+    event.preventDefault(); card.state.query = event.key === 'Backspace' ? card.state.query.slice(0, -1) : card.state.query + event.key;
+    card.state.focus = 0; card.state.marks.clear(); render(card);
+  }
+}
+function createCard(definition, container) {
+  const [id, title, command, profile, scenario = 'normal', width = 80, height = 24] = definition;
+  const card = {id, title, command, profile, scenario, width, height};
+  card.state = initialState(card);
+  if (profile === 'inline-checklist') card.state.marks.add('default');
+  const element = document.createElement('article');
+  element.className = 'card'; element.id = 'screen-' + id;
+  const renderer = profile.startsWith('inline-') || profile === 'review' ? '_RailUI' : profile === 'history' ? '_t_fzf_paginated' : sessionProfiles.has(profile) || profile === 'issues' ? '_t_fzf_filtered' : profile === 'table' ? 'printed table' : profile === 'help' ? 'gallery reference' : '_t_fzf_' + profile;
+  const proposal = profile === 'resume' ? 'Proposed shared resume layout' : 'Representative shared-renderer sample';
+  element.innerHTML = `<h3>${escapeHTML(title)}</h3><p class="meta">${escapeHTML(command)}<br>${escapeHTML(renderer)} / ${escapeHTML(profile)} · ${proposal}<br>${profile === 'list' ? 'No public list picker: t session list is read-only.<br>' : ''}${width} × ${height} · sample-only state: ${escapeHTML(scenario)}</p><div class="frame"><div class="terminal" tabindex="0" role="group" aria-label="${escapeHTML(title)} simulated terminal"></div></div><div class="controls" aria-label="${escapeHTML(title)} gallery controls"></div><div class="notice" role="status">Sample only. ${scenario === 'one' || scenario === 'slot' ? 'One result waits for Return.' : 'Focus terminal or use the preview controls.'}</div>`;
+  container.append(element);
+  card.element = element; card.terminal = element.querySelector('.terminal'); card.notice = element.querySelector('.notice');
+  const controls = element.querySelector('.controls');
+  const queryLabel = document.createElement('label'); queryLabel.textContent = 'Query';
+  card.query = document.createElement('input'); card.query.setAttribute('aria-label', title + ' sample query'); queryLabel.append(card.query);
+  if (!['table', 'help', 'review'].includes(profile) && !profile.startsWith('inline-')) controls.append(queryLabel);
+  const button = (text, action) => { const item = document.createElement('button'); item.type = 'button'; item.textContent = text; item.onclick = () => act(card, action); controls.append(item); };
+  if (sessionProfiles.has(profile)) {
+    button(profile === 'list' ? 'Reset filters' : 'Toggle filters', profile === 'list' ? 'defaults' : 'filters');
+    button('Match repo', 'facet:repo'); button('Toggle sort', 'sort'); button('Next sort', 'next-sort');
+    if (profile === 'resume') button('Hide merged', 'merged');
+  }
+  if (profile === 'issues') { button('Show all', 'all'); button('Defaults', 'defaults'); }
+  if (profile === 'history') { button('Previous page', 'previous-page'); button('Next page', 'next-page'); button('Refresh', 'refresh'); }
+  if (!['table', 'help'].includes(profile)) {
+    button('Focus next', 'down');
+    if (multiProfiles.has(profile)) button('Mark focused', 'mark');
+    if (profile === 'history' || profile === 'resume' || profile === 'close' || profile === 'list') button('Details', 'details');
+    button('Simulate Return', 'accept'); button('Simulate Esc', profile.startsWith('inline-') || profile === 'review' ? 'back' : 'cancel');
+  }
+  button('Reset sample', 'reset');
+  card.query.oninput = event => { card.state.query = event.target.value; card.state.focus = 0; card.state.marks.clear(); render(card); };
+  card.terminal.onkeydown = event => handleKey(card, event);
+  cards.push(card); render(card);
+  const anchor = document.createElement('a'); anchor.href = '#screen-' + id; anchor.textContent = title; document.getElementById('screen-index').append(anchor);
+}
+for (const [id, title, definitions] of groups) {
+  const section = document.createElement('section'); section.id = id;
+  section.innerHTML = `<h2>${escapeHTML(title)}</h2><div class="gallery"></div>`;
+  document.getElementById('gallery').append(section);
+  for (const definition of definitions) createCard(definition, section.querySelector('.gallery'));
+}
+const measuredGeometry = new Map();
+window.galleryVerify = function () {
+  const failures = []; let cells = 0, tables = 0;
+  for (const card of cards) {
+    const terminal = card.terminal, bounds = terminal.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) { failures.push(card.id + ': terminal not measurable'); continue; }
+    if (terminal.scrollWidth > terminal.clientWidth + 1 || terminal.scrollHeight > terminal.clientHeight + 1) failures.push(card.id + ': terminal content exceeds frame');
+    for (const line of terminal.querySelectorAll('.line')) if (line.scrollWidth > line.clientWidth + 1) failures.push(card.id + ': clipped control/text line');
+    const heading = terminal.querySelector('[data-result="heading"]');
+    if (!heading) continue;
+    tables++;
+    const measured = [...heading.querySelectorAll('[data-column]')].map(header => {
+      const rect = header.getBoundingClientRect();
+      return {key: header.dataset.column, left: rect.left - bounds.left, width: rect.width};
+    });
+    const previous = measuredGeometry.get(card.id);
+    if (previous) measured.forEach((column, index) => {
+      const old = previous[index];
+      if (!old || old.key !== column.key || Math.abs(old.left - column.left) > .5 || Math.abs(old.width - column.width) > .5) failures.push(card.id + ': column moved since previous measurement: ' + column.key);
+    });
+    measuredGeometry.set(card.id, measured);
+    for (const row of terminal.querySelectorAll('[data-result="row"]')) {
+      for (const header of heading.querySelectorAll('[data-column]')) {
+        const cell = row.querySelector(`[data-column="${header.dataset.column}"]`);
+        if (!cell) { failures.push(card.id + ': missing ' + header.dataset.column); continue; }
+        const a = header.getBoundingClientRect(), b = cell.getBoundingClientRect(); cells++;
+        if (Math.abs(a.left - b.left) > .5 || Math.abs(a.width - b.width) > .5) failures.push(card.id + ': misaligned ' + header.dataset.column);
+      }
+    }
+    const focused = terminal.querySelector('.focus');
+    if (focused && focused.getBoundingClientRect().bottom > bounds.bottom + .5) failures.push(card.id + ': focused row clipped');
+  }
+  if (!cells) failures.push('No result cells measured; geometry is unverified.');
+  const result = {passed: failures.length === 0, cards: cards.length, tables, cells, failures};
+  document.getElementById('verification').textContent = result.passed ? `PASS: ${cells} actual DOM cells align with headers across ${tables} tables and ${cards.length} visible cards. This measures geometry only; CLI behavior and visual fidelity still require review.` : 'FAIL: ' + failures.join('\n');
+  return result;
+};
+document.getElementById('verify').onclick = () => window.galleryVerify();
+// No automatic success claim: measurements run only when explicitly requested.
+</script>
+</body>
+</html>
