@@ -186,6 +186,181 @@ def test_round_robin_fifo_and_blocked_owner(manager):
     assert scheduler.take(20, 'b')['id'] == 8
 
 
+def automatic(engine):
+    return engine.control(dict(action='register', chosen=dict(chosen(), mode='automatic'),
+                               pid=os.getpid(), kind='worker'))
+
+
+def test_automatic_admission_is_atomic_and_read_only(manager):
+    engine = manager.Engine(Providers)
+    assert engine.control({'action': 'availability'})['state'] == 'available'
+    assert not engine.clients and not engine.jobs and engine.providers.loaded == 0
+    gate, results = threading.Barrier(3), []
+    def admit():
+        gate.wait()
+        results.append(automatic(engine))
+    threads = [threading.Thread(target=admit) for _ in range(2)]
+    for thread in threads: thread.start()
+    gate.wait()
+    for thread in threads: thread.join(2)
+    assert sum('id' in r for r in results) == 1
+    refused = next(r for r in results if 'id' not in r)
+    assert refused['admitted'] is False and refused['availability']['state'] == 'busy'
+    assert refused['availability']['blockers'][0]['owner_verified']
+    engine.close()
+
+
+def test_automatic_rechecks_other_requests_and_preserves_manual_queue(manager):
+    engine = manager.Engine(Providers)
+    first = automatic(engine)
+    local = engine.clients[first['id']]
+    manual = register(engine, model='other', kind='session')
+    other = engine.clients[manual['id']]
+    blocking = engine.submit(other, '/v1/responses', {}, handler())
+    with pytest.raises(ValueError, match='busy'):
+        engine.submit(local, '/v1/responses', {}, handler())
+    assert engine.client_status(local)['outcome'] == 'busy'
+    assert blocking['state'] == 'queued' and not blocking['cancel'].is_set()
+    assert len(engine.jobs) == 1
+    assert engine.submit(other, '/v1/responses', {}, handler())['state'] == 'queued'
+    engine.close()
+
+
+def test_availability_blockers_idle_models_and_release_evidence(manager, monkeypatch):
+    engine = manager.Engine(Providers)
+    engine.providers.get(chosen())
+    assert engine.availability()['state'] == 'available'
+    lease = register(engine)
+    job = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    engine.active = job
+    job.update(state='running', started=time.time()-1000)
+    assert engine.availability()['retry_after_seconds'] is None
+    job['backend_stopped'] = True
+    assert engine.availability()['retry_after_seconds'] == 15
+    engine.finish(job, 'completed'); engine.active = None
+    monkeypatch.setattr(manager, 'legacy_busy', lambda: True)
+    assert 'older worker' in engine.availability()['reason']
+    monkeypatch.setattr(manager, 'legacy_busy', lambda: False)
+    engine.providers.external = [{'memory_bytes': None}]
+    assert engine.availability()['state'] == 'unknown'
+    engine.providers.external = []
+    engine.blocked = 'recovery required'
+    assert engine.availability()['reason'] == 'recovery required'
+    engine.close()
+
+
+def test_automatic_memory_contention_returns_busy_without_retry(manager, monkeypatch):
+    engine = manager.Engine(Providers)
+    lease = automatic(engine)
+    class WaitingForMemory(ValueError): pass
+    monkeypatch.setattr(engine.providers, 'get', lambda *a: (_ for _ in ()).throw(WaitingForMemory('memory busy')))
+    engine.thread.start()
+    job = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    assert job['done'].wait(2) and job['state'] == 'busy'
+    assert engine.client_status(engine.clients[lease['id']])['outcome'] == 'busy'
+    assert engine.providers.loaded == 0
+    engine.close()
+
+
+def test_queue_loading_and_execution_are_separate_wall_time(manager, monkeypatch):
+    engine = manager.Engine(Providers)
+    lease = register(engine); client = engine.clients[lease['id']]
+    job = engine.submit(client, '/v1/responses', {}, handler())
+    job.update(created=10, started=20, execution_started=50, finished=70, state='completed')
+    view = engine.client_status(client)
+    assert (view['queue_seconds'], view['loading_seconds'], view['wait_seconds']) == (10, 30, 40)
+    row = engine.snapshot()['requests'][0]
+    assert (row['queue_seconds'], row['loading_seconds'], row['execution_seconds']) == (10, 30, 20)
+    job.pop('execution_started'); job.pop('finished'); job['state'] = 'loading'
+    monkeypatch.setattr(manager.time, 'time', lambda: 40)
+    view = engine.client_status(client)
+    assert view['wait_seconds'] == 30 and view['loading_seconds'] == 20
+    assert engine.snapshot()['requests'][0]['execution_seconds'] == 0
+    engine.close()
+
+
+def test_preflight_never_starts_runtime_and_handles_stale_state(manager, monkeypatch):
+    monkeypatch.setattr(manager, 'ensure', lambda: pytest.fail('preflight started manager'))
+    monkeypatch.setattr(manager, 'status', lambda: {'manager': 'stopped'})
+    assert manager.availability()['state'] == 'available'
+    monkeypatch.setattr(manager, 'legacy_busy', lambda: True)
+    assert manager.availability()['state'] == 'busy'
+    monkeypatch.setattr(manager, 'status', lambda: {'manager': 'stale'})
+    assert manager.availability()['state'] == 'unknown'
+    monkeypatch.setattr(manager, 'status', lambda: {'manager': 'running', 'protocol': manager.VERSION})
+    monkeypatch.setattr(manager, 'rpc', lambda action: {'state': 'busy', 'reason': 'known owner'})
+    assert manager.availability()['reason'] == 'known owner'
+
+
+@pytest.mark.parametrize('clients,requests,expected', [([], [], 'available'),
+    ([{'id': 'live'}], [], 'unknown'), ([], [{'state': 'running'}], 'unknown')])
+def test_older_manager_preflight_only_allows_idle_upgrade(manager, monkeypatch, clients, requests, expected):
+    monkeypatch.setattr(manager, 'status', lambda: {'manager': 'running', 'protocol': 2,
+                                                  'clients': clients, 'requests': requests})
+    monkeypatch.setattr(manager, 'rpc', lambda *a, **k: pytest.fail('preflight restarted old manager'))
+    assert manager.availability()['state'] == expected
+
+
+def test_legacy_probe_does_not_create_or_release_another_lock(manager):
+    import fcntl
+    path = Path(os.environ['XDG_STATE_HOME']) / 't/local-worker/worker.lock'
+    assert not manager.legacy_busy() and not path.exists()
+    path.parent.mkdir(parents=True)
+    with path.open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert manager.legacy_busy()
+        # A second check still sees the owner: the probe did not release it.
+        assert manager.legacy_busy()
+    assert not manager.legacy_busy()
+
+
+def test_client_admission_rejection_and_idempotent_enter(manager, monkeypatch):
+    monkeypatch.setattr(manager, 'ensure', lambda: None)
+    monkeypatch.setattr(manager, 'rpc', lambda *a, **k: {'admitted': False, 'availability': {'state': 'busy', 'reason': 'owner'}})
+    client = manager.Client(dict(chosen(), mode='automatic'), 'worker')
+    with pytest.raises(manager.AdmissionDenied) as error:
+        client.__enter__()
+    assert error.value.availability['state'] == 'busy' and client.info == {}
+    assert not hasattr(client, 'thread')
+    client.info = {'id': 'already-admitted'}
+    assert client.__enter__() is client
+
+
+@pytest.mark.parametrize('kind,stopped', [('worker', True), ('session', False)])
+def test_worker_busy_heartbeat_does_not_change_native_sessions(manager, monkeypatch, kind, stopped):
+    client = manager.Client(chosen(), kind)
+    class Once:
+        count = 0
+        def wait(self, seconds):
+            self.count += 1
+            return self.count > 1
+    client.closed = Once()
+    monkeypatch.setattr(client, 'call', lambda action: {'state': 'working', 'outcome': 'busy'})
+    client.heartbeat()
+    assert client.cancel_event.is_set() is stopped
+
+
+@pytest.mark.parametrize('reason', ['legacy', 'loading'])
+def test_automatic_late_blockers_never_start_generation(manager, monkeypatch, reason):
+    engine = manager.Engine(Providers)
+    lease = automatic(engine)
+    job = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    monkeypatch.setattr(engine, 'forward', lambda *a: pytest.fail('blocked request generated'))
+    if reason == 'legacy':
+        monkeypatch.setattr(engine, 'legacy_lock', lambda: False)
+    else:
+        get = engine.providers.get
+        def expired(*args):
+            job['deadline'] = time.time() - 1
+            return get(*args)
+        monkeypatch.setattr(engine.providers, 'get', expired)
+    engine.thread.start()
+    assert job['done'].wait(2)
+    assert job['state'] == ('busy' if reason == 'legacy' else 'timed_out')
+    if reason == 'loading': assert job['timeout_phase'] == 'loading'
+    engine.close()
+
+
 def test_clients_ownership_history_and_queue_cancellation(manager):
     engine = manager.Engine(Providers)
     lease = register(engine)
@@ -507,7 +682,7 @@ def test_owner_verification_process_identity_and_limits(manager,monkeypatch):
 def test_overlapping_queue_wait_is_wall_time_not_sum(manager):
     engine=manager.Engine(Providers);lease=register(engine);client=engine.clients[lease['id']]
     a=engine.submit(client,'/v1/responses',{},handler());b=engine.submit(client,'/v1/responses',{},handler())
-    a.update(created=10,started=20);b.update(created=15,started=25)
+    a.update(created=10,started=20,execution_started=20);b.update(created=15,started=25,execution_started=25)
     assert engine.client_status(client)['wait_seconds']==15
     engine.close()
 

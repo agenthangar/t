@@ -297,7 +297,7 @@ def test_automatic_approval_is_narrow_and_transport_bound(local,monkeypatch,tmp_
     m=local
     assert m.approval_args({'mode':'manual'})==[]
     args=m.approval_args({'mode':'automatic'})
-    assert len(args)==6 and all('mcp_servers.t-local-worker.tools.' in v for v in args[1::2])
+    assert len(args)==10 and all('mcp_servers.t-local-worker.tools.' in v for v in args[1::2])
     assert not m.trusted_connection()
     w=m.helper('t_local_worker');w['save_settings']({'enabled':True,'model':m.DEFAULT_MODEL,'provider':'lmstudio'})
     assert not m.trusted_connection()

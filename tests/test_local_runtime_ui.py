@@ -75,6 +75,16 @@ def test_requests_navigation_and_errors(ui_module,monkeypatch):
     assert 'memory unknown' in '\n'.join(m.monitor_lines(v))
 
 
+def test_busy_request_is_terminal(ui_module, monkeypatch):
+    state = view(); state['requests'][0]['state'] = 'busy'
+    monkeypatch.setattr(ui_module, 'manager', lambda: {'status': lambda: state})
+    ui = UI('request', 'back', 'back')
+    ui_module.requests_menu(ui)
+    detail = next(page for page in ui.pages if page[0].startswith('Request '))
+    assert 'cancel' in detail[2]['disabled']
+    assert ui_module.label('busy') == 'Busy'
+
+
 def test_settings_save_stopped_live_stale_and_provider(ui_module,monkeypatch,tmp_path):
     m=ui_module;calls=[];v=view()
     monkeypatch.setattr(m,'manager',lambda:{'status':lambda:v,'settings':lambda value=None:value or view()['settings'],

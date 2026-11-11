@@ -23,7 +23,7 @@ def worker(tmp_path, monkeypatch):
     def inference():
         result = real()
         helper = result['helper']
-        result['helper'] = lambda name: {'Client': ManagedClientFixture} if name == 't_local_manager' else helper(name)
+        result['helper'] = lambda name: {'Client': ManagedClientFixture, 'availability': lambda: {'state': 'available'}} if name == 't_local_manager' else helper(name)
         return result
     monkeypatch.setattr(module, 'inference', inference)
     return module
@@ -241,7 +241,7 @@ def test_mcp_protocol(worker, t_mod, monkeypatch, capsys):
     replies = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert replies[0]['error']['code'] == -32700
     assert replies[1]['result']['serverInfo']['name'] == 't-local-worker'
-    assert len(replies[2]['result']['tools']) == 4
+    assert len(replies[2]['result']['tools']) == 5
     assert replies[3]['result']['isError']
 
 
@@ -324,7 +324,7 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     status=worker.inference()['helper']('t_local_status')
     local={'leased_runtime':lambda chosen:None,'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
            'policy':worker.inference()['policy'],
-           'helper':lambda n:status if n=='t_local_status' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'hardware':lambda:{}},'runtime':runtime}
+           'helper':lambda n:status if n=='t_local_status' else {'Client':ManagedClientFixture, 'availability': lambda: {'state': 'available'}} if n=='t_local_manager' else {'hardware':lambda:{}},'runtime':runtime}
     monkeypatch.setattr(worker,'inference',lambda:local)
     monkeypatch.setattr(worker,'run_worker',lambda *a,**k:observed.append(a[3:]) or 'completed')
     manager=worker.Worker();args={'workspace':str(repo),'assignment':'inspect','timeout_seconds':300,'routing_reason':'bounded fixture'}
@@ -343,10 +343,10 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     routing['mode']='automatic'
     class Unavailable(ManagedClientFixture):
         def __enter__(self): raise ValueError('does not fit')
-    local['helper'] = lambda n:status if n=='t_local_status' else {'Client':Unavailable}
+    local['helper'] = lambda n:status if n=='t_local_status' else {'Client':Unavailable, 'availability': lambda: {'state': 'available'}}
     failed=manager.start(args)
     for thread in manager.threads:thread.join(2)
-    assert manager.call('task_status',{'task_id':failed['task_id']})['error']=='does not fit'
+    assert failed['status']=='busy' and not failed['accepted'] and failed['availability']['reason']=='does not fit'
     manager.close()
 
 
@@ -391,3 +391,81 @@ def test_task_limits_inherit_default_and_cap_explicit(worker, repo, monkeypatch,
     if requested is not None:args['timeout_seconds']=requested
     task=worker.Worker().start(args)
     assert task['timeout_seconds']==expected and task['inactivity_timeout_seconds']==300
+
+
+@pytest.mark.parametrize('state', ['busy', 'unknown'])
+def test_automatic_busy_preflight_does_not_snapshot(worker, repo, monkeypatch, state):
+    worker.save_settings({'enabled': True, 'model': 'test'})
+    original = worker.inference
+    def inference():
+        local = original()
+        local['effective'] = lambda path: local['policy']({'mode': 'automatic'})
+        return local
+    monkeypatch.setattr(worker, 'inference', inference)
+    manager = worker.Worker()
+    monkeypatch.setattr(manager, 'check_availability', lambda args: {'state': state, 'reason': 'another owner'})
+    monkeypatch.setattr(worker, 'snapshot', lambda *a: pytest.fail('copied a rejected task'))
+    result = manager.start({'workspace': str(repo), 'assignment': 'inspect'})
+    assert result['status'] == 'busy' and result['accepted'] is False
+    assert not manager.tasks and not worker.state_root().exists()
+
+
+def test_preflight_release_wait_is_bounded_and_requires_evidence(worker, monkeypatch):
+    manager = worker.Worker()
+    clock = [0]
+    monkeypatch.setattr(worker.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(worker.time, 'sleep', lambda n: clock.__setitem__(0, clock[0]+n))
+    view = {'state': 'busy', 'retry_after_seconds': None}
+    monkeypatch.setattr(manager, 'check_availability', lambda args: dict(view))
+    assert manager.preflight('/repo')['state'] == 'busy' and clock[0] == 0
+    view['retry_after_seconds'] = 15
+    assert manager.preflight('/repo')['state'] == 'busy' and 15 <= clock[0] < 15.2
+    views = iter([dict(view), {'state': 'available'}])
+    monkeypatch.setattr(manager, 'check_availability', lambda args: next(views))
+    assert manager.preflight('/repo')['state'] == 'available'
+
+
+def test_availability_tool_exposes_limits_without_snapshot(worker, repo, monkeypatch):
+    manager = worker.Worker()
+    assert manager.call('check_availability', {'workspace': str(repo)})['state'] == 'unknown'
+    worker.save_settings({'enabled': True, 'model': 'test'})
+    result = manager.call('check_availability', {'workspace': str(repo)})
+    assert result['state'] == 'available' and result['adapter_version'] == worker.ADAPTER_VERSION
+    assert result['effective_limits']['timeout_seconds'] == 900
+    assert not worker.state_root().exists()
+    with pytest.raises(ValueError): manager.call('check_availability', {'workspace': 'relative'})
+    with pytest.raises(ValueError): manager.call('check_availability', {})
+
+
+@pytest.mark.parametrize('outcome,reason', [('busy', 'busy'), ('timed_out', 'queue_timeout'), ('failed', 'failed')])
+def test_worker_preserves_patch_and_specific_manager_failure(worker, repo, monkeypatch, outcome, reason):
+    worker.save_settings({'enabled': True, 'model': 'test'})
+    original = worker.inference
+    class Contended(ManagedClientFixture):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.last.update(outcome=outcome, failure_reason='shared runtime blocked', queue_seconds=2,
+                             loading_seconds=3, wait_seconds=5, request_ids=['request-1'])
+        def waited(self): return 5
+    def inference():
+        local = original(); helper = local['helper']
+        local['helper'] = lambda name: {'Client': Contended} if name == 't_local_manager' else helper(name)
+        return local
+    monkeypatch.setattr(worker, 'inference', inference)
+    def run(job, *args, progress=None):
+        (job / 'workspace/file.py').write_text('partial\n')
+        progress.observed = {'completed_commands': 1, 'execution_seconds': 8}
+        progress()
+        return 'cancelled'
+    monkeypatch.setattr(worker, 'run_worker', run)
+    manager = worker.Worker()
+    task = manager.start({'workspace': str(repo), 'assignment': 'patch', 'mode': 'patch'})
+    for thread in manager.threads: thread.join(3)
+    result = manager.call('wait_task', {'task_id': task['task_id'], 'timeout_seconds': 1})
+    # wait_task returns the durable terminal task directly.
+    assert result['status'] == ('busy' if outcome == 'busy' else 'failed')
+    assert result['failure_reason'] == reason and result['partial_patch_available']
+    assert '+partial' in result['patch'] and result['completed_commands'] == 1
+    assert result['queue_seconds'] == 2 and result['loading_seconds'] == 3
+    assert (repo / 'file.py').read_text() == 'before\n'
+    manager.close()

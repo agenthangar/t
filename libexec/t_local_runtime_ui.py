@@ -32,7 +32,7 @@ def clean(value):
 def label(state):
     return {'running': 'Generating', 'queued': 'Queued', 'waiting_for_memory': 'Waiting for memory',
             'waiting_for_legacy': 'Waiting for an older session', 'completed': 'Completed',
-            'cancelled': 'Cancelled', 'timed_out': 'Queue timed out', 'failed': 'Failed', 'working': 'Working',
+            'cancelled': 'Cancelled', 'timed_out': 'Timed out', 'busy': 'Busy', 'failed': 'Failed', 'working': 'Working',
             'loading': 'Loading', 'unknown': 'Unknown', 'cancelling': 'Cancelling'}.get(state, clean(state))
 
 
@@ -99,7 +99,7 @@ def requests_menu(ui):
             continue
         while True:
             row = next((x for x in manager()['status']().get('requests', []) if x['id'] == picked), row)
-            active = row['state'] not in ('completed', 'cancelled', 'failed', 'timed_out', 'unknown')
+            active = row['state'] not in ('completed', 'cancelled', 'failed', 'timed_out', 'busy', 'unknown')
             action = ui.pick('Request ' + row['id'][:12], [('refresh', 'Refresh'), ('cancel', 'Cancel request'), ('back', 'Back')],
                              context=request_lines(row), disabled={} if active else {'cancel': 'This request is not active.'})
             if action in (None, 'back'):
