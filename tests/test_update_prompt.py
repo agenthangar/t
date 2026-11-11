@@ -138,7 +138,8 @@ def test_update_now_uses_existing_updater(t_mod, terminal, offer, answer):
     terminal[0].seek(0)
     assert t_mod._t_offer_update() == 10
     args = offer[1][-1][1]
-    assert vars(args) == {"dev": False, "relink": False, "check": False}
+    assert vars(args) == {"dev": False, "relink": False, "check": False,
+                          "_update_available": True}
     assert t_mod.os.environ["T_UPDATE_PROMPTED"] == str(t_mod.os.getpid())
     assert "Continuing your command" in terminal[2].getvalue()
 

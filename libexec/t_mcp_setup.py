@@ -118,7 +118,8 @@ def install(command):
         if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
             raise ValueError('unexpected Codex MCP configuration response')
         if any(e.get('name') == 'sessions' for e in entries):
-            print("Codex MCP server 'sessions' already configured; preserved")
+            if not os.environ.get('T_UPDATE_QUIET'):
+                print("Codex MCP server 'sessions' already configured; preserved")
             return 0
         result = subprocess.run([binary, 'mcp', 'add', 'sessions', '--', command, 'mcp'],
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)

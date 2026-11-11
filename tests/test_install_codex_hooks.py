@@ -69,6 +69,20 @@ def test_seeds_hooks_json_when_codex_home_exists(box):
     assert data == {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": HOOK_CMD}]}]}}
 
 
+def test_quiet_update_only_reports_new_hook_setup(box):
+    co, home = box
+    _codex_home(home)
+    first = relink(co, home, T_UPDATE_QUIET="1")
+    assert first.returncode == 0, first.stderr
+    assert_review_notice(first.stdout)
+    before = (home / ".codex/hooks.json").read_bytes()
+    second = relink(co, home, T_UPDATE_QUIET="1")
+    assert second.returncode == 0, second.stderr
+    assert "Codex hook registered" not in second.stdout
+    assert "Linked " not in second.stdout
+    assert (home / ".codex/hooks.json").read_bytes() == before
+
+
 def test_no_codex_home_no_hooks_file(box):
     co, home = box
     r = relink(co, home)

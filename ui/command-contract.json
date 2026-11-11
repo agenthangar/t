@@ -3181,6 +3181,10 @@
       "scope": "local installation; --all includes registered SSH hosts",
       "confirmation": "when_interrupting",
       "tests": [
+        "tests/test_update.py::test_current_git_update_skips_installer",
+        "tests/test_update.py::test_failed_git_setup_retries_at_same_head",
+        "tests/test_update.py::test_current_release_skips_updater_but_relink_still_repairs",
+        "tests/test_update.py::test_current_homebrew_skips_relink",
         "tests/test_update.py::test_update_local_switches_packaged_install_to_updated_main",
         "tests/test_dev_isolation.py::test_cli_scopes_are_independent_and_preserve_explicit_paths",
         "tests/test_dev_isolation.py::test_shell_helpers_switch_before_prompt_without_changing_path",
@@ -3229,6 +3233,8 @@
           "tests": [
             "tests/test_update.py::test_update_all_runs_local_then_registered_hosts",
             "tests/test_update.py::test_update_all_failures_continue",
+            "tests/test_update.py::test_update_all_reports_current_results",
+            "tests/test_update.py::test_remote_update_streams_prompts_and_consumes_only_results",
             "tests/test_update.py::test_update_all_cancellation_stops_batch"
           ]
         },
@@ -3247,7 +3253,7 @@
           ]
         }
       },
-      "notes": "Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative."
+      "notes": "Current installations skip setup; --relink remains explicit repair. Routine Git/setup output is quiet; --all reports concise per-host results while preserving prompts, diagnostics, cancellation and failure status. Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative."
     },
     "system diagnose": {
       "patterns": [
