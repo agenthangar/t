@@ -1,4 +1,5 @@
 """History search and picker operate on disposable snapshots, never personal sessions."""
+import datetime
 import importlib.util
 import json
 import os
@@ -39,6 +40,7 @@ def app(history, tmp_path):
 def rows(count=120):
     return [dict(repo='org/repo', agent='codex' if i % 2 else 'claude', sid=f'session-{i}',
                  title=f'Conversation {i}', updated=200 - i,
+                 last_turn=datetime.datetime.fromtimestamp(200 - i, datetime.timezone.utc).isoformat(),
                  associations=[dict(workspace=f'/gone/{i}', slot=str(i % 3 + 1), host='local', branch=f'branch-{i}')],
                  sources=[], prs=[], mentions=[]) for i in range(count)]
 
@@ -71,10 +73,11 @@ def test_deterministic_order_for_identical_dates_and_at_most_three_pr_summaries(
     data = rows(3)
     for r in data:
         r['updated'] = 100
+        r['last_turn'] = '2026-11-08T10:00:00Z'
     data[1]['agent'] = 'claude'
     assert [r['sid'] for r in history.page_rows(list(reversed(data)))[0]] == ['session-0', 'session-1', 'session-2']
     data[0]['prs'] = [dict(number=i, state='OPEN', url=f'https://github.com/org/repo/pull/{i}') for i in range(1, 7)]
-    rendered = history.format_row(data[0])
+    rendered = history.format_row(data[0], 120)
     assert all(f'#{i}O' in rendered for i in range(1, 4))
     assert all(f'#{i}O' not in rendered for i in range(4, 7))
     assert '+3' in rendered
@@ -82,7 +85,7 @@ def test_deterministic_order_for_identical_dates_and_at_most_three_pr_summaries(
     assert all(pr['url'] in history.details(data[0]) for pr in data[0]['prs'])
     data[0]['title'] = ''
     data[0]['owners'] = [{'host': 'remote', 'slot': 'repo-4', 'state': 'detached', 'context': ''}]
-    assert 'Untitled conversation' in history.format_row(data[0])
+    assert 'Untitled conversation' in history.format_row(data[0], 120)
     assert 'Host: remote' in history.details(data[0])
     assert 'Session: repo-4' in history.details(data[0])
     assert '·' in history.format_row(data[2])
@@ -142,7 +145,7 @@ def test_picker_explicit_selection_refresh_cancel_and_private_snapshots(history,
         snapshot = Path(words[3])
         assert snapshot.is_file()
         assert json.loads(snapshot.read_text())[0]['sid'] == 'session-0'
-        actual = 'Conversation\nenter\n' + history.picker_rows(rows(1), 'Conversation', 50, 1) if expected else stdout
+        actual = 'Conversation\nenter\n' + history.picker_rows(rows(1), 'Conversation', 50, 1, json.loads(Path(words[4]).read_text())['width']) if expected else stdout
         return SimpleNamespace(returncode=code, stdout=actual)
     monkeypatch.setattr(history.subprocess, 'run', fzf)
     selected, key, query = app.pick(rows(1), 'repo', query='Conversation' if expected else '')
@@ -274,6 +277,13 @@ finally:
             wait_for(lambda text: 'Conversation 50' in text and 'Page 2 · 120 conversations · 50 per page' in text, 'next page rows')
             tmux('send-keys', '-t', 'picker', 'C-b')
             wait_for(lambda text: 'Conversation 0' in text, 'previous page rows')
+            for label in ('repo ↑', 'agent ↑', 'host ↑', 'session ↑', 'last turn ↓'):
+                tmux('send-keys', '-t', 'picker', 'C-y')
+                wait_for(lambda text: 'Sort: ' + label in text, 'sort choice ' + label)
+            tmux('send-keys', '-t', 'picker', 'C-s')
+            wait_for(lambda text: 'Sort: OFF' in text, 'sort paused')
+            tmux('send-keys', '-t', 'picker', 'C-s')
+            wait_for(lambda text: 'Sort: last turn ↓' in text, 'sort restored')
             # This exact SID occurs on page 3, beyond fzf's initial 50 rows.
             tmux('send-keys', '-t', 'picker', '-l', 'session-119')
             wait_for(lambda text: 'Conversation 119' in text and 'Page 1 · 1 conversations · 50 per page' in text, 'global off-page search result')
@@ -369,10 +379,10 @@ finally:
             enter_label = '↩ Return' if sys.platform == 'darwin' and height > 14 else '↩' if sys.platform == 'darwin' else 'Enter'
             while time.monotonic() < deadline:
                 captured = tmux('capture-pane', '-p', '-t', 'picker')
-                if enter_label + ' resume' in captured and '▸' in captured and 'Conversat' in captured:
+                if enter_label + ' resume' in captured and '▸' in captured and 'Conversa' in captured:
                     break
                 time.sleep(.05)
-            assert enter_label + ' resume' in captured and '▸' in captured and 'Conversat' in captured, captured
+            assert enter_label + ' resume' in captured and '▸' in captured and 'Conversa' in captured, captured
             tmux('send-keys', '-t', 'picker', 'Escape')
             deadline = time.monotonic() + 10
             while not result.exists() and time.monotonic() < deadline:
@@ -415,3 +425,89 @@ def test_history_search_matches_literal_phrases_across_all_pages(history):
         assert count == 1 and selected[0]['sid'] == 'session-119'
     assert history.page_rows(data, 'keys awkward')[1] == 0
     assert history.page_rows(data, 'awk keys')[1] == 0
+
+
+def test_last_turn_sorts_before_pagination_and_unknowns_last(history):
+    data = rows(5)
+    for row, stamp in zip(data, ['2026-11-08T10:00:00Z', '-', '2026-11-08T08:00:00-08:00', 'invalid', '2026-11-08T16:00:00Z']):
+        row['last_turn'] = stamp
+    data[0]['updated'] = 9999999999  # General activity cannot outrank a real turn.
+    assert [r['sid'] for r in history.page_rows(data, limit=2)[0]] == ['session-2', 'session-4']
+    assert [r['sid'] for r in history.page_rows(data, limit=2, page=2)[0]] == ['session-0', 'session-1']
+    assert history.page_rows(data, 'session-3')[0] == [data[3]]
+    assert history.page_rows(data, sort_enabled=False)[0] == data
+    # Every existing alternate sort remains available, including natural slot order.
+    for i, row in enumerate(data):
+        row['repo'] = ['z/api', 'a/api', 'a/api', 'b/api', 'z/api'][i]
+        row['associations'][0].update(slot=['10', '2', '1', '4', '3'][i], host=['z', 'a', 'b', 'a', 'c'][i])
+    expected = {'repo': [2, 1, 3, 4, 0], 'agent': [2, 4, 0, 1, 3],
+                'host': [1, 3, 2, 4, 0], 'session': [2, 1, 4, 3, 0]}
+    for mode, indices in expected.items():
+        assert [r['sid'] for r in history.page_rows(data, sort=mode)[0]] == [f'session-{i}' for i in indices]
+
+
+def test_history_sort_actions_preserve_query_and_global_identity(history, tmp_path, capsys):
+    data = list(reversed(rows(6)))
+    snapshot, state = tmp_path / 'records.json', tmp_path / 'page.json'
+    history.private_write(snapshot, data)
+    history.private_write(state, dict(page=2, query='Conversation', limit=2, sort='turn', sort_enabled=True))
+    for mode in ('repo', 'agent', 'host', 'session', 'turn'):
+        history.picker([str(snapshot), str(state), 'next-sort', 'Conversation'])
+        rendered = capsys.readouterr().out.splitlines()
+        settings = json.loads(state.read_text())
+        assert settings['sort'] == mode and settings['sort_enabled'] and settings['page'] == 1
+        assert settings['query'] == 'Conversation'
+        expected, _ = history.page_rows(data, 'Conversation', 2, sort=mode)
+        assert [data[int(line.split('\t')[0])] for line in rendered] == expected
+    history.picker([str(snapshot), str(state), 'toggle-sort', 'Conversation'])
+    assert [int(line.split('\t')[0]) for line in capsys.readouterr().out.splitlines()] == [0, 1]
+    assert 'Sort: OFF' in state.with_suffix('.header').read_text()
+    history.picker([str(snapshot), str(state), 'next', 'Conversation'])
+    assert [int(line.split('\t')[0]) for line in capsys.readouterr().out.splitlines()] == [2, 3]
+    history.picker([str(snapshot), str(state), 'toggle-sort', 'Conversation'])
+    assert json.loads(state.read_text())['sort'] == 'turn'
+    assert 'last turn ↓' in state.with_suffix('.header').read_text()
+
+
+def test_history_accepts_exact_row_after_sort_and_retains_refresh_choice(history, app, monkeypatch):
+    data = rows(4)
+    def run(argv, **kwargs):
+        helper = shlex.split(argv[8])
+        snapshot, state = helper[3:5]
+        history.picker([snapshot, state, 'next-sort', 'Conversation'])
+        history.picker([snapshot, state, 'next-sort', 'Conversation'])
+        raw = Path(state).with_suffix('.rows').read_text().splitlines()[0]
+        assert kwargs['env']['T_PICKER_HISTORY_SORT'] == '1'
+        return SimpleNamespace(returncode=0, stdout='Conversation\nenter\n' + raw + '\n')
+    monkeypatch.setattr(history.subprocess, 'run', run)
+    selected, key, query = app.pick(data, 'repo', multi=True)
+    assert selected == [data[0]] and key == 'enter' and query == 'Conversation'
+    assert app.picker_sort == ('agent', True)
+
+
+@pytest.mark.parametrize('width,height', [(72, 24), (100, 32), (32, 20), (24, 12), (112, 12)])
+def test_history_sort_block_matches_open_and_preserves_section_spacing(history, monkeypatch, width, height):
+    import sys
+    monkeypatch.syspath_prepend(str(ROOT / 'libexec'))
+    import t_picker_filters as filters
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', str(height))
+    monkeypatch.setenv('T_PICKER_HEADER_WIDTH', str(width))
+    monkeypatch.setenv('NO_COLOR', '1')
+    opened = filters.header('open', 0, {}, 0, 'COLUMNS', width).splitlines()
+    saved = history.picker_header(rows(3), '', 50, 1, width).splitlines()
+    def sort_block(lines):
+        start = next(i for i, line in enumerate(lines) if line.startswith('Sort:'))
+        return lines[start:-1]  # Exclude column heading, retain the separating blank row.
+    assert sort_block(saved) == sort_block(opened)
+    start = next(i for i, line in enumerate(saved) if line.startswith('Sort:'))
+    if width > 40 and height > 14:
+        assert saved[start - 1] == '' and saved[-2] == ''
+        assert '  ' in saved[-1]  # Same two-space column gutters as open.
+    else:
+        assert '' not in saved
+    chrome = history._THEME['chrome']('Enter resume/Esc\n\n' + '\n'.join(saved), 'HISTORY', height <= 14)
+    assert 'HISTORY' not in chrome
+    if height > 14:
+        assert chrome.startswith('HOTKEYS\n')
+        assert '\n\n' in chrome
+    assert all(history.display_width(line) <= width for line in chrome.splitlines())

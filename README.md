@@ -1729,6 +1729,15 @@ local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a
 separate setting from these instructions to the agent.
 
+## Preview last-turn sorting locally
+
+From a t development worktree, `python3 scripts/preview_open_picker.py --profile history`
+opens isolated sample conversation history. Use `--profile open` or `--profile resume`
+for the other pickers. Ctrl-Y cycles last turn, repository, agent, host, and session;
+Ctrl-S toggles sorting. Last turn ↓ means newest user turn first, with unknown times
+last. Selection only prints sample identities; it never starts or attaches a session.
+
+
 ## Standalone sleep protection
 
 The `t` package also installs [`nosleep`](docs/nosleep.md), a standalone macOS
