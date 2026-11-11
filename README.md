@@ -1556,12 +1556,25 @@ or `none (outside Git)`. Packaged sources show `release`; detached checkouts sho
 
 `--all` updates this machine first, then each registered host from `t hosts list`
 in alias order. Each machine uses its existing Homebrew, release, or Git updater.
+Already-current installations skip setup. Routine Git and setup chatter is quiet;
+each host gets a concise result, while required prompts and failure details remain
+visible. For example:
+
+```text
+local: up to date
+office: updated
+build: up to date
+```
+
 SSH authentication must already work without a password prompt. Unreachable
 hosts and failed updates are reported while the remaining hosts continue; any
 failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining
 updates, preserving completed work. With no registered hosts, only this machine
 is updated. `t update --all` is the equivalent compatibility alias. `--all`
 cannot be combined with `--check`, `--local`, `--dev`, or `--relink`.
+Use `--relink` to repair links/integrations or review a deferred instruction
+migration even when the installed version is current. `--local` still switches
+to the requested checkout when another source is installed.
 
 When you use `t` interactively, it checks for a newer version in the background
 about once a day (retrying sooner after a failed check). A later command offers

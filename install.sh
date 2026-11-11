@@ -134,7 +134,9 @@ link() {
         echo "Backed up $dst -> $backup"
     fi
     ln -s "$src" "$dst"
-    echo "Linked $dst -> $src"
+    if [[ -z "${T_UPDATE_QUIET:-}" ]]; then
+        echo "Linked $dst -> $src"
+    fi
 }
 
 link_all() {
@@ -299,7 +301,8 @@ for group in groups:
         if any(name in str(hook.get("command", "")) for name in ("t-session-start", "claude-stamp-tmux")):
             registered = registered or str(hook["command"])
 if registered and not changed:
-    review_notice(registered)
+    if not os.environ.get("T_UPDATE_QUIET"):
+        review_notice(registered)
     sys.exit(0)
 if not registered:
     groups.append({"hooks": [{"type": "command", "command": command}]})

@@ -263,7 +263,7 @@ def _progress(message, *, machine=False):
 
 @contextmanager
 def _spinner(message, *, machine=False):
-    if machine or not sys.stdout.isatty() or not sys.stderr.isatty():
+    if machine or os.environ.get("T_UPDATE_QUIET") or not sys.stdout.isatty() or not sys.stderr.isatty():
         yield
         return
     helper = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
@@ -7918,17 +7918,21 @@ def _t_canonical_root(source):
     return root
 
 
-def _t_relink(root, dev=False):
+def _t_relink(root, dev=False, quiet=False):
     inst = os.path.join(root, "install.sh")
     if not os.path.isfile(inst):
         print(f"t update: no installer at {inst}", file=sys.stderr)
         return 1
     env = {**os.environ, "T_LINKS_ONLY": "1"}
+    if quiet:
+        env["T_UPDATE_QUIET"] = "1"
     if dev:
         env["T_LINK_DEV"] = "1"
     else:
         env.pop("T_LINK_DEV", None)
     p = subprocess.run([inst], env=env)
+    if p.returncode == 0 and not dev:
+        _t_update_pending(root).unlink(missing_ok=True)
     return p.returncode
 
 
@@ -8040,8 +8044,11 @@ def _t_offer_update(installation=None):
         return 0
     # The existing updater owns checksum checks, Homebrew, fast-forward safety,
     # links and hooks. Its subprocesses must not prompt recursively.
+    # Reuse the accepted offer rather than making a second network check that
+    # can contradict it. The installer still validates the downloaded payload.
     os.environ["T_UPDATE_PROMPTED"] = str(os.getpid())
-    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False)):
+    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False,
+                                          _update_available=True)):
         print("t update failed; your original command was not run. Retry it when ready.", file=sys.stderr)
         return 11
     print("t updated. Continuing your command.\n", file=sys.stderr)
@@ -8248,9 +8255,68 @@ def _t_update_ssh_argv(target):
     # Updaters can need a terminal (for example Homebrew sudo), while redirected
     # runs must not allocate one. Authentication never blocks the remaining hosts.
     tty = "-t" if sys.stdin.isatty() and sys.stdout.isatty() else "-T"
-    inner = "T_NO_UPDATE_CHECK=1 t update"
+    inner = "T_NO_UPDATE_CHECK=1 T_UPDATE_QUIET=1 t update"
     return ["ssh", tty, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
             target, f"zsh -lic {shlex.quote(inner)}"]
+
+
+def _t_update_remote(target):
+    """Consume only updater result lines; stream prompts and diagnostics intact."""
+    status, line, passthrough = "updated", "", False
+    results = {"t: up to date": "up to date", "t: updated": "updated"}
+    with subprocess.Popen(_t_update_ssh_argv(target), stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, bufsize=1) as process:
+        try:
+            while char := process.stdout.read(1):
+                if char == "\n":
+                    if line.rstrip("\r") in results and not passthrough:
+                        status = results[line.rstrip("\r")]
+                    else:
+                        print("" if passthrough else line, flush=True)
+                    line, passthrough = "", False
+                elif passthrough:
+                    print(char, end="", flush=True)
+                else:
+                    line += char
+                    if not any((result + "\r").startswith(line) for result in results):
+                        print(line, end="", flush=True)
+                        passthrough = True
+            if line and not passthrough:
+                print(line, end="", flush=True)
+            return process.wait(), status
+        except KeyboardInterrupt:
+            process.terminate()
+            process.wait()
+            raise
+
+
+def _t_update_result(args, status):
+    args._update_status = status
+    if not getattr(args, "_update_batch", False):
+        print(f"t: {status}", flush=True)
+    return 0
+
+
+def _t_update_linked(root):
+    link = os.path.join(HOME, "bin", "t")
+    return (os.path.islink(link) and
+            os.path.realpath(link) == os.path.realpath(os.path.join(root, "bin", "t")))
+
+
+def _t_update_pending(root):
+    return (Path(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state"))) /
+            "t/update" / (hashlib.sha256(root.encode()).hexdigest() + ".pending"))
+
+
+def _t_update_git_command(root, *argv):
+    with _spinner("Checking for updates"):
+        result = subprocess.run(["git", "-C", root, *argv], capture_output=True, text=True)
+    if result.returncode:
+        if result.stdout:
+            print(result.stdout, end="", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+    return result.returncode
 
 
 def _t_update_all(cfg, args):
@@ -8262,27 +8328,27 @@ def _t_update_all(cfg, args):
         if target not in seen:
             hosts.append((alias, target))
             seen.add(target)
-    local_args = argparse.Namespace(**{**vars(args), "all": False})
+    local_args = argparse.Namespace(**{**vars(args), "all": False, "_update_batch": True})
     failed = False
     for alias, target in [("local", None), *hosts]:
-        label = "local" if target is None else f"{alias} ({target})"
-        print(f"t update --all: updating {label}", flush=True)
+        label = alias
+        status = "updated"
         try:
-            rc = (cmd_update(cfg, local_args) if target is None else
-                  subprocess.run(_t_update_ssh_argv(target)).returncode)
+            if target is None:
+                rc = cmd_update(cfg, local_args)
+                status = getattr(local_args, "_update_status", status)
+            else:
+                rc, status = _t_update_remote(target)
         except KeyboardInterrupt:
             rc = 130
         except (OSError, ValueError) as error:
-            print(f"t update --all: {label}: {error}", file=sys.stderr)
+            print(f"{label}: {error}", file=sys.stderr)
             rc = 1
         if rc in (130, -signal.SIGINT):
-            print(f"t update --all: {label}: cancelled; remaining updates stopped", flush=True)
+            print(f"{label}: cancelled; remaining updates stopped", flush=True)
             return 130
-        print(f"t update --all: {label}: " +
-              (f"failed (exit {rc})" if rc else "updated"), flush=True)
+        print(f"{label}: " + (f"failed (exit {rc})" if rc else status), flush=True)
         failed = failed or bool(rc)
-    if not hosts:
-        print("t update --all: no registered remote hosts; local installation only")
     return 1 if failed else 0
 
 
@@ -8329,17 +8395,35 @@ def cmd_update(cfg, args):
                       os.path.realpath(active_link) == os.path.realpath(os.path.join(active, "bin", "t")))
         if args.relink:
             return _t_relink(opt)
+        previous = _t_release_version(opt)
+        pending = _t_update_pending(opt)
+        retry_setup = pending.exists()
         try:
-            upgraded = subprocess.run([brew["brew"], "upgrade", brew["formula"]])
+            with _spinner("Checking Homebrew"):
+                state = ({"available": True} if getattr(args, "_update_available", False) else
+                         _t_updates()["check"]({"kind": "brew", "source": opt,
+                             "current": previous, "brew": brew["brew"], "formula": brew["formula"]}, force=True))
+            if (state.get("checked") and not state.get("error") and
+                    not state.get("available") and not retry_setup):
+                return _t_update_result(args, "up to date")
+            if integrated:
+                pending.parent.mkdir(parents=True, exist_ok=True)
+                pending.touch()
+            upgraded = subprocess.run([brew["brew"], "upgrade", brew["formula"], "--quiet"])
         except OSError as error:
             print(f"t update: could not start Homebrew: {error}", file=sys.stderr)
             return 1
         if upgraded.returncode:
             return upgraded.returncode
+        if previous and _t_release_version(opt) == previous and not retry_setup:
+            pending.unlink(missing_ok=True)
+            return _t_update_result(args, "up to date")
         if integrated:
-            return _t_relink(opt)
-        print("t is upgraded in Homebrew. Run `t integrate` when you want to add its user links.")
-        return 0
+            result = _t_relink(opt, quiet=True)
+            if result:
+                return result
+            pending.unlink(missing_ok=True)
+        return _t_update_result(args, "updated")
     release = _t_release_version(active)
     if release:
         if args.dev:
@@ -8352,7 +8436,17 @@ def cmd_update(cfg, args):
             print(f"t update: release updater missing at {updater}", file=sys.stderr)
             return 1
         try:
-            return subprocess.run([sys.executable, updater]).returncode
+            with _spinner("Checking release"):
+                state = ({"available": True} if getattr(args, "_update_available", False) else
+                         _t_updates()["check"]({"kind": "release", "source": active,
+                                                "current": release}, force=True))
+            if state.get("checked") and not state.get("error") and not state.get("available"):
+                return _t_update_result(args, "up to date")
+            linked_before = _t_update_linked(active)
+            result = subprocess.run([sys.executable, updater],
+                                    env={**os.environ, "T_UPDATE_QUIET": "1"}).returncode
+            status = "up to date" if linked_before and _t_update_linked(active) else "updated"
+            return result if result else _t_update_result(args, status)
         except OSError as exc:
             print(f"t update: could not start release updater: {exc}", file=sys.stderr)
             return 1
@@ -8382,14 +8476,29 @@ def cmd_update(cfg, args):
     if _t_git(canonical, "status", "--porcelain"):
         print("t update: canonical main has local changes; commit or move them before updating", file=sys.stderr)
         return 1
-    fetch = subprocess.run(["git", "-C", canonical, "fetch", "origin", "main"])
-    if fetch.returncode:
-        return fetch.returncode
-    merge = subprocess.run(["git", "-C", canonical, "merge", "--ff-only", "origin/main"])
-    if merge.returncode:
+    fetch = _t_update_git_command(canonical, "fetch", "--quiet", "origin", "main")
+    if fetch:
+        return fetch
+    before = _t_git(canonical, "rev-parse", "HEAD")
+    latest = _t_git(canonical, "rev-parse", "origin/main")
+    pending = _t_update_pending(canonical)
+    if before and before == latest and _t_update_linked(canonical) and not pending.exists():
+        return _t_update_result(args, "up to date")
+    # A failed/interrupted reconciliation must be retried even after HEAD moved.
+    try:
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        pending.touch()
+    except OSError as error:
+        print(f"t update: cannot record pending setup: {error}", file=sys.stderr)
+        return 1
+    merge = _t_update_git_command(canonical, "merge", "--quiet", "--ff-only", "origin/main")
+    if merge:
         print("t update: canonical main diverged; resolve it before relinking", file=sys.stderr)
-        return merge.returncode
-    result = _t_relink(canonical)
+        return merge
+    result = _t_relink(canonical, quiet=True)
+    if result == 0:
+        pending.unlink(missing_ok=True)
+        _t_update_result(args, "updated")
     if result == 0 and local is not None:
         print(f"t now uses local checkout {canonical}; future t update calls update its main branch.")
     return result
@@ -14073,7 +14182,7 @@ PERIODIC CHECKS
         description='Update t from Homebrew, a published release, or canonical Git main. --local switches any '
             'installation to a local checkout. --relink repeats the selected source; --dev selects the '
             'current t worktree without changing shared installation links. --all updates this machine and registered SSH hosts, continuing after '
-            'failures. Ctrl-C stops remaining updates.',
+            'failures. Current installs skip setup. Ctrl-C stops remaining updates.',
         help_details="""DETAILS
 
   For Homebrew, upgrade the formula and keep any existing user links.
@@ -14081,6 +14190,8 @@ PERIODIC CHECKS
   For a versioned release, install the latest published release.
 
   For a Git checkout, fetch and fast-forward canonical main before relinking.
+  Already-current installations skip setup. Routine Git and setup output is quiet;
+  --all reports one result per host. Required prompts and errors remain visible.
   --relink repeats the selected source without fetching; --dev makes development
   available only inside the current t worktree, without changing shared links,
   hooks or settings. Each worktree automatically uses its own CLI and shell helpers;

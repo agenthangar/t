@@ -248,7 +248,9 @@ def capture(*args, **kwargs):
 m.subprocess.run = capture
 try:
     row, key, query = app.pick(json.loads(snapshot.read_text()), 'repo', multi=MULTI_MODE)
-    result.write_text(json.dumps({'sid': ([r['sid'] for r in row] if isinstance(row, list) else row['sid']) if row else None, 'key':key, 'query':query}))
+    pending = result.with_suffix('.tmp')
+    pending.write_text(json.dumps({'sid': ([r['sid'] for r in row] if isinstance(row, list) else row['sid']) if row else None, 'key':key, 'query':query}))
+    pending.replace(result)  # Existence means the complete JSON is readable.
 finally:
     app.store.close()
 '''.replace('MULTI_MODE', repr(multi)))
