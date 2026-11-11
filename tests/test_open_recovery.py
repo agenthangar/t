@@ -80,6 +80,10 @@ def test_existing_worktree_is_never_checked_out_or_freshened(recovery, tmp_path)
     r.git = git
     assert r.source(None, lambda *a: pytest.fail('unexpected prompt')) is None
     assert all(args[0] == 'rev-parse' for args in calls)
+    r.materialize(None)
+    r.git = lambda *a, **kw: str(tmp_path / 'different-repository')
+    with pytest.raises(ValueError, match='does not belong'):
+        r.source(None, lambda *a: pytest.fail('unexpected prompt'))
     r.workspace.rmdir(); r.workspace.symlink_to(tmp_path)
     with pytest.raises(ValueError, match='symlink'):
         r.source(None, lambda *a: True)
@@ -93,10 +97,16 @@ def test_missing_source_requires_explicit_default_choice(recovery, tmp_path):
     with pytest.raises(InterruptedError):
         r.source(None, lambda *a: False)
     assert r.source(None, lambda *a: True) == ('branch', 'dev/repo-3', '')
+    r.git = lambda *a, **kw: ''
+    with pytest.raises(ValueError, match='branch name is invalid'):
+        r.source(None, lambda *a: pytest.fail('unexpected prompt'))
+    r.git = lambda *a, **kw: 'dev/repo-3' if a[0] == 'check-ref-format' else ''
+    with pytest.raises(ValueError, match='default branch could not be determined'):
+        r.source(None, lambda *a: pytest.fail('unexpected prompt'))
 
 
-@pytest.mark.parametrize('owner_changed', [False, True])
-def test_force_rechecks_owner_before_reset(recovery, tmp_path, monkeypatch, owner_changed):
+@pytest.mark.parametrize('failure', ['', 'owner', 'agent', 'legacy'])
+def test_force_rechecks_owner_before_reset(recovery, tmp_path, monkeypatch, failure):
     r = object.__new__(recovery.Recovery)
     r.repo='repo'; r.slot='3'; r.session='dev-repo-3'; r.directory='/work'; r.branch='dev/repo-3'
     r.api={}; r.cfg=SimpleNamespace(); r.backup=None
@@ -105,20 +115,23 @@ def test_force_rechecks_owner_before_reset(recovery, tmp_path, monkeypatch, owne
         forget_workspace=lambda *a, **kw: calls.append('reset') or [])
     history=SimpleNamespace(discover=lambda *a, **kw: None, store=store)
     monkeypatch.setitem(recovery.HISTORY, 'HistoryCommand', lambda *a: history)
-    owners=iter([None, {'sid':'new'} if owner_changed else None])
+    owners=iter([None, {'sid':'new'} if failure == 'owner' else None])
     r.owner=lambda: next(owners)
     r.source=lambda *a: None
     r.materialize=lambda source: calls.append('materialize')
-    r.reservations=lambda: []
+    r.reservations=lambda: [{'path': '/work/.git/t-app-slot'}] if failure == 'legacy' else []
     r.clear_reservations=lambda values: None
-    r.shell=lambda name, *a: 'claude' if name == '_dev_agent_for' else calls.append(name) or ''
+    r.shell=lambda name, *a: ('unknown' if failure == 'agent' else 'claude') if name == '_dev_agent_for' else calls.append(name) or ''
     from contextlib import nullcontext
     monkeypatch.setitem(recovery.LIFECYCLE, 'launch_claims', lambda *a: nullcontext())
     monkeypatch.setitem(recovery.LIFECYCLE, 'native_preflight', lambda *a, **kw: calls.append('guard'))
-    if owner_changed:
-        with pytest.raises(ValueError, match='changed'):
+    if failure:
+        message = {'owner': 'changed', 'agent': 'unsupported', 'legacy': 'ownership is unknown'}[failure]
+        with pytest.raises(ValueError, match=message):
             r.force(confirmed=True)
         assert not calls
+        if failure == 'legacy':
+            assert json.loads(r.backup.read_text())['phase'] == 'prepared'
     else:
         r.force(confirmed=True)
         assert calls.index('guard') < calls.index('reset') < calls.index('_dev_new_session_claimed')
@@ -284,6 +297,7 @@ def test_reservation_backup_and_identity_recheck(recovery,tmp_path):
     with pytest.raises(ValueError,match='changed'): r.clear_reservations(saved)
     r.clear_reservations(r.reservations())
     assert not marker.exists() and not legacy.exists()
+    assert r.reservations() == []
     marker.symlink_to(gitdir)
     with pytest.raises(ValueError,match='unsafe'): r.reservations()
 
