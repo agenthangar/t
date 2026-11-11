@@ -6,6 +6,20 @@ This is the repository's terminal design system, indexed by [DESIGN.md](../DESIG
 
 When a workflow or task calls for a planning preview, use a local interactive HTML
 prototype to demonstrate the proposed command flow before application changes.
+Every session uses the [one-page gallery format](../DESIGN.md#planning-preview-format-for-every-session):
+show all affected screens and essential states together, with a linked index and
+independent sample interactions. A screen selector, tabs, or a carousel must not
+be the only way to see them. Shared terminal design changes include every shared
+screen family and affected custom screens; the
+[terminal screen gallery](previews/terminal-gallery.html) is the planning reference.
+Label existing and proposed behavior, command/navigation entry points, and viewport
+sizes. Scope arguments demonstrate the same command screen with narrower data.
+
+In HTML, headings and rows share fixed column tracks and separate pointer/mark
+gutters. Check actual rendered positions and overflow with Unicode and changing
+selection, search, filters, and sorting. Source-level character counts do not
+establish browser alignment or verify the real terminal implementation.
+
 Follow this terminal contract: shared layout, focus, keyboard controls, spacing,
 and narrow-screen behavior. Show affected navigation, selection, review,
 cancellation, and relevant empty/error states. Label sample data and simulated
