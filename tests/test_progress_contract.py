@@ -17,6 +17,22 @@ def test_progress_inventory():
     assert LINT['check']() == []
 
 
+def test_quiet_feedback_is_nested_thread_local_and_shared_across_loads(monkeypatch):
+    import threading
+    first=runpy.run_path(str(ROOT/'libexec/t_progress.py'))
+    second=runpy.run_path(str(ROOT/'libexec/t_progress.py'))
+    with first['quiet']():
+        with second['quiet']():
+            assert first['_state'].local.quiet
+            with second['spinner']('must stay quiet'):
+                assert not first['_state'].lock.locked()
+        assert first['_state'].local.quiet
+        other=[]
+        thread=threading.Thread(target=lambda:other.append(getattr(first['_state'].local,'quiet',False)))
+        thread.start();thread.join();assert other==[False]
+    assert not first['_state'].local.quiet
+
+
 def test_progress_detects_removed_spinner_and_new_wait(tmp_path):
     (tmp_path / 'bin').mkdir()
     (tmp_path / 'libexec').mkdir()
