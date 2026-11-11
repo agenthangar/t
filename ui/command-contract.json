@@ -803,7 +803,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls."
     },
     "session list": {
       "patterns": [
@@ -1132,7 +1132,10 @@
         "tests/test_resume_auth.py::test_resume_auth_warning_precedes_empty_or_selection",
         "tests/test_resume_history.py::test_batch_failure_stops_later_launches_and_keeps_ready_hints",
         "tests/test_resume_history.py::test_batch_registration_failure_reports_already_launched_owner",
-        "tests/test_resume_history.py::test_batch_tab_failure_never_hides_summary_behind_first_attachment"
+        "tests/test_resume_history.py::test_batch_tab_failure_never_hides_summary_behind_first_attachment",
+        "tests/test_history_picker.py::test_last_turn_sorts_before_pagination_and_unknowns_last",
+        "tests/test_history_picker.py::test_history_sort_actions_preserve_query_and_global_identity",
+        "tests/test_history_picker.py::test_history_accepts_exact_row_after_sort_and_retains_refresh_choice"
       ],
       "modes": {
         "default": {
@@ -1244,7 +1247,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Sort labels include direction (last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last turn, repository, agent, host and session. Actual last-turn sorting happens before pagination, unknown last. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order.",
       "source_reconciliation": {
         "scope": "selected local and cross-host saved conversations",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1286,7 +1289,10 @@
         "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel",
         "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json",
-        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity"
+        "tests/test_worktree_labels.py::test_python_and_shell_resolve_same_numeric_identity",
+        "tests/test_history_picker.py::test_last_turn_sorts_before_pagination_and_unknowns_last",
+        "tests/test_history_picker.py::test_history_sort_actions_preserve_query_and_global_identity",
+        "tests/test_history_picker.py::test_history_accepts_exact_row_after_sort_and_retains_refresh_choice"
       ],
       "modes": {
         "default": {
@@ -1379,7 +1385,7 @@
       "display_schema": "history_information",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
       "visibility": "hidden-compatibility",
-      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts."
+      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Sort labels include direction (last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last turn, repository, agent, host and session. Actual last-turn sorting happens before pagination, unknown last. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order."
     },
     "session cd": {
       "patterns": [
@@ -9988,6 +9994,10 @@
         "sources": {
           "type": "array",
           "meaning": "Every retained transcript source and its availability."
+        },
+        "last_turn": {
+          "type": "string",
+          "meaning": "Actual last user turn timestamp; never general activity or file mtime. Unknown timestamps sort last."
         }
       },
       "layouts": {
@@ -9999,6 +10009,7 @@
             "HOST",
             "SESSION",
             "WORKING ON",
+            "LAST TURN",
             "DATE",
             "BRANCH",
             "PRS",
@@ -10009,7 +10020,8 @@
             "DATE": "updated",
             "BRANCH": "associations[].branch",
             "PRS": "prs",
-            "ID": "sid"
+            "ID": "sid",
+            "LAST TURN": "last_turn"
           }
         },
         "picker": {
@@ -10057,14 +10069,15 @@
           "mentions",
           "sources",
           "model_source",
-          "summary_source"
+          "summary_source",
+          "last_turn"
         ],
         "full_values": true,
         "default": "when_terminal_fits",
         "toggle": "ctrl-/",
         "identity": "exact_conversation",
         "minimum_columns": 70,
-        "minimum_lines": 22,
+        "minimum_lines": 28,
         "placement": "bottom",
         "height_percent": 35
       },
@@ -10086,7 +10099,9 @@
         "keys": {
           "next": "ctrl-f",
           "previous": "ctrl-b",
-          "refresh": "ctrl-r"
+          "refresh": "ctrl-r",
+          "toggle_sort": "ctrl-s",
+          "next_sort": "ctrl-y"
         },
         "validate_returned_query_page_and_snapshot": true,
         "non_tty": "read_only_table",
@@ -10100,9 +10115,24 @@
         "clear_marks_on": [
           "search",
           "page",
-          "refresh"
+          "refresh",
+          "sort"
         ],
-        "failure": "exit_nonzero_without_reopening"
+        "failure": "exit_nonzero_without_reopening",
+        "sort": {
+          "choices": [
+            "turn",
+            "repo",
+            "agent",
+            "host",
+            "session"
+          ],
+          "default": "turn",
+          "unknown": "last",
+          "scope": "full_search_before_pagination",
+          "off": "snapshot_order",
+          "change": "clear_marks_and_reset_page"
+        }
       },
       "json": {
         "version": 1,
@@ -10133,7 +10163,8 @@
           "summary",
           "summary_source",
           "interface",
-          "display"
+          "display",
+          "last_turn"
         ],
         "compatibility": "additive_only",
         "ansi": false,
@@ -10163,7 +10194,8 @@
           "summary": "string",
           "summary_source": "string",
           "interface": "string",
-          "display": "object"
+          "display": "object",
+          "last_turn": "string"
         },
         "display_schema": "history_information"
       },
