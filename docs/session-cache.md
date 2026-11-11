@@ -10,6 +10,11 @@ The service starts on demand, without launchd or shell configuration. It owns
 expiry, refresh workers, invalidation, memory, and persistence. Commands do not
 query SQLite or retain independent process-local discovery caches. Live
 ownership checks before session actions remain uncached.
+Fresh allocation does not rebuild display discovery: it asks current peers only
+for retained worktree reservation markers, falling back to the existing live
+inventory on older hosts with desktop integrations. Local foreground preflight
+reads identity and cwd without transcript titles. The selected workspace still
+passes live local ownership and native writer checks before launch.
 
 ## Disk persistence
 
