@@ -72,9 +72,9 @@ def webhook_target(url):
     return parsed.netloc, parsed.path + '?wait=true'
 
 
-def send_discord(url, content):
+def send_discord(url, embed):
     host, path = webhook_target(url)
-    body = json.dumps({'content': content, 'allowed_mentions': {'parse': []}}).encode()
+    body = json.dumps({'embeds': [embed], 'allowed_mentions': {'parse': []}}).encode()
     for attempt in range(3):
         connection = http.client.HTTPSConnection(host, timeout=20)
         try:
@@ -113,31 +113,37 @@ def notify(repo, webhook, workflow, incident, reason, run, state, state_path):
     previous = state.get(workflow, {})
     if incident == 'pending':
         return
-    name = WORKFLOWS.get(workflow, ('Alert delivery test', None))[0]
+    name = WORKFLOWS.get(workflow, ('Delivery test', None))[0]
     seen = previous.get('seen', [])
+    url = run['html_url'] if run else f'https://github.com/{repo}/actions'
+    embed = {'author': {'name': repo}, 'url': url}
     if incident is None:
         if not previous.get('active'):
             return
-        url = run['html_url'] if run else f'https://github.com/{repo}/actions'
-        content = f'✅ **{repo}: {name} recovered.**\n[Latest successful run]({url})\nScheduled execution is within its deadline.'
+        embed.update(title=f'{name} recovered', color=0x57F287,
+                     description='Checks are passing and scheduled runs are on time.')
     else:
         if incident == previous.get('active') or incident in seen:
             return
-        lines = [f'⚠️ **{repo}: {name} needs attention.**', reason]
+        if workflow == 'delivery-test':
+            embed.update(title='Alerts connected', color=0x5865F2,
+                         description='Delivery test only. Nightly and weekly failure alerts will appear in this channel.')
+        else:
+            embed.update(title=f'{name} needs attention', color=0xED4245, description=reason)
         if run:
-            lines += [f"[Workflow run]({run['html_url']})", f"Commit: `{run['head_sha']}` · Attempt: {run.get('run_attempt', 1)}"]
+            embed['footer'] = {'text': f"Commit {run['head_sha'][:7]} · Attempt {run.get('run_attempt', 1)}"}
             pages = api(repo, f"actions/runs/{run['id']}/attempts/{run.get('run_attempt', 1)}/jobs?per_page=100", paginate=True)
             failed = [j for page in pages for j in page['jobs'] if j.get('conclusion') in FAILURES]
+            lines = []
             for job in failed:
-                line = f"- [{job['name']}]({job['html_url']}): {job['conclusion']}"
-                if len('\n'.join(lines + [line])) > 1850:
+                line = f"[{job['name']}]({job['html_url']}) — {job['conclusion']}"
+                if len('\n'.join(lines + [line])) > 900:
                     lines.append('More failed jobs are listed in the workflow run.')
                     break
                 lines.append(line)
-        else:
-            lines.append(f'[Workflow dashboard](https://github.com/{repo}/actions)')
-        content = '\n'.join(lines)
-    send_discord(webhook, content)
+            if lines:
+                embed['fields'] = [{'name': 'Failed jobs', 'value': '\n'.join(lines)}]
+    send_discord(webhook, embed)
     # Remember run-specific events across recoveries. Stable disabled/overdue
     # conditions can recur, so only deduplicate those while actively unhealthy.
     if incident and re.match(r'^[0-9]+-', incident):

@@ -54,19 +54,19 @@ def test_failure_deduplicates_replays_and_recovers(tmp_path, monkeypatch):
     def notify(incident, item=None):
         health.notify('test/repo', 'webhook', 'release.yml', incident, 'Failed.', item or run(), state, path)
     notify('123-1-failure')
-    assert len(messages) == 1 and 'Linux tests' in messages[0] and run()['html_url'] in messages[0]
+    assert len(messages) == 1 and 'Linux tests' in messages[0]['fields'][0]['value'] and run()['html_url'] == messages[0]['url']
     # Restore persisted state as a later workflow invocation would.
     state = health.json.loads(path.read_text())
     notify('123-1-failure')
     notify('pending')
     assert len(messages) == 1
     notify(None)
-    assert len(messages) == 2 and 'recovered' in messages[-1]
+    assert len(messages) == 2 and 'recovered' in messages[-1]['title']
     notify(None)
     notify('123-1-failure')
     assert len(messages) == 2
     notify('123-2-failure', run(run_attempt=2))
-    assert len(messages) == 3 and 'Attempt: 2' in messages[-1]
+    assert len(messages) == 3 and 'Attempt 2' in messages[-1]['footer']['text']
 
 
 @pytest.mark.parametrize('incident', ['disabled', 'overdue-never'])
@@ -77,7 +77,7 @@ def test_condition_alerts_again_after_recovery(incident, tmp_path, monkeypatch):
         health.notify('test/repo', 'webhook', 'scorecard.yml', value, 'Needs attention.', None,
                       state, tmp_path / 'state.json')
     assert len(messages) == 3
-    assert 'Workflow dashboard' in messages[0] and 'recovered' in messages[1]
+    assert messages[0]['url'] == 'https://github.com/test/repo/actions' and 'recovered' in messages[1]['title']
 
 
 def test_failed_delivery_does_not_persist_or_suppress_retry(tmp_path, monkeypatch):
@@ -97,7 +97,7 @@ def test_many_failed_jobs_fit_discord_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(health, 'api', lambda *a, **kw: [{'jobs': [dict(
         name='Long job name ' * 10, html_url='https://github.com/test/repo/jobs/1', conclusion='failure')] * 100}])
     health.notify('test/repo', 'webhook', 'release.yml', '123-1-failure', 'Failed.', run(), {}, tmp_path / 'state.json')
-    assert len(messages[0]) <= 2000 and 'More failed jobs' in messages[0]
+    assert len(messages[0]['fields'][0]['value']) <= 1024 and 'More failed jobs' in messages[0]['fields'][0]['value']
 
 
 @pytest.mark.parametrize('url', [
@@ -138,16 +138,16 @@ def response(status, body=b'{"id":"456"}', retry_after='2'):
 
 def test_discord_waits_for_confirmation_and_disables_mentions(monkeypatch):
     calls, sleeps = fake_transport(monkeypatch, [response(200)])
-    health.send_discord('https://discord.com/api/webhooks/123/token', '@everyone test')
+    health.send_discord('https://discord.com/api/webhooks/123/token', {'title': '@everyone test'})
     assert calls[0][0:2] == ('POST', '/api/webhooks/123/token?wait=true')
-    assert calls[0][2] == {'content': '@everyone test', 'allowed_mentions': {'parse': []}}
+    assert calls[0][2] == {'embeds': [{'title': '@everyone test'}], 'allowed_mentions': {'parse': []}}
     assert sleeps == []
 
 
 @pytest.mark.parametrize('transient', [response(429, retry_after='120'), response(503), OSError('secret URL')])
 def test_discord_retries_transient_failures(monkeypatch, transient):
     calls, sleeps = fake_transport(monkeypatch, [transient, response(200)])
-    health.send_discord('https://discord.com/api/webhooks/123/token', 'test')
+    health.send_discord('https://discord.com/api/webhooks/123/token', {'title': 'test'})
     assert len(calls) == 2 and len(sleeps) == 1 and sleeps[0] <= 30
 
 
@@ -159,7 +159,7 @@ def test_discord_retries_transient_failures(monkeypatch, transient):
 def test_discord_rejects_unconfirmed_delivery_without_leaking_secrets(monkeypatch, replies, expected):
     fake_transport(monkeypatch, replies)
     with pytest.raises(RuntimeError, match=expected) as caught:
-        health.send_discord('https://discord.com/api/webhooks/123/token', 'test')
+        health.send_discord('https://discord.com/api/webhooks/123/token', {'title': 'test'})
     assert 'secret URL' not in str(caught.value) and 'token' not in str(caught.value)
 
 
