@@ -289,6 +289,15 @@ destinations use a trailing `›`; scalar choices and immediate actions do not.
 All actions remain directly reachable, returning preserves row focus, and the
 shared viewport keeps the focused row and Save shortcut visible on narrow screens.
 
+Entering Local worker & models with pending edits offers Review and save, then
+continue; Discard changes and continue; and Back to settings. Review shows the
+actual shell and workflow changes before saving. A successful save or explicit
+discard opens the worker hub without restarting config; returning retains focus
+and uses the new saved baseline. Back, review cancellation and Ctrl+C retain
+pending edits. Save failures show one replaceable Retry save / Back to review
+prompt instead of repeated scrollback warnings. Post-save follow-up failures
+are labeled as already saved, never as discarded or unsaved changes.
+
 Cross-host moves and resumes use guarded t transfer for both Claude and Codex.
 Worktree transfers preflight push access before stopping the source, then publish
 final edits under a unique `refs/heads/t-transfer/<token>` ref. Destination checks
