@@ -191,9 +191,14 @@ def test_hub_all_branches_and_command_errors(ui_module,monkeypatch,capsys):
 def test_hub_and_model_test_fit_terminal(ui_module,t_mod,monkeypatch,width,height):
     from test_tui import make_ui
     monkeypatch.setattr(ui_module,'manager',lambda:{'status':lambda:view()})
+    original_helper=ui_module.helper
+    monkeypatch.setattr(ui_module,'helper',lambda name:{'settings':lambda:{'enabled':True,'model':'mlx-community/Qwen3.8-27B-8bit','provider':'lmstudio'}} if name=='t_local_worker' else original_helper(name))
     ui=make_ui(t_mod,['q'],width,height)
     ui_module.hub(ui,vars(t_mod))
-    assert 'Requests' in '\n'.join(ui.frames[0])
+    assert 'Local model' in '\n'.join(ui.frames[0])
+    if (width,height)==(80,24):
+        assert 'Runtime details' in '\n'.join(ui.frames[0])
+        assert 'Back to t config' in '\n'.join(ui.frames[0])
     for frame in ui.frames:
         assert sum(t_mod._term_rows(line,width) for line in frame)<=height
     ui=make_ui(t_mod,['q'],width,height)
@@ -252,3 +257,77 @@ def test_gui_monitor_always_closes_its_server(ui_module,monkeypatch,browser_erro
         with pytest.raises(OSError):m.monitor_gui()
     else:m.monitor_gui()
     assert calls[-3:]==['shutdown','join','closed']
+
+
+def test_hub_compact_overview_details_and_return_focus(ui_module,monkeypatch):
+    m=ui_module;v=view();reads=[]
+    v.update(endpoints={'lmstudio':'http://127.0.0.1:1234'},models=[
+        {'model':'loaded-model','provider':'lmstudio','memory_bytes':37*1024**3,'estimated':True,'owned':True}])
+    monkeypatch.setattr(m,'manager',lambda:{'status':lambda:reads.append('status') or v})
+    original_helper=m.helper
+    config={'enabled':True,'model':'mlx-community/Qwen3.8-27B-8bit','provider':'lmstudio'}
+    monkeypatch.setattr(m,'helper',lambda name:{'settings':lambda:config} if name=='t_local_worker' else original_helper(name))
+    ui=UI('runtime','back');m.hub(ui,{})
+    title,rows,options=ui.pages[0]
+    assert title=='Local inference'
+    assert rows==[('models','Local model'),('provider','Providers'),('machine','Machine settings'),
+        ('worker','Install / configure worker'),('monitor','Monitor usage'),('requests','Requests'),
+        ('runtime','Runtime details'),('back','Back to t config')]
+    assert options['sections']=={'models':'Configure','monitor':'Inspect'}
+    assert options['values']['models']=='LM Studio'
+    assert options['default']==0 and len(options['context'])==2
+    overview=str(options['context'])
+    assert 'Qwen3.8-27B-8bit' in overview and 'running' in overview
+    assert 'http' not in overview and 'GiB' not in overview and 'Fair turns' not in overview
+    assert ui.pages[1][0]=='Runtime details'
+    details='\n'.join(ui.pages[1][1])
+    assert 'http://127.0.0.1:1234' in details and 'Fair turns' in details
+    assert '37.0 GiB estimated' in details and config['model'] in details
+    assert ui.pages[2][2]['default']==6
+    assert reads==['status','status']
+
+
+@pytest.mark.parametrize('manager_failure',[False,True])
+def test_hub_unavailable_keeps_settings_and_errors_reachable(ui_module,monkeypatch,manager_failure):
+    m=ui_module;calls=[]
+    def status():
+        if manager_failure:raise OSError('Manager socket unavailable')
+        return {'manager':'unavailable','error':'Manager socket unavailable'}
+    monkeypatch.setattr(m,'manager',lambda:{'status':status})
+    original_helper=m.helper
+    monkeypatch.setattr(m,'helper',lambda name:{'settings':lambda:{'enabled':False,'model':'saved-model'}} if name=='t_local_worker' else original_helper(name))
+    monkeypatch.setattr(m,'machine_menu',lambda ui:calls.append('machine'))
+    monkeypatch.setattr(m,'provider_menu',lambda ui,provider:calls.append(provider))
+    ui=UI('machine','provider','ollama','runtime','back');m.hub(ui,{})
+    assert calls==['machine','ollama']
+    assert 'saved-model' in str(ui.pages[0][2]['context'])
+    assert 'unavailable' in str(ui.pages[0][2]['context'])
+    assert any(p[0]=='Runtime details' and 'Manager socket unavailable' in p[1] for p in ui.pages)
+
+
+@pytest.mark.parametrize('review',['back','save'])
+def test_hub_model_selection_review_preserves_worker_settings(ui_module,monkeypatch,review):
+    m=ui_module;saved=[];selected={'model':'new-model','provider':'lmstudio'}
+    config={'enabled':False,'model':'old-model','provider':'ollama'}
+    monkeypatch.setattr(m,'manager',lambda:{'status':lambda:view()})
+    def helper(name):
+        if name=='t_local_worker':return {'settings':lambda:config,'save_settings':lambda value:saved.append(value)}
+        assert name=='t_local_inference'
+        return {'select_model':lambda *a,**kw:selected}
+    monkeypatch.setattr(m,'helper',helper)
+    ui=UI('models',review,'back');m.hub(ui,{})
+    assert saved==([dict(config,**selected)] if review=='save' else [])
+    assert ui.pages[-1][2]['default']==0
+
+
+
+def test_hub_invalid_worker_settings_exposes_error_without_implying_provider(ui_module,monkeypatch):
+    m=ui_module
+    monkeypatch.setattr(m,'manager',lambda:{'status':lambda:view()})
+    original_helper=m.helper
+    def settings():raise ValueError('invalid local worker configuration')
+    monkeypatch.setattr(m,'helper',lambda name:{'settings':settings} if name=='t_local_worker' else original_helper(name))
+    ui=UI('runtime','back');m.hub(ui,{})
+    assert ui.pages[0][2]['values']['models']=='Unavailable'
+    assert 'settings unavailable' in str(ui.pages[0][2]['context'])
+    assert 'invalid local worker configuration' in ui.pages[1][1]

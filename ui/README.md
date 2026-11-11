@@ -1496,12 +1496,40 @@ sleep hold is taken; subsequent checks run approximately every 10 seconds.
 
 `t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
 returning to the hub afterward. Save or discard hub edits before opening the
-independently saved editor. Blank, nonselectable rail rows separate its sections.
-Nearby-network selection includes refresh, the saved network and manual entry.
-Explicit **Enable network discovery** builds the local CoreWLAN/CoreLocation app
-and requests Location permission; browsing and monitoring never request it.
-Password setup stays pending until review, then uses a private Keychain prompt.
+independently saved editor. On close, Automatic checks, Battery protection,
+Hotspot fallback and nested Retries share one staged transaction and retained
+focus. Blank nonselectable rail rows separate groups.
+
+Choose fallback starts with saved Wi-Fi names from narrowly scoped Keychain
+metadata. Opening it never scans or reads passwords. Nearby networks is a
+separate page; explicit Allow Wi-Fi discovery builds the CoreWLAN/CoreLocation
+helper and requests Location access. Scan progress and bounded timeouts remain
+visible. Both lists filter inline as the user types; arrows/Return navigate,
+Backspace edits, Esc clears then backs out, Ctrl-H optionally hides connected.
+Connected networks are visible initially and labeled on their selectable row.
+No separate Search or Filters section precedes the choices.
+
+Manual entry immediately prompts privately for a password, or offers a matching
+saved credential. Stage the candidate only after this step succeeds. Cancel
+retains the previous fallback; save errors retain the draft. Secrets stay out of
+JSON, argv, files, logs and review; explicit Save alone writes the selected
+credential to the nosleep Keychain service. Clearing a fallback disables it and
+drops its pending credential, never deleting known Wi-Fi or Keychain entries.
 `nosleep hotspot setup` remains a compatibility route.
+
+Hotspot retry limits offer elapsed time (60 minutes for new defaults) or total
+attempts, with 300 seconds between attempts and a 30-second attempt timeout.
+The window begins with the first attempt and includes cooldowns; attempts never
+overlap. Recovery resets the window; expiry returns to normal sleep checks.
+Legacy configured fallback retains its bounded attempt limit. Battery protection
+still overrides hotspot holds and `--forever`.
+
+The Local inference hub shows a compact worker/selected-model summary and puts
+Configure before Inspect. Runtime details retains endpoints, scheduler policy,
+loaded-model ownership and memory estimates without crowding the overview.
+Models, providers, machine settings, worker setup, requests and monitoring remain
+reachable even when the manager is unavailable. Workflow inference and its task,
+inactivity and queue budgets remain workflow-scoped.
 
 The runtime observes the selected SSID asynchronously even when fallback or
 checks are disabled. The dashboard separates fallback policy from association and
