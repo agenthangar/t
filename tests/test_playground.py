@@ -15,12 +15,12 @@ playground = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(playground)
 
 
-@pytest.fixture
-def demo_agent(tmp_path):
+@pytest.fixture(scope="session")
+def demo_agent(tmp_path_factory):
     compiler = shutil.which("cc")
     if not compiler:
         pytest.skip("cc is required for the native playground agent")
-    binary = tmp_path / "claude"
+    binary = tmp_path_factory.mktemp("demo-agent") / "claude"
     subprocess.run([compiler, "-Wall", "-Wextra", "-Werror",
                     str(ROOT / "scripts/playground/fake-claude.c"), "-o", str(binary)],
                    check=True, capture_output=True)

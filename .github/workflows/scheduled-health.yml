@@ -1,0 +1,40 @@
+name: Scheduled health
+on:
+  workflow_run:
+    workflows: [Releases, Scorecard]
+    types: [completed]
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      test_notification:
+        description: Send a clearly labeled GitHub alert delivery test
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+  issues: write
+concurrency:
+  group: scheduled-health
+  cancel-in-progress: false
+jobs:
+  notify:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Never check out the triggering run's branch or execute its artifacts.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Report failed, cancelled, stuck or overdue scheduled runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_ALERT_ASSIGNEE: ${{ vars.CI_ALERT_ASSIGNEE }}
+          TEST_NOTIFICATION: ${{ inputs.test_notification }}
+        run: |
+          args=()
+          if [ "$TEST_NOTIFICATION" = true ]; then args+=(--test); fi
+          python3 scripts/scheduled_health.py "${args[@]}"

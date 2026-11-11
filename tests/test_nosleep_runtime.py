@@ -14,57 +14,12 @@ import time
 
 import pytest
 
+from pty_helpers import _run_under_pty
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 ZSHRC = REPO_ROOT / "zsh" / "nosleep.zsh"
-
-
-# compinit's one-keystroke question when a dir on $fpath is group-writable. It is asked
-# ONLY on a tty (without one `read -q` hits EOF and compinit aborts, silently under the
-# `source … >/dev/null 2>&1`) — which is why the non-pty tests never met it and the pty
-# ones hung on it: GitHub's ubuntu runner ships such a dir. Answered `y`, what a person
-# types; the sandbox never uses completion.
-COMPINIT_PROMPT = b"Ignore insecure directories and continue [y] or abort compinit [n]? "
-
-
-def _run_under_pty(argv, env, timeout=60):
-    """Run argv under a pseudo-terminal — for the branches gated on `-t 0 && -t 1` (the
-    fzf pickers). stdout + stderr come back merged as .stdout; EOF once the child closes
-    its side (an empty read, or EIO on Linux). A compinit prompt is answered `y` once."""
-    master, slave = pty.openpty()
-    proc = subprocess.Popen(argv, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
-    os.close(slave)
-    out, deadline, answered = bytearray(), time.monotonic() + timeout, False
-    while True:
-        ready, _, _ = select.select([master], [], [], max(0.0, deadline - time.monotonic()))
-        if not ready:
-            proc.kill()
-            break
-        try:
-            chunk = os.read(master, 65536)
-        except OSError:
-            break
-        if not chunk:
-            break
-        out += chunk
-        if not answered and out.rstrip().endswith(COMPINIT_PROMPT.rstrip()):
-            os.write(master, b"y")
-            answered = True
-    os.close(master)
-    return subprocess.CompletedProcess(argv, proc.wait(timeout=10), out.decode(errors="replace"), "")
-
-
-def test_run_under_pty_answers_the_compinit_prompt():
-    """The harness's own environment guard, driven against a real `read -q` prompt so it
-    is exercised on every OS, not only where a group-writable fpath dir happens to exist."""
-    prompt = COMPINIT_PROMPT.decode()
-    r = _run_under_pty(["zsh", "-c", f'if read -q "?{prompt}"; then echo continued; else echo aborted; fi; echo rc=$?'],
-                       {**os.environ, "TERM": "dumb"}, timeout=15)
-    assert "continued" in r.stdout and "aborted" not in r.stdout and "rc=0" in r.stdout, r.stdout
-    # and a command that never asks is untouched
-    r = _run_under_pty(["zsh", "-c", "echo plain; echo rc=$?"], {**os.environ, "TERM": "dumb"}, timeout=15)
-    assert "plain" in r.stdout and "rc=0" in r.stdout
 
 
 @pytest.fixture
@@ -1107,8 +1062,38 @@ def test_zsh_nosleep_saved_check_preferences_and_overrides(nosleep_loop, args, a
     assert config.read_text() == saved
 
 
-@pytest.mark.parametrize("args", ["-g", "-e", "-r", "-b", "-e 0", "-r 11", "-b 301", "-g nope"])
-def test_zsh_nosleep_invalid_short_timing_flags_leave_power_untouched(zsh, args):
+@pytest.mark.parametrize("args", [
+    '-g',
+    '-e',
+    '-r',
+    '-b',
+    '-e 0',
+    '-r 11',
+    '-b 301',
+    '-g nope',
+    '-dXe2',
+    '-dMLg',
+    '-de0',
+    '-dMLb301',
+    '-de2f',
+    '-dg-1',
+    '--grace -1',
+    '--display',
+    '--display --lock',
+    '--display=',
+    '-d=',
+    '-d invalid',
+    '--display=invalid',
+    '-l invalid',
+    '--lock=',
+    '-l=maybe',
+    '-c=',
+    '--checks=bogus',
+    '-c bogus',
+    '-Ld=bogus',
+    '-Lc=bogus',
+])
+def test_zsh_nosleep_invalid_arguments_leave_power_untouched(zsh, args):
     result = zsh(f'sudo() {{ print unexpected-power; }}; nosleep {args}; print rc=$?')
     assert "rc=2" in result.stdout
     assert "unexpected-power" not in result.stdout
@@ -1141,13 +1126,6 @@ def test_zsh_nosleep_undim_clears_saved_dimming_without_turning_display_off(nosl
     assert not any(line.startswith(("lock ", "brightness ")) for line in log)
     assert [line for line in log if line.startswith("display-off ")] == ["display-off 1004"]
     assert config.read_text() == saved
-
-
-@pytest.mark.parametrize("args", ["-dXe2", "-dMLg", "-de0", "-dMLb301", "-de2f", "-dg-1", "--grace -1"])
-def test_zsh_nosleep_invalid_groups_leave_power_untouched(zsh, args):
-    result = zsh(f'sudo() {{ print unexpected-power; }}; nosleep {args}; print rc=$?')
-    assert "rc=2" in result.stdout
-    assert "unexpected-power" not in result.stdout
 
 
 def test_zsh_nosleep_help_and_status_separate_checks_from_settings(zsh, nosleep_loop):
@@ -1204,17 +1182,6 @@ def test_zsh_nosleep_check_mode_replaces_saved_checks_and_forever(nosleep_loop, 
     if not (agent or internet):
         assert "No checks" in result.stdout and "(inactive)" in result.stdout
     assert config.read_text() == saved
-
-
-@pytest.mark.parametrize("args", [
-    "--display", "--display --lock", "--display=", "-d=", "-d invalid",
-    "--display=invalid", "-l invalid", "--lock=", "-l=maybe",
-    "-c=", "--checks=bogus", "-c bogus", "-Ld=bogus", "-Lc=bogus",
-])
-def test_zsh_nosleep_invalid_modes_do_not_touch_power(zsh, args):
-    result = zsh(f'sudo() {{ print unexpected-power; }}; nosleep {args}; print rc=$?')
-    assert "rc=2" in result.stdout
-    assert "unexpected-power" not in result.stdout
 
 
 @pytest.mark.parametrize("requirement", ["all", "1", "2"])

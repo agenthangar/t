@@ -47,16 +47,10 @@ def host(tmp_path, monkeypatch):
     git("tag", "v0.6.0")
     head = advance()
     state = dict(base=base, head=head, items=[record("v0.6.0", base)],
-                 ci="success", status="completed", calls=[], assets={}, git=git, advance=advance)
+                 calls=[], assets={}, git=git, advance=advance)
     monkeypatch.setattr(release, "releases", lambda repo: copy.deepcopy(state["items"]))
 
     def api(repo, path):
-        if path.startswith("actions/workflows/ci.yml/runs?"):
-            sha = path.split("head_sha=")[1].split("&")[0]
-            if state["ci"] is None:
-                return {"workflow_runs": []}
-            return {"workflow_runs": [dict(head_sha=sha, event="push",
-                                          status=state["status"], conclusion=state["ci"])]}
         if path.startswith("commits/"):
             return {"sha": git("rev-parse", path.removeprefix("commits/"))}
         raise AssertionError(path)
@@ -101,6 +95,11 @@ def host(tmp_path, monkeypatch):
 
     monkeypatch.setattr(release, "api", api)
     monkeypatch.setattr(release, "run", run)
+    monkeypatch.setenv('GITHUB_RUN_ID', '123')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
+    evidence = tmp_path / 'validation.json'
+    evidence.write_text(json.dumps(dict(sha=head, full=True, run_id='123', run_attempt='2')))
+    state['validation'] = evidence
     return state
 
 
@@ -126,20 +125,29 @@ def test_highest_stable_is_numeric_and_ignores_drafts_prereleases(host):
 
 def test_no_commits_means_no_release(host):
     host["git"]("checkout", "-q", host["base"])
-    assert release.plan("test/repo") == {}
+    assert release.plan("test/repo") == dict(sha=release.commit("HEAD"))
     assert host["calls"] == []
 
 
-@pytest.mark.parametrize("conclusion", [None, "failure", "cancelled", "skipped"])
-def test_no_successful_ci_means_no_release(host, conclusion):
-    host["ci"] = conclusion
-    assert release.plan("test/repo") == {}
-    assert host["calls"] == []
+def test_plan_selects_commit_before_validation_without_publishing(host):
+    assert release.plan("test/repo")['sha'] == host['head']
+    assert host['calls'] == []
 
 
-def test_pending_ci_is_not_publishable(host):
-    host["status"] = "in_progress"
-    assert release.plan("test/repo") == {}
+@pytest.mark.parametrize('change', ['missing', 'sha', 'full', 'run_id', 'run_attempt', 'empty_run'])
+def test_publication_requires_same_attempt_full_validation(host, artifact, monkeypatch, change):
+    evidence = host['validation']
+    if change == 'missing':
+        evidence = None
+    elif change == 'empty_run':
+        monkeypatch.delenv('GITHUB_RUN_ID')
+    else:
+        data = json.loads(evidence.read_text())
+        data[change] = False if change == 'full' else 'wrong'
+        evidence.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match='validation'):
+        release.publish('test/repo', 'v0.6.1', host['head'], 'v0.6.0', True, artifact, evidence)
+    assert host['calls'] == []
 
 
 def test_explicit_published_tag_selects_its_exact_commit(host):
@@ -187,14 +195,14 @@ def artifact(tmp_path):
 
 
 def publish(host, artifact):
-    release.publish("test/repo", "v0.6.1", host["head"], "v0.6.0", True, artifact)
+    release.publish("test/repo", "v0.6.1", host["head"], "v0.6.0", True, artifact, host["validation"])
 
 
 def test_publish_complete_draft_once_and_retry_without_mutation(host, artifact):
     publish(host, artifact)
     assert actions(host) == ["create", "upload", "edit"]
     assert host["git"]("rev-parse", "v0.6.1") == host["head"]
-    assert release.plan("test/repo") == {}
+    assert release.plan("test/repo") == dict(sha=release.commit("HEAD"))
     host["calls"].clear()
     publish(host, artifact)
     assert actions(host) == ["download", "download"]
@@ -270,11 +278,7 @@ def test_equivalent_gzip_keeps_original_bytes_and_checksum(host, artifact):
     assert host["assets"]["v0.6.1", "SHA256SUMS"].decode().startswith(hashlib.sha256(original).hexdigest())
 
 
-def test_publication_rechecks_ci_and_competing_release(host, artifact):
-    host["ci"] = "failure"
-    with pytest.raises(ValueError, match="CI no longer passes"):
-        publish(host, artifact)
-    host["ci"] = "success"
+def test_publication_rechecks_competing_release(host, artifact):
     host["items"].append(record("v0.7.0", host["head"]))
     with pytest.raises(ValueError, match="newer release"):
         publish(host, artifact)
@@ -296,7 +300,7 @@ def test_manual_milestone_during_upload_keeps_latest(host, artifact, monkeypatch
 
 def test_wrong_checkout_and_minor_bump_cannot_be_published(host, artifact):
     with pytest.raises(ValueError, match="planned release commit"):
-        release.publish("test/repo", "v0.6.1", host["base"], "v0.6.0", True, artifact)
+        release.publish("test/repo", "v0.6.1", host["base"], "v0.6.0", True, artifact, host["validation"])
     with pytest.raises(ValueError, match="only increment the patch"):
-        release.publish("test/repo", "v0.7.0", host["head"], "v0.6.0", True, artifact)
+        release.publish("test/repo", "v0.7.0", host["head"], "v0.6.0", True, artifact, host["validation"])
     assert host["calls"] == []
