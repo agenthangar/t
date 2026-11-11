@@ -285,6 +285,11 @@ notifications are detached from attachment and hook completion. Deferred discove
 only invalidates snapshots; it never publishes an old live-row overlay after a
 slot closes or is reused. Ownership, launch readiness and worktree preparation
 remain synchronous. No background task changes the active branch or checkout.
+Fresh allocation requests only remote reservation markers on hosts with retired
+desktop integrations, with the existing live inventory fallback for older peers.
+It does not rebuild local display discovery. Foreground launch preflight consumes
+identity and cwd without reading titles or resolving display labels. Cached
+inventory is never accepted as proof that a workspace has no live owner.
 Try `t open --codex --new` from a registered repository. The isolated
 `python3 scripts/preview_session_start.py` demonstrates history contention without
 starting an agent, touching personal settings or opening a desktop window.

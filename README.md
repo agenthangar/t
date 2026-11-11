@@ -403,6 +403,10 @@ For opening sessions, `t session open --help` shows a concise reference with
 examples; `t help session open` adds session targeting, defaults, and remote
 behavior. Start a fresh Codex session in the current repo with
 `t open --codex --new` (`codex` without `--` is a repository name).
+Fresh allocation checks remote reservation markers without rebuilding the local
+session inventory or reading session titles. Older hosts with desktop integrations
+retain their live reservation scan. Foreground ownership checks read identity and
+workspace metadata without collecting display details.
 Session-cache refresh and history indexing run in the background. Startup still
 prepares the worktree, checks ownership, and captures launch settings and revision
 evidence before returning control. It never changes an active checkout in the

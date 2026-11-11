@@ -697,7 +697,11 @@
         "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer",
         "tests/test_session_lifecycle.py::test_public_new_scopes_unindexed_writers",
         "tests/test_session_cache.py::test_invalidation_detaches_without_cache_io_or_stale_live_rows",
-        "tests/test_history_data.py::test_deferred_history_returns_while_database_is_locked"
+        "tests/test_history_data.py::test_deferred_history_returns_while_database_is_locked",
+        "tests/test_fresh_slot_allocation.py::test_reservation_scan_never_collects_local_display_and_supports_old_peers",
+        "tests/test_fresh_slot_allocation.py::test_reservations_read_only_matching_worktree_markers",
+        "tests/test_fresh_slot_allocation.py::test_fresh_allocation_requests_reservations_and_honors_cancellation",
+        "tests/test_fresh_slot_allocation.py::test_foreground_preflight_keeps_conflict_without_display_work"
       ],
       "modes": {
         "default": {
@@ -765,7 +769,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Fresh allocation skips local display discovery and queries only remote worktree reservation markers on hosts with retired desktop integrations, retaining the live inventory fallback on older peers. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership."
     },
     "session list": {
       "patterns": [
