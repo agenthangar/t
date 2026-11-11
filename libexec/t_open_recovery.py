@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HISTORY = runpy.run_path(str(ROOT / 'libexec/t_history.py'))
 LIFECYCLE = HISTORY['_LIFECYCLE']
 CACHE = HISTORY['_CACHE_REQUEST']
+_spinner = HISTORY['_spinner']
 
 
 def matching(record, workspace, sid=''):
@@ -58,6 +59,7 @@ class Recovery:
         self.branch = self.shell('_dev_worktree_branch', repo, slot).strip()
         self.backup = None
 
+    @_spinner('Recovering session')
     def shell(self, *args, optional=False, timeout=90):
         env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
         env.update(T_OPEN_RECOVERY_ACTIVE='1', T_MCP_DETACHED='1', T_NO_UPDATE_CHECK='1')
@@ -67,6 +69,7 @@ class Recovery:
             raise ValueError(result.stderr.strip() or result.stdout.strip() or 'session recovery failed')
         return result.stdout if not result.returncode else ''
 
+    @_spinner('Restoring session source')
     def git(self, *args, optional=False, directory=None):
         result = subprocess.run(['git', '-C', directory or self.cfg.repos[self.repo], *args],
                                 capture_output=True, text=True, timeout=60)

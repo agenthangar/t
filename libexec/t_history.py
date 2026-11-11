@@ -159,6 +159,7 @@ class Store:
     def records(self):
         return [json.loads(row[0]) for row in self.db.execute('select record from conversations')]
 
+    @_spinner('Resetting session records')
     def forget_workspace(self, workspace, sid='', *, backup, evidence):
         """Back up and reset only this session; native transcripts remain untouched."""
         selected = []

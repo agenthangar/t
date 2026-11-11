@@ -43,7 +43,7 @@ def test_reset_backs_up_before_clearing_only_target_records(recovery, tmp_path, 
         assert json.loads(backup.read_text())['records']
         calls.append((op, payload))
         return {'forgotten': 1}
-    monkeypatch.setitem(store.forget_workspace.__globals__, '_CACHE_REQUEST', cache)
+    monkeypatch.setitem(store.forget_workspace.__wrapped__.__globals__, '_CACHE_REQUEST', cache)
     one, other = record(), record('two', '/elsewhere')
     one['sources'] = [dict(host='local', path='/native/one.jsonl')]
     store.merge(one); store.merge(other)
@@ -59,7 +59,7 @@ def test_reset_backs_up_before_clearing_only_target_records(recovery, tmp_path, 
 def test_cache_failure_keeps_history_and_backup(recovery, tmp_path, monkeypatch):
     store = recovery.HISTORY['Store']()
     store.merge(record())
-    monkeypatch.setitem(store.forget_workspace.__globals__, '_CACHE_REQUEST', lambda *a: {})
+    monkeypatch.setitem(store.forget_workspace.__wrapped__.__globals__, '_CACHE_REQUEST', lambda *a: {})
     clock = iter([0, 4])
     monkeypatch.setattr(recovery.HISTORY['time'], 'monotonic', lambda: next(clock))
     backup = tmp_path / 'backup.json'

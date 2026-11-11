@@ -100,4 +100,3 @@ _t_open_recovery_preflight() {
   fi
   return 0
 }
-
