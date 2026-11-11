@@ -83,11 +83,11 @@
     },
     "bin/t:cmd_update:subprocess.run": {
       "kind": "passthrough",
-      "reason": "Git, Homebrew, and installer output is streamed to the terminal."
+      "reason": "Homebrew and installers retain live prompts and diagnostics; quiet Git work uses the shared spinner."
     },
-    "bin/t:_t_update_all:subprocess.run": {
+    "bin/t:_t_update_remote:subprocess.Popen": {
       "kind": "passthrough",
-      "reason": "Remote update output is streamed to the terminal."
+      "reason": "Remote prompts and diagnostics stream immediately; only final updater result lines are consumed for the per-host summary."
     },
     "bin/t:_install_walk:subprocess.call": {
       "kind": "passthrough",

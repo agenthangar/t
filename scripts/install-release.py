@@ -257,6 +257,11 @@ def _install_locked(archive, checksums, base, home, requested_version=None):
             else:
                 shutil.rmtree(staging)
                 staging = None
+                if (os.environ.get("T_UPDATE_QUIET") and all(
+                        (home / destination).is_symlink() and
+                        (home / destination).resolve() == root / source
+                        for source, destination in OWNED_LINKS)):
+                    return root
         else:
             staging.rename(root)
             published = True
@@ -269,7 +274,8 @@ def _install_locked(archive, checksums, base, home, requested_version=None):
             env.pop("T_LINKS_ONLY", None)
         env.pop("T_LINK_DEV", None)
         subprocess.run([str(root / "install.sh")], env=env, cwd=str(root), check=True)
-        print("Installed t " + version + " at " + str(root))
+        if not os.environ.get("T_UPDATE_QUIET"):
+            print("Installed t " + version + " at " + str(root))
         return root
     except Exception:
         rollback_links(states)

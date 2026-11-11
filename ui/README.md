@@ -231,8 +231,14 @@ In a batch, cancellation stops the remaining actions; already completed actions
 are kept and reported. Cancellation never rolls back completed work or attaches
 to another target automatically.
 `t system update --all` is a direct batch action: update locally, then registered
-SSH targets in alias order (duplicate targets run once), streaming each updater's
-output. Report each result and continue after failures, including unreachable
+SSH targets in alias order (duplicate targets run once). Report one concise result
+per host: `up to date`, `updated`, or `failed (exit N)`. Suppress routine Git/setup
+chatter while streaming required prompts and actionable diagnostics. Quiet local
+Git checks use the shared terminal spinner; redirected output stays static.
+Already-current installations skip setup; failed setup is retried. `--relink`
+explicitly repairs links/integrations and reviews deferred instruction migration.
+`--local` still switches sources when another source is installed.
+Continue after failures, including unreachable
 hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
 hosts means a local-only update. Remote updates never fan out recursively.
 With no usable terminal, require explicit input or use the command's documented
@@ -1617,7 +1623,8 @@ Installation shows the affected global and repository instruction paths and back
 location, then asks **Back up and rebuild these global and repository instructions?
 [y/N]**. Declining, EOF or unattended installation preserves existing instructions.
 Only t-owned marked blocks are rebuilt; custom Markdown and hand-written content
-remain. Linked repository instruction files are preserved and reported. Global
+remain. Linked repository instruction files are preserved; routine updates omit
+unchanged-link notices. Global
 instruction symlinks block migration. Original contents, permissions and hashes are backed up under the user's
 state directory. Unchanged files are not backed up or prompted for again.
 

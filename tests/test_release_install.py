@@ -75,6 +75,21 @@ def test_release_installs_without_git_and_preserves_user_settings(sandbox):
     assert release.install(archive, sums, base, home) == root
 
 
+def test_current_release_update_skips_setup_after_archive_verification(sandbox, monkeypatch):
+    home, base = sandbox
+    archive, sums = artifact()
+    root = release.install(archive, sums, base, home)
+    monkeypatch.setenv("T_UPDATE_QUIET", "1")
+    calls = []
+    monkeypatch.setattr(release.subprocess, "run", lambda *a, **k: calls.append(a))
+    assert release.install(archive, sums, base, home) == root
+    assert calls == []
+    # An incomplete installation still reconciles its missing links.
+    (home / release.OWNED_LINKS[-1][1]).unlink()
+    assert release.install(archive, sums, base, home) == root
+    assert len(calls) == 1
+
+
 def test_integrity_failure_and_unsafe_member_leave_home_unchanged(sandbox):
     home, base = sandbox
     archive, sums = artifact()
