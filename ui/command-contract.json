@@ -680,7 +680,8 @@
       "patterns": [
         "action",
         "filtered",
-        "multi"
+        "multi",
+        "wizard"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository or all local/remote sessions",
@@ -768,6 +769,43 @@
           "tests": [
             "tests/test_open_picker.py::test_open_local_override_never_scans_remote"
           ]
+        },
+        "repair": {
+          "argv": [
+            "session",
+            "open",
+            "api",
+            "3"
+          ],
+          "patterns": [
+            "action",
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_open_recovery.py::test_force_rechecks_owner_before_reset"
+          ],
+          "notes": "On an interactive failed numbered open, offer Repair / Cancel, then Force open / Cancel only after repair fails. Use shared RailUI. Nonterminal failures print a recovery command without prompting. Cancellation returns 130 and stops remaining batch actions."
+        },
+        "force": {
+          "argv": [
+            "session",
+            "open",
+            "api",
+            "3",
+            "--force"
+          ],
+          "patterns": [
+            "action",
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_open_recovery.py::test_force_without_confirmation_does_not_touch_session",
+            "tests/test_open_recovery.py::test_force_preserves_dirty_worktree_and_stops_only_selected_owner",
+            "tests/test_open_recovery.py::test_force_restores_saved_context"
+          ],
+          "notes": "Explicit numeric CLI target only. Confirm the target and any client stopped; --yes confirms for scripts. Preserve worktree files and native transcripts. Back up and reset target t history/cache records through owning APIs, reconstruct missing source and resume context when available; otherwise report a fresh conversation. Default-branch fallback requires a separate choice. Recheck ownership and writer release; never bypass unknown owners or kill a shared backend. --host delegates to the selected host with zsh -lic."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",

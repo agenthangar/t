@@ -352,6 +352,16 @@ _t_cd() {
 # The host paths dispatch via _dev_remote_open with the original gh-style args (minus
 # --host / -r), so H's own `t open` re-parses them from ITS $PWD.
 _t_open() {
+  local _T_OPEN_FAILED_REPO= _T_OPEN_FAILED_SLOT= _T_OPEN_FAILED_AGENT= rc
+  _t_open_impl "$@"; rc=$?
+  if (( rc != 0 && rc != 2 && rc != 130 )) && [[ -z ${T_OPEN_RECOVERY_ACTIVE:-} && -n $_T_OPEN_FAILED_REPO && $_T_OPEN_FAILED_SLOT == <-> ]]; then
+    _t_open_recover repair "$_T_OPEN_FAILED_REPO" "$_T_OPEN_FAILED_SLOT" 0 "$_T_OPEN_FAILED_AGENT"
+    return $?
+  fi
+  return $rc
+}
+
+_t_open_impl() {
   local -a a rest mode_pos; local arg want_host= has_host= host= remote= isnew= local_only= app= cli= cli_intent= include_attached=
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
@@ -374,6 +384,9 @@ _t_open() {
     esac
   done
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
+  if (( ${a[(Ie)--force]} )) && [[ -n $isnew ]]; then
+    print -u2 't open: --force cannot be combined with --new'; return 2
+  fi
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
   # Bare means every repo across local/remote hosts; a named repo filters.
@@ -440,7 +453,7 @@ _t_open() {
       case "$arg" in
         -r|--remote) ;;
         -l|--local|--here) ;;   # --host already names the machine; "force local" is moot
-        --*) flags+=("$arg") ;;
+        -*) flags+=("$arg") ;;
         *)   pos+=("$arg") ;;
       esac
     done
@@ -642,7 +655,9 @@ _t_open_selected() {
         && tmux has-session -t "=dev-${first[1]}-${first[2]}:" 2>/dev/null; then
       tmux switch-client -t "=dev-${first[1]}-${first[2]}:" || rc=1
     else
-      _t_open "${first[@]}" || rc=1
+      _t_open "${first[@]}"; local open_rc=$?
+      (( open_rc == 130 )) && return 130
+      (( open_rc == 0 )) || rc=1
     fi
   fi
   return $rc
@@ -959,7 +974,7 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
         case $action in
-          open) flags+=(--new --fg --cli -l --local --here -r --remote --host --codex --claude -y --yes) ;;
+          open) flags+=(--new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
           close) flags+=(-y --yes -r --remote) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;

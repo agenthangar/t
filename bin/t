@@ -13190,6 +13190,21 @@ OPENING DEFAULTS
   isolated sessions apply changes at
   guarded resume/restart.
 
+RECOVERY
+  When a numbered open fails in a terminal, choose Repair or Cancel.
+  If repair fails, choose Force open to reset only that session's t records,
+  reopen its existing worktree, and resume saved context when available.
+  Force open preserves source files and native transcripts. If context is
+  unavailable, it starts a fresh conversation and reports that outcome.
+  t session open api 3 --force enters recovery directly; --yes confirms it
+  for an explicit numeric slot, including noninteractive use. --force does
+  not support --new or --fg. Use --host HOST for a remote target.
+  A live client is identified before stopping and its writer must release.
+  Unknown owners and unavailable hosts remain blocked. Recovery backups
+  remain private under t's lifecycle state directory.
+  A missing worktree uses its saved branch or linked PR when available;
+  falling back to the published default branch requires a separate choice.
+
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
   Fresh local slots can open when a configured host is offline. Automatic
@@ -13206,6 +13221,8 @@ REMOTE SESSIONS
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
+    sp.add_argument("--force", action="store_true", help="reset this slot's t state and reopen its worktree, resuming context when available")
+    sp.add_argument("-y", "--yes", action="store_true", help="confirm --force for one explicit slot")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
     sp.add_argument("--cli", action="store_true", help="open in the CLI")
     ag = sp.add_argument_group("agent (fresh slots)").add_mutually_exclusive_group()

@@ -54,6 +54,7 @@ _t_load_plugin() {
   source "$T_HOME/zsh/remote.zsh"
   source "$T_HOME/zsh/resume.zsh"
   source "$T_HOME/zsh/lifecycle.zsh"
+  source "$T_HOME/zsh/open-recovery.zsh"
   source "$T_HOME/zsh/share.zsh"
   source "$T_HOME/zsh/shim.zsh"
 

@@ -39,6 +39,28 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+## Session-open recovery
+
+Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
+refreshes discovery and retries, or revives a verified exited pane. If it fails,
+offer **Force open / Cancel**. Keep the reason brief and identify any live client
+that force open will stop. Cancel returns 130 and stops remaining batch actions.
+
+`t session open api 3 --force` enters the force confirmation directly. `--yes`
+confirms only an explicit numeric force target; redirected commands never prompt.
+`--new`, foreground mode and automatic remote selection cannot be forced; use
+`--host HOST` to select a remote target. Compatibility `t open` shares the flow.
+
+Force open saves private recovery evidence before resetting the selected session's
+t history and discovery state through their owning APIs. Reuse the worktree
+without freshening or changing files. Reconstruct a missing worktree from its
+local branch, published branch or uniquely linked PR. Starting from the published
+default branch requires a separate explicit choice. Resume native context if it
+is available; otherwise clearly report a fresh conversation. Transcripts and
+unrelated sessions are preserved. Ownership changes, held writers and unreachable
+hosts still block conflicting launches. No global database wipe, backend kill or
+held-lock deletion is a recovery action. Failed launches retain the backup path.
+
 ## Workflow settings and resets
 
 Group the main workflow editor into Models, Behavior and Manage using shared

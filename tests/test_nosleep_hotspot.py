@@ -189,7 +189,10 @@ if os.fork() == 0:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     null = os.open(os.devnull, os.O_RDWR)
     for fd in (0, 1, 2): os.dup2(null, fd)
-    pathlib.Path(pidfile).write_text(str(os.getpid()))
+    # Existence signals readiness to both readers; never expose a partial PID.
+    pending = pathlib.Path(pidfile).with_suffix('.tmp')
+    pending.write_text(str(os.getpid()))
+    pending.replace(pidfile)
     while True: time.sleep(1)
 while not pathlib.Path(pidfile).exists(): time.sleep(.01)
 if mode == "leader-exits": sys.exit(0)

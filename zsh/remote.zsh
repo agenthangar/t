@@ -301,6 +301,9 @@ _dev_remote_open() {
   fi
   local rcmd="T_UPDATE_PROMPTED=\$\$ t open --local"; local a
   for a in "$@"; do rcmd+=" ${(q)a}"; done
+  if (( ${@[(Ie)--force]} )); then
+    rcmd='(( ${+functions[_t_open_recover]} )) || { print -u2 "t open: update t on this host before force recovery"; exit 2; }; '"$rcmd"
+  fi
   echo "→ $host: ${rcmd#T_UPDATE_PROMPTED=\$\$ } (stays on $host; Ctrl-b d to detach)"
   _term_title "$host: open ${(j: :)@}"
   local rc=0

@@ -2508,7 +2508,7 @@ _t_issue_launch() {
 _t_dev() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
-  local no_tmux= force= remote= all= local_only= agent_over=
+  local no_tmux= force= remote= all= local_only= agent_over= open_force= open_yes=0
   local -a pos
   local arg
   # -f/--fg = foreground/no-tmux EVERYWHERE (matches tbeam -f). The kill-confirm
@@ -2518,7 +2518,8 @@ _t_dev() {
   for arg in "$@"; do
     case "$arg" in
       -f|--fg|--no-tmux) no_tmux=1 ;;
-      -y|--yes|--force)  force=1 ;;
+      -y|--yes)          force=1; open_yes=1 ;;
+      --force)           force=1; open_force=1 ;;
       -r|--remote)       remote=1 ;;
       -l|--local|--here) local_only=1 ;;
       -a|--all)          all=1 ;;
@@ -2579,6 +2580,13 @@ _t_dev() {
     echo "t open: --local/--here and -r/--remote are mutually exclusive" >&2
     return 2
   fi
+  if [[ -n $open_force && ( -n $no_tmux || -n $remote || $slot == new || $repo == new ) ]]; then
+    print -u2 't open: --force requires a numeric CLI slot; use --host HOST for a remote target'
+    return 2
+  fi
+  if [[ $open_yes == 1 && -z $open_force ]]; then
+    print -u2 't open: --yes requires --force'; return 2
+  fi
   if [[ -n $remote ]]; then
     _dev_remote "$repo" "$slot" "$no_tmux"     # explicit -r: force attach in place on its host
     return
@@ -2610,6 +2618,21 @@ _t_dev() {
     slot=$repo; repo=; _bare_repo=1
   fi
   [[ -z $repo ]] && repo=$(_t_infer_repo "$slot")
+  if [[ -n $open_force ]]; then
+    [[ -n ${DEV_REPOS[$repo]:-} && $slot == <-> && $#pos -le 2 ]] || {
+      print -u2 't open: --force requires one explicit numeric slot'; return 2
+    }
+    local owner_alias
+    for owner_alias in ${(k)DEV_REPOS}; do
+      [[ ${DEV_REPOS[$owner_alias]} == ${DEV_REPOS[$repo]} ]] || continue
+      if tmux has-session -t "=dev-$owner_alias-$slot:" 2>/dev/null; then
+        repo=$owner_alias; break
+      fi
+    done
+    local T_OPEN_RECOVERY_ACTIVE=1
+    _t_open_recover force "$repo" "$slot" "$open_yes" "$agent_over"
+    return $?
+  fi
 
   # Worktree-aware bare open: standing inside a per-session worktree
   # ($DEV_WORKTREE_ROOT/<basename>/<slot>) defaults the slot to ITS slot, so
@@ -2690,6 +2713,11 @@ _t_dev() {
   fi
 
   # Legacy/internal slot-less CLI callers share the complete picker too.
+  if [[ -n ${DEV_REPOS[$repo]:-} && $slot == <-> && -z $no_tmux ]]; then
+    _T_OPEN_FAILED_REPO=$repo
+    _T_OPEN_FAILED_SLOT=$slot
+    _T_OPEN_FAILED_AGENT=$agent_over
+  fi
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local open_rc
     _t_open_picker "$repo" "" "" 1; open_rc=$?
@@ -2861,6 +2889,11 @@ _t_dev() {
   fi
 
   local session="dev-${repo}-${slot}"
+
+  # The public controller can recover this exact failed target after locks unwind.
+  _T_OPEN_FAILED_REPO=$repo
+  _T_OPEN_FAILED_SLOT=$slot
+  _T_OPEN_FAILED_AGENT=$agent
 
   # Remote Codex desktop workspaces own their numbered slot without tmux. The
   # attach resolver deliberately excludes them, so check their reservation before
