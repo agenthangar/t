@@ -416,12 +416,12 @@ def test_preflight_release_wait_is_bounded_and_requires_evidence(worker, monkeyp
     monkeypatch.setattr(worker.time, 'monotonic', lambda: clock[0])
     monkeypatch.setattr(worker.time, 'sleep', lambda n: clock.__setitem__(0, clock[0]+n))
     view = {'state': 'busy', 'retry_after_seconds': None}
-    monkeypatch.setattr(manager, 'check_availability', lambda args: dict(view))
+    monkeypatch.setattr(manager, 'check_availability', lambda args, **kwargs: dict(view))
     assert manager.preflight('/repo')['state'] == 'busy' and clock[0] == 0
     view['retry_after_seconds'] = 15
     assert manager.preflight('/repo')['state'] == 'busy' and 15 <= clock[0] < 15.2
     views = iter([dict(view), {'state': 'available'}])
-    monkeypatch.setattr(manager, 'check_availability', lambda args: next(views))
+    monkeypatch.setattr(manager, 'check_availability', lambda args, **kwargs: next(views))
     assert manager.preflight('/repo')['state'] == 'available'
 
 

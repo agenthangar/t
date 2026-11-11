@@ -105,10 +105,10 @@ def settings(value=None):
     return result
 
 
-def rpc(action, **fields):
+def rpc(action, *, _timeout=5, **fields):
     path = root() / 'control.sock'
     with socket.socket(socket.AF_UNIX) as conn:
-        conn.settimeout(5)
+        conn.settimeout(_timeout)
         conn.connect(str(path))
         conn.sendall(json.dumps(dict(action=action, **fields)).encode() + b'\n')
         with conn.makefile('rb') as stream:
@@ -152,9 +152,14 @@ def legacy_busy():
     return False
 
 
-def availability():
+def availability(deadline=None):
     """Never start the manager, a provider, or inference for a preflight."""
     try:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Release wait expired')
+            return rpc('availability', _timeout=min(5, remaining))
         view = status()
         if view.get('manager') == 'running' and view.get('protocol') == VERSION:
             return rpc('availability')

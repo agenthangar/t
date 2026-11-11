@@ -326,6 +326,16 @@ def test_client_admission_rejection_and_idempotent_enter(manager, monkeypatch):
     assert client.__enter__() is client
 
 
+def test_release_wait_rpc_is_capped_by_remaining_deadline(manager, monkeypatch):
+    monkeypatch.setattr(manager.time, 'monotonic', lambda: 10)
+    calls = []
+    monkeypatch.setattr(manager, 'rpc', lambda action, **kwargs: calls.append(kwargs) or {'state': 'available'})
+    assert manager.availability(deadline=10.25)['state'] == 'available'
+    assert calls == [{'_timeout': .25}]
+    assert manager.availability(deadline=10)['state'] == 'unknown'
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize('kind,stopped', [('worker', True), ('session', False)])
 def test_worker_busy_heartbeat_does_not_change_native_sessions(manager, monkeypatch, kind, stopped):
     client = manager.Client(chosen(), kind)

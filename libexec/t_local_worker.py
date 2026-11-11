@@ -380,14 +380,15 @@ class Worker:
                       context_tokens=config.get('context', 32768))
         return config, chosen
 
-    def check_availability(self, args):
+    def check_availability(self, args, deadline=None):
         if not isinstance(args, dict) or set(args) != {'workspace'}:
             raise ValueError('provide only workspace')
         config, chosen = self.configuration(args['workspace'])
         if not config['enabled'] or chosen['mode'] in ('disabled', 'local-only'):
             view = dict(state='unknown', reason='Local delegation is disabled or requires a native local lead', blockers=[])
         else:
-            view = inference()['helper']('t_local_manager')['availability']()
+            probe = inference()['helper']('t_local_manager')['availability']
+            view = probe() if deadline is None else probe(deadline=deadline)
         return dict(view, adapter_version=ADAPTER_VERSION, model=chosen['model'], provider=chosen['provider'],
                     effective_limits={key: chosen[key] for key in ('timeout_seconds', 'max_timeout_seconds', 'inactivity_timeout_seconds', 'queue_timeout_seconds')})
 
@@ -397,8 +398,8 @@ class Worker:
         if view.get('retry_after_seconds') == 15:
             deadline = time.monotonic() + 15
             while view.get('retry_after_seconds') == 15 and time.monotonic() < deadline:
-                time.sleep(.1)
-                view = self.check_availability({'workspace': workspace})
+                time.sleep(min(.1, max(0, deadline - time.monotonic())))
+                view = self.check_availability({'workspace': workspace}, deadline=deadline)
         return view
 
     def start(self, args):
