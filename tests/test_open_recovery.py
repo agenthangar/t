@@ -125,9 +125,15 @@ def test_force_rechecks_owner_before_reset(recovery, tmp_path, monkeypatch, owne
         assert json.loads(r.backup.read_text())['phase'] == 'complete'
 
 
+def force_open(base, env, command):
+    # Recovery performs several guarded login-shell calls, unlike a single open.
+    # Keep a bounded deadline that also tolerates concurrent full test runs.
+    return _run(['zsh', '-lic', command], env=env, cwd=base, timeout=90)
+
+
 def test_force_without_confirmation_does_not_touch_session(lifecycle):
     base, env = lifecycle
-    result = _shell(base, env, 't session open repo 1 --force')
+    result = force_open(base, env, 't session open repo 1 --force')
     assert result.returncode == 2, result.stdout + result.stderr
     assert '--yes' in result.stderr
     assert not (base / 'agents.log').exists()
@@ -142,7 +148,7 @@ def test_force_preserves_dirty_worktree_and_stops_only_selected_owner(lifecycle)
     worktree = base/'worktrees/repo/repo-1'
     (worktree/'draft.txt').write_text('keep this work\n')
     before = _run(['git', '-C', str(worktree), 'rev-parse', 'HEAD'], env=env, cwd=base).stdout
-    result = _shell(base, env, 't session open alias 1 --force --yes')
+    result = force_open(base, env, 't session open alias 1 --force --yes')
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'fresh conversation' in result.stdout
     assert (worktree/'draft.txt').read_text() == 'keep this work\n'
@@ -177,13 +183,13 @@ def test_force_restores_saved_context(lifecycle, agent, missing):
             db.execute('insert into threads values (?,?,?,?,?,?,?,?,?)',(sid,str(transcript),str(worktree),None,'Saved work',1,0,'cli','Saved context'))
         if not missing:
             with _unindexed_writers(base,env,(sid,)):
-                blocked=_shell(base,env,'t session open repo 1 --force --yes')
+                blocked=force_open(base,env,'t session open repo 1 --force --yes')
                 assert blocked.returncode != 0 and 'writer lock' in blocked.stderr
                 assert not (base/'agents.log').exists()
     if missing:
         result=_run(['git','-C',str(base/'repo'),'worktree','remove',str(worktree)],env=env,cwd=base)
         assert result.returncode == 0, result.stderr
-    result=_shell(base, env, 't session open repo 1 --force --yes')
+    result=force_open(base, env, 't session open repo 1 --force --yes')
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Resumed saved context' in result.stdout
     assert sid in (base/'agents.log').read_text()
