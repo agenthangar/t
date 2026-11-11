@@ -64,7 +64,9 @@ def issue_marker(workflow):
 
 def notify(repo, recipient, workflow, incident, reason, run, issues):
     marker = issue_marker(workflow)
-    existing = next((i for i in issues if not i.get('pull_request') and marker in (i.get('body') or '')), None)
+    existing = next((i for i in issues if not i.get('pull_request')
+                     and i.get('user', {}).get('login') == 'github-actions[bot]'
+                     and marker in (i.get('body') or '')), None)
     if incident == 'pending':
         return
     if incident is None:

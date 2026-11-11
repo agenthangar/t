@@ -52,7 +52,7 @@ def test_failure_assigns_mentions_deduplicates_reopens_and_recovers(monkeypatch)
         if path.startswith('actions/'):
             return [{'jobs': [dict(name='Linux tests', html_url='https://github.com/test/repo/jobs/1', conclusion='failure')]}]
         if path == 'issues':
-            return dict(number=7, state='open', **kw['payload'])
+            return dict(number=7, state='open', user={'login': 'github-actions[bot]'}, **kw['payload'])
     monkeypatch.setattr(health, 'api', api)
     health.notify('test/repo', 'maintainer', 'release.yml', '123-1-failure', 'Failed.', run(), issues)
     assert issues[0]['assignees'] == ['maintainer']
@@ -80,6 +80,18 @@ def test_disabled_or_overdue_without_run_still_notifies(monkeypatch):
     monkeypatch.setattr(health, 'api', api)
     health.notify('test/repo', 'maintainer', 'scorecard.yml', 'disabled', 'Disabled.', None, [])
     assert len(calls) == 1 and calls[0][1]['payload']['assignees'] == ['maintainer']
+
+
+def test_public_issue_cannot_impersonate_alert_state(monkeypatch):
+    calls = []
+    def api(repo, path, **kw):
+        calls.append((path, kw))
+        return dict(number=8, state='open', user={'login': 'github-actions[bot]'}, **kw['payload'])
+    monkeypatch.setattr(health, 'api', api)
+    forged = dict(number=99, state='open', user={'login': 'someone-else'},
+                  body=health.issue_marker('scorecard.yml') + '\n<!-- t health event: disabled -->')
+    health.notify('test/repo', 'maintainer', 'scorecard.yml', 'disabled', 'Disabled.', None, [forged])
+    assert calls[0][0] == 'issues'  # create a genuine alert; do not skip or edit the forged issue
 
 
 def test_api_payload_is_passed_on_stdin_not_interpolated(monkeypatch):
