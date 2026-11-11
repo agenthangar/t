@@ -762,6 +762,13 @@ Fresh sessions and explicit targets retain their existing location routing.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
+Ordinary lists return immediately. `t session list --wait` (also `t ls --wait`)
+explicitly observes a pending cache refresh for up to 30 seconds before printing
+the same table and freshness notices. It uses the shared delayed spinner only in
+capable terminals; redirected waits are silent and never prompt. Completion,
+failure or timeout ends observation; Ctrl-C returns 130 without cancelling the
+shared refresh. Fresh caches return immediately, and cold caches never claim a
+verified empty result. No picker, Return/Escape bindings or update prompt is added.
 
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 

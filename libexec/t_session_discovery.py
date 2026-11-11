@@ -11,19 +11,43 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 _CACHE = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
+_spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 
 
-def request(operation, payload=None):
+def request(operation, payload=None, *, deadline=None):
+    if deadline is not None:
+        return _CACHE['request'](operation, payload, deadline=deadline)
     return _CACHE['request'](operation, payload)
 
 
-def discover(cfg, *, local=False, host=None, fields=('rows', 'resume')):
+def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
     if host is not None:
         targets = {host: 'local' if host == 'local' else cfg.hosts.get(host, host)}
+    options = {'deadline': deadline} if deadline is not None else {}
     return request('discover', {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
-                                         for host, target in targets.items()]})
+                                         for host, target in targets.items()]}, **options)
+
+
+def wait_for_refresh(cfg, view, *, local=False, timeout=30):
+    """Observe the shared refresh without changing expiry, ownership or workers."""
+    deadline = time.monotonic() + timeout
+    with _spinner('Refreshing sessions'):
+        while not view.get('unavailable') and (view.get('loading') or any(
+                h.get('refreshing') for h in view.get('hosts', []))):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return dict(view, wait_timed_out=True)
+            time.sleep(min(.25, remaining))
+            if time.monotonic() >= deadline:
+                return dict(view, wait_timed_out=True)
+            latest = discover(cfg, local=local, fields=['rows'], deadline=deadline)
+            if latest.get('unavailable'):
+                return dict(view, wait_timed_out=True) if time.monotonic() >= deadline else dict(
+                    view, wait_unavailable=True)
+            view = latest
+    return view
 
 
 def freshness(view):
@@ -32,6 +56,10 @@ def freshness(view):
 
 
 def announce(view):
+    if view.get('wait_timed_out'):
+        print('t: Refresh wait timed out; showing available sessions.', file=sys.stderr)
+    if view.get('wait_unavailable'):
+        print('t: Session discovery unavailable; showing the last available snapshot.', file=sys.stderr)
     if view.get('unavailable'):
         print('t: Session discovery unavailable; retry shortly.', file=sys.stderr)
     elif view.get('loading') or (not any(h.get('value') is not None for h in view.get('hosts', []))

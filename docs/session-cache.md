@@ -40,6 +40,21 @@ returns existing records immediately and refreshes expired or missing entries
 in the background. A failed refresh retains the last known sessions. Open
 pickers keep their current list; the next invocation sees refreshed results.
 
+To wait explicitly, use `t session list --wait` (or `t ls --wait`). It observes
+the shared refresh for at most 30 seconds, then prints the existing table and
+freshness information. Fresh caches return immediately. Failure or timeout
+retains available rows; losing the service while waiting preserves the caller's
+last snapshot. Ctrl-C cancels only this command with status 130. It never cancels
+shared workers, changes expiry policy, or bypasses live ownership checks.
+Ordinary lists and MCP remain immediate. Redirected `--wait` is bounded and
+silent until the result, with no spinner or prompt.
+
+```sh
+t ls                         # Continue immediately with available sessions
+t session list --wait        # Wait for local and registered hosts
+t session list api --local --wait
+```
+
 A cold cache reports that discovery is refreshing, rather than claiming there
 are no sessions. Human output reports cache age and unavailable hosts; MCP and
 history JSON include additive `freshness` metadata. Transport failures do not
@@ -65,6 +80,7 @@ python3 scripts/preview_session_cache.py --scenario warm
 python3 scripts/preview_session_cache.py --scenario expired
 python3 scripts/preview_session_cache.py --scenario offline
 python3 scripts/preview_session_cache.py --scenario cold
+python3 scripts/preview_session_cache.py --scenario expired --wait
 ```
 
 These use the real session-list renderer and private socket service with synthetic
