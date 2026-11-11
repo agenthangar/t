@@ -672,18 +672,17 @@ def prepare_model(ui, row, context):
         if ui.pick('Prepare local model', [('prepare', action), ('back', 'Cancel · Keep current model')],
                    context=summary, accents={'prepare': 'g'}) != 'prepare':
             return None
-        ui.restore()
+        def operation(cancel):
+            if row['provider'] == 'lmstudio':
+                return install(row['model'], False, context, cancel=cancel)
+            return ollama_action(row['model'], 'install', context=context, cancel=cancel)
         try:
-            with helper('t_local_worker')['reservation']():
-                if row['provider'] == 'lmstudio':
-                    install(row['model'], False, context)
-                else:
-                    ollama_action(row['model'], 'install', context=context)
+            result = helper('t_local_runtime_ui')['run_model_action'](ui, operation, row['model'], preflight=True)
+            if result is None:
+                return None  # Cancelled preflight or test never stages cached readiness.
             error = ''
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             error = str(exc)
-        finally:
-            ui.raw()
         try:
             refreshed = next((r for r in catalogue(context=context)['models']
                               if selection(r) == selection(row)), None)

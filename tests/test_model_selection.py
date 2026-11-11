@@ -1,5 +1,6 @@
 """Model selection stages only verified identities; all runtimes are fake."""
 from contextlib import nullcontext
+import threading
 import copy
 import pytest
 from test_local_inference import local, hardware
@@ -23,7 +24,12 @@ def rows(local, monkeypatch):
     values[2].update(installed=False, ready=False, fit=True)
     monkeypatch.setattr(local,'catalogue',lambda *a, **kw: {'models':values})
     original_helper = local.helper
-    monkeypatch.setattr(local,'helper',lambda name: original_helper(name) if name == 't_model_display' else {'status': lambda: {'models': []}, 'reservation':nullcontext})
+    def run_action(ui, operation, model, *, preflight):
+        assert preflight
+        result = operation(threading.Event())
+        return {} if result is None else result
+    monkeypatch.setattr(local,'helper',lambda name: original_helper(name) if name == 't_model_display' else
+                        {'status': lambda: {'models': []}, 'reservation':nullcontext, 'run_model_action':run_action})
     return values
 
 
@@ -47,7 +53,7 @@ def test_ready_selects_directly_and_compares_all_published_scores(local, rows):
 @pytest.mark.parametrize('installed', [True,False])
 def test_prepare_is_explicit_and_stages_only_after_verification(local, rows, monkeypatch, installed):
     row=rows[1]; row['installed']=installed; called=[]
-    def install(name, download_only, context):
+    def install(name, download_only, context, *, cancel):
         called.append((name,download_only,context));row.update(installed=True,ready=True,fit=True)
     monkeypatch.setattr(local,'install',install)
     ui=Menu([row['model'],'back','__back'])
@@ -64,7 +70,7 @@ def test_prepare_is_explicit_and_stages_only_after_verification(local, rows, mon
 @pytest.mark.parametrize('failure', ['busy','not_ready','missing','scan_error','interrupt'])
 def test_preparation_failure_does_not_select_or_retry_implicitly(local, rows, monkeypatch, failure):
     row=rows[1]; calls=[]
-    def install(*args):
+    def install(*args, **kwargs):
         calls.append(args)
         if failure=='busy':raise ValueError('Local worker busy')
         if failure=='interrupt':raise KeyboardInterrupt
@@ -103,7 +109,7 @@ def test_provider_identity_sources_empty_and_unavailable(local, rows, monkeypatc
 
 def test_ollama_preparation_preserves_exact_provider(local, rows, monkeypatch):
     row=dict(rows[0],provider='ollama',ready=False,installed=False);rows[:]=[row];calls=[]
-    def install(name,action,*,context):calls.append((name,action,context));row.update(ready=True,installed=True)
+    def install(name,action,*,context,cancel):calls.append((name,action,context));row.update(ready=True,installed=True)
     monkeypatch.setattr(local,'ollama_action',install)
     assert local.prepare_model(Menu(['prepare']),row,16384)==local.selection(row)
     assert calls==[(row['model'],'install',16384)]
@@ -129,3 +135,19 @@ def test_context_and_actions_align(t_mod):
     lines=[t_mod._ANSI_RE.sub('',line) for line in ui.frames[0]]
     assert next(l.index('Model') for l in lines if 'Model' in l)==next(l.index('Verify') for l in lines if 'Verify' in l)
     assert next(l.index('Qwen') for l in lines if 'Qwen' in l)==next(l.index('On disk') for l in lines if 'On disk' in l)
+
+
+@pytest.mark.parametrize('ready_after_cancel', [False, True])
+def test_preparation_cancelled_preflight_never_installs_or_selects(local, rows, monkeypatch, ready_after_cancel):
+    row = rows[1]
+    calls = []
+    original_helper = local.helper
+    def run_action(ui, operation, model, *, preflight):
+        calls.append((model, preflight))
+        row['ready'] = ready_after_cancel
+        return None
+    monkeypatch.setattr(local, 'helper', lambda name: {'run_model_action': run_action}
+                        if name == 't_local_runtime_ui' else original_helper(name))
+    monkeypatch.setattr(local, 'install', lambda *a, **kw: pytest.fail('Cancelled preflight installed model'))
+    assert local.prepare_model(Menu(['prepare']), row, 8192) is None
+    assert calls == [(row['model'], True)]
