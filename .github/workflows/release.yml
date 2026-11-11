@@ -23,7 +23,7 @@ concurrency:
 jobs:
   plan:
     if: github.event_name == 'release' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       # GitHub only lists drafts to callers with push access. Planning is read-only.
       contents: write
@@ -63,7 +63,7 @@ jobs:
   archive:
     needs: [plan, validate]
     if: needs.plan.outputs.tag != '' && needs.validate.outputs.sha == needs.plan.outputs.sha && !inputs.validate_only
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       actions: read
