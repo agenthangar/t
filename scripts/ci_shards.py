@@ -10,6 +10,11 @@ from pathlib import Path
 import statistics
 import time
 
+if __package__:
+    from .ci_policy import fast_node
+else:
+    from ci_policy import fast_node
+
 ROOT = Path(__file__).resolve().parent.parent
 WEIGHTS = ROOT / 'tests/ci-file-durations.json'
 LEGACY = ['tests/test_picker_ui.py', 'tests/test_history_picker.py',
@@ -46,6 +51,7 @@ def pytest_addoption(parser):
     parser.addoption('--ci-shard', type=int, default=None)
     parser.addoption('--ci-shards', type=int, default=4)
     parser.addoption('--ci-legacy', action='store_true')
+    parser.addoption('--ci-fast', action='store_true')
     parser.addoption('--ci-manifest', default=None)
 
 
@@ -62,13 +68,16 @@ def pytest_collection_modifyitems(config, items):
     shard = config.getoption('--ci-shard')
     count = config.getoption('--ci-shards')
     legacy = config.getoption('--ci-legacy')
-    if legacy and shard is not None:
-        raise ValueError('legacy and shard selection are exclusive')
+    fast = config.getoption('--ci-fast')
+    if legacy and (fast or shard is not None):
+        raise ValueError('legacy and fast/shard selection are exclusive')
     files = sorted({item.nodeid.split('::')[0] for item in items})
+    eligible_files = sorted({item.nodeid.split('::')[0] for item in items
+                             if not fast or fast_node(item.nodeid)})
     if shard is not None:
         if not 0 <= shard < count:
             raise ValueError('invalid shard index')
-        selected_files = assignments(files, read_json(WEIGHTS), count)[shard]
+        selected_files = assignments(eligible_files, read_json(WEIGHTS), count)[shard]
     elif legacy:
         if not set(LEGACY) <= set(files):
             raise ValueError('missing legacy compatibility files')
@@ -76,11 +85,19 @@ def pytest_collection_modifyitems(config, items):
     else:
         selected_files = files
     selected = [item for item in items if item.nodeid.split('::')[0] in selected_files]
-    deselected = [item for item in items if item.nodeid.split('::')[0] not in selected_files]
+    if legacy:
+        selected = [item for item in selected if item.get_closest_marker('fzf_compat')]
+        if {item.nodeid.split('::')[0] for item in selected} != set(LEGACY):
+            raise ValueError('missing marked legacy compatibility cases')
+    if fast:
+        selected = [item for item in selected if fast_node(item.nodeid)
+                    and not item.get_closest_marker('fzf_compat')]
+    chosen = {item.nodeid for item in selected}
+    deselected = [item for item in items if item.nodeid not in chosen]
     config.hook.pytest_deselected(items=deselected)
     items[:] = selected
     state.update(selected=sorted(item.nodeid for item in items), files=selected_files,
-                 shard=shard, count=count, legacy=legacy)
+                 shard=shard, count=count, legacy=legacy, fast=fast)
 
 
 # The report hook has no config argument; a per-process plugin object keeps state.
@@ -105,7 +122,7 @@ def pytest_sessionfinish(session, exitstatus):
     if path:
         state = session.config._ci_audit.copy()
         state['elapsed'] = time.monotonic() - state.pop('started')
-        state.update(exitstatus=int(exitstatus), commit=os.environ.get('GITHUB_SHA', 'local'))
+        state.update(exitstatus=int(exitstatus), commit=os.environ.get('CI_TEST_SHA', os.environ.get('GITHUB_SHA', 'local')))
         write_json(path, state)
 
 
@@ -130,7 +147,7 @@ def reconcile(manifests, count):
     union = set()
     for manifest in manifests:
         if (manifest['full'] != first['full'] or manifest['commit'] != first['commit']
-                or manifest['count'] != count or manifest['legacy']):
+                or manifest['count'] != count or manifest['legacy'] or manifest.get('fast')):
             raise ValueError('shard collection, commit or configuration differs')
         selected = set(manifest['selected'])
         if union & selected:

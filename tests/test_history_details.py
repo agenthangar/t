@@ -189,6 +189,7 @@ def test_lifecycle_uses_one_incremental_scan_for_identity_and_metadata(app, hist
 
 
 @pytest.mark.parametrize('columns,lines', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.fzf_compat
 def test_real_details_picker_retains_focus_and_scrollable_metadata_at_each_size(history, tmp_path, columns, lines):
     if not shutil.which('tmux') or not shutil.which('fzf'):
         pytest.skip('real terminal geometry requires tmux and fzf')

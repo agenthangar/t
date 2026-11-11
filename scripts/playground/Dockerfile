@@ -2,11 +2,11 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+COPY playground/install-deps.sh /tmp/install-deps.sh
+RUN bash /tmp/install-deps.sh \
         ca-certificates curl fzf gcc libc6-dev gh git openssh-client procps python3 rsync \
         tmux uuid-runtime zsh \
-    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/apt/lists/* /tmp/install-deps.sh \
     && useradd --create-home --shell /usr/bin/zsh tester
 
 COPY --chown=tester:tester source/ /opt/t-source/

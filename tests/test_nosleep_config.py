@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import pty
 import select
-import signal
 import stat
 import struct
 import subprocess
@@ -16,6 +15,8 @@ import termios
 import time
 
 import pytest
+
+from pty_helpers import run_terminal
 
 
 MODULE = Path(__file__).resolve().parents[1] / "libexec" / "nosleep_config.py"
@@ -190,39 +191,32 @@ def test_edit_validates_draft_before_replacing_config(isolated, tmp_path):
     assert json.loads(path.read_text())["dim"] is True
 
 
-def test_short_narrow_tty_stacks_values_and_interrupt_restores_terminal(isolated):
+def test_short_narrow_tty_stacks_values_and_interrupt_restores_terminal(isolated, tmp_path):
     env, path = isolated
     output = _pty_config(isolated, [(b"Local settings", b"q")], columns=42, lines=10)
     assert b"Display when lid closes" in output
     assert b"off on close" in output
     assert not path.exists()
-    master, slave = pty.openpty()
-    process = subprocess.Popen([sys.executable, str(MODULE)], stdin=slave, stdout=slave,
-                               stderr=slave, env=env, close_fds=True)
-    os.close(slave)
-    try:
-        output = bytearray()
-        deadline = time.monotonic() + 5
-        while b"Local settings" not in output and time.monotonic() < deadline:
-            if select.select([master], [], [], 0.1)[0]:
-                output.extend(os.read(master, 4096))
-        assert b"Local settings" in output
-        process.send_signal(signal.SIGINT)
-        deadline = time.monotonic() + 5
-        while process.poll() is None and time.monotonic() < deadline:
-            if select.select([master], [], [], 0.1)[0]:
-                try:
-                    output.extend(os.read(master, 4096))
-                except OSError:
-                    break
-        # Linux may report PTY closure before waitpid observes process exit.
-        assert process.wait(timeout=max(0.1, deadline - time.monotonic())) == 0, output.decode(errors="replace")
-        assert not path.exists()
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
-        os.close(master)
+    # A title can be visible before rendering has finished. Use the shared
+    # terminal harness and signal at the input boundary; it also verifies the
+    # actual terminal flags after exit, rather than inferring restoration.
+    harness = tmp_path / "interrupt_config.py"
+    harness.write_text('''import importlib.util, sys
+spec = importlib.util.spec_from_file_location('config', sys.argv[1])
+config = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(config)
+read_key = config.key
+def ready_read_key():
+    print('<test-read-ready>', end='', flush=True)
+    return read_key()
+config.key = ready_read_key
+raise SystemExit(config.main([]))
+''')
+    code, output = run_terminal([sys.executable, str(harness), str(MODULE)], env,
+                                tmp_path, (42, 10), [('<test-read-ready>', b'\x03')])
+    assert code == 0, output
+    assert 'Settings unchanged.' in output
+    assert not path.exists()
 
 
 def test_tty_menu_saves_display_on_without_dimming(isolated):

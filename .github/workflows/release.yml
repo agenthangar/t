@@ -7,6 +7,10 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
+      validate_only:
+        description: Run full nightly validation without publishing a release
+        type: boolean
+        default: false
       tag:
         description: Existing stable release to verify (blank publishes the next patch if needed)
         required: false
@@ -39,7 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Select a tested release commit
+      - name: Pin the nightly validation and release commit
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,9 +51,18 @@ jobs:
         run: |
           python3 scripts/release.py plan --tag "$REQUESTED_TAG"
           echo "controller=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-  archive:
+  validate:
     needs: plan
-    if: needs.plan.outputs.tag != ''
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.plan.outputs.sha }}
+  archive:
+    needs: [plan, validate]
+    if: needs.plan.outputs.tag != '' && needs.validate.outputs.sha == needs.plan.outputs.sha && !inputs.validate_only
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,6 +87,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-validation
+          path: ${{ runner.temp }}/validation
       - name: Build pinned runtime archive
         run: python3 scripts/build-release.py "$RELEASE_TAG"
       - name: Verify archive installation in an isolated home
@@ -108,7 +125,8 @@ jobs:
           args=()
           if [ "$AUTOMATIC_RELEASE" = true ]; then args+=(--automatic); fi
           python3 "$RUNNER_TEMP/t-release.py" publish \
-            --tag "$RELEASE_TAG" --sha "$RELEASE_SHA" --previous "$PREVIOUS_TAG" "${args[@]}"
+            --tag "$RELEASE_TAG" --sha "$RELEASE_SHA" --previous "$PREVIOUS_TAG" \
+            --validation "$RUNNER_TEMP/validation/validation.json" "${args[@]}"
       # GITHUB_TOKEN-created releases do not trigger another release event.
       # Dispatch the tap here, for both nightly and manually published releases.
       - name: Get tap dispatch token
