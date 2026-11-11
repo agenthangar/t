@@ -29,7 +29,8 @@ FAST_KEEP = {
     'test_public_remote_open_uses_login_shell_and_reattaches',
 }
 FULL_PREFIXES = (
-    '.github/', 'scripts/', 'tests/', 'bin/', 'zsh/', 'ui/',
+    '.github/', 'scripts/', 'bin/', 'zsh/', 'ui/',
+    'tests/test_ci_', 'tests/test_release_workflow.py',
     'install.sh', 't.plugin.zsh', 'pyproject.toml', 'requirements',
     'libexec/t_lifecycle', 'libexec/t_remote', 'libexec/t_codex_',
     'libexec/t_resume', 'libexec/t_history', 'libexec/t_candidates',
@@ -37,10 +38,16 @@ FULL_PREFIXES = (
     'libexec/t_shell_setup', 'libexec/t_onboarding', 'libexec/t_dev',
     'libexec/t_repos', 'libexec/t_recovery', 'libexec/t_updates',
 )
+FULL_TEST_FILES = EXTENDED | {
+    'tests/test_picker_ui.py', 'tests/test_history_picker.py',
+    'tests/test_history_details.py', 'tests/test_share_ui.py',
+}
 
 
 def requires_full(paths):
-    return any(path.startswith(FULL_PREFIXES) for path in paths)
+    return any(path.startswith(FULL_PREFIXES) or path in FULL_TEST_FILES
+               or (path.startswith('tests/') and not path.rsplit('/', 1)[-1].startswith('test_'))
+               for path in paths)
 
 
 def fast_node(node):

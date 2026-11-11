@@ -13,6 +13,9 @@ from scripts import ci_policy as policy, ci_shards as shards
     ('libexec/t_usage.py', False), ('libexec/t_lifecycle.py', True),
     ('libexec/t_codex_ownership.py', True), ('bin/t', True),
     ('ui/fzf.sh', True), ('tests/new_helper.py', True),
+    ('tests/test_usage.py', False), ('tests/test_future.py', False),
+    ('tests/conftest.py', True), ('tests/test_onboarding_pty.py', True),
+    ('tests/test_history_picker.py', True), ('tests/test_ci_shards.py', True),
     ('.github/workflows/ci.yml', True), ('scripts/release.py', True),
 ])
 def test_risky_changes_expand_validation(path, full):

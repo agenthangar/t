@@ -33,7 +33,8 @@ for its automated flow.
 PR CI keeps the install/session smoke, fast regressions, ownership/worktree/remote
 shell safeguards, CLI/shell contracts and security checks. Expensive integration
 matrices run when their implementation, tests, or CI changes, and on every nightly
-release validation. New test files join the fast suite by default. The policy lives in
+release validation. Shared test-harness changes also request the full suite;
+ordinary unit-test edits stay fast, and new test files join it by default. The policy lives in
 `scripts/ci_policy.py`; run the fast subset with
 `python3 -m pytest -p scripts.ci_shards --ci-fast`.
 
