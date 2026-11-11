@@ -4986,7 +4986,6 @@ def cmd_config(cfg, args):
     targets = []
     try:
         before = _config_read(_current_local_rc())
-        cfg._config_before = before
         result = (_config_wizard(cfg, workflows_only=True, workflow_target=workflow_target) if workflow_target else
                   "edit" if getattr(args, "edit", False) else
                   _config_wizard(cfg, workflows_only=True) if getattr(args, "workflows_ui", False) else _config_wizard(cfg))

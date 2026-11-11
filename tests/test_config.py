@@ -1254,14 +1254,19 @@ def test_config_unrelated_edits_do_not_stage_native_defaults(t_mod, native_defau
         edited._workflow_initial = copy.deepcopy(edited._workflow_document)
         edited._workflow_activate = False
         edited._workflow_document['workflows']['standard']['planning']['effort'] = 'medium'
-    before = native.stat(), native.read_text()
+    def unchanged_native():
+        # Reading may update atime on macOS; identity, content and write metadata must stay unchanged.
+        info = native.stat()
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns, native.read_text())
+    before = unchanged_native()
     monkeypatch.setitem(sync, 'native_defaults', lambda settings: pytest.fail('unrelated native write'))
     monkeypatch.setitem(helper, 'propagation', lambda: sync)
     monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
     monkeypatch.setattr(t_mod, '_config_editor', lambda: 0)
     monkeypatch.setattr(t_mod, 'Config', lambda: edited)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=change == 'show', edit=change == 'editor')) == 0
-    assert (native.stat(), native.read_text()) == before
+    assert unchanged_native() == before
     if change in ('unchanged', 'editor', 'show'):
         assert not helper['config_path']().exists()
         assert not sync['state_path']().exists()
