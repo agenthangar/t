@@ -599,6 +599,13 @@ without downloading them again. Benchmarks and artifact/runtime details have
 separate views. `t config models install MODEL --yes` also reuses completed files
 and verifies inference; downloaded weights alone do not mean Ready.
 
+Interactive tests first list any sessions using the shared runtime. Choose
+**Wait for a turn**, **Interrupt all sessions**, or **Back**. Interruption acts on
+the displayed sessions without a second confirmation; their conversations stay
+open. The test waits for confirmed release, and progress updates automatically.
+For example, `t workflow open NAME` → **Inference & routing → Local model →
+Test model** checks availability even when another session uses a different model.
+
 Shared local inference: `t config` → **Local worker & models** shows model usage,
 requests, provider setup, CLI help and desktop-app launch actions. Use
 `t config models runtime monitor --view cli` or `--view gui` to monitor the same
