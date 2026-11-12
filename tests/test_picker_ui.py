@@ -72,7 +72,7 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False):
             env['T_HOME'] = str(ROOT)
             if slow_update:
                 library = root / 'slow/libexec'
@@ -165,6 +165,11 @@ def picker():
                           '_t_dev() { print -r -- "$*" >> "$HOME/selected"; }\n'
                           ': > "$HOME/selected"\n')
                 picker_cmd = 't open --cli' if profile == 'public-open-all' else 't open api --cli'
+                if discovery_notice:
+                    prefix += ('_t_discovery_rows() {\n'
+                               '  print -n "Older results" > "$3"\n'
+                               '  _dev_session_rows --details | awk \'NF {print "local\\t" $0}\'\n'
+                               '}\n')
                 if profile == 'public-open-kill':
                     prefix += ('functions[_rows_before_kill]=$functions[_dev_session_rows]\n'
                                '_dev_session_rows() {\n'
@@ -772,3 +777,15 @@ def test_long_phrase_search_matches_full_metadata_beyond_narrow_display(picker):
     keys('-l', 'still in progress')
     wait('still in progress', focused='First')
     assert finish() == ['api 2 --local']
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
+@pytest.mark.fzf_compat
+def test_open_discovery_notice_keeps_focused_row_visible(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='public-open-all', width=width, height=height, discovery_notice=True)
+    wait('Older results', focused='4')
+    keys('C-f')
+    screen = wait('4/4 (0)')
+    assert 'Older results' in screen and 'Filters OFF' in screen and '▸' in screen
+    assert finish('Escape', status=130) == []

@@ -501,6 +501,120 @@ def test_standalone_artifact_miss_never_spawns_service(cache, monkeypatch):
     assert cache.request('artifact', {'key': 'missing'}) == {'value': None}
 
 
+@pytest.mark.parametrize('operation', ['event', 'forget'])
+def test_failed_target_cooldown_survives_invalidation_and_context_changes(engine, operation):
+    memory, now, jobs, _ = engine
+    remote = spec('u@mini', 'mini')
+    discover(memory, remote); drain(jobs)
+    original = discover(memory, remote)['hosts'][0]['value']
+    memory.handle('event', {'targets': ['u@mini']})
+    memory.collect = lambda _: (_ for _ in ()).throw(OSError('offline'))
+    discover(memory, remote); drain(jobs)
+    if operation == 'event':
+        memory.handle(operation, {'targets': ['u@mini']})
+    else:
+        memory.handle(operation, {'target': 'u@mini', 'workspace': '/unrelated'})
+    alternate = spec('u@mini', 'alias', context={'repos': {'new': '/new'}})
+    for _ in range(3):
+        hosts = discover(memory, remote, alternate)['hosts']
+        assert all(h['error'] == 'offline' and h['retry_at'] == now[0] + 3600 for h in hosts)
+        assert not any(h['refreshing'] for h in hosts) and not jobs
+        assert hosts[0]['value'] == original
+    now[0] += 3599
+    discover(memory, alternate); assert not jobs
+    now[0] += 1
+    discover(memory, alternate, remote); assert len(jobs) == 1
+    memory.collect = lambda _: {'rows': '', 'resume': []}
+    drain(jobs)
+    assert not memory.failures
+    assert all(not e.get('error') for e in memory.entries.values())
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('invalidate_while_loading', [False, True])
+def test_failed_target_cooldown_survives_restore(cache, engine, legacy, invalidate_while_loading):
+    memory, now, jobs, _ = engine
+    memory.collect = lambda _: (_ for _ in ()).throw(OSError('offline'))
+    discover(memory, spec('remote')); drain(jobs)
+    saved = memory.snapshot()
+    if legacy:
+        saved.pop('failures')
+        saved['entries']['malformed'] = None
+    restored_jobs = []
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *job: restored_jobs.append(job))
+    if invalidate_while_loading:
+        restored.handle('event', {'targets': ['remote']})
+    restored.restore(saved)
+    host = discover(restored, spec('remote', 'renamed', context={'repos': {'a': '/a'}}))['hosts'][0]
+    assert host['error'] == 'offline' and host['retry_at'] == now[0] + 3600
+    assert not restored_jobs
+
+
+def test_reset_host_only_clears_target_preserves_rows_and_does_not_collect(engine):
+    memory, now, jobs, saves = engine
+    discover(memory, spec('remote'), spec('other')); drain(jobs); drain(jobs)
+    memory.handle('event', {'targets': ['remote', 'other']})
+    memory.collect = lambda _: (_ for _ in ()).throw(OSError('offline'))
+    discover(memory, spec('remote'), spec('other')); drain(jobs); drain(jobs)
+    alternate = spec('remote', 'alias', context={'repos': {'a': '/a'}})
+    discover(memory, alternate)
+    before = memory.snapshot()
+    assert memory.handle('reset-host', {'target': 'remote'}) == {'reset': 'remote'}
+    assert set(memory.failures) == {'other'} and not jobs and saves
+    for key, entry in memory.entries.items():
+        if entry['spec']['target'] == 'remote':
+            assert entry['checked'] == entry['retry'] == 0 and not entry['error']
+            assert entry.get('value') == before['entries'][key].get('value')
+        else:
+            assert entry == before['entries'][key]
+    hosts = discover(memory, spec('remote'), alternate, spec('other'))['hosts']
+    assert len(jobs) == 1 and hosts[0]['refreshing'] and hosts[1]['refreshing']
+    assert not hosts[2]['refreshing'] and hosts[2]['error'] == 'offline'
+
+
+@pytest.mark.parametrize('operation', ['event', 'forget', 'reset-host'])
+@pytest.mark.parametrize('failure', [False, True])
+def test_inflight_failure_cooldown_respects_only_explicit_reset(engine, operation, failure):
+    memory, now, jobs, _ = engine
+    def collect(_):
+        if failure:
+            raise OSError('offline')
+        return {'rows': 'stale', 'resume': []}
+    memory.collect = collect
+    discover(memory, spec('remote'))
+    payload = {'targets': ['remote']} if operation == 'event' else {'target': 'remote', 'workspace': '/work'}
+    memory.handle(operation, payload)
+    discover(memory, spec('remote'))
+    assert len(jobs) == 1  # Reset does not start a concurrent collector.
+    drain(jobs)
+    host = discover(memory, spec('remote'))['hosts'][0]
+    assert host['value'] is None
+    cooling = failure and operation != 'reset-host'
+    assert bool(host['error']) == cooling
+    assert len(jobs) == (0 if cooling else 1)
+
+
+def test_reset_host_validation_and_restoration_gate(engine):
+    memory, _, jobs, _ = engine
+    for payload in ({}, {'target': ''}, {'target': []}):
+        with pytest.raises(ValueError, match='invalid'):
+            memory.handle('reset-host', payload)
+    memory.loading = True
+    with pytest.raises(ValueError, match='loading'):
+        memory.handle('reset-host', {'target': 'remote'})
+    assert not jobs and not memory.reset_epochs
+
+
+def test_restore_ignores_invalid_failure_metadata(cache):
+    memory = cache._Memory(clock=lambda: 10000, submit=lambda *a: None)
+    memory.restore({'failures': {'wrong': [], 'empty': {'retry_at': 10100, 'error': ''},
+        'infinite': {'retry_at': float('inf'), 'error': 'bad'},
+        'future': {'retry_at': 13601, 'error': 'bad'}, 'text': {'retry_at': 'soon', 'error': 'bad'}}})
+    assert not memory.failures
+    with pytest.raises(ValueError, match='invalid'):
+        memory.restore({'failures': []})
+
+
 def test_invalid_disk_snapshot_is_rebuilt_from_ram(cache):
     memory = cache._Memory(submit=lambda *a: None)
     disk = cache._Persistence(memory)

@@ -480,6 +480,22 @@ _t_open_impl() {
 # Complete current-session picker. Return 2 when there are no candidates, or 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
+  local _T_OPEN_NOTICE_FILE picker_result
+  _T_OPEN_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-open-discovery.XXXXXX") || return 1
+  {
+    _t_open_picker_impl "$@"; picker_result=$?
+    # An empty scoped subset of incomplete discovery is not a fresh-slot request.
+    if (( picker_result == 2 )) && [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+      print -u2 -- 't open: discovery is incomplete; no session was started'
+      picker_result=1
+    fi
+    return $picker_result
+  } always {
+    rm -f -- "$_T_OPEN_NOTICE_FILE"
+  }
+}
+
+_t_open_picker_impl() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
   if [[ -z $6 ]]; then
@@ -499,10 +515,10 @@ _t_open_picker() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_t_discovery_rows --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --local --unprefixed --details) || return $?
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
@@ -555,7 +571,7 @@ _t_open_picker() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" \
+    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
@@ -786,7 +802,7 @@ _t() {
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
-    hosts) actions=(list ls show add edit remove default run) ;;
+    hosts) actions=(list ls show add edit remove default reset run) ;;
     workflow) actions=(context list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local models) ;;
@@ -987,7 +1003,7 @@ _t() {
       else _values 'slot' 1 2 3 4; fi ;;
     hosts/run)
       (( CURRENT == first )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
-    hosts/show|hosts/remove|hosts/default|hosts/edit)
+    hosts/show|hosts/remove|hosts/default|hosts/edit|hosts/reset)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then
         _values 'host' ${(k)REMOTE_HOSTS}
       elif [[ $group/$action == hosts/edit && $CURRENT == $(( first + 1 )) && ${words[CURRENT]} != -* ]]; then

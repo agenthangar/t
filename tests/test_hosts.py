@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from test_agent_seam import zsh  # noqa: F401 — isolated shell fixture
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,3 +166,37 @@ def test_plural_run_keeps_login_shell_and_remote_arguments(t_mod, monkeypatch):
     assert seen[0][:3] == ["ssh", "-t", "u@lab"]
     assert seen[0][3].startswith("zsh -lic ")
     assert shlex.split(seen[0][3])[2] == "T_UPDATE_PROMPTED=$$ echo 'two words' --help"
+
+
+def test_host_reset_only_resets_registered_discovery_target(t_mod, monkeypatch, capsys):
+    cfg = SimpleNamespace(hosts={'mini': 'u@mini'})
+    monkeypatch.setattr(t_mod, '_host_refresh_config', lambda: None)
+    monkeypatch.setattr(t_mod, 'Config', lambda: cfg)
+    calls = []
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: {'reset_host': lambda c, alias: calls.append((c, alias))})
+    args = t_mod.build_parser().parse_args(['hosts', 'reset', 'mini'])
+    assert t_mod.cmd_hosts(cfg, args) == 0
+    assert calls == [(cfg, 'mini')]
+    assert 'next session browse' in capsys.readouterr().out
+    assert not t_mod._command_readonly(['hosts', 'reset', 'mini'])
+
+
+def test_host_reset_adapter_resolves_alias_without_connecting(monkeypatch):
+    from conftest import load_script
+    adapter = load_script(ROOT / 'libexec/t_session_discovery.py', 'host_reset_test')
+    calls = []
+    cfg = SimpleNamespace(hosts={'mini': 'u@mini'})
+    monkeypatch.setattr(adapter, 'request', lambda *args: calls.append(args) or {'reset': 'u@mini'})
+    assert adapter.reset_host(cfg, 'mini') == {'reset': 'u@mini'}
+    assert calls == [('reset-host', {'target': 'u@mini'})]
+    with pytest.raises(ValueError, match='unknown host'):
+        adapter.reset_host(cfg, 'missing')
+    assert len(calls) == 1
+    monkeypatch.setattr(adapter, 'request', lambda *args: {'unavailable': True})
+    with pytest.raises(ValueError, match='unavailable'):
+        adapter.reset_host(cfg, 'mini')
+
+
+def test_host_reset_completion(zsh):
+    result = zsh('_values() { print -l -- "$@"; }; _describe() { print -l -- "${actions[@]}"; }; words=(t hosts r); CURRENT=3; _t')
+    assert 'reset' in result.stdout.splitlines()
