@@ -360,7 +360,7 @@ with ShareUI(vars(t)) as ui:
     finish({'cancelled':'review' if not accepted else None,
             'source':source['id'], 'target':target['id']})
 ''')
-    with tempfile.TemporaryDirectory(prefix="t-share-tty-") as short:
+    with tempfile.TemporaryDirectory(prefix="t-share-tty-", dir="/tmp") as short:
         socket = str(Path(short) / "tmux.sock")
 
         def tmux(*args, check=True):

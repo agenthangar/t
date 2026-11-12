@@ -352,6 +352,7 @@ def zsh(tmp_path):
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "T_LOCAL_RC": str(home / ".zshrc.local"),
                "PATH": f"{bins}:{os.environ.get('PATH', '')}", "TERM": "dumb",
                "TMUX_TMPDIR": os.environ.get("TMUX_TMPDIR", "/tmp"), "T_RECOVERY_DISABLE": "1", "T_NO_AUTORELOAD": "1",
+               "T_FRESH_REFRESH_DISABLE": "1",
                "T_DISCOVERY_COLLECTOR": os.environ.get("T_DISCOVERY_COLLECTOR", "1"),
                "TMUX_LOG": str(log), "FAKE_PS": str(tmp_path / "ps.txt"), **extra}
         # These command/argv tests use a synthetic process table. Exercise shell
@@ -516,6 +517,7 @@ def test_zsh_agent_at_welcome(zsh):
 
 
 def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
+    (zsh.home / 'code/api').mkdir(parents=True)
     r = zsh("_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex")
     assert r.returncode == 0, r.stderr
     log = zsh.log.read_text().splitlines()
@@ -547,6 +549,7 @@ def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
 
 @pytest.mark.parametrize("launch", ["new", "resume"])
 def test_failed_tmux_creation_never_sends_keys_into_an_existing_slot(zsh, tmp_path, launch):
+    (zsh.home / 'code/api').mkdir(parents=True)
     stub = tmp_path / "stubbin" / "tmux"
     stub.write_text(TMUX_LOG_STUB.replace('case "$1" in',
                                           '[[ "$1" == new-session ]] && exit 1\ncase "$1" in'))
@@ -646,12 +649,13 @@ def test_here_new_can_launch_when_remote_owner_is_unknown(zsh, slot, should_laun
     (zsh.home / "code/api").mkdir(parents=True)
     result = zsh(f'''
       REMOTE_HOSTS[mini]=mini
-      _dev_remote_legacy_owner() {{ return 3; }}
-      _dev_worktree_enabled() {{ return 1; }}
+      _dev_remote_resolve() {{ return 3; }}
+      _dev_fresh_open() {{ print -r -- launched; }}
+      _dev_worktree_enabled() {{ return 0; }}
       _dev_slot_fresh() {{ [[ $2 == 1 ]]; }}
       _dev_agent_check() {{ return 0; }}
       _dev_new_session() {{ print -r -- launched; }}
-      _t_dev api {slot} --local; print -r -- "rc=$?"
+      _t_dev api {slot} --fg --local; print -r -- "rc=$?"
     ''')
     assert ("launched" in result.stdout) is should_launch
     assert ("rc=0" in result.stdout) is should_launch
@@ -735,6 +739,8 @@ def test_zsh_repos_cd_enters_checkout_named_t(zsh):
 
 
 def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
+    (zsh.home / 'code/api').mkdir(parents=True)
+    (zsh.home / 'code/web').mkdir(parents=True)
     r = zsh("DEV_MODEL[claude]=sonnet; DEV_MODEL[codex]=local/model; "
             "DEV_EFFORT[claude]=max; DEV_EFFORT[codex]=ultra; "
             "_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex; "
@@ -2845,6 +2851,7 @@ def test_session_startup_is_quiet_and_logged(zsh, tmp_path, mode, agent, fails):
 
 @pytest.mark.parametrize('mode', ['new', 'resume'])
 def test_failed_placeholder_barrier_preserves_changed_session(zsh, mode):
+    (zsh.home / 'code/api').mkdir(parents=True)
     command = ('_dev_new_session dev-api-3 $HOME/code/api dev/x 1 codex' if mode == 'new'
                else '_dev_resume_session dev-api-3 $HOME/code/api saved-id codex')
     result = zsh('_dev_stop_session_placeholder() { return 1; }; ' + command)

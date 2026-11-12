@@ -91,29 +91,42 @@ _dev_agent_check() {
   print -u2 -r -- "t: '$1' is not installed here — run: t agent install $1"
   return 1
 }
-# _dev_agent_default_args <agent> <cwd> — scoped fresh-session defaults.
+# _dev_agent_default_args <agent> <cwd> [--resolved args…] — fresh defaults.
+# The combined launcher passes one validated bundle; other private callers retain
+# this compatibility entry point without starting both old resolver helpers.
 _dev_agent_default_args() {
   local agent=$1 target=${2:-$PWD} model=${DEV_MODEL[$1]:-} effort=${DEV_EFFORT[$1]:-}
-  local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_workflow_sync.py" index
-  local -a overrides permissions
-  if [[ -f $helper ]]; then
-    overrides=("${(@f)$(T_WORKFLOW_DEFAULT_MODEL="$model" python3 "$helper" --launch-settings "$agent" "$target")}")
-    overrides=("${(@)overrides:#}")
-    for (( index=1; index<=${#overrides}; index+=2 )); do
-      case ${overrides[index]} in
-        --model) model=${overrides[index+1]}; effort= ;;
-        -c)
-          if [[ ${overrides[index+1]} == model_reasoning_effort=* ]]; then
-            effort=${overrides[index+1]#model_reasoning_effort=}; effort=${effort//\"/}
-          else
-            permissions+=("${overrides[index]}" "${overrides[index+1]}")
-          fi ;;
-        --effort) effort=${overrides[index+1]} ;;
-        --sandbox|--ask-for-approval|--permission-mode|--settings)
-          permissions+=("${overrides[index]}" "${overrides[index+1]}") ;;
-      esac
-    done
+  local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_launch_policy.py" index encoded count
+  local -a overrides permissions bundle
+  if [[ ${3:-} == --resolved ]]; then
+    overrides=("${@:4}")
+  else
+    encoded=$(T_WORKFLOW_DEFAULT_MODEL="$model" T_LAUNCH_DEFAULT_MODEL="$model" \
+      T_LAUNCH_DEFAULT_EFFORT="$effort" T_LAUNCH_DEFAULT_SPEED="${DEV_FAST[$agent]:-}" \
+      python3 "$helper" launch "$agent" "$target") || return 1
+    bundle=("${(@0)encoded}")
+    count=${bundle[1]:-}
+    [[ $count == <-> ]] && (( count <= ${#bundle} - 1 )) || {
+      print -u2 't: invalid cached launch settings'; return 1
+    }
+    overrides=("${(@)bundle[$((count + 2)),-1]}")
   fi
+  (( ${#overrides} % 2 == 0 )) || {
+    print -u2 't: incomplete scoped launch settings'; return 1
+  }
+  for (( index=1; index<=${#overrides}; index+=2 )); do
+    case ${overrides[index]} in
+      --model) model=${overrides[index+1]}; effort= ;;
+      -c)
+        if [[ ${overrides[index+1]} == model_reasoning_effort=* ]]; then
+          effort=${overrides[index+1]#model_reasoning_effort=}; effort=${effort//\"/}
+        else
+          permissions+=("${overrides[index]}" "${overrides[index+1]}")
+        fi ;;
+      --effort) effort=${overrides[index+1]} ;;
+      *) permissions+=("${overrides[index]}" "${overrides[index+1]}") ;;
+    esac
+  done
   [[ -n $model ]] && print -rl -- --model "$model"
   if [[ -n $effort ]]; then
     case $agent in
@@ -126,22 +139,27 @@ _dev_agent_default_args() {
 }
 
 # _dev_agent_new_cmd <agent> [sid] [task-file] [cwd] — a FRESH slot.
-# DEV_MODEL is keyed by agent, so switching tools never carries the other tool's model.
-# Scoped single-model preferences override these account defaults at launch.
+# Select the executable and apply account fallbacks outside the scoped-policy
+# cache. A cache failure cannot silently omit permissions or change providers.
 _dev_agent_new_cmd() {
-  local agent="$1"
+  local agent="$1" target="${4:-$PWD}" encoded count defaults_text
+  local helper="${T_HOME:-${${(%):-%x}:A:h:h}}/libexec/t_launch_policy.py"
   local executable; executable=$(_dev_agent_executable "$agent") || executable=$agent
-  local -a launch_args=("$executable")
-  if [[ $agent == codex ]]; then
-    local inference_helper="${${(%):-%x}:A:h:h}/libexec/t_local_inference.py"
-    local -a local_prefix
-    local_prefix=("${(@f)$(python3 "$inference_helper" --launch-prefix "${4:-$PWD}")}") || local_prefix=(python3 "$inference_helper" --lead)
-    local_prefix=("${(@)local_prefix:#}")
-    launch_args=("${local_prefix[@]}" "$executable")
-  fi
-  local -a defaults
+  encoded=$(T_WORKFLOW_DEFAULT_MODEL="${DEV_MODEL[$agent]:-}" \
+    T_LAUNCH_DEFAULT_MODEL="${DEV_MODEL[$agent]:-}" T_LAUNCH_DEFAULT_EFFORT="${DEV_EFFORT[$agent]:-}" \
+    T_LAUNCH_DEFAULT_SPEED="${DEV_FAST[$agent]:-}" python3 "$helper" launch "$agent" "$target") || return 1
+  local -a bundle local_prefix policy_args defaults launch_args
+  bundle=("${(@0)encoded}")
+  count=${bundle[1]:-}
+  [[ $count == <-> ]] && (( count <= ${#bundle} - 1 )) || {
+    print -u2 't: invalid cached launch policy'; return 1
+  }
+  (( count == 0 )) || local_prefix=("${(@)bundle[2,$((count + 1))]}")
+  policy_args=("${(@)bundle[$((count + 2)),-1]}")
+  launch_args=("${local_prefix[@]}" "$executable")
   [[ $agent == claude && -n $2 ]] && launch_args+=(--session-id "$2")
-  defaults=("${(@f)$(_dev_agent_default_args "$agent" "${4:-$PWD}")}")
+  defaults_text=$(_dev_agent_default_args "$agent" "$target" --resolved "${policy_args[@]}") || return 1
+  defaults=("${(@f)defaults_text}")
   defaults=("${(@)defaults:#}")
   launch_args+=("${defaults[@]}")
   if [[ " ${defaults[*]} " != *service_tier=* && " ${defaults[*]} " != *fastMode* ]]; then
@@ -153,11 +171,7 @@ _dev_agent_new_cmd() {
       claude:0) launch_args+=(--settings '{"fastMode":false}') ;;
     esac
   fi
-  # A fresh slot must not inherit an independently updated shared daemon's
-  # feature settings. Keep its backend local, as with desktop handoffs/recovery.
   [[ $agent == codex ]] && launch_args+=(--no-daemon)
-  # Read the optional task in the pane, as one quoted argument. Keep its body
-  # out of the command sent to tmux and the interactive shell's history.
   local brief_arg=""
   [[ -n $3 ]] && brief_arg=" -- \"\$(cat -- ${(q)3})\""
   print -r -- "${(j: :)${(@q)launch_args}}${brief_arg}"
@@ -556,9 +570,14 @@ _dev_self_sid() {
 # (${DEV_REPOS[repo]:t}), not the alias, so they are identical on every host (a dir is
 # `dot` here and `dotfiles` there, but its basename `dotfiles` is stable) — which keeps
 # cross-host resolution (tbeam, _dev_remote_resolve) coherent.
-# Sync trust before launching either a terminal agent or desktop workspace.
+# Native CLIs inherit canonical repository trust, installed by setup/update.
+# Repair missing decisions only; do not rewrite native config on every launch.
 # Keep stdout free for callers that return a worktree path or other protocol data.
 _dev_auto_trust() {
   [[ ${T_AUTO_TRUST:-} == 1 && -z ${T_NO_TRUST:-} && -d $1 ]] || return 0
+  if [[ -n $2 && -f $T_HOME/libexec/t_trust_state.py ]] &&
+     python3 "$T_HOME/libexec/t_trust_state.py" "$2" "$1"; then
+    return 0
+  fi
   command t trust -q "$1" >&2
 }

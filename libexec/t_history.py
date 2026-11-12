@@ -1906,26 +1906,81 @@ def picker(argv):
     print(output, end='')
 
 
+def prepared_association(sid, workspace, consumer='unknown'):
+    """Reuse verified creation evidence for this launch's first conversation only."""
+    try:
+        value = json.loads(os.environ.get('T_LAUNCH_CONTEXT', ''))
+        if value.get('version') != 1 or Path(value['workspace']).resolve() != Path(workspace).resolve():
+            return
+        gitfile = Path(workspace) / '.git'
+        info = gitfile.stat()
+        identity = value['gitfile_identity']
+        if [info.st_dev, info.st_ino, info.st_ctime_ns] != [identity['dev'], identity['ino'], identity['ctime_ns']]:
+            return
+        gitdir = Path(value['gitdir']).resolve()
+        pointer = gitfile.read_text().strip()
+        if not pointer.startswith('gitdir: ') or (Path(workspace) / pointer[8:]).resolve() != gitdir:
+            return
+        expected = hashlib.sha256(json.dumps([str(gitdir), info.st_dev, info.st_ino, info.st_ctime_ns]).encode()).hexdigest()
+        if value['generation'] != expected or not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', value['commit']):
+            return
+        if not all(isinstance(value[key], str) and value[key] and not any(c in value[key] for c in '\r\n\0')
+                   for key in ('repo', 'branch', 'slot')) or not value['slot'].isdigit():
+            return
+        observed = value['observed']
+        if not isinstance(observed, (int, float)) or not math.isfinite(observed) or observed <= 0:
+            return
+        # An agent can create another conversation without restarting its process.
+        # Its inherited context must not freeze that conversation at the old SHA.
+        marker = gitdir / 't-launch-conversation'
+        claim = dict(sid=sid, generation=expected, observed=observed)
+        fd = os.open(gitdir / 't-launch-conversation.lock',
+                     os.O_WRONLY | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        with os.fdopen(fd, 'w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if marker.exists() or marker.is_symlink():
+                existing = {} if marker.is_symlink() else json.loads(marker.read_text())
+                if (not isinstance(existing, dict) or
+                        any(existing.get(key) != item for key, item in claim.items()) or
+                        not isinstance(existing.get('consumers'), list) or consumer in existing['consumers']):
+                    return
+                claim['consumers'] = [*existing['consumers'], consumer]
+            else:
+                claim['consumers'] = [consumer]
+            # Initial controller + SessionStart publication may race; each can
+            # use creation evidence once. Later hooks, even for the same SID,
+            # capture the then-current checkout instead of reusing an old SHA.
+            private_write(marker, claim)
+        return value
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return
+
+
 def capture_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):
     """Capture launch evidence locally before an agent can change the checkout."""
     if not SID.fullmatch(sid) or agent not in ('claude', 'codex'):
         return
-    remote = run(['git', '-C', workspace, 'remote', 'get-url', 'origin'], optional=True).strip()
-    repo = slug(remote)
-    if not repo:
-        common = run(['git', '-C', workspace, 'rev-parse', '--path-format=absolute', '--git-common-dir'], optional=True).strip()
-        if not common:
-            return
-        repo = 'local:' + str(Path(common).parent.resolve())
-    commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
-    branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
-    leaf = Path(workspace).name.removeprefix(Path(workspace).parent.name + '-')
-    slot = leaf if re.fullmatch(r'[0-9]+', leaf) else ''
-    observed = time.time()
+    prepared = prepared_association(sid, workspace, interface) if event == 'launch' else None
+    if prepared:
+        repo, commit, branch, slot, workspace_generation, observed = (
+            prepared[key] for key in ('repo', 'commit', 'branch', 'slot', 'generation', 'observed'))
+    else:
+        remote = run(['git', '-C', workspace, 'remote', 'get-url', 'origin'], optional=True).strip()
+        repo = slug(remote)
+        if not repo:
+            common = run(['git', '-C', workspace, 'rev-parse', '--path-format=absolute', '--git-common-dir'], optional=True).strip()
+            if not common:
+                return
+            repo = 'local:' + str(Path(common).parent.resolve())
+        commit = run(['git', '-C', workspace, 'rev-parse', 'HEAD'], optional=True).strip()
+        branch = run(['git', '-C', workspace, 'branch', '--show-current'], optional=True).strip()
+        leaf = Path(workspace).name.removeprefix(Path(workspace).parent.name + '-')
+        slot = leaf if re.fullmatch(r'[0-9]+', leaf) else ''
+        workspace_generation, observed = generation(workspace), time.time()
     value = dict(repo=repo, agent=agent, sid=sid, interface=interface,
                  interface_updated=observed, updated=observed,
                  associations=[dict(workspace=workspace, slot=slot, host='local', branch=branch,
-                                    commit=commit, generation=generation(workspace), evidence=event,
+                                    commit=commit, generation=workspace_generation, evidence=event,
                                     observed=observed)])
     if transcript_path:
         value['sources'] = [dict(host='local', path=transcript_path, updated=observed)]
@@ -1947,6 +2002,14 @@ def publish_association(value):
         store.merge(value)
     finally:
         store.close()
+    if transcript_path:
+        try:
+            collector = runpy.run_path(str(Path(__file__).with_name('t_mcp_policy.py')))['collect_observations']
+            workspace = next((item['workspace'] for item in value.get('associations', [])
+                              if item.get('host') == 'local'), '')
+            collector(value['agent'], workspace, value['sid'], transcript_path=transcript_path)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # Optional native observations cannot prevent history publication.
     if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
         _CACHE_REQUEST('event', {'targets': ['local']})
 

@@ -332,16 +332,17 @@ notifications are detached from attachment and hook completion. Deferred discove
 only invalidates snapshots; it never publishes an old live-row overlay after a
 slot closes or is reused. Ownership, launch readiness and worktree preparation
 remain synchronous. No background task changes the active branch or checkout.
-Fresh allocation requests only remote reservation markers on hosts with retired
-desktop integrations, with the existing live inventory fallback for older peers.
-It does not rebuild local display discovery. Foreground launch preflight consumes
+Origin refresh requests coalesce into one detached periodic worker per repository.
+Fresh local allocation performs no remote desktop-reservation scan and does not
+rebuild display discovery. Actual remote CLI attachment retains live discovery.
+Foreground launch preflight consumes
 identity and cwd without reading titles or resolving display labels. Cached
 inventory is never accepted as proof that a workspace has no live owner.
 Try `t open --codex --new` from a registered repository. The isolated
 `python3 scripts/preview_session_start.py` demonstrates history contention without
 starting an agent, touching personal settings or opening a desktop window.
 
-The config hub groups Session defaults, Agents, Workflows, Runners, MCP server, Repositories &
+The config hub groups Session defaults, Agents, Workflows, Runners, MCP servers, Repositories &
 worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices
 separate from
@@ -375,13 +376,44 @@ creation and discovery are removed. Historical interface metadata stays readable
 Old reservation markers protect worktrees from automatic cleanup; exact CLI history
 resume checks writer ownership before starting.
 
-Config → MCP server → Sessions server shows read-only Codex enabled state and
-Claude user-scope registration. Browsing and Refresh status never start servers or
-write settings. Register missing clients now uses an explicit immediate-action
-review, blocks while hub edits are pending, preserves existing registrations and
-disabled entries, and restores the terminal around the existing installer. It is
-separate from config Save. Registration is not proof of an active connection;
-reload the client after registering. No remote fan-out occurs from this menu.
+Config → MCP servers is a plain server list with Refresh and Back, without
+Manage/Navigation headings or a zero-pending review/save footer. It inspects local
+Codex, Claude and Cursor configuration, including available Codex plugin servers.
+Server details distinguish configured enablement from explicit last-observed
+startup status and duration. Missing evidence reads Not measured; authentication
+state is never presented as connection health. Browsing never connects servers,
+writes client configuration, or fans out to remote hosts.
+
+The `sessions · t session tools` detail explains its purpose and the agent's bare
+`t mcp` stdio command. Check setup (`t mcp status`), Set up in agents (`t mcp install`)
+and Remove from agents (`t mcp uninstall`) stay inside that detail. Setup/removal
+retain immediate-action review, block while hub edits are pending, preserve
+custom and disabled entries, and restore the terminal around the installer.
+Registration is not proof of a live connection; reload the client afterward.
+
+Workflows → MCP servers stages Inherit client setting, Enabled or Disabled for
+individual Codex direct and plugin servers. Absent choices inherit native
+configuration. Overrides apply to subsequent launches; workflow Save/Discard and
+review cover the changes. Existing authentication, transports and managed policy
+stay with the client. Claude and Cursor inventory is available, with per-workflow
+controls explicitly unsupported rather than flattening credentials or managed
+configuration into generated files. A missing local server retains its saved
+choice visibly and can be reset to inheritance.
+
+Disabling an absent direct server emits no transport-less native table; explicitly
+enabling one fails before launch with a configure-or-inherit message. A disabled
+parent plugin must be enabled in the client before its individual servers can be
+enabled. Local-only inference uses an isolated runtime with MCP servers disabled;
+its workflow page explains that saved choices are retained for cloud routing.
+Untracked native-only managed definitions are revalidated instead of cached.
+
+`t mcp list [--json]` is read-only general inventory on this machine, with current
+checkout settings where applicable. Lists never open a picker, start servers or
+prompt for updates. Native configuration inspection may invoke `codex mcp list
+--json`; it does not connect its MCP transports. Last-observed data comes only
+from bounded existing native events associated with the exact session and
+configuration. Duration requires an explicit matching start and terminal event;
+absent or changed evidence stays Not measured.
 
 `t mcp status [--json]` is read-only client configuration inspection.
 `t mcp install` adds missing registrations, preserving existing disabled/custom entries.
@@ -1259,9 +1291,10 @@ projection are additive metadata. They must not replace raw identity or evidence
 JSON and non-TTY listings never select or resume; JSON has no ANSI styling,
 presentation headers, or prompts.
 
-Fresh local slots tolerate unavailable remote hosts while checking known owners,
-including legacy reservations reported by older peers. Saved CLI resumes warn
-and continue checking local and reachable owners.
+Fresh local slots use local allocation state without contacting configured hosts.
+Actual remote CLI attachment, local legacy reservations and final workspace-owner
+checks remain guarded. Saved CLI resumes warn and continue checking local and
+reachable owners.
 
 Issue starts warn and skip unavailable registered hosts and unconfigured optional
 cloud providers. Saved resume routes retain local checks and known owners while

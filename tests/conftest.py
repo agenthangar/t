@@ -58,6 +58,7 @@ def t_mod():
 def disable_recovery_watchers(monkeypatch):
     """Session tests must never start a watcher against the developer's tmux."""
     monkeypatch.setenv("T_RECOVERY_DISABLE", "1")
+    monkeypatch.setenv("T_FRESH_REFRESH_DISABLE", "1")
 
 
 @pytest.fixture(autouse=True)

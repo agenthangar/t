@@ -5,37 +5,52 @@ _t_lifecycle_run() {
   else _t_with_progress "Verifying conversation lifecycle" _t_lifecycle_run_impl "$@"; fi
 }
 _t_lifecycle_run_impl() {
-  local scratch frame code=1 worker_rc=0 command_text rx tx worker_pid
+  local scratch frame code=1 worker_rc=0 action count argument rx tx worker_pid index
+  local -a arguments
   scratch=$(mktemp -d) || return 1
-  coproc python3 "$T_HOME/libexec/t_lifecycle.py" bridge "$@"
+  coproc python3 "$T_HOME/libexec/t_lifecycle.py" bridge-shell "$scratch" "$@"
   worker_pid=$!
   exec {rx}<&p {tx}>&p
   {
-    while IFS= read -r frame <&$rx; do
-      if [[ $frame == '{"done": '* ]]; then
-        code=${${frame#*': '}%\}}; break
+    while IFS= read -r -d '' frame <&$rx; do
+      if [[ $frame == done ]]; then
+        IFS= read -r -d '' code <&$rx || code=1
+        [[ $code == <-> ]] || code=1
+        break
       fi
-      command_text=$(python3 "$T_HOME/libexec/t_lifecycle.py" decode "$frame") || break
-      if [[ $frame == '{"output": '* ]]; then
-        eval "$command_text"
+      if [[ $frame == output ]]; then
+        IFS= read -r -d '' argument <&$rx || break
+        print -r -- "$argument"
         continue
       fi
+      [[ $frame == call ]] || break
+      IFS= read -r -d '' action <&$rx || break
+      IFS= read -r -d '' count <&$rx || break
+      [[ $count == <-> && $count -le 128 ]] || break
+      arguments=()
+      for (( index=0; index<count; index++ )); do
+        IFS= read -r -d '' argument <&$rx || break 2
+        arguments+=("$argument")
+      done
       worker_rc=0
       : >"$scratch/error"
-      if [[ $command_text == '_t_lifecycle_effect attach '* ]]; then
+      if [[ $action == attach ]]; then
         # Interactive terminal ownership must not be redirected into diagnostics.
-        eval "$command_text" >"$scratch/output" || worker_rc=$?
+        _t_lifecycle_effect "$action" "${arguments[@]}" >"$scratch/output" || worker_rc=$?
       else
-        eval "$command_text" >"$scratch/output" 2>"$scratch/error" || worker_rc=$?
+        _t_lifecycle_effect "$action" "${arguments[@]}" >"$scratch/output" 2>"$scratch/error" || worker_rc=$?
       fi
       # Keep the original error visible and retain a bounded copy in the receipt,
       # including failures before a pane (and therefore its log) can be created.
       cat "$scratch/error" >&2
-      python3 "$T_HOME/libexec/t_lifecycle.py" reply "$worker_rc" "$scratch/output" "$scratch/error" >&$tx || break
+      print -r -- "$worker_rc" >&$tx || break
     done
+    exec {tx}>&-
+    tx=
     wait "$worker_pid" 2>/dev/null || true
   } always {
-    exec {rx}<&- {tx}>&-
+    exec {rx}<&-
+    [[ -z $tx ]] || exec {tx}>&-
     rm -rf -- "$scratch"
   }
   return $code
@@ -45,7 +60,9 @@ _t_lifecycle_effect() {
   local action=$1; shift
   case $action in
     preflight) _dev_launch_preflight "$@" ;;
-    new) _dev_new_session_effect "$@" ;;
+    new)
+      local _T_LIFECYCLE_VERIFY_READY=1
+      _dev_new_session_effect "$@" ;;
     resume) _dev_resume_session_effect "$@" ;;
     replace-preflight)
       [[ $(tmux display-message -p -t "=$1:" '#{session_path}') == "$2" &&
@@ -65,13 +82,18 @@ _t_lifecycle_effect() {
         local -F SECONDS=0
         while (( SECONDS < 15 )); do
           _DEV_PS_AT=0
+          _dev_ps_snapshot
           pid=$(_dev_session_claude_pid "$session")
-          current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}') || return 1
+          current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}') || {
+            print -u2 "t: $session exited during startup; inspect $HOME/.tmux-logs/$session.log"; return 1
+          }
           [[ $current == "$identity" && ${${current#*|}:A} == ${dir:A} ]] || return 1
           if [[ -n $pid && $(_dev_agent_of_session "$session") == "$agent" ]]; then
             print -r -- "$identity"; return 0
           fi
-          [[ $(tmux display-message -p -t "=$session:" '#{pane_dead}') == 0 ]] || return 1
+          [[ $(tmux display-message -p -t "=$session:" '#{pane_dead}') == 0 ]] || {
+            print -u2 "t: $session exited during startup; inspect $HOME/.tmux-logs/$session.log"; return 1
+          }
           sleep 0.1
         done
         print -u2 "t open: agent startup is not ready; inspect $HOME/.tmux-logs/$session.log"
@@ -80,7 +102,19 @@ _t_lifecycle_effect() {
       _t_history_owner "${session#dev-}" "$sid" "$dir" "$agent" wait ;;
     record)
       local event=$1 session=$2 dir=$3 agent=$4 sid=$5
-      [[ -n $sid ]] || sid=$(_dev_session_sid "$session")
+      if [[ -z $sid && $event == new && -n ${T_LAUNCH_CONTEXT:-} ]]; then
+        # The immutable pane was just verified. A fresh Codex may not have a
+        # thread yet; its SessionStart hook carries the captured revision later.
+        local pid reg registered_dir
+        pid=$(_dev_session_claude_pid "$session")
+        reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$pid"
+        if [[ -n $pid && -r $reg ]]; then
+          IFS=$'\t' read -r sid registered_dir < "$reg"
+          [[ ${registered_dir:A} == ${dir:A} ]] || sid=
+        fi
+      else
+        [[ -n $sid ]] || sid=$(_dev_session_sid "$session")
+      fi
       [[ $event != new ]] || event=launch
       [[ $event != replace ]] || event=resume
       # Launch history invalidates discovery after its detached publication. Do

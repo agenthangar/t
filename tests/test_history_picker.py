@@ -254,7 +254,7 @@ try:
 finally:
     app.store.close()
 '''.replace('MULTI_MODE', repr(multi)))
-    with tempfile.TemporaryDirectory(prefix='t-history-pty-') as short:
+    with tempfile.TemporaryDirectory(prefix='t-history-pty-', dir='/tmp') as short:
         socket = str(Path(short) / 'tmux.sock')
         def tmux(*argv):
             return subprocess.run(['tmux', '-S', socket, '-f', '/dev/null', *argv], env=env,
@@ -367,7 +367,7 @@ try:
 finally:
     app.store.close()
 '''.replace('MULTI_MODE', repr(multi)))
-    with tempfile.TemporaryDirectory(prefix='t-history-small-pty-') as short:
+    with tempfile.TemporaryDirectory(prefix='t-history-small-pty-', dir='/tmp') as short:
         socket = str(Path(short) / 'tmux.sock')
         command = shlex.join([sys.executable, str(harness), str(ROOT), str(snapshot), str(result)])
         def tmux(*argv):

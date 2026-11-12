@@ -572,6 +572,43 @@ def test_deferred_history_freezes_launch_evidence_before_optional_io(history, tm
     assert not calls
 
 
+def test_prepared_history_reuses_creation_evidence_for_first_conversation(history, tmp_path, monkeypatch):
+    workspace = tmp_path / 'worktrees/repo/repo-21'
+    workspace.mkdir(parents=True)
+    gitdir = tmp_path / 'repo/.git/worktrees/repo-21'
+    gitdir.mkdir(parents=True)
+    marker = workspace / '.git'
+    marker.write_text('gitdir: ' + str(gitdir) + '\n')
+    info = marker.stat()
+    generation = history.hashlib.sha256(json.dumps([str(gitdir), info.st_dev, info.st_ino, info.st_ctime_ns]).encode()).hexdigest()
+    context = dict(version=1, workspace=str(workspace), gitdir=str(gitdir), repo='org/repo',
+                   slot='21', branch='dev/repo-21', commit='a' * 40, generation=generation,
+                   observed=100, gitfile_identity=dict(dev=info.st_dev, ino=info.st_ino, ctime_ns=info.st_ctime_ns))
+    monkeypatch.setenv('T_LAUNCH_CONTEXT', json.dumps(context))
+    monkeypatch.setattr(history, 'run', lambda *a, **kw: pytest.fail('creation metadata was rediscovered'))
+    for interface in ('cli', 'unknown'):
+        value = history.capture_association('first', 'codex', str(workspace), interface=interface)
+        association, = value['associations']
+        assert association['commit'] == 'a' * 40
+        assert association['generation'] == generation and association['observed'] == 100
+    assert history.prepared_association('first', str(workspace)) is None
+    assert history.prepared_association('first', str(workspace), 'cli') is None
+    assert history.prepared_association('second', str(workspace)) is None
+    claim = gitdir / 't-launch-conversation'
+    claim.unlink()
+    for change in ({'version': 2}, {'workspace': str(tmp_path)}, {'generation': 'wrong'},
+                   {'commit': 'bad'}, {'branch': ''}, {'slot': 'wrong'}, {'observed': float('nan')},
+                   {'gitfile_identity': dict(dev=0, ino=0, ctime_ns=0)}):
+        monkeypatch.setenv('T_LAUNCH_CONTEXT', json.dumps({**context, **change}))
+        assert history.prepared_association('first', str(workspace)) is None
+        assert not claim.exists()
+    monkeypatch.setenv('T_LAUNCH_CONTEXT', json.dumps(context))
+    marker.write_text('not a git pointer')
+    context['gitfile_identity']['ctime_ns'] = marker.stat().st_ctime_ns
+    monkeypatch.setenv('T_LAUNCH_CONTEXT', json.dumps(context))
+    assert history.prepared_association('first', str(workspace)) is None
+
+
 def test_deferred_history_returns_while_database_is_locked(history, tmp_path, monkeypatch):
     import time
     repo = tmp_path / 'repo'
@@ -722,6 +759,38 @@ def test_record_association_local_repository_and_wrong_transcript_identity(histo
         wrong = transcript_file(tmp_path / 'wrong.jsonl', codex_rows(workspace, sid='other'))
         history.record_association('selected', 'codex', str(workspace), str(wrong))
         assert [r['sid'] for r in store.records()] == ['local']
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('failure', [PermissionError, ValueError])
+def test_mcp_observation_failure_preserves_history_and_discovery(history, tmp_path, monkeypatch, failure):
+    workspace = str(tmp_path / 'retired-workspace')
+    transcript = str(tmp_path / 'unavailable-transcript.jsonl')
+    value = conversation(sid='captured', interface='cli',
+        associations=[dict(workspace=workspace, host='local', slot='19',
+                           commit='a' * 40, evidence='launch', observed=10)],
+        sources=[dict(host='local', path=transcript, updated=10)])
+    calls, notifications = [], []
+    def unavailable(agent, cwd, sid, **kwargs):
+        calls.append((agent, cwd, sid, kwargs))
+        raise failure('optional native observations unavailable')
+    original = history.runpy.run_path
+    monkeypatch.setattr(history.runpy, 'run_path', lambda path, *a, **kw:
+        {'collect_observations': unavailable} if Path(path).name == 't_mcp_policy.py'
+        else original(path, *a, **kw))
+    monkeypatch.setattr(history, 'run', lambda *a, **kw: pytest.fail('publication rediscovered Git state'))
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *a: notifications.append(a))
+    monkeypatch.setenv('T_DISCOVERY_COLLECTOR', '0')
+    history.publish_association(value)
+    assert calls == [('codex', workspace, 'captured', {'transcript_path': transcript})]
+    assert notifications == [('event', {'targets': ['local']})]
+    store = history.Store()
+    try:
+        saved, = store.records()
+        assert saved['sid'] == 'captured' and saved['interface'] == 'cli'
+        assert saved['associations'][0]['commit'] == 'a' * 40
+        assert saved['sources'][0]['path'] == transcript
     finally:
         store.close()
 

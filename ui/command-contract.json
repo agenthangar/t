@@ -699,9 +699,9 @@
         "tests/test_session_lifecycle.py::test_public_new_scopes_unindexed_writers",
         "tests/test_session_cache.py::test_invalidation_detaches_without_cache_io_or_stale_live_rows",
         "tests/test_history_data.py::test_deferred_history_returns_while_database_is_locked",
-        "tests/test_fresh_slot_allocation.py::test_reservation_scan_never_collects_local_display_and_supports_old_peers",
-        "tests/test_fresh_slot_allocation.py::test_reservations_read_only_matching_worktree_markers",
-        "tests/test_fresh_slot_allocation.py::test_fresh_allocation_requests_reservations_and_honors_cancellation",
+        "tests/test_fresh_slot_allocation.py::test_new_uses_local_allocator_without_remote_probe",
+        "tests/test_fresh_slot_allocation.py::test_numbered_foreground_still_checks_actual_remote_cli",
+        "tests/test_fresh_workspace.py::test_simultaneous_fresh_alias_opens_allocate_distinct_owners",
         "tests/test_fresh_slot_allocation.py::test_foreground_preflight_keeps_conflict_without_display_work"
       ],
       "modes": {
@@ -737,7 +737,7 @@
             "tests/test_picker_ui.py::test_inline_filters_keep_the_list_visible_and_repeat_clears",
             "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
           ],
-          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview or new-session controls. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection’s attach command, continues the batch and returns nonzero."
+          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview or new-session controls. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection\u2019s attach command, continues the batch and returns nonzero."
         },
         "explicit": {
           "argv": [
@@ -753,7 +753,7 @@
           "tests": [
             "tests/test_open_picker.py::test_explicit_open_target_bypasses_picker"
           ],
-          "notes": "Fresh unused local slots tolerate unavailable remote hosts. Known remote owners, including retired integration reservations reported by older peers, still block conflicting launches. Existing workspaces retain ownership checks."
+          "notes": "Fresh local allocation uses a durable counter and local refs without contacting configured hosts. Existing numbered workspaces and actual remote CLI attachment retain live ownership checks. Local legacy, issue and history reservations remain guarded."
         },
         "local": {
           "argv": [
@@ -810,7 +810,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh allocation skips local display discovery and queries only remote worktree reservation markers on hosts with retired desktop integrations, retaining the live inventory fallback on older peers. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh local allocation reserves monotonically increasing numbers under a canonical-repository counter lock, then validates and creates under the workspace launch claim. It never reclaims old branches or queries remote desktop reservations. Cached origin or local default refs supply a pinned commit; one detached worker fetches origin refs every five minutes and observes t-managed update, push and merge refresh requests. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership."
     },
     "session list": {
       "patterns": [
@@ -2598,9 +2598,10 @@
           "read_only": false,
           "terminal": true,
           "tests": [
-            "tests/test_config.py::test_config_mcp_registration_review"
+            "tests/test_config.py::test_config_mcp_registration_review",
+            "tests/test_mcp_policy.py::test_config_inventory_and_workflow_controls"
           ],
-          "notes": "MCP submenu inspection and refresh are read-only. Registration requires immediate-action review and no pending hub edits; preserves existing client entries and disabled settings. Configuration state is not connection health."
+          "notes": "Read-only general MCP inventory and explicit observed startup evidence, with no server connections or zero-pending review footer. t session-tools setup stays inside its server details and retains immediate-action review. Workflow server choices are staged; Codex direct/plugin controls apply to new sessions only."
         },
         "repository_design_system": {
           "argv": [
@@ -4951,6 +4952,50 @@
         }
       }
     },
+    "mcp list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "read_only": true,
+      "terminal": false,
+      "renderer": "plain",
+      "scope": "this machine and current checkout configuration",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_mcp_policy.py::test_inventory_command_contract"
+      ],
+      "notes": "General configured-server inventory; never connects MCP servers, prompts, opens a picker or changes registrations. Status retains its sessions-only JSON shape.",
+      "modes": {
+        "default": {
+          "argv": [
+            "mcp",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_mcp_policy.py::test_inventory_command_contract"
+          ]
+        },
+        "json": {
+          "argv": [
+            "mcp",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_mcp_policy.py::test_inventory_command_contract"
+          ]
+        }
+      }
+    },
     "mcp status": {
       "patterns": [
         "detail",
@@ -5721,6 +5766,35 @@
           ]
         }
       }
+    },
+    "remote mcp list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "mcp",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
     },
     "remote mcp status": {
       "patterns": [

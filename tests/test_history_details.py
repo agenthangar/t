@@ -212,7 +212,7 @@ try:
  row,key,query=app.pick(rows,'api 5');result.write_text(json.dumps(dict(key=key,sid=row['sid'] if row else None)))
 finally:app.store.close()
 ''')
-    with tempfile.TemporaryDirectory(prefix='t-details-geometry-') as directory:
+    with tempfile.TemporaryDirectory(prefix='t-details-geometry-', dir='/tmp') as directory:
         socket = str(Path(directory) / 'tmux.sock')
         def tmux(*args):
             return subprocess.run(['tmux', '-S', socket, '-f', '/dev/null', *args], env=env, text=True,

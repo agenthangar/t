@@ -317,10 +317,12 @@ def current(state):
     return not source or digest(Path(source['path']).read_text()) == source['hash']
 
 
-def launch_policy(w, document, cwd):
+def launch_policy(w, document, cwd, common_dir=None):
     """Resolve only the actual destination's canonical repository scope."""
     try:
-        common = git(cwd or os.getcwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir') if document['repositories'] else None
+        common = common_dir
+        if common is None and document['repositories']:
+            common = git(cwd or os.getcwd(), 'rev-parse', '--path-format=absolute', '--git-common-dir')
         return w['resolve_context'](document, cwd, getattr(document, 'tool', 'codex'), common_dir=common or None)['workflow']
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -376,7 +378,31 @@ def launch_settings(agent, cwd=None):
     policy = launch_policy(w, w['tool_document'](document, agent), cwd)
     return (setting_args(session_defaults(policy, agent, saved=before is not None), agent) +
             (w['permission_args'](policy, agent) if before is not None else []) +
-            (w.get('inference_args', lambda *a: [])(policy, agent) if before is not None else []))
+            (w.get('inference_args', lambda *a: [])(policy, agent) if before is not None else []) +
+            runpy.run_path(str(Path(__file__).with_name('t_mcp_policy.py')))['launch_args'](policy, agent, cwd))
+
+
+def launch_bundle(agent, cwd=None, common_dir=None):
+    """Resolve defaults and provider prefix from one immutable workflow snapshot."""
+    if agent not in ('codex', 'claude', 'cursor'):
+        raise ValueError('unsupported launch tool')
+    w = workflow()
+    document, before = w['load']()
+    policy = launch_policy(w, w['tool_document'](document, agent), cwd, common_dir=common_dir)
+    if policy is None:
+        raise ValueError('cannot verify workflow scope; launch settings were not applied')
+    mcp_api = runpy.run_path(str(Path(__file__).with_name('t_mcp_policy.py')))
+    arguments = (setting_args(session_defaults(policy, agent, saved=before is not None), agent) +
+                 (w['permission_args'](policy, agent) if before is not None else []) +
+                 (w.get('inference_args', lambda *a: [])(policy, agent) if before is not None else []) +
+                 mcp_api['launch_args'](policy, agent, cwd))
+    prefix, routing = [], None
+    if agent == 'codex' and before is not None and policy['enabled'] and 'inference' in policy:
+        routing = w['inference']()['policy'](policy.get('inference'))
+        prefix = ['python3', str(Path(__file__).with_name('t_local_inference.py')), '--lead-policy',
+                  json.dumps(routing, sort_keys=True, separators=(',', ':'))]
+    return {'args': arguments, 'prefix': prefix, 'routing': routing,
+            'cacheable': mcp_api['cacheable'](policy, agent, cwd)}
 
 
 def resume_settings(sid, cwd=None, agent='codex'):
