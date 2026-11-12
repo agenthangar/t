@@ -95,7 +95,10 @@ class Recovery:
             self.shell('_t_restart_slot', self.session, self.directory, owner['sid'], owner['agent'],
                        'restart-dead', '', owner['dead_identity'])
         else:
-            self.shell('_t_dev', self.repo, self.slot)
+            agent = os.environ.get('T_OPEN_RECOVERY_AGENT', '')
+            if agent not in ('', 'codex', 'claude'):
+                raise ValueError('unsupported recovery agent')
+            self.shell('_t_dev', self.repo, self.slot, *(['--' + agent] if agent else []))
 
     def source(self, record, confirm):
         if self.workspace.is_symlink():

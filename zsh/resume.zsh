@@ -125,6 +125,8 @@ _t_resume() {
   # peer warns instead of vetoing independent local/reachable work. Dynamic
   # scope keeps this policy out of unrelated launches and transfer preflight.
   local _T_RESUME_ALLOW_UNAVAILABLE=1
+  local -x T_RESUME_REPAIR=0
+  [[ -t 0 && -t 1 && -t 2 ]] && T_RESUME_REPAIR=1
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual

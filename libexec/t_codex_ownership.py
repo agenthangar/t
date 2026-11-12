@@ -20,6 +20,11 @@ _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinn
 
 _RETRY = "Retry: t session resume."
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
+_WRITER_SETTLE_SECONDS = 30.0
+
+
+class UnresolvedWriterError(ValueError):
+    """A held writer has not published verifiable workspace metadata yet."""
 
 
 def _processes(run, retry):
@@ -282,7 +287,7 @@ def _thread_cwds(codex_home, sid, *, for_close=False):
     return known
 
 
-def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False, run=None):
+def _scan_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False, run=None):
     """Prefer known worktree conflicts; otherwise retain the unknown policy."""
     if folder is None:
         return None
@@ -313,8 +318,38 @@ def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=Fa
         if any(os.path.realpath(path) == os.path.realpath(cwd) for path in cwds):
             return other
     if unresolved and unknown is None and not for_close:
-        raise ValueError(_unknown_writer_message(*unresolved[0]))
+        raise UnresolvedWriterError(_unknown_writer_message(*unresolved[0]))
     return None
+
+
+def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False, run=None):
+    """Let starting writers publish metadata; never treat a timeout as release.
+
+    Healthy launches and allocator-proven fresh workspaces take one scan. Only
+    unresolved writers enter the bounded wait, with a fresh scan on each retry
+    so a newly published conflict cannot be hidden by an earlier snapshot.
+    """
+    options = dict(unknown=unknown, for_close=for_close, run=run)
+    try:
+        return _scan_cwd_owner(folder, sid, cwd, codex_home, **options)
+    except UnresolvedWriterError:
+        if _WRITER_SETTLE_SECONDS <= 0:
+            raise
+    return _wait_cwd_owner(folder, sid, cwd, codex_home, options)
+
+
+@_spinner('Waiting for conversation ownership')
+def _wait_cwd_owner(folder, sid, cwd, codex_home, options):
+    deadline = time.monotonic() + _WRITER_SETTLE_SECONDS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(.5, remaining))
+        try:
+            return _scan_cwd_owner(folder, sid, cwd, codex_home, **options)
+        except UnresolvedWriterError:
+            if time.monotonic() >= deadline:
+                raise
 
 
 
@@ -426,6 +461,11 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
             guidance = "Wait for its owning backend to exit before resuming. "
             raise ValueError("another Codex conversation in this worktree is still loaded "
                              f"({other}). " + guidance + retry)
+        # Resolving a starting sibling may take time. Recheck the selected
+        # writer before returning; the native resume still claims it atomically.
+        if target and _lock_held(target):
+            raise ValueError("the selected Codex conversation is still loaded "
+                             "(its writer lock is held). " + retry)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("could not verify the selected Codex rollout or writer lock: "
                          + str(exc) + ". " + retry) from exc

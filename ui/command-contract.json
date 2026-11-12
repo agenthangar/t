@@ -703,7 +703,9 @@
         "tests/test_fresh_slot_allocation.py::test_reservation_scan_never_collects_local_display_and_supports_old_peers",
         "tests/test_fresh_slot_allocation.py::test_reservations_read_only_matching_worktree_markers",
         "tests/test_fresh_slot_allocation.py::test_fresh_allocation_requests_reservations_and_honors_cancellation",
-        "tests/test_fresh_slot_allocation.py::test_foreground_preflight_keeps_conflict_without_display_work"
+        "tests/test_fresh_slot_allocation.py::test_foreground_preflight_keeps_conflict_without_display_work",
+        "tests/test_codex_ownership.py::test_starting_writer_waits_for_metadata_and_rechecks_ownership",
+        "tests/test_codex_ownership.py::test_resolved_ownership_does_not_sleep_or_probe_processes"
       ],
       "modes": {
         "default": {
@@ -787,9 +789,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_open_recovery.py::test_force_rechecks_owner_before_reset"
+            "tests/test_open_recovery.py::test_force_rechecks_owner_before_reset",
+            "tests/test_open_recovery.py::test_repair_retains_explicit_agent"
           ],
-          "notes": "On an interactive failed numbered open, offer Repair / Cancel, then Force open / Cancel only after repair fails. Use shared RailUI. Nonterminal failures print a recovery command without prompting. Cancellation returns 130 and stops remaining batch actions."
+          "notes": "On an interactive failed numbered open, offer Repair / Cancel, then Force open / Cancel only after repair fails. Use shared RailUI. Nonterminal failures print a recovery command without prompting. Cancellation returns 130 and stops remaining batch actions. Repair retains an explicit agent selection."
         },
         "force": {
           "argv": [
@@ -830,7 +833,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh allocation skips local display discovery and queries only remote worktree reservation markers on hosts with retired desktop integrations, retaining the live inventory fallback on older peers. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership."
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh allocation skips local display discovery and queries only remote worktree reservation markers on hosts with retired desktop integrations, retaining the live inventory fallback on older peers. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch."
     },
     "session list": {
       "patterns": [
@@ -1160,7 +1163,8 @@
         "action",
         "filtered",
         "multi",
-        "list"
+        "list",
+        "single"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository, or local and registered-host repository identities with --all/outside a checkout",
@@ -1196,7 +1200,9 @@
         "tests/test_resume_history.py::test_batch_tab_failure_never_hides_summary_behind_first_attachment",
         "tests/test_history_picker.py::test_last_turn_sorts_before_pagination_and_unknowns_last",
         "tests/test_history_picker.py::test_history_sort_actions_preserve_query_and_global_identity",
-        "tests/test_history_picker.py::test_history_accepts_exact_row_after_sort_and_retains_refresh_choice"
+        "tests/test_history_picker.py::test_history_accepts_exact_row_after_sort_and_retains_refresh_choice",
+        "tests/test_codex_ownership.py::test_starting_writer_waits_for_metadata_and_rechecks_ownership",
+        "tests/test_codex_ownership.py::test_resolved_ownership_does_not_sleep_or_probe_processes"
       ],
       "modes": {
         "default": {
@@ -1293,6 +1299,24 @@
             "tests/test_resume_history.py::test_plain_slot_resume_routes_to_history"
           ],
           "notes": "Delegates to nonterminal session history; no launch or update prompt."
+        },
+        "repair": {
+          "argv": [
+            "session",
+            "resume",
+            "api",
+            "3"
+          ],
+          "when": "a selected saved conversation fails in an interactive terminal",
+          "patterns": [
+            "action",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
+          ],
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -1308,7 +1332,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Sort labels include direction (last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last turn, repository, agent, host and session. Actual last-turn sorting happens before pagination, unknown last. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; hourly expiry refreshes asynchronously, retaining stale rows and showing freshness. SQLite is restart persistence only. Lifecycle actions verify ownership live and invalidate affected hosts. Sort labels include direction (last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last turn, repository, agent, host and session. Actual last-turn sorting happens before pagination, unknown last. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch.",
       "source_reconciliation": {
         "scope": "selected local and cross-host saved conversations",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1341,7 +1365,9 @@
       "patterns": [
         "list",
         "machine",
-        "multi"
+        "multi",
+        "single",
+        "action"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository and slot",
@@ -1441,6 +1467,24 @@
             "tests/test_history_resume.py::test_history_cli_forms_inference_json_and_readonly",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ]
+        },
+        "repair": {
+          "argv": [
+            "session",
+            "history",
+            "api",
+            "3"
+          ],
+          "when": "a selected saved conversation fails in an interactive terminal",
+          "patterns": [
+            "action",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
+          ],
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI."
         }
       },
       "display_schema": "history_information",

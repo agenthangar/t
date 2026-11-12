@@ -19,10 +19,13 @@ MODULE = Path(__file__).resolve().parent.parent / "libexec" / "t_codex_ownership
 
 
 @pytest.fixture
-def handoff():
+def handoff(monkeypatch):
     spec = importlib.util.spec_from_file_location("t_codex_ownership", MODULE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    # Existing refusal cases model a writer that has already exhausted its
+    # startup grace. Timing is exercised with a virtual clock below.
+    monkeypatch.setattr(module, '_WRITER_SETTLE_SECONDS', 0)
     return module
 
 
@@ -1029,3 +1032,87 @@ def test_index_reads_wal_database_without_sidecars(handoff, tmp_path):
     db.close()
     assert not Path(str(path)+'-wal').exists()
     assert handoff._index_rows(str(path), 'select cwd from threads where id=?', (OTHER,)) == [('/other/worktree',)]
+
+
+@pytest.mark.parametrize('outcome', ['elsewhere', 'same', 'selected', 'released', 'timeout'])
+def test_starting_writer_waits_for_metadata_and_rechecks_ownership(
+        handoff, target, tmp_path, monkeypatch, outcome):
+    """A live lock can precede its rollout; elapsed time never grants ownership."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(handoff, '_WRITER_SETTLE_SECONDS', 30)
+    clock = [0.0]
+    sleeps = []
+    other_lock = target['locks'] / f'{OTHER}.lock'
+    other_lock.touch()
+    with locked(other_lock, tmp_path):
+        selected_handle = None
+        def sleep(seconds):
+            nonlocal selected_handle
+            sleeps.append(seconds)
+            clock[0] += seconds
+            if clock[0] >= 23 and outcome not in ('timeout', 'released'):
+                unindexed_open_rollout(target['home'] / 'sessions', sid=OTHER,
+                    cwd=target['cwd'] if outcome == 'same' else tmp_path / 'unrelated',
+                    name=OTHER)
+                if outcome == 'selected' and selected_handle is None:
+                    import fcntl
+                    selected_handle = (target['locks'] / f'{SID}.lock').open('r')
+                    fcntl.flock(selected_handle, fcntl.LOCK_EX)
+        original_held = handoff._lock_held
+        def held(path):
+            if path == str(other_lock) and outcome == 'released' and clock[0] >= 23:
+                return False
+            return original_held(path)
+        monkeypatch.setattr(handoff, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+        monkeypatch.setattr(handoff, '_lock_held', held)
+        probe, _ = open_writer_probe(other_lock, [], pids=(42,))
+        try:
+            if outcome in ('same', 'selected', 'timeout'):
+                expected = {'same': 'in this worktree', 'selected': 'writer lock is held',
+                            'timeout': 'could not be matched'}[outcome]
+                with pytest.raises(ValueError, match=expected):
+                    handoff.assert_released(None, SID, str(target['cwd']), probe, **options(target))
+            else:
+                handoff.assert_released(None, SID, str(target['cwd']), probe, **options(target))
+            assert sleeps, 'startup ownership must be rechecked before refusing'
+            assert 23 <= clock[0] <= 30
+            assert other_lock.exists()
+        finally:
+            if selected_handle:
+                selected_handle.close()
+
+
+def test_resolved_ownership_does_not_sleep_or_probe_processes(handoff, target, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(handoff, 'time', SimpleNamespace(
+        monotonic=lambda: 0, sleep=lambda *_: pytest.fail('healthy launch must not wait')))
+    handoff.assert_released(None, SID, str(target['cwd']),
+        lambda *a, **k: pytest.fail('healthy launch must not inspect processes'), **options(target))
+
+
+def test_known_conflict_never_waits_for_startup(handoff, target, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(handoff, '_WRITER_SETTLE_SECONDS', 30)
+    monkeypatch.setattr(handoff, 'time', SimpleNamespace(
+        monotonic=lambda: 0, sleep=lambda *_: pytest.fail('known conflicts must fail promptly')))
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    unindexed_open_rollout(target['home'] / 'sessions', sid=OTHER, cwd=target['cwd'], name=OTHER)
+    with locked(lock, tmp_path), pytest.raises(ValueError, match='in this worktree'):
+        handoff.assert_released(None, SID, str(target['cwd']),
+            lambda *a, **k: pytest.fail('known metadata does not need lsof'), **options(target))
+
+
+def test_writer_wait_is_interruptible_without_removing_lock(handoff, target, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(handoff, '_WRITER_SETTLE_SECONDS', 30)
+    def interrupt(*_):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(handoff, 'time', SimpleNamespace(monotonic=lambda: 0, sleep=interrupt))
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    probe, _ = open_writer_probe(lock, [], pids=(42,))
+    with locked(lock, tmp_path):
+        with pytest.raises(KeyboardInterrupt):
+            handoff.assert_released(None, SID, str(target['cwd']), probe, **options(target))
+        assert handoff._lock_held(str(lock))
