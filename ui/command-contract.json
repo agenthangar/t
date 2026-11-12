@@ -681,7 +681,8 @@
         "action",
         "filtered",
         "multi",
-        "wizard"
+        "wizard",
+        "single"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository or all local/remote sessions",
@@ -735,9 +736,12 @@
             "tests/test_picker_ui.py::test_inline_filter_toggle_preserves_query_and_removes_hidden_marks",
             "tests/test_picker_ui.py::test_inline_filters_keep_the_list_visible_and_repeat_clears",
             "tests/test_picker_ui.py::test_inline_filters_keep_the_list_visible_and_repeat_clears",
-            "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible"
+            "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible",
+            "tests/test_session_wait.py::test_open_waits_for_new_attached_row_before_snapshot",
+            "tests/test_open_picker.py::test_open_requests_waited_snapshot_and_keeps_notice_after_toggle",
+            "tests/test_open_picker.py::test_open_incomplete_empty_scope_never_starts_fresh"
           ],
-          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview or new-session controls. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection’s attach command, continues the batch and returns nonzero."
+          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview or new-session controls. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection\u2019s attach command, continues the batch and returns nonzero. Observe pending discovery for at most 30 seconds before freezing the picker snapshot; fresh caches open immediately. Persist a warning for explicitly accepted older/partial results across filter changes. Settled remote failures pause one hour across aliases/context and do not extend the wait; t hosts reset HOST allows an early retry."
         },
         "explicit": {
           "argv": [
@@ -806,6 +810,22 @@
             "tests/test_open_recovery.py::test_force_restores_saved_context"
           ],
           "notes": "Explicit numeric CLI target only. Confirm the target and any client stopped; --yes confirms for scripts. Preserve worktree files and native transcripts. Back up and reset target t history/cache records through owning APIs, reconstruct missing source and resume context when available; otherwise report a fresh conversation. Default-branch fallback requires a separate choice. Recheck ownership and writer release; never bypass unknown owners or kill a shared backend. --host delegates to the selected host with zsh -lic."
+        },
+        "discovery_recovery": {
+          "argv": [
+            "session",
+            "open"
+          ],
+          "when": "pending discovery times out or local discovery is unavailable",
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_session_wait.py::test_open_timeout_requires_explicit_cached_choice",
+            "tests/test_session_wait.py::test_open_recovery_uses_shared_rail_and_restores_terminal"
+          ],
+          "notes": "Shared RailUI: Retry refresh, Browse older results when rows exist, Cancel. Ordinary retries honor remote failure cooldown; local explicit retry may reset its failed scan. Cancel preserves shared refresh. Incomplete empty discovery never launches a session."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -9968,6 +9988,64 @@
             "runs",
             "watch",
             "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "hosts reset": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "explicit registered host alias",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_hosts.py::test_host_reset_only_resets_registered_discovery_target",
+        "tests/test_hosts.py::test_host_reset_adapter_resolves_alias_without_connecting"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "hosts",
+            "reset",
+            "build"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_hosts.py::test_host_reset_only_resets_registered_discovery_target"
+          ]
+        }
+      },
+      "notes": "Clear the actual target\u2019s one-hour discovery failure cooldown across aliases and repository views. Mark snapshots stale without connecting, changing registration, or touching sessions. The next discovery may retry."
+    },
+    "remote hosts reset": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "hosts",
+            "reset"
           ],
           "patterns": [
             "action"

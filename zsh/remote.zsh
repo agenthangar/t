@@ -1147,6 +1147,7 @@ _t_remote_open_inventory() {
   if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
     local -a cache_args
     [[ -n $2 ]] && cache_args+=(--repo "$2")
+    [[ -z ${_T_OPEN_NOTICE_FILE:-} ]] || cache_args+=(--open --notice-file "$_T_OPEN_NOTICE_FILE")
     _t_discovery_rows --host "$1" --cli-only "${cache_args[@]}"
     return $?
   fi

@@ -565,6 +565,20 @@ def _session_discovery():
     return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_session_discovery.py'))
 
 
+def _open_discovery_choice(message, available):
+    ui = _RailUI()
+    try:
+        ui.raw()
+        choices = [('retry', 'Retry refresh')]
+        if available:
+            choices.append(('cached', 'Browse older results'))
+        choices.append(('cancel', 'Cancel'))
+        return ui.pick(message, choices, context=(
+            'Failed remote hosts wait an hour; t hosts reset HOST allows an early retry.',))
+    finally:
+        ui.restore()
+
+
 def cmd_ls(cfg, args):
     try:
         scope, wt_scope = _ls_scope(cfg, args.repo, args.all, os.getcwd())
@@ -1871,6 +1885,10 @@ def cmd_hosts(cfg, args):
                 print("\n".join(_table_lines(("ALIAS", "SSH TARGET"), rows)))
             return 0
         alias = getattr(args, "alias", None)
+        if action == "reset":
+            _session_discovery()['reset_host'](cfg, alias)
+            print(f"Reset discovery cooldown for {alias}. The next session browse may retry this host.")
+            return 0
         if action == "show":
             if alias not in cfg.hosts:
                 raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
@@ -12124,6 +12142,7 @@ COMMAND_GROUPS = {
                "send": ("cursor", "send")},
     "hosts": {"list": ("hosts", "list"), "show": ("hosts", "show"),
              "add": ("hosts", "add"), "edit": ("hosts", "edit"),
+             "reset": ("hosts", "reset"),
              "remove": ("hosts", "remove"), "default": ("hosts", "default"),
              "run": ("on",)},
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
@@ -12632,6 +12651,7 @@ Run `t help issue <verb>` for flags and arguments.
              "Run `t hosts list` to list registered machines.\n"
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
              "  t hosts add mini chris@mini.local\n"
+             "  t hosts reset mini   Clear the one-hour discovery failure cooldown\n"
              "  t hosts run mini t session list\n" if group == "hosts" else "")
     if group == "mcp":
         extra = ("\nSCOPE\n  Commands affect this machine only. Status is read-only; --json prints structured state.\n"
@@ -12693,6 +12713,7 @@ def _command_description(group, action):
                  "clone": "Clone and register a repository", "add": "Register an existing checkout"},
         "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
         "hosts": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
+                  "reset": "Reset a host's session-discovery failure cooldown",
                  "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
                  "remove": "Unregister a host (delete / rm also work)",
                  "default": "Show, set, or clear the legacy beam default",
@@ -13127,9 +13148,9 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Open sessions. Bare: browse all repos; attached sessions are hidden. "
-            "Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; "
-            "run again for updated results. Ownership is checked live before opening.",
+        description="Browse sessions; attached sessions start hidden. Pending discovery waits up to 30 seconds; "
+            "fresh caches open immediately. Failed hosts pause retries for an hour (t hosts reset HOST). "
+            "Ownership is checked live.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
@@ -13737,6 +13758,10 @@ EXAMPLES
     host_show = host_sub.add_parser("show", description="Show a registered host's SSH target and whether "
         "it is the default destination for legacy `t beam`.")
     host_show.add_argument("alias", help="registered host alias")
+    host_reset = host_sub.add_parser("reset", description="Clear a registered host's one-hour session-discovery "
+        "failure cooldown. The next session browse can retry it. This does not connect to the host, "
+        "change registration, or stop sessions.")
+    host_reset.add_argument("alias", help="registered host alias whose discovery cooldown to reset")
     for action in ("add", "edit"):
         hp = host_sub.add_parser(action, description=(
             "Register a remote machine under a short alias." if action == "add" else
@@ -14603,7 +14628,24 @@ def _main(argv):
         cache = _session_discovery()
         selected_host = argv[argv.index('--host') + 1] if '--host' in argv else None
         repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
-        view = cache['discover'](Config(), local='--local' in argv, host=selected_host, fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        options = dict(local='--local' in argv, host=selected_host,
+                       fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        if '--open' in argv:
+            if not sys.stdin.isatty() or not sys.stderr.isatty():
+                print('t open: interactive discovery requires a terminal', file=sys.stderr)
+                return 1
+            # The shell captures rows from stdout. Shared progress and RailUI
+            # stay on the terminal, never in the inventory stream.
+            try:
+                with redirect_stdout(sys.stderr):
+                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, **options)
+            except (OSError, ValueError) as error:
+                print(f't open: {error}', file=sys.stderr)
+                return 1
+            if '--notice-file' in argv:
+                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
+        else:
+            view = cache['discover'](Config(), **options)
         cache['announce'](view)
         text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
         if '--basic' in argv:

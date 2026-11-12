@@ -34,7 +34,7 @@ LEGACY_GROUP_VERBS = {
                 "move", "read", "view-plan", "paste", "search", "goal"},
     "repo": {"list", "cd", "locate", "create", "clone", "add"},
     "cursor": {"list", "resume", "send"},
-    "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
+    "hosts": {"list", "show", "add", "edit", "remove", "default", "reset", "run"},
     "agentcore": {"invoke", "stop"},
     "config": {"open", "show", "edit", "setup", "onboard", "local", "models"},
     "profile": {"init", "edit", "show", "apply"},

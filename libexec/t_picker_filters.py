@@ -374,6 +374,9 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
     warning = ''
+    notice = directory / 'discovery-notice'
+    if notice.exists() and notice.read_text().strip():
+        warning = clip_columns(notice.read_text().strip(), width) + '\n'
     if profile == 'resume':
         # The invocation snapshot persists through every filter/sort/reset reload.
         hosts = (directory / 'auth-hosts').read_text().splitlines() if (directory / 'auth-hosts').exists() else []

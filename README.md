@@ -464,6 +464,7 @@ for a host's login shell.
 | `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
 | `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
 | `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
+| `t hosts reset <alias>` | Clear a failed host's one-hour discovery cooldown; the next browse may retry |
 | `t hosts default [alias] [--clear]` | Show, set, or clear the legacy `t beam` default destination |
 
 `hosts` manages remote machines. Run `t hosts` to see its commands,
@@ -1803,4 +1804,7 @@ macOS discovery permission setup, and hotspot passwords. Its live dashboard show
 the selected network's availability even when fallback is disabled.
 
 Session discovery is served from a shared in-memory cache with hourly expiry
-and asynchronous disk persistence. See [session cache behavior and storage](docs/session-cache.md).
+and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
+refresh before building its picker; fresh cached results open immediately. Failed
+hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
+early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).

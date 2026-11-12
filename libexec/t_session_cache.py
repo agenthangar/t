@@ -161,6 +161,7 @@ class _Memory:
     """No storage access: all request handlers operate on these dictionaries."""
     def __init__(self, collect=_collect, clock=time.time, persist=lambda: None, submit=None):
         self.entries, self.generations, self.artifacts = {}, {}, {}
+        self.failures, self.reset_epochs = {}, {}
         self.active_targets = set()
         self.waiting = {}
         self.overlays = {}
@@ -175,10 +176,28 @@ class _Memory:
         threading.Thread(target=callback, args=args, daemon=True).start()
 
     def restore(self, saved):
-        if not all(isinstance(saved.get(k, {}), dict) for k in ('entries', 'generations', 'artifacts', 'overlays')):
+        if not all(isinstance(saved.get(k, {}), dict) for k in ('entries', 'generations', 'artifacts', 'overlays', 'failures')):
             raise ValueError('invalid discovery snapshot')
         with self.lock:
             invalidated = set(self.generations)
+            failures = dict(saved.get('failures', {}))
+            if 'failures' not in saved:
+                # Upgrade old entry-scoped failures even if a lifecycle event
+                # invalidated the rows while disk restoration was in progress.
+                for entry in saved.get('entries', {}).values():
+                    if not isinstance(entry, dict) or not isinstance(entry.get('spec'), dict):
+                        continue
+                    target, retry = entry['spec'].get('target'), entry.get('retry')
+                    if (isinstance(target, str) and isinstance(entry.get('error'), str) and entry['error']
+                            and isinstance(retry, (int, float)) and math.isfinite(retry)
+                            and retry > failures.get(target, {}).get('retry_at', 0)):
+                        failures[target] = {'retry_at': retry, 'error': entry['error']}
+            for target, failure in failures.items():
+                if (isinstance(target, str) and target and isinstance(failure, dict)
+                        and isinstance(failure.get('error'), str) and failure['error']
+                        and isinstance(failure.get('retry_at'), (int, float))
+                        and math.isfinite(failure['retry_at']) and 0 < failure['retry_at'] <= self.clock() + TTL):
+                    self.failures.setdefault(target, dict(failure))
             for key, entry in saved.get('entries', {}).items():
                 if not isinstance(entry, dict) or not isinstance(entry.get('spec'), dict):
                     continue
@@ -206,7 +225,8 @@ class _Memory:
 
     def snapshot(self):
         with self.lock:
-            return copy.deepcopy(dict(entries=self.entries, generations=self.generations, artifacts=self.artifacts, overlays=self.overlays))
+            return copy.deepcopy(dict(entries=self.entries, generations=self.generations, artifacts=self.artifacts,
+                                      overlays=self.overlays, failures=self.failures))
 
     def handle(self, operation, payload):
         with self.lock:
@@ -218,6 +238,21 @@ class _Memory:
                     self.artifacts[key] = payload['value']
                     self.persist()
                 return {'value': copy.deepcopy(self.artifacts.get(key))}
+            if operation == 'reset-host':
+                target = payload.get('target')
+                if not isinstance(target, str) or not target:
+                    raise ValueError('invalid session discovery host')
+                if self.loading:
+                    raise ValueError('session cache is still loading; retry reset')
+                self.failures.pop(target, None)
+                self.generations[target] = self.generations.get(target, 0) + 1
+                self.reset_epochs[target] = self.reset_epochs.get(target, 0) + 1
+                for entry in self.entries.values():
+                    if entry['spec']['target'] == target:
+                        entry['checked'] = entry['retry'] = 0
+                        entry['error'] = ''
+                self.persist()
+                return {'reset': target}
             if operation == 'forget':
                 target = payload.get('target', 'local')
                 workspace, sid = payload.get('workspace'), payload.get('sid', '')
@@ -297,17 +332,19 @@ class _Memory:
                 if entry is not None:
                     self._overlay(entry)
                     now = self.clock()
+                    failure = self.failures.get(spec['target'], {})
+                    retry = max(entry['retry'], failure.get('retry_at', 0))
                     stale = not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
-                    if stale and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets and now >= entry['retry']:
+                    if stale and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets and now >= retry:
                         entry['refreshing'] = True
                         self.active_targets.add(spec['target'])
                         generation = self.generations.get(spec['target'], 0)
-                        self.submit(self.refresh, key, generation)
+                        self.submit(self.refresh, key, generation, self.reset_epochs.get(spec['target'], 0))
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
                                       checked=entry['checked'], stale=stale,
-                                      refreshing=entry['refreshing'] or (stale and now >= entry['retry']
+                                      refreshing=entry['refreshing'] or (stale and now >= retry
                                           and spec['target'] in self.active_targets),
-                                      error=entry.get('error', ''), retry_at=entry['retry'],
+                                      error=failure.get('error', entry.get('error', '')), retry_at=retry,
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
                 else:
@@ -325,18 +362,34 @@ class _Memory:
         rows += [change['row'] for change in changes.values() if not change['close']]
         value['rows'] = '\n'.join(rows) + ('\n' if rows else '')
 
-    def refresh(self, key, generation):
+    def refresh(self, key, generation, reset_epoch=None):
         spec = self.entries[key]['spec']
+        target = spec['target']
+        if reset_epoch is None:
+            reset_epoch = self.reset_epochs.get(target, 0)
         try:
             value, error = self.collect(spec), ''
         except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired) as exc:
-            value, error = None, ' '.join(str(exc).split())[:512]
+            value, error = None, ' '.join(str(exc).split())[:512] or 'session scan failed'
         with self.lock:
             entry = self.entries[key]
             entry['refreshing'] = False
-            self.active_targets.discard(spec['target'])
-            if generation != self.generations.get(spec['target'], 0):
+            self.active_targets.discard(target)
+            if reset_epoch != self.reset_epochs.get(target, 0):
                 return
+            # Ordinary row invalidation must not erase evidence that a host is
+            # unreachable. Only an explicit reset can supersede this failure.
+            if error:
+                self.failures[target] = {'retry_at': self.clock() + TTL, 'error': error}
+                self.persist()
+            if generation != self.generations.get(target, 0):
+                return
+            if not error:
+                self.failures.pop(target, None)
+                for sibling in self.entries.values():
+                    if sibling['spec']['target'] == target:
+                        sibling['error'] = ''
+                        sibling['retry'] = 0
             entry['error'] = error
             entry['retry'] = self.clock() + TTL
             if value is not None:

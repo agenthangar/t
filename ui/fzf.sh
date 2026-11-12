@@ -19,7 +19,7 @@ _t_fzf_worker() {
     emulate -L zsh
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
-      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK \
+      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK T_PICKER_NOTICE \
       T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
@@ -274,6 +274,7 @@ Tab mark ✓"
     printf '%s\n' "$_t_picker_columns" >> "$T_PICKER_HEADER_ALL"
   fi
   export T_PICKER_VIEWS="$_t_picker_dir" T_PICKER_SESSION_MASK=
+  printf '%s' "${T_PICKER_NOTICE:-}" > "$_t_picker_dir/discovery-notice"
   case ${T_PICKER_SESSION_FILTERS:-} in
     open|resume|list) T_PICKER_SESSION_MASK=1 ;;
     kill) T_PICKER_SESSION_MASK=3 ;;

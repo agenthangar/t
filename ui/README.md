@@ -820,6 +820,20 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
+Before freezing its snapshot, the open picker observes pending discovery for up
+to 30 seconds with the shared delayed spinner. A fresh snapshot opens immediately.
+Timeout or unavailable local discovery offers **Retry refresh / Browse older
+results / Cancel** through RailUI; omit browsing when no rows are available.
+An older or partial snapshot keeps a warning through filter and sort changes.
+An empty incomplete snapshot never starts a fresh session. Cancel returns 130
+without canceling the shared refresh. Settled remote failures retain reachable
+rows and their freshness notices without delaying each subsequent open.
+
+Failed discovery targets pause automatic retries for one hour across aliases and
+repository views, including normal invalidation and cache service restarts.
+`t hosts reset HOST` clears only that registered target's discovery cooldown and
+marks its snapshot stale. It is a direct action with no picker or connection;
+the next browse may retry. Registrations, sessions and worktrees are retained.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
