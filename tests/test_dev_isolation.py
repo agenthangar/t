@@ -1,10 +1,16 @@
 """Development selection is local to a worktree and one command invocation."""
+import fcntl
 import os
 from pathlib import Path
+import pty
+import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import termios
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -77,6 +83,154 @@ def test_selector_uses_only_related_worktree_and_explicit_executable(selector, t
     assert selector.select_root(main, b, env) == main
     (b / 'libexec/t_dev.py').unlink()
     assert not selector.valid(b, main)
+
+
+def test_selector_does_not_probe_unrelated_repositories(selector, trees, monkeypatch):
+    main, a, b, home, env = trees
+    foreign = home / 'foreign'
+    (foreign / '.git').mkdir(parents=True)
+    nested = foreign / 'nested'
+    nested.mkdir()
+    calls = []
+    real_git = selector.git
+
+    def record(root, *args):
+        calls.append(Path(root))
+        return real_git(root, *args)
+
+    monkeypatch.setattr(selector, 'git', record)
+    for cwd in (home, nested, main):
+        assert selector.select_root(main, cwd, env) == main
+    assert calls and set(calls) == {main}
+
+
+def interrupt_git_once(home, env):
+    """Interrupt only the selector process; never signal the test runner."""
+    real_git = shutil.which('git')
+    stub = home / 'bin/git'
+    stub.write_text(f'''#!{sys.executable}
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+marker = Path(os.environ['T_TEST_INTERRUPT_ONCE'])
+if not marker.exists():
+    marker.touch()
+    if os.environ.get('T_TEST_WAIT_INTERRUPT'):
+        time.sleep(20)
+    os.kill(os.getppid(), signal.SIGINT)
+    time.sleep(1)
+    sys.exit(130)
+os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])
+''')
+    stub.chmod(0o755)
+    env['T_TEST_INTERRUPT_ONCE'] = str(home / 'interrupted')
+
+
+@pytest.mark.parametrize('entry', ['libexec/t_dev.py', 'bin/t'])
+def test_source_selection_interrupt_exits_quietly(trees, entry):
+    main, a, b, home, env = trees
+    interrupt_git_once(home, env)
+    args = [str(main)] if entry.endswith('.py') else ['--version']
+    result = subprocess.run([sys.executable, str(main / entry), *args],
+                            cwd=home, env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 130, result.stderr
+    assert result.stdout == result.stderr == ''
+
+
+def test_interrupted_initial_load_keeps_retryable_shell_function(trees):
+    main, a, b, home, env = trees
+    interrupt_git_once(home, env)
+    with (main / 'zsh/shim.zsh').open('a') as file:
+        file.write('\n_t_dispatch() { print -r -- "DISPATCH:$*"; }\n')
+    config = home / '.config/t'
+    config.mkdir(parents=True)
+    (config / 'local.zsh').write_text('print loaded >> "$HOME/loads"\n')
+    script = f'''source {shlex.quote(str(main / 't.plugin.zsh'))}
+print -r -- "source=$?"
+whence -w t
+t open example --new
+print -r -- "retry=$?"
+'''
+    result = subprocess.run(['zsh', '-f', '-c', script], cwd=home, env=env,
+                            text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+    assert result.stdout.splitlines() == [
+        'source=130', 't: function', 'DISPATCH:open example --new', 'retry=0']
+    assert (home / 'loads').read_text().splitlines() == ['loaded']
+
+
+def test_ctrl_c_during_startup_recovers_in_same_interactive_shell(trees):
+    main, a, b, home, env = trees
+    interrupt_git_once(home, env)
+    env.update(T_TEST_WAIT_INTERRUPT='1', PS1='READY> ', RPS1='', TERM='dumb')
+    with (main / 'zsh/shim.zsh').open('a') as file:
+        file.write('\n_t_dispatch() { print -r -- "RECOVERED:$*"; }\n')
+    master, slave = pty.openpty()
+
+    def attach_terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+    process = subprocess.Popen(['zsh', '-f', '-i'], cwd=home, env=env,
+                               stdin=slave, stdout=slave, stderr=slave,
+                               preexec_fn=attach_terminal)
+    os.close(slave)
+    output = bytearray()
+
+    def wait_for(predicate, *, exiting=False):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], .05)[0]:
+                try:
+                    output.extend(os.read(master, 65536))
+                except OSError:  # Linux returns EIO after the slave closes.
+                    pass
+            if predicate():
+                return
+            assert exiting or process.poll() is None, output.decode(errors='replace')
+        pytest.fail(output.decode(errors='replace'))
+
+    try:
+        wait_for(lambda: b'READY> ' in output)
+        os.write(master, f'source {shlex.quote(str(main / "t.plugin.zsh"))}\n'.encode())
+        wait_for(lambda: Path(env['T_TEST_INTERRUPT_ONCE']).exists())
+        os.write(master, b'\x03')
+        wait_for(lambda: output.count(b'READY> ') >= 2)
+        os.write(master, b'whence -w t; t open example --new\n')
+        wait_for(lambda: b'RECOVERED:open example --new' in output)
+        os.write(master, b'unsetopt checkjobs checkrunningjobs; exit 0\n')
+        wait_for(lambda: process.poll() is not None, exiting=True)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        os.close(master)
+    assert b't: function' in output
+    assert b'Traceback' not in output
+    assert b'this verb runs in the shell' not in output
+
+
+@pytest.mark.parametrize('reload', ['_t_reload', 't open example --new'])
+def test_interrupted_reload_does_not_dispatch_stale_source(trees, reload):
+    main, a, b, home, env = trees
+    interrupt_git_once(home, env)
+    script = f'''source {shlex.quote(str(main / 't.plugin.zsh'))} || exit
+_t_dispatch() {{ print UNEXPECTED_DISPATCH; }}
+rm "$T_TEST_INTERRUPT_ONCE"
+{reload}
+print -r -- "cancelled=$?"
+whence -w t
+'''
+    # Load successfully first, then arm the one-shot failure for the reload.
+    Path(env['T_TEST_INTERRUPT_ONCE']).touch()
+    result = subprocess.run(['zsh', '-f', '-c', script], cwd=home, env=env,
+                            text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+    assert result.stdout.splitlines() == ['cancelled=130', 't: function']
 
 
 def test_cli_scopes_are_independent_and_preserve_explicit_paths(trees):

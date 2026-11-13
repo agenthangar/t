@@ -165,6 +165,11 @@ prompts, shell startup, MCP registrations, workflow preferences, or settings.
 Normal installs and canonical updates retain their existing integration behavior.
 The installed source selector must be upgraded once for older installations;
 development setup itself never replaces that shared installation.
+Source selection never probes an unrelated working repository with Git. Cancelling
+selection returns 130 without a traceback or command dispatch. Interrupted initial
+shell loading retains a retryable `t` function; the next invocation finishes loading
+the selected helpers before running the command. Reload failures retain the existing
+dispatcher and never run a command against a stale source.
 
 `t --version` is a read-only detail display. Preserve the release/revision on the
 first line, then show labeled `Source` and `Worktree` paths with their branches.

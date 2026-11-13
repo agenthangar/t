@@ -61,7 +61,10 @@ if __name__ == "__main__":
     # this command and its login-shell children. Never change user-wide links.
     _dev_source = Path(__file__).resolve().parent.parent
     _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
-    _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    try:
+        _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    except KeyboardInterrupt:
+        sys.exit(130)
     os.environ['T_DEV_CONTEXT'] = str(_dev_selected)
     os.environ['T_DEV_CONTEXT_OWNER'] = str(os.getpid())
     if _dev_selected != _dev_source:

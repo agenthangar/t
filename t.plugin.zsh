@@ -1,6 +1,17 @@
 # Source this file from ~/.zshrc after putting the installed t binary on PATH.
 # Development selection follows this shell's current worktree; shared links
 # always retain the normal installation.
+# Keep a retryable front door even if Ctrl-C interrupts initial source selection.
+# A reload must retain the existing dispatcher until its replacement is ready.
+if (( ! ${+functions[t]} )); then
+  t() {
+    emulate -L zsh
+    local plugin="${${(%):-%x}:A}"
+    source "$plugin" || return $?
+    t "$@"
+  }
+fi
+
 _t_load_plugin() {
   local entry="${${(%):-%x}:A}" bin resolved common selected
   # %x in a function is its definition file; resolve that file, not a cached root.
@@ -9,9 +20,9 @@ _t_load_plugin() {
     bin=$(whence -p t 2>/dev/null)
     resolved="${bin:A:h:h}"
     if [[ -n $bin && -r $resolved/libexec/t_dev.py ]]; then
-      selected=$(python3 "${entry:h}/libexec/t_dev.py" "$resolved" --explicit)
+      selected=$(python3 "${entry:h}/libexec/t_dev.py" "$resolved" --explicit) || return $?
     else
-      selected=$(python3 "${entry:h}/libexec/t_dev.py" "${entry:h}")
+      selected=$(python3 "${entry:h}/libexec/t_dev.py" "${entry:h}") || return $?
     fi
     if [[ -n $selected && $selected != ${entry:h} && -r $selected/t.plugin.zsh ]]; then
       source "$selected/t.plugin.zsh"
@@ -92,7 +103,7 @@ _t_reload() {
   bin=$(whence -p t 2>/dev/null)
   [[ -n $bin ]] && root="${bin:A:h:h}"
   if [[ -r $root/libexec/t_dev.py ]]; then
-    root=$(python3 "$root/libexec/t_dev.py" "$root" --explicit)
+    root=$(python3 "$root/libexec/t_dev.py" "$root" --explicit) || return $?
   fi
   plugin="$root/t.plugin.zsh"
   [[ -r $plugin ]] || plugin="$T_HOME/t.plugin.zsh"
@@ -106,7 +117,7 @@ _t_reload_if_moved() {
   bin=$(whence -p t 2>/dev/null)
   [[ -n $bin ]] && root="${bin:A:h:h}"
   if [[ -r $root/libexec/t_dev.py ]]; then
-    root=$(python3 "$root/libexec/t_dev.py" "$root" --explicit)
+    root=$(python3 "$root/libexec/t_dev.py" "$root" --explicit) || return $?
   fi
   plugin="$root/t.plugin.zsh"
   [[ -r $plugin ]] || plugin="$T_HOME/t.plugin.zsh"
