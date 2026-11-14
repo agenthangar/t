@@ -162,10 +162,15 @@ print -r -- "retry=$?"
     assert (home / 'loads').read_text().splitlines() == ['loaded']
 
 
-def test_ctrl_c_during_startup_recovers_in_same_interactive_shell(trees):
+@pytest.mark.parametrize('startup', ['source', 'login'])
+def test_ctrl_c_during_startup_recovers_in_same_interactive_shell(trees, startup):
     main, a, b, home, env = trees
     interrupt_git_once(home, env)
-    env.update(T_TEST_WAIT_INTERRUPT='1', PS1='READY> ', RPS1='', TERM='dumb')
+    env.update(T_TEST_WAIT_INTERRUPT='1', PS1='READY> ', RPS1='', TERM='dumb',
+               SHELL_SESSIONS_DISABLE='1')
+    if startup == 'login':
+        rc = home / '.zshrc'
+        rc.write_text('PS1="READY> "; RPS1=""\n' + rc.read_text())
     with (main / 'zsh/shim.zsh').open('a') as file:
         file.write('\n_t_dispatch() { print -r -- "RECOVERED:$*"; }\n')
     master, slave = pty.openpty()
@@ -174,7 +179,8 @@ def test_ctrl_c_during_startup_recovers_in_same_interactive_shell(trees):
         os.setsid()
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-    process = subprocess.Popen(['zsh', '-f', '-i'], cwd=home, env=env,
+    argv = ['zsh', '-f', '-i'] if startup == 'source' else ['zsh', '-li']
+    process = subprocess.Popen(argv, cwd=home, env=env,
                                stdin=slave, stdout=slave, stderr=slave,
                                preexec_fn=attach_terminal)
     os.close(slave)
@@ -194,11 +200,12 @@ def test_ctrl_c_during_startup_recovers_in_same_interactive_shell(trees):
         pytest.fail(output.decode(errors='replace'))
 
     try:
-        wait_for(lambda: b'READY> ' in output)
-        os.write(master, f'source {shlex.quote(str(main / "t.plugin.zsh"))}\n'.encode())
+        if startup == 'source':
+            wait_for(lambda: b'READY> ' in output)
+            os.write(master, f'source {shlex.quote(str(main / "t.plugin.zsh"))}\n'.encode())
         wait_for(lambda: Path(env['T_TEST_INTERRUPT_ONCE']).exists())
         os.write(master, b'\x03')
-        wait_for(lambda: output.count(b'READY> ') >= 2)
+        wait_for(lambda: output.count(b'READY> ') >= (2 if startup == 'source' else 1))
         os.write(master, b'whence -w t; t open example --new\n')
         wait_for(lambda: b'RECOVERED:open example --new' in output)
         os.write(master, b'unsetopt checkjobs checkrunningjobs; exit 0\n')

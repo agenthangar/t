@@ -63,7 +63,7 @@ def test_fast_shards_partition_all_eligible_cases_once(monkeypatch):
 
 def results(full=True, macos=False, reference=False):
     data = {key: {'result': 'success'} for key in (
-        'scope', 'cli-contract', 'shell', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
+        'scope', 'cli-contract', 'shell', 'startup-smoke', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
         'reference', 'verify-shards', 'macos', 'playground', 'gitleaks', 'pip-audit', 'codeql')}
     skipped = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage'}
     if not macos:
@@ -76,16 +76,36 @@ def results(full=True, macos=False, reference=False):
 
 
 @pytest.mark.parametrize('full,macos,reference', [(False, False, False), (True, False, False), (True, True, True)])
-def test_required_gate_rejects_failures_cancellation_missing_and_unexpected_skips(full, macos, reference):
+@pytest.mark.parametrize('job', ['playground', 'startup-smoke'])
+def test_required_gate_rejects_failures_cancellation_missing_and_unexpected_skips(full, macos, reference, job):
     data = results(full, macos, reference)
     policy.check_results(data, full=full, macos=macos, reference=reference)
     for outcome in ('failure', 'cancelled', 'skipped'):
-        data['playground']['result'] = outcome
+        data[job]['result'] = outcome
         with pytest.raises(ValueError):
             policy.check_results(data, full=full, macos=macos, reference=reference)
-    del data['playground']
+    del data[job]
     with pytest.raises(ValueError, match='missing'):
         policy.check_results(data, full=full, macos=macos, reference=reference)
+
+
+def test_startup_smoke_is_unconditional_and_pinned_to_validated_commit():
+    workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
+    smoke = workflow.split('  startup-smoke:\n', 1)[1].split('  pytest:\n', 1)[0]
+    assert '\n    if:' not in smoke
+    assert 'ref: ${{ needs.scope.outputs.sha }}' in smoke
+    for name in (
+        'test_shell_helpers_switch_before_prompt_without_changing_path',
+        'test_source_selection_interrupt_exits_quietly',
+        'test_interrupted_initial_load_keeps_retryable_shell_function',
+        'test_ctrl_c_during_startup_recovers_in_same_interactive_shell',
+        'test_interrupted_reload_does_not_dispatch_stale_source',
+        'test_selector_does_not_probe_unrelated_repositories',
+    ):
+        assert f'tests/test_dev_isolation.py::{name}' in smoke
+        assert policy.fast_node(f'tests/test_dev_isolation.py::{name}')
+    gate = workflow.split('  ci:\n', 1)[1]
+    assert 'shell, startup-smoke, pytest' in gate
 
 
 def test_only_successful_full_gate_writes_same_attempt_evidence(tmp_path, monkeypatch):

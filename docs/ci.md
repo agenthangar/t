@@ -6,6 +6,12 @@ deferring expensive integration matrices listed in
 [`scripts/ci_policy.py`](../scripts/ci_policy.py). It is broader than an
 installation-only smoke test. New test files join the fast tier by default.
 
+The separate **Shell startup smoke** job is mandatory on every PR, main push,
+full nightly run and release validation. It tests normal shell dispatch, real
+Ctrl-C during both login startup and explicit sourcing, retrying the next command,
+quiet cancellation and failed reloads. The CI gate rejects failed, cancelled or
+skipped startup smoke even when the fast regression tier is replaced by full CI.
+
 Critical runtime, installer, shell, test-harness and CI changes automatically
 select full Linux validation on PRs. Nightly/release runs always select it for
 the exact pinned commit; a fast PR result cannot authorize publication.
