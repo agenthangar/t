@@ -9782,6 +9782,179 @@
         }
       },
       "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "system apps install": {
+      "patterns": [
+        "action",
+        "detail",
+        "review"
+      ],
+      "renderer": "rail",
+      "scope": "optional desktop app on this Mac; no repository inference",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_nightr.py::test_app_command_routes_and_readonly",
+        "tests/test_nightr.py::test_install_records_only_successful_verified_package"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "apps",
+            "install",
+            "nightr"
+          ],
+          "patterns": [
+            "review",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_install_records_only_successful_verified_package"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "system",
+            "apps",
+            "install",
+            "nightr",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_nightr.py::test_install_dry_run_and_linux_are_safe"
+          ]
+        },
+        "yes": {
+          "argv": [
+            "system",
+            "apps",
+            "install",
+            "nightr",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_install_records_only_successful_verified_package"
+          ]
+        }
+      },
+      "notes": "t install nightr is the compatibility convenience. Installation never authorizes the privileged helper or starts protection."
+    },
+    "remote system apps install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "apps",
+            "install",
+            "nightr"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
+    },
+    "system apps status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "optional desktop app on this Mac; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_nightr.py::test_app_command_routes_and_readonly",
+        "tests/test_nightr.py::test_status_never_installs_or_probes_network"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "apps",
+            "status",
+            "nightr"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_status_never_installs_or_probes_network"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "apps",
+            "status",
+            "nightr",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_status_never_installs_or_probes_network"
+          ]
+        }
+      }
+    },
+    "remote system apps status": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "apps",
+            "status",
+            "nightr"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {

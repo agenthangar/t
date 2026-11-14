@@ -3980,7 +3980,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nosleep ›"), ("edit", "Open config in editor"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
                 edited._workflow_shell_pending = bool(_config_diff(initial, _config_state(edited)))
@@ -4025,11 +4025,15 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     continue
                 if choice == "nosleep":
                     if pending:
-                        ui.done("pending", "Save or discard pending settings before opening Nosleep.")
+                        ui.done("pending", "Save or discard pending settings before opening Nightr.")
                         continue
                     ui.restore()
                     try:
-                        subprocess.call([sys.executable, os.path.join(_t_source_root(), "libexec", "nosleep_config.py")])
+                        app = _nightr_module()
+                        if app["installed"]():
+                            subprocess.call([str(app["CLI"]), "config"])
+                        else:
+                            cmd_apps(edited, argparse.Namespace(action="install", app="nightr", yes=False, dry_run=False))
                     finally:
                         ui.raw()
                     continue
@@ -4961,7 +4965,7 @@ def cmd_config(cfg, args):
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Local worker: t config local --show (setup: t config local)")
-        print("Nosleep: nosleep config --show (setup: t config → Nosleep)")
+        print("Nightr: t system apps status nightr (setup: t config → Nightr)")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
@@ -7496,6 +7500,8 @@ def _install_result(items):
             sel["hosts"].append(it["alias"])
         elif it["kind"] == "shell":
             sel["shell"] = True
+        elif it["kind"] == "app":
+            sel["nightr"] = True
     return sel
 
 
@@ -7578,6 +7584,9 @@ def _install_plan(sel, probed, os_name, has_brew, headless, hosts):
             else:
                 rec(f"login:{a}", "error",
                     f"{a} login: not installed and not selected for install")
+    if sel.get("nightr"):
+        rec("app:nightr", "run", "install Nightr and include its updates in t system update",
+            [sys.executable, str(Path(__file__).resolve()), "system", "apps", "install", "nightr", "--yes"], interactive=True)
     if any(s["do"] == "run" for s in steps):
         rec("sync", "run", "refresh t links, hooks, and selected agent integrations")
     if sel.get("shell"):
@@ -7905,6 +7914,10 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if words[:2] == ["system", "apps"]:
+        return len(words) > 2 and (words[2] == "status" or "--dry-run" in words[3:])
+    if words[:2] == ["install", "nightr"]:
+        return "--dry-run" in words[2:]
     if words[:2] == ["system", "usage"]:
         return True
     if verb == "eval":
@@ -8116,7 +8129,29 @@ def _t_update_all(cfg, args):
     return 1 if failed else 0
 
 
+def _nightr_module():
+    return _NIGHTR
+
+
+def cmd_apps(cfg, args):
+    return _nightr_module()["command"](args, _RailUI)
+
+
 def cmd_update(cfg, args):
+    if getattr(args, "all", False):
+        return _t_update_all(cfg, args)
+    result = _cmd_update_t(cfg, args)
+    if getattr(args, "dev", False) or getattr(args, "relink", False):
+        return result
+    try:
+        app_result = _nightr_module()["update_managed"](check=getattr(args, "check", False))
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print(f"Nightr update: {error}", file=sys.stderr)
+        app_result = 1
+    return result or app_result
+
+
+def _cmd_update_t(cfg, args):
     if getattr(args, "all", False):
         return _t_update_all(cfg, args)
     if getattr(args, "check", False):
@@ -8463,6 +8498,11 @@ def cmd_install(cfg, args):
                   {"t": "header", "sec": "shell", "label": "SHELL SETUP"},
                   {"t": "toggle", "sec": "shell", "kind": "shell", "alias": "zsh integration",
                    "value": f"{shell_rc} · preserve existing settings", "checked": True}]
+    if sys.platform == "darwin" and not args.agents:
+        items += [{"t": "spacer", "sec": "apps"},
+                  {"t": "header", "sec": "apps", "label": "DESKTOP APPS"},
+                  {"t": "toggle", "sec": "apps", "kind": "app", "alias": "Nightr",
+                   "value": "Keep your Mac awake · optional", "checked": False}]
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 
@@ -11870,10 +11910,12 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
+               "apps": {v: ("system", "apps", v) for v in ("install", "status")},
                "diagnose": ("doctor",), "advisories": ("__advisories",),
                "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
 }
 
+_NIGHTR = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_nightr.py'))
 _REMOTE = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_remote.py'))
 _REMOTE['extend_registry'](COMMAND_GROUPS)
 
@@ -11988,6 +12030,8 @@ def _command_path(argv):
 def _canonical_argv(argv):
     """Translate a complete public command; preserve its payload arguments."""
     argv = _hosts_argv(_runners_argv(argv))
+    if argv[:2] == ["install", "nightr"]:
+        return ["system", "apps", "install", "nightr", *argv[2:]]
     if argv == ["workflow", "sync", "--receive"]:
         return ["config", *argv]  # Private transport used by existing registered hosts.
     if argv and argv[0] == "move":
@@ -12325,6 +12369,24 @@ SCOPE
 LEARN MORE
   t help workflow <verb>
 """)
+    if group == "system apps":
+        return _wrap_help("""USAGE
+  t system apps install nightr [--yes|--dry-run]
+  t system apps status nightr [--json]
+
+COMMANDS
+  install  Install Nightr or include an existing copy in managed updates
+  status   Show local installation and update ownership without changes
+
+SCOPE
+  This Mac only; no repository argument or repository inference.
+  Installation is optional and requires macOS and a published signed release.
+  Homebrew owns its installations. Direct installs use verified Nightr releases.
+  t system update includes opted-in apps; it never installs absent apps.
+  Run nightr setup for explicit helper authorization and login preferences.
+  t install nightr is a compatibility convenience.
+  Run t help system apps <verb> for details.
+""")
     if group == "issue":
         return _wrap_help("""USAGE
   t issue <verb> [repo] [arguments] [flags]
@@ -12430,7 +12492,8 @@ def _command_description(group, action):
                    "apply": "Apply permission rules"},
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
-        "system": {"integrate": "Link t and its hooks", "update": "Update t",
+        "system": {"integrate": "Link t and its hooks", "update": "Update t and managed apps",
+                   "apps": "Install and inspect optional desktop apps",
                    "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks", "usage": "Inspect workflow, session and evaluation usage"},
     }
     if group == 'remote' and action not in descriptions['remote']:
@@ -12567,6 +12630,7 @@ def build_parser():
     p._group_parsers = {}
     system = sub.add_parser('system', help='inspect system usage')
     system_sub = system.add_subparsers(dest='system_resource', required=True)
+    _nightr_module()["add_parser"](system_sub)
     usage = system_sub.add_parser('usage', help='inspect recorded workflow, session and evaluation usage')
     usage_sub = usage.add_subparsers(dest='usage_action', required=True)
     for action in ('list', 'show'):
@@ -13480,7 +13544,8 @@ EXAMPLES
   offers Refresh or manual entry); register or unregister repos and set their tool,
   branch and worktree overrides; choose the default beam host and worktree defaults.
 
-  Nosleep opens its own reviewed editor for sleep settings, nearby Wi-Fi discovery,
+  Nightr opens its own reviewed editor when installed, or offers optional app installation.
+  Configure sleep settings, nearby Wi-Fi discovery,
   macOS Location permission and hotspot credentials. Save or discard hub edits first.
 
   Save changes reviews then writes a managed block in T_LOCAL_RC.
@@ -14062,7 +14127,7 @@ PERIODIC CHECKS
 IMPLEMENTED = {
     "remote": cmd_remote,
     "__advisories": cmd_advisories,
-    "system": lambda cfg, args: runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner),
+    "system": lambda cfg, args: cmd_apps(cfg, args) if args.system_resource == "apps" else runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner),
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,
