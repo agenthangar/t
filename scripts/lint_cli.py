@@ -40,7 +40,7 @@ LEGACY_GROUP_VERBS = {
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
-    "system": {"integrate", "update", "diagnose", "advisories", "usage"},
+    "system": {"integrate", "update", "diagnose", "advisories", "usage", "apps"},
 }
 
 

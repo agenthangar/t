@@ -1848,3 +1848,16 @@ Percentages describe observed tokens, not task counts or completeness. Throughpu
 uses matched request time including prefill, never entire task duration. Costs
 are dated API estimates; savings need a compatible frontier-only baseline.
 Reports read existing local evidence only: no model start, downloads or network.
+
+## Optional desktop apps
+
+`t system apps install nightr` reviews installation or adopts an existing Nightr
+installation for updates. `t install nightr` is its compatibility convenience.
+`--yes` explicitly runs installation without review; `--dry-run` is read-only.
+`t system apps status nightr [--json]` never starts an app, prompts or downloads.
+These commands target this Mac and do not infer a repository. Nightr is optional
+in the installer and has its own `t config` entry, separate from coding agents.
+
+`t system update` includes opted-in Nightr installations, preserving Homebrew or
+direct ownership. It never installs an absent app. App setup and helper approval
+remain explicit in `nightr setup`; uninstalling t leaves Nightr installed.

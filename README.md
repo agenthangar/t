@@ -1819,3 +1819,14 @@ and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
 refresh before building its picker; fresh cached results open immediately. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
+
+### Nightr
+
+Install the optional macOS keep-awake app with `t system apps install nightr`
+(or `t install nightr`). Use `--dry-run` to review the acquisition path.
+After installation, `nightr setup` configures the helper and login behavior;
+`nightr config` edits preferences. `t config` includes a Nightr entry.
+
+`t system apps status nightr --json` is read-only. `t system update` includes
+Nightr only after opting in, preserves its package owner, and never installs a
+missing app. Installation requires a published, verified Nightr release.
