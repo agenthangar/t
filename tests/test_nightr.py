@@ -164,7 +164,7 @@ def test_migration_refuses_unowned_hold_without_reset(apps, monkeypatch):
 def test_migration_allows_native_owned_hold(apps, monkeypatch):
     patch(apps, monkeypatch, installed=lambda: "0.1.0")
     results = iter([SimpleNamespace(returncode=0, stdout=" SleepDisabled 1\n"),
-                    SimpleNamespace(returncode=0, stdout='{"holding":true}')])
+                    SimpleNamespace(returncode=0, stdout='{"version":1,"status":{"holding":true}}')])
     monkeypatch.setattr(apps["subprocess"], "run", lambda *a, **kw: next(results))
     apps["assert_migration_safe"]()
 
@@ -197,7 +197,10 @@ def test_concurrent_install_does_not_enter_installer(apps, monkeypatch):
         assert apps["command"](request) == 1
 
 
-@pytest.mark.parametrize("returncode, stdout", [(1, ""), (0, "invalid json"), (0, '{"holding":false}')])
+@pytest.mark.parametrize("returncode, stdout", [(1, ""), (0, "invalid json"),
+    (0, '{"version":1,"status":{"holding":false}}'), (0, '{"holding":true}'),
+    (0, '{"version":2,"status":{"holding":true}}'),
+    (0, '{"version":1,"error":"unknown owner","status":{"holding":true}}')])
 def test_migration_never_accepts_unverified_native_owner(apps, monkeypatch, returncode, stdout):
     patch(apps, monkeypatch, installed=lambda: "0.1.0")
     results = iter([SimpleNamespace(returncode=0, stdout=" SleepDisabled 1\n"),
@@ -256,3 +259,89 @@ def test_missing_package_ownership_cannot_opt_in(apps, monkeypatch, record):
     monkeypatch.setattr(apps["runpy"], "run_path", lambda path: {"read_record": lambda: record})
     with pytest.raises(ValueError, match="ownership is missing"):
         apps["package_owner"]()
+
+
+@pytest.mark.parametrize("owner", ["direct", "homebrew"])
+@pytest.mark.parametrize("result", [0, 7])
+def test_existing_app_adoption_records_only_verified_success(apps, monkeypatch, owner, result):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    monkeypatch.setattr(apps["shutil"], "which", lambda name: None if owner == "direct" else "/test/brew")
+    calls = []
+    patch(apps, monkeypatch, installed=lambda: "0.1.0",
+          brew_owned=lambda brew: owner == "homebrew",
+          package=lambda action: calls.append(action) or result)
+    assert apps["install"]() == result
+    assert calls == ["adopt-" + owner]
+    saved = apps["integration"]()
+    assert (saved["owner"] if saved else None) == (owner if result == 0 else None)
+    if result == 0:
+        assert apps["install"]() == 0
+        assert len(calls) == 1
+
+
+def test_install_rejects_unknown_bundle_and_missing_postinstall_app(apps, monkeypatch, tmp_path):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    app = tmp_path / "Nightr.app"
+    app.mkdir()
+    patch(apps, monkeypatch, APP=app, installed=lambda: None,
+          package=lambda action: pytest.fail("unknown bundle overwritten"))
+    with pytest.raises(ValueError, match="unrecognized"):
+        apps["install"]()
+    app.rmdir()
+    patch(apps, monkeypatch, package=lambda action: 0)
+    with pytest.raises(ValueError, match="did not produce"):
+        apps["install"]()
+    assert apps["integration"]() is None
+    monkeypatch.setattr(apps["sys"], "platform", "linux")
+    with pytest.raises(ValueError, match="requires macOS"):
+        apps["install"]()
+
+
+def test_package_dispatch_uses_bundled_helper(apps, monkeypatch):
+    calls = []
+    def load(path):
+        calls.append(Path(path))
+        return {"main": lambda argv: calls.append(argv) or 6,
+                "read_record": lambda: {"owner": "direct"}}
+    monkeypatch.setattr(apps["runpy"], "run_path", load)
+    assert apps["package"]("check") == 6
+    assert apps["package_owner"]() == "direct"
+    assert calls == [Path(__file__).parents[1] / "libexec/nightr_install.py", ["check"],
+                     Path(__file__).parents[1] / "libexec/nightr_install.py"]
+
+
+def test_brew_probe_and_clear_power_check_are_readonly(apps, monkeypatch):
+    calls = []
+    monkeypatch.setattr(apps["subprocess"], "run", lambda argv, **kw:
+                        calls.append(argv) or SimpleNamespace(returncode=0, stdout="SleepDisabled 0\n"))
+    assert apps["brew_owned"](None) is False
+    assert apps["brew_owned"]("/test/brew") is True
+    apps["assert_migration_safe"]()
+    assert calls == [["/test/brew", "list", "--cask", "agenthangar/tap/nightr"], ["/usr/bin/pmset", "-g"]]
+
+
+def test_status_text_and_existing_dry_run_do_not_mutate(apps, monkeypatch, capsys):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    apps["record"]("direct")
+    patch(apps, monkeypatch, installed=lambda: "0.1.0", install=lambda: pytest.fail("dry run installed"))
+    assert apps["command"](args("status")) == 0
+    assert "0.1.0 · updates managed by t" in capsys.readouterr().out
+    request = args()
+    request.dry_run = True
+    assert apps["command"](request) == 0
+    assert "existing Nightr installation" in capsys.readouterr().out
+
+
+def test_invalid_lock_owner_prevents_install(apps, monkeypatch, capsys):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    patch(apps, monkeypatch, installed=lambda: None, install=lambda: pytest.fail("unsafe lock accepted"))
+    original = apps["os"].fstat
+    def foreign_owner(fd):
+        info = list(original(fd))
+        info[4] = apps["os"].getuid() + 1
+        return apps["os"].stat_result(info)
+    monkeypatch.setattr(apps["os"], "fstat", foreign_owner)
+    request = args()
+    request.yes = True
+    assert apps["command"](request) == 1
+    assert "invalid Nightr integration lock" in capsys.readouterr().err

@@ -90,7 +90,9 @@ def assert_migration_safe():
     if installed():
         result = subprocess.run([str(CLI), "status", "--json"], capture_output=True, text=True, timeout=5)
         try:
-            owned = result.returncode == 0 and json.loads(result.stdout).get("holding") is True
+            response = json.loads(result.stdout)
+            owned = (result.returncode == 0 and response.get("version") == 1
+                     and not response.get("error") and response.get("status", {}).get("holding") is True)
         except (ValueError, AttributeError):
             owned = False
         if owned:
@@ -119,6 +121,7 @@ def update_managed(*, check=False):
 def install():
     if sys.platform != "darwin":
         raise ValueError("Nightr requires macOS; nothing installed")
+    print("Nightr: checking existing protection…", file=sys.stderr)
     assert_migration_safe()
     saved = integration()
     if installed():
