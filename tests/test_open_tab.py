@@ -88,7 +88,7 @@ def test_terminal_without_origin_can_create_dedicated_window(zsh, tmp_path):
     assert source.index('end try') < source.index('do script')
 
 
-def test_multi_open_runs_every_extra_terminal_before_first_attach(zsh, tmp_path):
+def test_multi_open_gives_every_selection_a_window_without_attaching_here(zsh, tmp_path):
     script = tmp_path / 'automation'
     result = zsh(r'''
       osascript() { cat >> "$SCRIPT"; print -u2 EXTRA_WINDOW; }
@@ -96,9 +96,61 @@ def test_multi_open_runs_every_extra_terminal_before_first_attach(zsh, tmp_path)
       _t_open_selected $'local\tapi-1\tdetached\tFirst\nlocal\tapi-2\tdetached\tSecond\nlocal\tapi-3\tdetached\tThird' '' ''
     ''', TERM_PROGRAM='Apple_Terminal', SCRIPT=str(script))
     assert result.returncode == 0
-    assert result.stderr.count('EXTRA_WINDOW') == 2
-    assert result.stdout.count('FIRST_ATTACH') == 1
+    assert result.stderr.count('EXTRA_WINDOW') == 3
+    assert 'FIRST_ATTACH' not in result.stdout
     source = script.read_text()
-    for slot in (2, 3):
-        assert f'    do script "t open api {slot} --cli --local"\n' in source
-    assert 't open api 1' not in source
+    for slot in (1, 2, 3):
+        assert f'  do script "t open api {slot} --cli --local"\n' in source
+    assert 'System Events' not in source
+
+
+@pytest.mark.parametrize('terminal', ['Apple_Terminal', 'iTerm.app'])
+def test_open_window_targets_only_a_new_window(zsh, tmp_path, terminal):
+    script = tmp_path / 'automation'
+    result = zsh(r'''
+      osascript() { cat > "$SCRIPT"; }
+      _dev_open_window 't open "api" 2 --cli --host mini'; print rc=$?
+    ''', TERM_PROGRAM=terminal, SCRIPT=str(script))
+    assert 'rc=0' in result.stdout
+    source = script.read_text()
+    assert 't open \\"api\\" 2 --cli --host mini' in source
+    for unsafe in ('activate', 'front window', 'current window', 'current session', 'write text', 'System Events', 'keystroke'):
+        assert unsafe not in source
+    if terminal == 'Apple_Terminal':
+        assert '  do script "t open \\"api\\" 2 --cli --host mini"\n' in source
+    else:
+        assert 'create window with default profile command "/bin/zsh -lic ' in source
+
+
+@pytest.mark.parametrize('terminal', ['Apple_Terminal', 'iTerm.app'])
+def test_open_window_tmux_uses_client_terminal_program_without_needing_tty(zsh, tmp_path, terminal):
+    script = tmp_path / 'automation'
+    result = zsh('''
+      tmux() { [[ "$*" == 'show-environment -g TERM_PROGRAM' ]] || return 1; print "TERM_PROGRAM=$CLIENT_PROGRAM"; }
+      osascript() { cat > "$SCRIPT"; }
+      _dev_open_window 't open api 2'; print rc=$?
+    ''', TMUX='isolated-stub', TERM_PROGRAM='tmux', CLIENT_PROGRAM=terminal, SCRIPT=str(script))
+    assert 'rc=0' in result.stdout
+    assert 't open api 2' in script.read_text()
+
+
+@pytest.mark.parametrize('environment', [
+    {'SSH_CONNECTION': 'remote'}, {'TERM_PROGRAM': 'unknown'},
+])
+def test_open_window_unavailable_never_automates(zsh, environment):
+    result = zsh('''
+      osascript() { print -u2 WRONG_AUTOMATION; }
+      _dev_open_window 't open api 2'; print rc=$?
+    ''', **({'TERM_PROGRAM': 'Apple_Terminal'} | environment))
+    assert 'rc=1' in result.stdout
+    assert 'WRONG_AUTOMATION' not in result.stderr
+
+
+@pytest.mark.parametrize('terminal', ['Apple_Terminal', 'iTerm.app'])
+def test_open_window_automation_failure_propagates(zsh, terminal):
+    result = zsh('''
+      osascript() { cat >/dev/null; print -u2 'Automation refused'; return 1; }
+      _dev_open_window 't open api 2'; print rc=$?
+    ''', TERM_PROGRAM=terminal)
+    assert 'rc=1' in result.stdout
+    assert 'Automation refused' in result.stderr

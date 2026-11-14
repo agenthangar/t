@@ -16,7 +16,7 @@
 # Keep the title lifecycle in the calling shell: dispatch may change its cwd.
 t() {
   emulate -L zsh
-  _t_reload_if_moved
+  _t_reload_if_moved || return $?
   # Dynamic scope ends when this command returns; child helpers may change cwd
   # while retaining this invocation's source. The selector rejects tmux leaks.
   local -x T_DEV_CONTEXT="$T_HOME" T_DEV_CONTEXT_OWNER=$$
@@ -352,6 +352,16 @@ _t_cd() {
 # The host paths dispatch via _dev_remote_open with the original gh-style args (minus
 # --host / -r), so H's own `t open` re-parses them from ITS $PWD.
 _t_open() {
+  local _T_OPEN_FAILED_REPO= _T_OPEN_FAILED_SLOT= _T_OPEN_FAILED_AGENT= rc
+  _t_open_impl "$@"; rc=$?
+  if (( rc != 0 && rc != 2 && rc != 130 )) && [[ -z ${T_OPEN_RECOVERY_ACTIVE:-} && -n $_T_OPEN_FAILED_REPO && $_T_OPEN_FAILED_SLOT == <-> ]]; then
+    _t_open_recover repair "$_T_OPEN_FAILED_REPO" "$_T_OPEN_FAILED_SLOT" 0 "$_T_OPEN_FAILED_AGENT"
+    return $?
+  fi
+  return $rc
+}
+
+_t_open_impl() {
   local -a a rest mode_pos; local arg want_host= has_host= host= remote= isnew= local_only= app= cli= cli_intent= include_attached=
   for arg in "$@"; do
     if [[ -n $want_host ]]; then host=$arg; want_host=; continue; fi
@@ -374,6 +384,9 @@ _t_open() {
     esac
   done
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
+  if (( ${a[(Ie)--force]} )) && [[ -n $isnew ]]; then
+    print -u2 't open: --force cannot be combined with --new'; return 2
+  fi
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
   # Bare means every repo across local/remote hosts; a named repo filters.
@@ -440,7 +453,7 @@ _t_open() {
       case "$arg" in
         -r|--remote) ;;
         -l|--local|--here) ;;   # --host already names the machine; "force local" is moot
-        --*) flags+=("$arg") ;;
+        -*) flags+=("$arg") ;;
         *)   pos+=("$arg") ;;
       esac
     done
@@ -467,6 +480,22 @@ _t_open() {
 # Complete current-session picker. Return 2 when there are no candidates, or 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
+  local _T_OPEN_NOTICE_FILE picker_result
+  _T_OPEN_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-open-discovery.XXXXXX") || return 1
+  {
+    _t_open_picker_impl "$@"; picker_result=$?
+    # An empty scoped subset of incomplete discovery is not a fresh-slot request.
+    if (( picker_result == 2 )) && [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+      print -u2 -- 't open: discovery is incomplete; no session was started'
+      picker_result=1
+    fi
+    return $picker_result
+  } always {
+    rm -f -- "$_T_OPEN_NOTICE_FILE"
+  }
+}
+
+_t_open_picker_impl() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
   if [[ -z $6 ]]; then
@@ -486,10 +515,10 @@ _t_open_picker() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_t_discovery_rows --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --local --unprefixed --details) || return $?
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
@@ -542,7 +571,7 @@ _t_open_picker() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" \
+    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
@@ -600,13 +629,14 @@ _t_list_snapshot() {
   _t_open_selected "$selected" "" ""
 }
 
-# Desktop selections open immediately; the first CLI selection uses this terminal
-# and the remaining CLI selections get tabs. Preserve the selected host/interface,
-# so a configured default never converts an existing owner as a side effect.
+# Multi-selections each get a new window; a single selection uses this terminal.
+# Preserve the selected host/interface so a configured default never converts an
+# existing owner as a side effect.
 _t_open_selected() {
   local selected="$1" app="$2" cli="$3" row host label state mode cmd rc=0
-  local -a fields args first
-  for row in "${(@f)selected}"; do
+  local -a fields args first rows
+  rows=("${(@f)selected}")
+  for row in "${rows[@]}"; do
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
     if [[ $state == app ]]; then
@@ -627,11 +657,11 @@ _t_open_selected() {
     elif [[ $mode == --cli ]]; then
       args+=(--local)
     fi
-    if (( ! $#first )); then
-      first=("${args[@]}")
-    else
+    if (( $#rows > 1 )); then
       cmd="t open ${(j: :)${(@q)args}}"
-      _dev_open_tab "$cmd" || { print -u2 -r -- "Could not open a terminal. Attach with: $cmd"; rc=1; }
+      _dev_open_window "$cmd" || { print -u2 -r -- "Could not open a terminal window. Attach with: $cmd"; rc=1; }
+    else
+      first=("${args[@]}")
     fi
   done
   if (( $#first )); then
@@ -641,7 +671,9 @@ _t_open_selected() {
         && tmux has-session -t "=dev-${first[1]}-${first[2]}:" 2>/dev/null; then
       tmux switch-client -t "=dev-${first[1]}-${first[2]}:" || rc=1
     else
-      _t_open "${first[@]}" || rc=1
+      _t_open "${first[@]}"; local open_rc=$?
+      (( open_rc == 130 )) && return 130
+      (( open_rc == 0 )) || rc=1
     fi
   fi
   return $rc
@@ -770,7 +802,7 @@ _t() {
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
-    hosts) actions=(list ls show add edit remove default run) ;;
+    hosts) actions=(list ls show add edit remove default reset run) ;;
     workflow) actions=(context list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local models) ;;
@@ -958,7 +990,7 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
         case $action in
-          open) flags+=(--new --fg --cli -l --local --here -r --remote --host --codex --claude -y --yes) ;;
+          open) flags+=(--new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
           close) flags+=(-y --yes -r --remote) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
@@ -971,7 +1003,7 @@ _t() {
       else _values 'slot' 1 2 3 4; fi ;;
     hosts/run)
       (( CURRENT == first )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
-    hosts/show|hosts/remove|hosts/default|hosts/edit)
+    hosts/show|hosts/remove|hosts/default|hosts/edit|hosts/reset)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then
         _values 'host' ${(k)REMOTE_HOSTS}
       elif [[ $group/$action == hosts/edit && $CURRENT == $(( first + 1 )) && ${words[CURRENT]} != -* ]]; then
@@ -988,7 +1020,7 @@ _t() {
       _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -l --local -a --all -h --help; fi ;;
+      else _values 'flag' -r --remote -l --local -a --all --wait -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)

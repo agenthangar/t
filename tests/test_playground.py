@@ -167,3 +167,39 @@ def test_launcher_rejects_image_option_before_docker(monkeypatch, capsys):
     assert error.value.code == 2
     assert "image must be a Docker image tag" in capsys.readouterr().err
     assert not called
+
+
+@pytest.fixture
+def smoke(monkeypatch):
+    spec = importlib.util.spec_from_file_location("playground_smoke", ROOT / "scripts/playground/smoke.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    clock = [0.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    return module
+
+
+def test_smoke_waits_for_async_session_list(smoke, monkeypatch):
+    replies = iter(["Refreshing sessions", "No sessions", "playground 1"])
+    calls = []
+    def run(*command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, next(replies), "")
+    monkeypatch.setattr(smoke, "run", run)
+    result = smoke.expect_output("playground", "zsh", "-lic", "t session list")
+    assert result.stdout == "playground 1"
+    assert len(calls) == 3
+    assert all(call[0] == ("zsh", "-lic", "t session list") for call in calls)
+    assert 0 < calls[-1][1]["timeout"] < calls[0][1]["timeout"] <= 30
+
+
+def test_smoke_discovery_wait_has_deadline_and_reports_last_output(smoke, monkeypatch):
+    calls = []
+    def run(*command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "No sessions", "refresh pending")
+    monkeypatch.setattr(smoke, "run", run)
+    with pytest.raises(AssertionError, match="refresh pending"):
+        smoke.expect_output("playground", "zsh", "-lic", "t ls", timeout=.2)
+    assert len(calls) == 2

@@ -61,7 +61,10 @@ if __name__ == "__main__":
     # this command and its login-shell children. Never change user-wide links.
     _dev_source = Path(__file__).resolve().parent.parent
     _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
-    _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    try:
+        _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    except KeyboardInterrupt:
+        sys.exit(130)
     os.environ['T_DEV_CONTEXT'] = str(_dev_selected)
     os.environ['T_DEV_CONTEXT_OWNER'] = str(os.getpid())
     if _dev_selected != _dev_source:
@@ -263,7 +266,7 @@ def _progress(message, *, machine=False):
 
 @contextmanager
 def _spinner(message, *, machine=False):
-    if machine or not sys.stdout.isatty() or not sys.stderr.isatty():
+    if machine or os.environ.get("T_UPDATE_QUIET") or not sys.stdout.isatty() or not sys.stderr.isatty():
         yield
         return
     helper = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
@@ -565,6 +568,20 @@ def _session_discovery():
     return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_session_discovery.py'))
 
 
+def _open_discovery_choice(message, available):
+    ui = _RailUI()
+    try:
+        ui.raw()
+        choices = [('retry', 'Retry refresh')]
+        if available:
+            choices.append(('cached', 'Browse older results'))
+        choices.append(('cancel', 'Cancel'))
+        return ui.pick(message, choices, context=(
+            'Failed remote hosts wait an hour; t hosts reset HOST allows an early retry.',))
+    finally:
+        ui.restore()
+
+
 def cmd_ls(cfg, args):
     try:
         scope, wt_scope = _ls_scope(cfg, args.repo, args.all, os.getcwd())
@@ -572,6 +589,7 @@ def cmd_ls(cfg, args):
         print(e, file=sys.stderr)
         return 1
     st = Style()
+    view = None
     _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
     command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
     if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
@@ -579,12 +597,18 @@ def cmd_ls(cfg, args):
     else:
         cache = _session_discovery()
         view = cache['discover'](cfg, local=not args.remote, fields=['rows'])
+        if getattr(args, 'wait', False):
+            view = cache['wait_for_refresh'](cfg, view, local=not args.remote)
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
         text = cache['rows'](view, prefixed=args.remote)
     rows = _scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope)
     if not rows:
+        if view and any(h.get('value') is None or h.get('refreshing') or h.get('error')
+                        for h in view.get('hosts', [])):
+            print('No sessions in the available snapshot; discovery is incomplete.')
+            return 0
         if args.remote:
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
             print(f"No dev sessions running{where} on this machine or any reachable host.")
@@ -1864,6 +1888,10 @@ def cmd_hosts(cfg, args):
                 print("\n".join(_table_lines(("ALIAS", "SSH TARGET"), rows)))
             return 0
         alias = getattr(args, "alias", None)
+        if action == "reset":
+            _session_discovery()['reset_host'](cfg, alias)
+            print(f"Reset discovery cooldown for {alias}. The next session browse may retry this host.")
+            return 0
         if action == "show":
             if alias not in cfg.hosts:
                 raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
@@ -2767,6 +2795,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             stages = helper["model_stages"](policy)
             local_only = policy.get("inference", {}).get("mode") == "local-only" and agent == "codex"
             rows = [("enabled", "Use this workflow")]
+            if name:
+                rows.append(('repositories', 'Repositories ›'))
             if not local_only:
                 rows.append(("stages_enabled", "Use multiple models"))
             rows += [(stage, _workflow_stage_title(stage))
@@ -2796,6 +2826,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 values["review"] = "Skipped before PR"
             values["inference"] = policy.get("inference", {}).get("mode", "manual")
             values["enabled"] = "enabled" if policy["enabled"] else "disabled"
+            if name:
+                using = sum(item['using'] for item in _workflow_assignment_rows(cfg, helper, name))
+                values['repositories'] = f"{using} using this workflow"
             values["stages_enabled"] = ", ".join(_workflow_stage_title(stage) for stage in stages) if stages else "No · one model"
             values["main_model"] = defaults.get("model") or _workflow_session_default_label(cfg, policy, agent, "model")
             values["main_effort"] = _workflow_effort(defaults["effort"]) if defaults.get("effort") else _workflow_session_default_label(cfg, policy, agent, "effort")
@@ -2820,6 +2853,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 return
             focus = choice
             changed = copy.deepcopy(policy)
+            if choice == 'repositories':
+                _workflow_repositories_menu(ui, cfg, helper, name)
+                continue  # Assignments and source edits already share the staged document.
             if choice == 'instructions':
                 action = ui.pick('Text instructions', [('edit', 'Edit text instructions'),
                     ('clear', 'Clear text instructions'), *([('undo', 'Undo clear')] if cleared_text is not None else []), ('back', 'Back')],
@@ -3089,6 +3125,100 @@ def _config_workflow(ui, cfg, repo=None):
             return
         last = tool
         _workflow_tool_scope(ui, cfg, tool, lambda scoped: _config_workflow_tool(ui, scoped, repo))
+
+
+def _workflow_assignment_rows(cfg, helper, name):
+    """Read registered assignments without scanning repositories or writing defaults."""
+    document = cfg._workflow_document
+    result = []
+    for alias, path in sorted(cfg.repos.items()):
+        path = os.path.realpath(path)
+        entry = document['repositories'].get(path, {})
+        source = helper['source'](document, path)
+        using = not entry.get('excluded') and 'inline' not in entry and source == name
+        if entry.get('excluded'):
+            label = 'Workflows disabled'
+        elif 'inline' in entry:
+            label = 'Custom workflow'
+        elif 'workflow' in entry:
+            label = 'Assigned · ' + source
+        else:
+            label = 'Inherit global · ' + source
+        if not entry.get('excluded') and not helper['resolved'](document, path)['enabled']:
+            label += ' · Workflow disabled'
+        result.append({'key': 'repo:' + alias, 'alias': alias, 'path': path, 'using': using, 'label': label})
+    return result
+
+
+def _workflow_repositories_menu(ui, cfg, helper, name):
+    focus = 'assign'
+    while True:
+        repositories = _workflow_assignment_rows(cfg, helper, name)
+        available = [item for item in repositories if not item['using']]
+        rows, values, sections = [('assign', '+ Assign repositories…')], {}, {'back': 'Navigation'}
+        for using, heading in ((True, 'Using this workflow'), (False, 'Other repositories')):
+            group = [item for item in repositories if item['using'] == using]
+            if group:
+                sections[group[0]['key']] = heading
+            for item in group:
+                rows.append((item['key'], item['alias'] + ' ›'))
+                values[item['key']] = item['label']
+        rows.append(('back', 'Back'))
+        reason = 'All registered repositories already use this workflow.' if repositories else 'Register a repository with t repo add first.'
+        if not available:
+            values['assign'] = 'All assigned' if repositories else 'No registered repositories'
+        choice = ui.pick('Workflow · ' + name + ' · Repositories', rows, values=values, sections=sections,
+                         disabled={'assign': reason} if not available else {},
+                         default=next((i for i, row in enumerate(rows) if row[0] == focus), 0))
+        if choice in (None, 'back'):
+            return
+        focus = choice
+        if choice == 'assign':
+            if not available:
+                continue
+            selected = ui.pick('Assign repositories to ' + name,
+                               [(item['key'], item['alias']) for item in available], multi=True, marked=set(),
+                               values={item['key']: item['label'] for item in available})
+            if not selected:
+                continue
+            # Build the whole batch before replacing the staged document.
+            after = cfg._workflow_document
+            for item in available:
+                if item['key'] in selected:
+                    after = helper['action'](after, 'use', name, item['path'])
+            cfg._workflow_document = after
+        else:
+            item = next(item for item in repositories if item['key'] == choice)
+            _workflow_assign_repository_menu(ui, cfg, helper, name, item['alias'], item['path'])
+
+
+def _workflow_assign_repository_menu(ui, cfg, helper, name, repo, repository):
+    focus = 'use'
+    while True:
+        document = cfg._workflow_document
+        entry = document['repositories'].get(repository, {})
+        selected = entry.get('workflow') == name and not entry.get('excluded') and 'inline' not in entry
+        rows = [('use', 'Use this workflow'), ('inherit', 'Use global default'),
+                ('choose', 'Choose another workflow ›'), ('disable', 'Disable workflows'),
+                ('design_system', 'Design system ›'), ('back', 'Back')]
+        choice = ui.pick('Repository · ' + repo, rows,
+                         values={'use': name + (' · Selected' if selected else ''), 'inherit': document['default'],
+                                 'choose': helper['source'](document, repository),
+                                 'disable': 'Selected' if entry.get('excluded') else '',
+                                 'design_system': _workflow_design_source_label(helper, document, repository)},
+                         sections={'use': 'Workflow', 'design_system': 'Design', 'back': 'Navigation'},
+                         default=next(i for i, row in enumerate(rows) if row[0] == focus))
+        if choice in (None, 'back'):
+            return
+        focus = choice
+        if choice == 'choose':
+            _workflow_repository_selector(ui, cfg, helper, repo, repository)
+        elif choice == 'design_system':
+            _workflow_design_system_menu(ui, cfg, helper, repo, repository)
+        else:
+            verb = {'use': 'use', 'inherit': 'inherit', 'disable': 'exclude'}[choice]
+            cfg._workflow_document = helper['action'](document, verb, name if verb == 'use' else None, repository)
+            return
 
 
 def _workflow_repository_selector(ui, cfg, helper, repo, repository):
@@ -5254,13 +5384,18 @@ class _RailUI:
 
     def pick(self, label, rows, multi=False, default=0, marked=None,
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
-             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(), model_table=None, benchmark_suite=""):
+             on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
+             columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite="",
+             refresh=None, refresh_interval=.5):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
-        Optional shortcuts return an action key."""
+        Optional shortcuts return an action key. refresh may update context in
+        place; True returns '__done__' without a keypress. Timed repaint retains
+        selection and marks and uses the same viewport as ordinary pickers."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
+        cells, notes = cells or {}, notes or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
         empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
@@ -5272,13 +5407,28 @@ class _RailUI:
                 marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
+        if focused_shortcuts:
+            keys += ' · ' + '/'.join(focused_shortcuts) + ' sources/tools'
         flash = ""
         while True:
-            display = [(f"{self.rail}   {part}", None) for text in context
-                       for part in _wrap_columns(text, max(1, self.cols() - 6))]
+            if refresh is not None and refresh():
+                return '__done__'
+            display = []
+            context_width = max((len(text[0]) for text in context if isinstance(text, tuple)), default=0)
+            for text in context:
+                lines = (self.row(*text, label_width=context_width) if isinstance(text, tuple) else
+                         [f"{self.rail}    {part}" for part in _wrap_columns(text, max(1, self.cols() - 7))])
+                display.extend((line, None) for line in lines)
+            if context:
+                display.append((self.rail, None))
             table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
             table_keys = [key for key, _ in rows if key in table_rows]
             label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
+            widths = [max(len(title), max((len(str(cell[i])) for cell in cells.values()), default=0))
+                      for i, title in enumerate(columns)]
+            model_width = self.cols() - 8 - sum(widths) - 2 * len(widths)
+            table = bool(columns and model_width >= 18)
+            first_cell = True
             for n, (key, text) in enumerate(rows):
                 if n == 1 and rows[0][0] == '' and key not in sections:
                     display.append((self.rail, None))
@@ -5289,8 +5439,43 @@ class _RailUI:
                 if table_keys and key == table_keys[0]:
                     display.append((f"{self.rail}    {self.st.y}{table_header}{self.st.r}", None))
                 mark = ("◼" if n in marks else "◻") if multi else None
-                display += [(line, n) for line in self.row(table_rows.get(key, text), None if key in table_rows else values.get(key), selected=n == cur,
-                            mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key in table_rows:
+                    display += [(line, n) for line in self.row(table_rows[key], selected=n == cur, mark=mark, accent="y" if key in disabled else accents.get(key, ""))]
+                elif key in cells:
+                    if table and first_cell:
+                        heading = 'Model'.ljust(model_width) + '  ' + '  '.join(t.rjust(w) for t, w in zip(columns, widths))
+                        display.extend((line, None) for line in self.row(heading))
+                    first_cell = False
+                    if table:
+                        body = _truncate(text, model_width).ljust(model_width) + '  ' + '  '.join(str(v).rjust(w) for v, w in zip(cells[key], widths))
+                        lines = self.row(body, selected=n == cur)
+                    else:
+                        lines = self.row(text, cells[key][-1], selected=n == cur)
+                        scores = [f'{title} {value}' for title, value in zip(columns[:-1], cells[key][:-1]) if value != '—'] or ['Benchmarks · Unreported']
+                        packed, part = [], ''
+                        for score in scores:
+                            if part and _display_width(part+' · '+score) > self.cols()-7:
+                                packed.append(part); part = ''
+                            part += (' · ' if part else '') + score
+                        packed.append(part)
+                        lines += [f'{self.rail}    {self.st.c}{part}{self.st.r}' for text in packed
+                                  for part in _wrap_columns(text, max(1, self.cols() - 7))]
+                    if notes.get(key):
+                        lines += [f'{self.rail}    {self.st.y}{part}{self.st.r}' for part in _wrap_columns(notes[key], max(1, self.cols() - 7))]
+                    # Only the label anchors the viewport; a short terminal must never lose its cursor.
+                    display.extend((line, n if i == 0 else None) for i, line in enumerate(lines))
+                    if n == cur and details:
+                        display.append((self.rail, None))
+                        for detail in details(key):
+                            display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
+                        display.append((self.rail, None))
+                else:
+                    display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
+                                mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key in table_rows and n == cur and details:
+                    display.append((self.rail, None))
+                    for detail in details(key):
+                        display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
                 if table_keys and key == table_keys[-1]:
                     display.append((self.rail, None))
                     display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None)
@@ -5299,7 +5484,13 @@ class _RailUI:
                     display.append((self.rail, None))
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""
+            if refresh is not None:
+                import select
+                if not select.select([sys.stdin], [], [], max(.05, refresh_interval))[0]:
+                    continue
             k = self.read_key()
+            if k in (focused_shortcuts or {}) and (rows[cur][0] in cells or rows[cur][0] in table_rows):
+                return focused_shortcuts[k], rows[cur][0]
             if k in (shortcuts or {}):
                 return shortcuts[k]
             if k in ("up", "k"):
@@ -7757,17 +7948,21 @@ def _t_canonical_root(source):
     return root
 
 
-def _t_relink(root, dev=False):
+def _t_relink(root, dev=False, quiet=False):
     inst = os.path.join(root, "install.sh")
     if not os.path.isfile(inst):
         print(f"t update: no installer at {inst}", file=sys.stderr)
         return 1
     env = {**os.environ, "T_LINKS_ONLY": "1"}
+    if quiet:
+        env["T_UPDATE_QUIET"] = "1"
     if dev:
         env["T_LINK_DEV"] = "1"
     else:
         env.pop("T_LINK_DEV", None)
     p = subprocess.run([inst], env=env)
+    if p.returncode == 0 and not dev:
+        _t_update_pending(root).unlink(missing_ok=True)
     return p.returncode
 
 
@@ -7879,8 +8074,11 @@ def _t_offer_update(installation=None):
         return 0
     # The existing updater owns checksum checks, Homebrew, fast-forward safety,
     # links and hooks. Its subprocesses must not prompt recursively.
+    # Reuse the accepted offer rather than making a second network check that
+    # can contradict it. The installer still validates the downloaded payload.
     os.environ["T_UPDATE_PROMPTED"] = str(os.getpid())
-    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False)):
+    if cmd_update(None, argparse.Namespace(dev=False, relink=False, check=False,
+                                          _update_available=True)):
         print("t update failed; your original command was not run. Retry it when ready.", file=sys.stderr)
         return 11
     print("t updated. Continuing your command.\n", file=sys.stderr)
@@ -8091,9 +8289,68 @@ def _t_update_ssh_argv(target):
     # Updaters can need a terminal (for example Homebrew sudo), while redirected
     # runs must not allocate one. Authentication never blocks the remaining hosts.
     tty = "-t" if sys.stdin.isatty() and sys.stdout.isatty() else "-T"
-    inner = "T_NO_UPDATE_CHECK=1 t update"
+    inner = "T_NO_UPDATE_CHECK=1 T_UPDATE_QUIET=1 t update"
     return ["ssh", tty, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
             target, f"zsh -lic {shlex.quote(inner)}"]
+
+
+def _t_update_remote(target):
+    """Consume only updater result lines; stream prompts and diagnostics intact."""
+    status, line, passthrough = "updated", "", False
+    results = {"t: up to date": "up to date", "t: updated": "updated"}
+    with subprocess.Popen(_t_update_ssh_argv(target), stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, bufsize=1) as process:
+        try:
+            while char := process.stdout.read(1):
+                if char == "\n":
+                    if line.rstrip("\r") in results and not passthrough:
+                        status = results[line.rstrip("\r")]
+                    else:
+                        print("" if passthrough else line, flush=True)
+                    line, passthrough = "", False
+                elif passthrough:
+                    print(char, end="", flush=True)
+                else:
+                    line += char
+                    if not any((result + "\r").startswith(line) for result in results):
+                        print(line, end="", flush=True)
+                        passthrough = True
+            if line and not passthrough:
+                print(line, end="", flush=True)
+            return process.wait(), status
+        except KeyboardInterrupt:
+            process.terminate()
+            process.wait()
+            raise
+
+
+def _t_update_result(args, status):
+    args._update_status = status
+    if not getattr(args, "_update_batch", False):
+        print(f"t: {status}", flush=True)
+    return 0
+
+
+def _t_update_linked(root):
+    link = os.path.join(HOME, "bin", "t")
+    return (os.path.islink(link) and
+            os.path.realpath(link) == os.path.realpath(os.path.join(root, "bin", "t")))
+
+
+def _t_update_pending(root):
+    return (Path(os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local/state"))) /
+            "t/update" / (hashlib.sha256(root.encode()).hexdigest() + ".pending"))
+
+
+def _t_update_git_command(root, *argv):
+    with _spinner("Checking for updates"):
+        result = subprocess.run(["git", "-C", root, *argv], capture_output=True, text=True)
+    if result.returncode:
+        if result.stdout:
+            print(result.stdout, end="", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+    return result.returncode
 
 
 def _t_update_all(cfg, args):
@@ -8105,27 +8362,27 @@ def _t_update_all(cfg, args):
         if target not in seen:
             hosts.append((alias, target))
             seen.add(target)
-    local_args = argparse.Namespace(**{**vars(args), "all": False})
+    local_args = argparse.Namespace(**{**vars(args), "all": False, "_update_batch": True})
     failed = False
     for alias, target in [("local", None), *hosts]:
-        label = "local" if target is None else f"{alias} ({target})"
-        print(f"t update --all: updating {label}", flush=True)
+        label = alias
+        status = "updated"
         try:
-            rc = (cmd_update(cfg, local_args) if target is None else
-                  subprocess.run(_t_update_ssh_argv(target)).returncode)
+            if target is None:
+                rc = cmd_update(cfg, local_args)
+                status = getattr(local_args, "_update_status", status)
+            else:
+                rc, status = _t_update_remote(target)
         except KeyboardInterrupt:
             rc = 130
         except (OSError, ValueError) as error:
-            print(f"t update --all: {label}: {error}", file=sys.stderr)
+            print(f"{label}: {error}", file=sys.stderr)
             rc = 1
         if rc in (130, -signal.SIGINT):
-            print(f"t update --all: {label}: cancelled; remaining updates stopped", flush=True)
+            print(f"{label}: cancelled; remaining updates stopped", flush=True)
             return 130
-        print(f"t update --all: {label}: " +
-              (f"failed (exit {rc})" if rc else "updated"), flush=True)
+        print(f"{label}: " + (f"failed (exit {rc})" if rc else status), flush=True)
         failed = failed or bool(rc)
-    if not hosts:
-        print("t update --all: no registered remote hosts; local installation only")
     return 1 if failed else 0
 
 
@@ -8194,17 +8451,35 @@ def _cmd_update_t(cfg, args):
                       os.path.realpath(active_link) == os.path.realpath(os.path.join(active, "bin", "t")))
         if args.relink:
             return _t_relink(opt)
+        previous = _t_release_version(opt)
+        pending = _t_update_pending(opt)
+        retry_setup = pending.exists()
         try:
-            upgraded = subprocess.run([brew["brew"], "upgrade", brew["formula"]])
+            with _spinner("Checking Homebrew"):
+                state = ({"available": True} if getattr(args, "_update_available", False) else
+                         _t_updates()["check"]({"kind": "brew", "source": opt,
+                             "current": previous, "brew": brew["brew"], "formula": brew["formula"]}, force=True))
+            if (state.get("checked") and not state.get("error") and
+                    not state.get("available") and not retry_setup):
+                return _t_update_result(args, "up to date")
+            if integrated:
+                pending.parent.mkdir(parents=True, exist_ok=True)
+                pending.touch()
+            upgraded = subprocess.run([brew["brew"], "upgrade", brew["formula"], "--quiet"])
         except OSError as error:
             print(f"t update: could not start Homebrew: {error}", file=sys.stderr)
             return 1
         if upgraded.returncode:
             return upgraded.returncode
+        if previous and _t_release_version(opt) == previous and not retry_setup:
+            pending.unlink(missing_ok=True)
+            return _t_update_result(args, "up to date")
         if integrated:
-            return _t_relink(opt)
-        print("t is upgraded in Homebrew. Run `t integrate` when you want to add its user links.")
-        return 0
+            result = _t_relink(opt, quiet=True)
+            if result:
+                return result
+            pending.unlink(missing_ok=True)
+        return _t_update_result(args, "updated")
     release = _t_release_version(active)
     if release:
         if args.dev:
@@ -8217,7 +8492,17 @@ def _cmd_update_t(cfg, args):
             print(f"t update: release updater missing at {updater}", file=sys.stderr)
             return 1
         try:
-            return subprocess.run([sys.executable, updater]).returncode
+            with _spinner("Checking release"):
+                state = ({"available": True} if getattr(args, "_update_available", False) else
+                         _t_updates()["check"]({"kind": "release", "source": active,
+                                                "current": release}, force=True))
+            if state.get("checked") and not state.get("error") and not state.get("available"):
+                return _t_update_result(args, "up to date")
+            linked_before = _t_update_linked(active)
+            result = subprocess.run([sys.executable, updater],
+                                    env={**os.environ, "T_UPDATE_QUIET": "1"}).returncode
+            status = "up to date" if linked_before and _t_update_linked(active) else "updated"
+            return result if result else _t_update_result(args, status)
         except OSError as exc:
             print(f"t update: could not start release updater: {exc}", file=sys.stderr)
             return 1
@@ -8247,14 +8532,29 @@ def _cmd_update_t(cfg, args):
     if _t_git(canonical, "status", "--porcelain"):
         print("t update: canonical main has local changes; commit or move them before updating", file=sys.stderr)
         return 1
-    fetch = subprocess.run(["git", "-C", canonical, "fetch", "origin", "main"])
-    if fetch.returncode:
-        return fetch.returncode
-    merge = subprocess.run(["git", "-C", canonical, "merge", "--ff-only", "origin/main"])
-    if merge.returncode:
+    fetch = _t_update_git_command(canonical, "fetch", "--quiet", "origin", "main")
+    if fetch:
+        return fetch
+    before = _t_git(canonical, "rev-parse", "HEAD")
+    latest = _t_git(canonical, "rev-parse", "origin/main")
+    pending = _t_update_pending(canonical)
+    if before and before == latest and _t_update_linked(canonical) and not pending.exists():
+        return _t_update_result(args, "up to date")
+    # A failed/interrupted reconciliation must be retried even after HEAD moved.
+    try:
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        pending.touch()
+    except OSError as error:
+        print(f"t update: cannot record pending setup: {error}", file=sys.stderr)
+        return 1
+    merge = _t_update_git_command(canonical, "merge", "--quiet", "--ff-only", "origin/main")
+    if merge:
         print("t update: canonical main diverged; resolve it before relinking", file=sys.stderr)
-        return merge.returncode
-    result = _t_relink(canonical)
+        return merge
+    result = _t_relink(canonical, quiet=True)
+    if result == 0:
+        pending.unlink(missing_ok=True)
+        _t_update_result(args, "updated")
     if result == 0 and local is not None:
         print(f"t now uses local checkout {canonical}; future t update calls update its main branch.")
     return result
@@ -11885,6 +12185,7 @@ COMMAND_GROUPS = {
                "send": ("cursor", "send")},
     "hosts": {"list": ("hosts", "list"), "show": ("hosts", "show"),
              "add": ("hosts", "add"), "edit": ("hosts", "edit"),
+             "reset": ("hosts", "reset"),
              "remove": ("hosts", "remove"), "default": ("hosts", "default"),
              "run": ("on",)},
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
@@ -12355,12 +12656,11 @@ SCOPE
   Models, Behavior and Manage group the editor; resets stay pending until Save.
   Permissions selects Codex and Claude access for new and resumed CLI sessions.
   Lead model and Lead reasoning effort configure the main conversation.
-  Inference & routing: local models; opt-in Continue locally on cloud outage.
-  Time limits: default task 15 min, maximum task 30 min, inactivity 5 min,
-  queue wait 5 min. Reset time limits affects only these four values.
+  Inference & routing: cloud retry limit (default 5m), then pause or local.
+  Time limits: task 15m, maximum 30m, inactivity 5m, queue 5m; reset only these.
   Frontend design configures prototypes and repository design systems.
   CLI planning previews have independent timing and approval settings.
-  Repository assignments select design sources or start guidance drafting.
+  Workflow → Repositories assigns repos; each repo also exposes its design source.
   Text instructions can override work preferences and model-stage guidance.
   Task/repo rules prevail; Markdown overrides preferences, then stage guidance.
   Edits publish native instructions, then reconcile supported loaded sessions.
@@ -12416,6 +12716,7 @@ Run `t help issue <verb>` for flags and arguments.
              "Run `t hosts list` to list registered machines.\n"
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
              "  t hosts add mini chris@mini.local\n"
+             "  t hosts reset mini   Clear the one-hour discovery failure cooldown\n"
              "  t hosts run mini t session list\n" if group == "hosts" else "")
     if group == "mcp":
         extra = ("\nSCOPE\n  Commands affect this machine only. Status is read-only; --json prints structured state.\n"
@@ -12477,6 +12778,7 @@ def _command_description(group, action):
                  "clone": "Clone and register a repository", "add": "Register an existing checkout"},
         "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
         "hosts": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
+                  "reset": "Reset a host's session-discovery failure cooldown",
                  "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
                  "remove": "Unregister a host (delete / rm also work)",
                  "default": "Show, set, or clear the legacy beam default",
@@ -12913,9 +13215,9 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Open sessions. Bare: browse all repos; attached sessions are hidden. "
-            "Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; "
-            "run again for updated results. Ownership is checked live before opening.",
+        description="Browse sessions; attached sessions start hidden. Pending discovery waits up to 30 seconds; "
+            "fresh caches open immediately. Failed hosts pause retries for an hour (t hosts reset HOST). "
+            "Ownership is checked live.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
@@ -12939,7 +13241,7 @@ SELECTION
   Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
-  LAST TURN is newest first by default; unknown timestamps sort last.
+  LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
@@ -12953,13 +13255,15 @@ SELECTION
   Press k to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
-  Use --new to start a new session. The first CLI opens here, others use tabs;
-  Remote pickers add HOST. --fg opens one.
-  Extra tabs stay in the originating window. If Terminal cannot safely create
-  a tab, it opens a new window. Commands never target an existing tab.
+  Use --new to start a new session. One selection opens here; multiple
+  selections each open in a new window, including the first. Remote pickers
+  add HOST. --fg opens one. Failed windows report exact attach commands.
+  Commands target only newly created windows; the invoking terminal stays free.
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  Fresh allocation checks remote reservations without rebuilding the local
+  session list. Older hosts retain their live reservation scan.
   Session-cache refresh and history indexing run in the background. Worktree
   preparation, ownership checks and launch settings finish before you enter.
   Unidentified Codex writers do not block newly allocated worktrees globally.
@@ -12973,6 +13277,21 @@ OPENING DEFAULTS
   apply at CLI launch/resume; speed stays unchanged. Live attach retains its owner;
   isolated sessions apply changes at
   guarded resume/restart.
+
+RECOVERY
+  When a numbered open fails in a terminal, choose Repair or Cancel.
+  If repair fails, choose Force open to reset only that session's t records,
+  reopen its existing worktree, and resume saved context when available.
+  Force open preserves source files and native transcripts. If context is
+  unavailable, it starts a fresh conversation and reports that outcome.
+  t session open api 3 --force enters recovery directly; --yes confirms it
+  for an explicit numeric slot, including noninteractive use. --force does
+  not support --new or --fg. Use --host HOST for a remote target.
+  A live client is identified before stopping and its writer must release.
+  Unknown owners and unavailable hosts remain blocked. Recovery backups
+  remain private under t's lifecycle state directory.
+  A missing worktree uses its saved branch or linked PR when available;
+  falling back to the published default branch requires a separate choice.
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
@@ -12990,6 +13309,8 @@ REMOTE SESSIONS
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
+    sp.add_argument("--force", action="store_true", help="reset this slot's t state and reopen its worktree, resuming context when available")
+    sp.add_argument("-y", "--yes", action="store_true", help="confirm --force for one explicit slot")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
     sp.add_argument("--cli", action="store_true", help="open in the CLI")
     ag = sp.add_argument_group("agent (fresh slots)").add_mutually_exclusive_group()
@@ -13003,7 +13324,7 @@ REMOTE SESSIONS
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List cached live sessions across repositories and registered hosts without prompting. '
             'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
-            'Cold or expired entries refresh in the background; run again for updated results. '
+            'Cold or expired entries refresh in the background; --wait observes refresh for up to 30 seconds. '
             'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
 
@@ -13015,6 +13336,11 @@ REMOTE SESSIONS
   `t session list <repo>`. `-a` explicitly selects every repo (the default).
   Registered hosts are included by default with a HOST column; --local limits
   the view to this machine. -r retains the default.
+
+  Results return immediately by default. Use `t session list --wait` to wait up
+  to 30 seconds for the current refresh, then print available results with their
+  freshness. Ctrl-C cancels this wait; shared background refresh keeps running.
+  Redirected --wait is bounded and silent until results; it never prompts.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
   NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
@@ -13036,6 +13362,7 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", dest="remote", action="store_false",
                           help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
@@ -13148,7 +13475,11 @@ REMOTE SESSIONS
   The details pane opens on larger terminals; Ctrl-/ toggles it and Shift-Up/Down
   scrolls.
 
-  Search covers all pages. Search, paging, and refresh clear marks.
+  Search and sorting cover all pages. Ctrl-S toggles sorting; Ctrl-Y cycles
+  last turn, repository, agent, host, and session. Last turn ↓ defaults to newest
+  user turn first; unknown times sort last. Text sorts ascend. Sorting off
+  restores snapshot order. Sort changes clear marks and return to page 1.
+  Search, paging, and refresh retain sort choices and clear marks.
   Extra selections open in new tabs before the first attaches here.
   Resume errors exit nonzero without reopening the picker; batches stop and
   report already-resumed conversations.
@@ -13209,7 +13540,9 @@ REMOTE SESSIONS
 
   A plain slot target browses saved conversations: select exact
   conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
-  and Ctrl-/ shows details. Without a terminal, history lists without launching.
+  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last turn,
+  repository, agent, host, and session. Last turn ↓ means newest first, unknown last.
+  Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
   With explicit options, a slot without a terminal takes its newest saved chat.
@@ -13492,6 +13825,10 @@ EXAMPLES
     host_show = host_sub.add_parser("show", description="Show a registered host's SSH target and whether "
         "it is the default destination for legacy `t beam`.")
     host_show.add_argument("alias", help="registered host alias")
+    host_reset = host_sub.add_parser("reset", description="Clear a registered host's one-hour session-discovery "
+        "failure cooldown. The next session browse can retry it. This does not connect to the host, "
+        "change registration, or stop sessions.")
+    host_reset.add_argument("alias", help="registered host alias whose discovery cooldown to reset")
     for action in ("add", "edit"):
         hp = host_sub.add_parser(action, description=(
             "Register a remote machine under a short alias." if action == "add" else
@@ -13644,6 +13981,11 @@ EXAMPLES
             "add": "copy a workflow under a new name", "use": "select a named workflow",
             "exclude": "exclude a repository from its workflow", "inherit": "restore the global default for a repository"}[verb],
             description="Global default unless --repo selects a registered repository. No checkout inference or repository picker.")
+        if verb == 'open':
+            leaf.help_details = ('MODEL TESTS\n\n  Inference & routing → Local model → Test model checks shared runtime owners.\n'
+                                 '  Choose Wait for a turn, Interrupt all sessions, or Back. Interruption acts\n'
+                                 '  directly on the listed sessions, without a second confirmation. Progress\n'
+                                 '  refreshes automatically; the test waits for confirmed runtime release.')
         leaf.add_argument("--tool", dest="workflow_tool", choices=("codex", "claude", "cursor"),
                           help="workflow tool; default: repository tool or account default")
         if verb not in ("add", "open", "delete"):
@@ -13933,7 +14275,7 @@ PERIODIC CHECKS
         description='Update t from Homebrew, a published release, or canonical Git main. --local switches any '
             'installation to a local checkout. --relink repeats the selected source; --dev selects the '
             'current t worktree without changing shared installation links. --all updates this machine and registered SSH hosts, continuing after '
-            'failures. Ctrl-C stops remaining updates.',
+            'failures. Current installs skip setup. Ctrl-C stops remaining updates.',
         help_details="""DETAILS
 
   For Homebrew, upgrade the formula and keep any existing user links.
@@ -13941,6 +14283,8 @@ PERIODIC CHECKS
   For a versioned release, install the latest published release.
 
   For a Git checkout, fetch and fast-forward canonical main before relinking.
+  Already-current installations skip setup. Routine Git and setup output is quiet;
+  --all reports one result per host. Required prompts and errors remain visible.
   --relink repeats the selected source without fetching; --dev makes development
   available only inside the current t worktree, without changing shared links,
   hooks or settings. Each worktree automatically uses its own CLI and shell helpers;
@@ -14352,7 +14696,24 @@ def _main(argv):
         cache = _session_discovery()
         selected_host = argv[argv.index('--host') + 1] if '--host' in argv else None
         repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
-        view = cache['discover'](Config(), local='--local' in argv, host=selected_host, fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        options = dict(local='--local' in argv, host=selected_host,
+                       fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        if '--open' in argv:
+            if not sys.stdin.isatty() or not sys.stderr.isatty():
+                print('t open: interactive discovery requires a terminal', file=sys.stderr)
+                return 1
+            # The shell captures rows from stdout. Shared progress and RailUI
+            # stay on the terminal, never in the inventory stream.
+            try:
+                with redirect_stdout(sys.stderr):
+                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, **options)
+            except (OSError, ValueError) as error:
+                print(f't open: {error}', file=sys.stderr)
+                return 1
+            if '--notice-file' in argv:
+                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
+        else:
+            view = cache['discover'](Config(), **options)
         cache['announce'](view)
         text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
         if '--basic' in argv:

@@ -86,7 +86,7 @@ class Runner:
         self.child = None
         self.closing = False
 
-    def run(self, argv, *, input=None, include_stderr=False):
+    def run(self, argv, *, input=None, include_stderr=False, on_wait=None):
         remaining = self.deadline - time.monotonic()
         if self.cancelled:
             raise Cancelled("hotspot attempt cancelled")
@@ -98,11 +98,22 @@ class Runner:
                 env={**os.environ, "LC_ALL": "C"})
         if self.cancelled:
             raise Cancelled("hotspot attempt cancelled")
-        try:
-            output, errors = self.child.communicate(input=input, timeout=max(0.001, self.deadline - time.monotonic()))
-            code = self.child.returncode
-        except subprocess.TimeoutExpired as exc:
-            raise HotspotError("hotspot attempt timed out") from exc
+        while True:
+            if on_wait is not None:
+                on_wait()
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise HotspotError("hotspot attempt timed out")
+            try:
+                output, errors = self.child.communicate(
+                    input=input, timeout=min(0.2, remaining) if on_wait is not None else remaining)
+                code = self.child.returncode
+                break
+            except subprocess.TimeoutExpired as exc:
+                if on_wait is None:
+                    raise HotspotError("hotspot attempt timed out") from exc
+                # communicate resumes its buffered I/O; input must only be supplied once.
+                input = None
         # Reap/cancel any descendants before dropping ownership of this group.
         self.close()
         if code:

@@ -10,6 +10,13 @@ import signal
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_update_checks(t_mod, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(t_mod, "_t_updates", lambda: {
+        "check": lambda *args, **kwargs: {"checked": True, "error": True}})
+
+
 @pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
 def test_update_all_alias_and_exclusive_modes(t_mod, prefix):
     parser = t_mod.build_parser()
@@ -27,7 +34,7 @@ def _batch_update(t_mod, monkeypatch, hosts, outcomes):
     monkeypatch.setattr(t_mod.os.path, "isfile", lambda path: True)
     calls = []
 
-    def run(argv):
+    def run(argv, **kwargs):
         calls.append(argv)
         result = outcomes[len(calls) - 1]
         if isinstance(result, BaseException):
@@ -35,6 +42,8 @@ def _batch_update(t_mod, monkeypatch, hosts, outcomes):
         return argparse.Namespace(returncode=result)
 
     monkeypatch.setattr(t_mod.subprocess, "run", run)
+    monkeypatch.setattr(t_mod, "_t_update_remote", lambda target:
+                        (run(t_mod._t_update_ssh_argv(target)).returncode, "updated"))
     cfg = argparse.Namespace(hosts=hosts)
     args = t_mod.build_parser().parse_args(["update", "--all"])
     return cfg, args, calls
@@ -46,18 +55,17 @@ def test_update_all_runs_local_then_registered_hosts(t_mod, monkeypatch, capsys)
     assert t_mod.cmd_update(cfg, args) == 0
     assert calls[0] == [t_mod.sys.executable, "/release/scripts/install-release.py"]
     assert [argv[-2] for argv in calls[1:]] == ["same", "me@last"]
-    assert all(shlex.split(argv[-1]) == ["zsh", "-lic", "T_NO_UPDATE_CHECK=1 t update"]
+    assert all(shlex.split(argv[-1]) == ["zsh", "-lic", "T_NO_UPDATE_CHECK=1 T_UPDATE_QUIET=1 t update"]
                for argv in calls[1:])
     output = capsys.readouterr().out
-    assert "local: updated" in output and "a (same): updated" in output
-    assert "b (same)" not in output
+    assert output == "local: updated\na: updated\nz: updated\n"
 
 
 def test_update_all_no_hosts(t_mod, monkeypatch, capsys):
     cfg, args, calls = _batch_update(t_mod, monkeypatch, {}, [0])
     assert t_mod.cmd_update(cfg, args) == 0
     assert len(calls) == 1
-    assert "no registered remote hosts" in capsys.readouterr().out
+    assert capsys.readouterr().out == "local: updated\n"
 
 
 @pytest.mark.parametrize("outcomes", [[17, 0, 0], [0, 255, 0],
@@ -68,7 +76,7 @@ def test_update_all_failures_continue(t_mod, monkeypatch, capsys, outcomes):
     assert t_mod.cmd_update(cfg, args) == 1
     assert len(calls) == 3
     output = capsys.readouterr().out
-    assert "failed (exit " in output and "b (online): updated" in output
+    assert "failed (exit " in output and "b: updated" in output
 
 
 @pytest.mark.parametrize("cancel", [130, -signal.SIGINT, KeyboardInterrupt()])
@@ -90,7 +98,7 @@ def test_update_ssh_argv_preserves_login_shell_and_target(t_mod, monkeypatch, tt
     assert argv[-2] == "me@host-name"
     shell, mode, command = shlex.split(argv[-1])
     assert (shell, mode) == ("zsh", "-lic")
-    assert shlex.split(command) == ["T_NO_UPDATE_CHECK=1", "t", "update"]
+    assert shlex.split(command) == ["T_NO_UPDATE_CHECK=1", "T_UPDATE_QUIET=1", "t", "update"]
 
 
 @pytest.mark.parametrize("target", ["-oProxyCommand=bad", "host; touch /tmp/bad", "", "me@host name"])
@@ -114,6 +122,7 @@ def local_checkout(tmp_path, monkeypatch):
                        "XDG_CACHE_HOME": home / ".cache",
                        "XDG_STATE_HOME": home / ".local/state"}.items():
         monkeypatch.setenv(key, str(value))
+    monkeypatch.setattr("t_bin.HOME", str(home))
     remote = tmp_path / "remote.git"
     git(tmp_path, "init", "--bare", "-q", str(remote))
     main = tmp_path / "local t"
@@ -139,7 +148,7 @@ def local_checkout(tmp_path, monkeypatch):
 @pytest.mark.parametrize("source", ["brew", "release"])
 @pytest.mark.parametrize("explicit", [False, True])
 def test_update_local_switches_packaged_install_to_updated_main(
-        t_mod, tmp_path, monkeypatch, local_checkout, source, explicit):
+        t_mod, tmp_path, monkeypatch, local_checkout, source, explicit, capfd):
     main, home = local_checkout
     active = _brew_trees(tmp_path)[0][0] if source == "brew" else _release_tree(tmp_path)
     (home / "bin").mkdir()
@@ -155,6 +164,10 @@ def test_update_local_switches_packaged_install_to_updated_main(
     cfg = argparse.Namespace(repos={} if explicit else {"t": str(main)})
     args = t_mod.build_parser().parse_args(["update", "--local"] + ([str(main)] if explicit else []))
     assert t_mod.cmd_update(cfg, args) == 0
+    output = capfd.readouterr()
+    assert "t: updated" in output.out
+    assert not any(noise in output.out + output.err for noise in
+                   ("Fast-forward", "files changed", "FETCH_HEAD", "Updating "))
     assert (main / "new").read_text() == "merged fix"
     assert (home / "bin/t").resolve() == main / "bin/t"
     assert active.exists()
@@ -487,6 +500,177 @@ def test_integrate_runs_full_release_installer(t_mod, tmp_path, monkeypatch):
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
     assert t_mod.cmd_integrate(None, argparse.Namespace()) == 0
     assert log.read_text().strip() == "unset,unset"
+
+
+def test_current_git_update_skips_installer(t_mod, monkeypatch, local_checkout, capfd):
+    main, home = local_checkout
+    (home / "bin").mkdir()
+    (home / "bin/t").symlink_to(main / "bin/t")
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    monkeypatch.setattr(t_mod, "_t_relink", lambda *a, **k: pytest.fail("already installed"))
+    args = t_mod.build_parser().parse_args(["update"])
+    assert t_mod.cmd_update(None, args) == 0
+    assert capfd.readouterr().out == "t: up to date\n"
+    assert not (home / ".local/state/t/update").exists()
+
+
+def test_git_fetch_failure_keeps_diagnostics_and_skips_setup(t_mod, monkeypatch, local_checkout, capfd):
+    main, home = local_checkout
+    git(main, "remote", "set-url", "origin", str(main.parent / "missing.git"))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    monkeypatch.setattr(t_mod, "_t_relink", lambda *a, **k: pytest.fail("fetch failed"))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) != 0
+    output = capfd.readouterr()
+    assert "missing.git" in output.err and "repository" in output.err
+    assert not output.out
+
+
+def test_git_switch_from_release_at_same_head_still_installs(t_mod, monkeypatch, local_checkout):
+    main, home = local_checkout
+    (home / "bin").mkdir()
+    (home / "bin/t").symlink_to(home / "release/bin/t")
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    args = t_mod.build_parser().parse_args(["update", "--local", str(main)])
+    assert t_mod.cmd_update(None, args) == 0
+    assert (home / "bin/t").resolve() == main / "bin/t"
+
+
+def test_failed_git_setup_retries_at_same_head(t_mod, monkeypatch, local_checkout, capfd):
+    main, home = local_checkout
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    calls = []
+    def relink(root, **kwargs):
+        calls.append(root)
+        (home / "bin").mkdir(exist_ok=True)
+        link = home / "bin/t"
+        if not link.exists():
+            link.symlink_to(main / "bin/t")
+        return 9 if len(calls) == 1 else 0
+    monkeypatch.setattr(t_mod, "_t_relink", relink)
+    args = t_mod.build_parser().parse_args(["update"])
+    assert t_mod.cmd_update(None, args) == 9
+    assert t_mod.cmd_update(None, args) == 0
+    assert t_mod.cmd_update(None, args) == 0
+    assert len(calls) == 2
+    assert capfd.readouterr().out == "t: updated\nt: up to date\n"
+
+
+def test_explicit_repair_clears_pending_setup(t_mod, monkeypatch, local_checkout):
+    main, home = local_checkout
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(main))
+    pending = t_mod._t_update_pending(str(main))
+    pending.parent.mkdir(parents=True)
+    pending.touch()
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
+    assert not pending.exists()
+    monkeypatch.setattr(t_mod, "_t_relink", lambda *a, **k: pytest.fail("already repaired"))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+
+
+def test_current_release_skips_updater_but_relink_still_repairs(t_mod, tmp_path, monkeypatch, capsys):
+    root = _release_tree(tmp_path)
+    (root / "scripts/install-release.py").write_text("raise AssertionError('must not reinstall')")
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
+    checks = []
+    def check(installation, **kwargs):
+        checks.append((installation, kwargs))
+        return {"checked": True, "available": False, "error": False}
+    monkeypatch.setattr(t_mod, "_t_updates", lambda: {"check": check})
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+    assert capsys.readouterr().out == "t: up to date\n"
+    assert checks == [({"kind": "release", "source": str(root), "current": "v1.2.3"}, {"force": True})]
+    calls = []
+    monkeypatch.setattr(t_mod, "_t_relink", lambda root: calls.append(root) or 0)
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
+    assert calls == [str(root)] and len(checks) == 1
+
+
+def test_current_homebrew_skips_relink(t_mod, tmp_path, monkeypatch, capsys):
+    roots, opt, opt_link, brew = _brew_trees(tmp_path)
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    (home / "bin/t").symlink_to(opt / "bin/t")
+    monkeypatch.setattr(t_mod, "HOME", str(home))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[0]))
+    monkeypatch.setenv("T_UPDATE_LOG", str(tmp_path / "log"))
+    monkeypatch.setenv("T_BREW_OPT_LINK", str(opt_link))
+    monkeypatch.setenv("T_BREW_NEXT", str(roots[0].parent))
+    monkeypatch.setattr(t_mod, "_t_relink", lambda *a, **k: pytest.fail("already installed"))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+    assert capsys.readouterr().out == "t: up to date\n"
+
+
+def test_current_homebrew_check_skips_upgrade(t_mod, tmp_path, monkeypatch, capsys):
+    roots, opt, opt_link, brew = _brew_trees(tmp_path)
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[0]))
+    monkeypatch.setattr(t_mod, "_t_updates", lambda: {"check": lambda *a, **k:
+                        {"checked": True, "available": False, "error": False}})
+    monkeypatch.setattr(t_mod.subprocess, "run", lambda *a, **k: pytest.fail("already current"))
+    assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
+    assert capsys.readouterr().out == "t: up to date\n"
+
+
+def test_failed_homebrew_setup_retries_after_upgrade(t_mod, tmp_path, monkeypatch):
+    roots, opt, opt_link, brew = _brew_trees(tmp_path)
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    (home / "bin/t").symlink_to(opt / "bin/t")
+    monkeypatch.setattr(t_mod, "HOME", str(home))
+    monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(opt.resolve()))
+    monkeypatch.setenv("T_UPDATE_LOG", str(tmp_path / "log"))
+    monkeypatch.setenv("T_BREW_OPT_LINK", str(opt_link))
+    monkeypatch.setenv("T_BREW_NEXT", str(roots[1].parent))
+    calls = []
+    monkeypatch.setattr(t_mod, "_t_relink", lambda *a, **k: calls.append(a) or (9 if len(calls) == 1 else 0))
+    args = argparse.Namespace(dev=False, relink=False)
+    assert t_mod.cmd_update(None, args) == 9
+    assert t_mod.cmd_update(None, args) == 0
+    assert t_mod.cmd_update(None, args) == 0
+    assert len(calls) == 2
+
+
+def test_remote_update_interrupt_terminates_child(t_mod, monkeypatch):
+    calls = []
+    class Child:
+        def __enter__(self):
+            self.stdout = self
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, size):
+            raise KeyboardInterrupt
+        def terminate(self):
+            calls.append("terminate")
+        def wait(self):
+            calls.append("wait")
+    monkeypatch.setattr(t_mod.subprocess, "Popen", lambda *a, **k: Child())
+    with pytest.raises(KeyboardInterrupt):
+        t_mod._t_update_remote("sample")
+    assert calls == ["terminate", "wait"]
+
+
+@pytest.mark.parametrize("output,status", [
+    ("t: up to date\n", "up to date"), ("t: updated\r\n", "updated"),
+    ("Review setup? [y/N] accepted\nt: updated\n", "updated"),
+    ("t: updated with a warning\n", "updated"), ("unfinished prompt", "updated"),
+    ("t:", "updated")])
+def test_remote_update_streams_prompts_and_consumes_only_results(t_mod, monkeypatch, capsys, output, status):
+    monkeypatch.setattr(t_mod, "_t_update_ssh_argv", lambda target:
+        [t_mod.sys.executable, "-c", "import sys; sys.stdout.write(" + repr(output) + ")"])
+    assert t_mod._t_update_remote("sample") == (0, status)
+    expected = "".join(line for line in output.splitlines(keepends=True)
+                       if line.strip() not in ("t: updated", "t: up to date"))
+    assert capsys.readouterr().out == expected
+
+
+def test_update_all_reports_current_results(t_mod, monkeypatch, capsys):
+    cfg, args, calls = _batch_update(t_mod, monkeypatch, {"remote": "remote"}, [])
+    monkeypatch.setattr(t_mod, "_t_updates", lambda: {"check": lambda *a, **k:
+                        {"checked": True, "available": False, "error": False}})
+    monkeypatch.setattr(t_mod, "_t_update_remote", lambda target: (0, "up to date"))
+    assert t_mod.cmd_update(cfg, args) == 0
+    assert capsys.readouterr().out == "local: up to date\nremote: up to date\n"
+    assert not calls
 
 
 def test_release_update_missing_script_is_actionable(t_mod, tmp_path, monkeypatch, capsys):

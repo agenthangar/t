@@ -83,11 +83,11 @@
     },
     "bin/t:cmd_update:subprocess.run": {
       "kind": "passthrough",
-      "reason": "Git, Homebrew, and installer output is streamed to the terminal."
+      "reason": "Homebrew and installers retain live prompts and diagnostics; quiet Git work uses the shared spinner."
     },
-    "bin/t:_t_update_all:subprocess.run": {
+    "bin/t:_t_update_remote:subprocess.Popen": {
       "kind": "passthrough",
-      "reason": "Remote update output is streamed to the terminal."
+      "reason": "Remote prompts and diagnostics stream immediately; only final updater result lines are consumed for the per-host summary."
     },
     "bin/t:_install_walk:subprocess.call": {
       "kind": "passthrough",
@@ -228,6 +228,10 @@
     "libexec/t_local_worker.py:git:subprocess.run": {
       "kind": "protocol",
       "reason": "Snapshot and patch operations run in the background local worker; task_status reports progress without terminal chrome."
+    },
+    "libexec/t_local_worker.py:Worker.preflight:time.sleep": {
+      "kind": "protocol",
+      "reason": "MCP admission may wait once for at most 15 seconds only after observed generation completion. Preflight exposes release evidence; no spinner may enter the MCP wire. Busy or unknown inference otherwise returns immediately."
     },
     "libexec/t_local_worker.py:run_worker:subprocess.Popen": {
       "kind": "background",
@@ -576,6 +580,14 @@
     "libexec/t_workflow_install.py:repositories:subprocess.run": {
       "kind": "phase",
       "reason": "Bounded local worktree inventory before listing the affected files for installer confirmation."
+    },
+    "bin/t:_RailUI.pick:select.select": {
+      "kind": "passthrough",
+      "reason": "The shared picker owns the terminal and polls input to repaint asynchronous progress without losing focus."
+    },
+    "libexec/t_model_preflight.py:legacy_owners:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded read-only lock-holder discovery runs within model-test preflight; RailUI owns feedback and no session is interrupted during discovery."
     }
   },
   "shell": [

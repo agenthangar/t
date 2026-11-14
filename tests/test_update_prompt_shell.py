@@ -30,6 +30,8 @@ def run_shim(tmp_path, command, *, prompt_rc=0, interactive=True, extra_env=None
     binary.chmod(0o755)
     script = (
         f'source "{ROOT / "zsh" / "shim.zsh"}"\n'
+        # This isolates the dispatcher from the plugin's source selector.
+        '_t_reload_if_moved() { return 0; }\n'
         f'_t_reload() {{ {reload_body}; }}\n'
         '_t_cd() { print -r -- "shell:cd:$*:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"; }\n'
         '_t_open() { print -r -- "shell:open:$*:marker=${T_UPDATE_PROMPTED:+set}" >> "$T_TEST_LOG"; }\n'

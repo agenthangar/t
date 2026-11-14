@@ -77,7 +77,7 @@ valid_source() {
     [[ -f "$root/.t-install-version" ]] || return 1
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
-        claude/settings.json.example bin/t bin/nosleep zsh/lifecycle.zsh zsh/nosleep.zsh zsh/nosleep-fallback.zsh libexec/nosleep_config.py libexec/nosleep_hotspot.py libexec/nosleep_wifi.py libexec/nosleep_wifi.swift bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
+        claude/settings.json.example bin/t bin/nosleep zsh/lifecycle.zsh zsh/nosleep.zsh zsh/nosleep-fallback.zsh libexec/nosleep_config.py libexec/nosleep_hotspot.py libexec/nosleep_wifi.py libexec/nosleep_wifi.swift libexec/nosleep_credentials.py libexec/nosleep_credentials.swift bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
         libexec/t_dev.py libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
         libexec/t_toml.py libexec/t_codex_socket.py libexec/vendor/SHA256SUMS libexec/vendor/tomli-LICENSE libexec/vendor/tomli/__init__.py libexec/vendor/tomli/_parser.py libexec/vendor/tomli/_re.py libexec/vendor/tomli/_types.py libexec/vendor/tomli/py.typed \
         libexec/t_workflow.py libexec/t_workflow_install.py libexec/t_workflow_context.py libexec/t_design_system.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_lifecycle.py libexec/t_codex_store.py libexec/t_codex_ownership.py libexec/t_history.py libexec/t_candidates.py libexec/t_session_cache.py libexec/t_session_discovery.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_picker_theme.py libexec/t_repos.py \
@@ -134,7 +134,9 @@ link() {
         echo "Backed up $dst -> $backup"
     fi
     ln -s "$src" "$dst"
-    echo "Linked $dst -> $src"
+    if [[ -z "${T_UPDATE_QUIET:-}" ]]; then
+        echo "Linked $dst -> $src"
+    fi
 }
 
 link_all() {
@@ -299,7 +301,8 @@ for group in groups:
         if any(name in str(hook.get("command", "")) for name in ("t-session-start", "claude-stamp-tmux")):
             registered = registered or str(hook["command"])
 if registered and not changed:
-    review_notice(registered)
+    if not os.environ.get("T_UPDATE_QUIET"):
+        review_notice(registered)
     sys.exit(0)
 if not registered:
     groups.append({"hooks": [{"type": "command", "command": command}]})

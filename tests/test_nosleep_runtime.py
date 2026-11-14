@@ -138,8 +138,12 @@ def nosleep_loop(zsh, tmp_path):
                 print -r -- 'hotspot_ssid=Fake hotspot'
                 print -r -- "hotspot_after=${FAKE_HOTSPOT_AFTER:-300}"
                 print -r -- "hotspot_timeout=${FAKE_HOTSPOT_TIMEOUT:-30}"
+                print -r -- "hotspot_attempts=${FAKE_HOTSPOT_ATTEMPTS:-1}"
+                print -r -- "hotspot_retry_delay=${FAKE_HOTSPOT_RETRY_DELAY:-30}"
+                print -r -- "hotspot_retry_mode=${FAKE_HOTSPOT_RETRY_MODE:-attempts}"
+                print -r -- "hotspot_retry_minutes=${FAKE_HOTSPOT_RETRY_MINUTES:-60}"
             }
-            _nosleep_hotspot_connect() { return 1; }
+            _nosleep_hotspot_connect() { return 0; }
         fi
         if [[ ${FAKE_HOTSPOT_BACKEND:-} == hang ]]; then
             _nosleep_hotspot_connect() { exec /bin/sleep 60; }
@@ -1347,6 +1351,7 @@ def test_nosleep_fallback_helper_exit_cannot_claim_recovery_or_extend_deadline(z
     result = zsh(r'''
         setopt nomonitor
         hotspot=1 monitoring=1 internet=1 online=0 hotspot_after=300 hotspot_timeout=30
+        hotspot_attempts=1 hotspot_retry_delay=30 fallback_attempts=0 fallback_retry_at=0
         fallback_outage_at=1000 fallback_started_at=-1 fallback_deadline=0 fallback_done=0
         _NOSLEEP_HOTSPOT_PID='' now=1300 next_check=9000
         _nosleep_status_clear() { :; }
@@ -1363,7 +1368,7 @@ def test_nosleep_fallback_helper_exit_cannot_claim_recovery_or_extend_deadline(z
         kill -0 "$child" 2>/dev/null; print -r -- "alive=$?"
     '''.replace("BACKEND", backend))
     assert result.returncode == 0, result.stderr
-    assert "holding=0" in result.stdout
+    assert ("holding=1" if backend == "return 1" else "holding=0") in result.stdout
     assert "holding=1 done=1 pid=" in result.stdout
     assert "alive=1" in result.stdout
     assert not result.stderr
@@ -1495,11 +1500,12 @@ def test_nosleep_cli_contract_saved_hotspot_details_reach_runtime(nosleep_loop):
     path = nosleep_loop.home / ".config/nosleep/config.json"
     path.parent.mkdir(parents=True)
     saved = json.dumps({"hotspot": True, "hotspot_ssid": "📱 Test's", "hotspot_after": 4,
-                        "hotspot_timeout": 6})
+                        "hotspot_timeout": 6, "hotspot_attempts": 2, "hotspot_retry_delay": 4})
     path.write_text(saved)
     result, log = nosleep_loop("--hotspot on -A -g0 -e2 -r0", FAKE_ONLINE="0", FAKE_HOTSPOT_BACKEND="record")
     assert "hotspot 1004 ssid=📱 Test's after=4 timeout=6" in log
-    assert "exit=0 at=1010" in result.stdout
+    assert "hotspot 1014 ssid=📱 Test's after=4 timeout=6" in log
+    assert "exit=0 at=1020" in result.stdout
     assert path.read_text() == saved
 
 
@@ -1735,3 +1741,205 @@ def test_nosleep_disabled_battery_protection_does_not_probe(nosleep_loop):
     assert not any('-g batt' in line for line in log)
     assert 'Not checked (protection off)' in result.stdout
     assert 'exit=130 at=1012' in result.stdout
+
+
+@pytest.mark.parametrize('backend,timeout', [('hang', '30'), ('record', '2')])
+def test_battery_cutoff_overrides_hotspot_window_and_cleans_up(nosleep_loop, backend, timeout):
+    battery_config(nosleep_loop)
+    result, log = nosleep_loop('-A -g0 -e3600 -r0', FAKE_HOTSPOT='1', FAKE_HOTSPOT_AFTER='0',
+        FAKE_HOTSPOT_TIMEOUT=timeout, FAKE_HOTSPOT_RETRY_MODE='duration',
+        FAKE_HOTSPOT_RETRY_MINUTES='60', FAKE_HOTSPOT_RETRY_DELAY='300',
+        FAKE_HOTSPOT_BACKEND=backend, FAKE_ONLINE='0', FAKE_BATTERY='20',
+        FAKE_BATTERY_DROP_AT='1010', FAKE_STOP_AT='1020')
+    assert 'battery 19% is below 20%; releasing sleep hold' in result.stdout
+    assert 'exit=0 at=1010' in result.stdout
+    assert result.stdout.count('attempting hotspot fallback') == 1
+    assert sum('disablesleep 0' in line for line in log) == 1
+    for child in {int(line.split()[2]) for line in log if line.startswith('child ')}:
+        with pytest.raises(ProcessLookupError):
+            os.kill(child, 0)
+
+
+@pytest.mark.parametrize('attempts', [1, 3])
+@pytest.mark.parametrize('every', [2, 3600])
+def test_hotspot_attempt_budget_and_cooldown_gate_sleep(nosleep_loop, attempts, every):
+    result, log = nosleep_loop(f'-A -g0 -e{every} -r0', FAKE_HOTSPOT='1',
+        FAKE_HOTSPOT_AFTER='4', FAKE_HOTSPOT_TIMEOUT='4',
+        FAKE_HOTSPOT_ATTEMPTS=str(attempts), FAKE_HOTSPOT_RETRY_DELAY='6',
+        FAKE_HOTSPOT_BACKEND='record', FAKE_ONLINE='0')
+    launches = [line for line in log if line.startswith('hotspot ')]
+    assert [int(line.split()[1]) for line in launches] == [1004 + 10 * i for i in range(attempts)]
+    assert f'exit=0 at={1004 + 4 * attempts + 6 * (attempts - 1)}' in result.stdout
+    assert f'hotspot attempts exhausted ({attempts}/{attempts})' in result.stdout
+    for launch in launches:
+        assert 'online ' + launch.split()[1] in log
+    if attempts > 1:
+        assert 'hotspot retry 2/3 in 6s' in result.stdout
+        assert 'Retry 2/3 in' in result.stdout
+
+
+@pytest.mark.parametrize('mode', ['attempts', 'duration'])
+def test_hotspot_recovery_during_cooldown_cancels_retry(nosleep_loop, mode):
+    result, log = nosleep_loop('-A -g0 -e2 -r0', FAKE_HOTSPOT='1',
+        FAKE_HOTSPOT_AFTER='4', FAKE_HOTSPOT_TIMEOUT='4', FAKE_HOTSPOT_ATTEMPTS='3',
+        FAKE_HOTSPOT_RETRY_DELAY='6', FAKE_HOTSPOT_BACKEND='record',
+        FAKE_ONLINE='0 0 0 0 0 0 1', FAKE_STOP_AT='1024', FAKE_HOTSPOT_RETRY_MODE=mode)
+    assert len([line for line in log if line.startswith('hotspot ')]) == 1
+    assert 'network recovered' in result.stdout
+    assert 'letting go' not in result.stdout
+    assert 'exit=130 at=1024' in result.stdout
+
+
+@pytest.mark.parametrize('mode', ['attempts', 'duration'])
+def test_hotspot_cancelling_cooldown_does_not_launch_next_attempt(nosleep_loop, mode):
+    result, log = nosleep_loop('-A -g0 -e2 -r0', FAKE_HOTSPOT='1',
+        FAKE_HOTSPOT_AFTER='4', FAKE_HOTSPOT_TIMEOUT='4', FAKE_HOTSPOT_ATTEMPTS='3',
+        FAKE_HOTSPOT_RETRY_DELAY='6', FAKE_HOTSPOT_BACKEND='record',
+        FAKE_ONLINE='0', FAKE_STOP_AT='1012', FAKE_HOTSPOT_RETRY_MODE=mode)
+    assert len([line for line in log if line.startswith('hotspot ')]) == 1
+    assert 'exit=130 at=1012' in result.stdout
+
+
+def test_hotspot_retry_timeouts_reap_each_owned_helper(nosleep_loop):
+    result, log = nosleep_loop('-A -g0 -e2 -r0', FAKE_HOTSPOT='1',
+        FAKE_HOTSPOT_AFTER='4', FAKE_HOTSPOT_TIMEOUT='4', FAKE_HOTSPOT_ATTEMPTS='3',
+        FAKE_HOTSPOT_RETRY_DELAY='6', FAKE_HOTSPOT_BACKEND='hang', FAKE_ONLINE='0')
+    children = {int(line.split()[2]) for line in log if line.startswith('child ')}
+    assert len(children) == 3
+    assert 'exit=0 at=1028' in result.stdout
+    for child in children:
+        with pytest.raises(ProcessLookupError):
+            os.kill(child, 0)
+
+
+def test_hotspot_failed_join_cooldown_requires_fresh_probe_and_resets_on_recovery(zsh):
+    result = zsh(r'''
+        setopt nomonitor
+        hotspot=1 monitoring=1 internet=1 online=0 hotspot_after=0 hotspot_timeout=30
+        hotspot_attempts=3 hotspot_retry_delay=5 fallback_attempts=0 fallback_retry_at=0
+        fallback_outage_at=1000 fallback_started_at=-1 fallback_deadline=0 fallback_done=0
+        _NOSLEEP_HOTSPOT_PID='' now=1000 next_check=9000
+        _nosleep_status_clear() { :; }
+        _nosleep_hotspot_connect() { return 1; }
+        _nosleep_fallback_tick observed
+        /bin/sleep 0.05
+        now=1001
+        _nosleep_fallback_tick
+        print -r -- "failed: attempts=$fallback_attempts retry_at=$fallback_retry_at active=$fallback_started_at"
+        now=1005
+        _nosleep_fallback_tick observed
+        print -r -- "cooldown: attempts=$fallback_attempts"
+        now=1006
+        _nosleep_fallback_tick
+        print -r -- "due: attempts=$fallback_attempts next_check=$next_check"
+        _nosleep_fallback_tick observed
+        print -r -- "retried: attempts=$fallback_attempts"
+        online=1
+        _nosleep_fallback_observe
+        print -r -- "recovered: attempts=$fallback_attempts retry_at=$fallback_retry_at outage=$fallback_outage_at pid=$_NOSLEEP_HOTSPOT_PID"
+        online=0 now=1007
+        _nosleep_fallback_observe
+        _nosleep_fallback_tick observed
+        print -r -- "new outage: attempts=$fallback_attempts"
+        _nosleep_fallback_cancel
+    ''')
+    assert result.returncode == 0 and not result.stderr, result.stderr
+    assert 'failed: attempts=1 retry_at=1006 active=-1' in result.stdout
+    assert 'cooldown: attempts=1' in result.stdout
+    assert 'due: attempts=1 next_check=1006' in result.stdout
+    assert 'retried: attempts=2' in result.stdout
+    assert 'recovered: attempts=0 retry_at=0 outage=-1 pid=' in result.stdout
+    assert 'new outage: attempts=1' in result.stdout
+
+
+@pytest.mark.parametrize('setting,value', [('hotspot_attempts', '0'), ('hotspot_attempts', '11'),
+                                          ('hotspot_retry_delay', '0'), ('hotspot_retry_delay', '301')])
+def test_hotspot_runtime_rejects_invalid_retry_settings_before_power_changes(zsh, setting, value):
+    result = zsh('''
+        _nosleep_config() { print -r -- 'SETTING=VALUE'; }
+        sudo() { print unexpected-side-effect; }
+        _nosleep_hold() { print unexpected-side-effect; }
+        nosleep; print rc=$?
+    '''.replace('SETTING', setting).replace('VALUE', value))
+    assert 'rc=2' in result.stdout and 'unexpected-side-effect' not in result.stdout
+    assert 'hotspot attempts must be' in result.stderr
+
+
+@pytest.mark.parametrize('timeout,launches', [(4, [1004, 1014, 1024, 1034, 1044, 1054]),
+                                          (20, [1004, 1030, 1056])])
+def test_duration_window_expires_during_cooldown_or_attempt(nosleep_loop, timeout, launches):
+    result, log = nosleep_loop('-A -g0 -e3600 -r0', FAKE_HOTSPOT='1',
+        FAKE_HOTSPOT_AFTER='4', FAKE_HOTSPOT_TIMEOUT=str(timeout), FAKE_HOTSPOT_ATTEMPTS='1',
+        FAKE_HOTSPOT_RETRY_DELAY='6', FAKE_HOTSPOT_RETRY_MODE='duration', FAKE_HOTSPOT_RETRY_MINUTES='1',
+        FAKE_HOTSPOT_BACKEND='record', FAKE_ONLINE='0')
+    assert [int(line.split()[1]) for line in log if line.startswith('hotspot ')] == launches
+    assert 'exit=0 at=1064' in result.stdout
+    assert 'hotspot retry window expired (1m)' in result.stdout
+    assert 'retry window left' in result.stdout
+    assert 'attempts exhausted' not in result.stdout
+    for when in launches:
+        assert f'online {when}' in log
+    if timeout == 20:
+        assert any(line.startswith('hotspot 1056 ') and 'timeout=8' in line for line in log)
+
+
+def test_duration_deadline_reaps_active_helper(nosleep_loop):
+    result, log = nosleep_loop('-A -g0 -e3600 -r0', FAKE_HOTSPOT='1',
+        FAKE_HOTSPOT_AFTER='4', FAKE_HOTSPOT_TIMEOUT='20', FAKE_HOTSPOT_RETRY_DELAY='6',
+        FAKE_HOTSPOT_RETRY_MODE='duration', FAKE_HOTSPOT_RETRY_MINUTES='1',
+        FAKE_HOTSPOT_BACKEND='hang', FAKE_ONLINE='0')
+    children = {int(line.split()[2]) for line in log if line.startswith('child ')}
+    assert len(children) == 3
+    assert 'exit=0 at=1064' in result.stdout
+    for child in children:
+        with pytest.raises(ProcessLookupError):
+            os.kill(child, 0)
+
+
+def test_sixty_minute_window_caps_helper_and_resets_on_recovery(zsh):
+    result = zsh(r'''
+        setopt nomonitor
+        hotspot=1 monitoring=1 internet=1 online=0 hotspot_after=0 hotspot_timeout=30
+        hotspot_retry_mode=duration hotspot_retry_minutes=60 hotspot_retry_delay=300 hotspot_attempts=1
+        fallback_outage_at=1000 fallback_started_at=-1 fallback_deadline=0 fallback_done=0
+        fallback_attempts=0 fallback_retry_at=0 fallback_window_deadline=0
+        _NOSLEEP_HOTSPOT_PID='' now=1000 next_check=9000
+        _nosleep_status_clear() { :; }
+        _nosleep_hotspot_connect() { return 0; }
+        _nosleep_fallback_tick observed
+        print "window=$fallback_window_deadline"
+        now=1030
+        _nosleep_fallback_tick observed
+        now=4590
+        _nosleep_fallback_tick observed
+        print "last attempt: deadline=$fallback_deadline window=$fallback_window_deadline"
+        now=4600
+        _nosleep_fallback_tick observed
+        print "expired: done=$fallback_done attempts=$fallback_attempts pid=$_NOSLEEP_HOTSPOT_PID"
+        online=1
+        _nosleep_fallback_observe
+        print "reset: window=$fallback_window_deadline attempts=$fallback_attempts done=$fallback_done"
+        online=0 now=5000
+        _nosleep_fallback_observe
+        _nosleep_fallback_tick observed
+        print "fresh window=$fallback_window_deadline"
+        _nosleep_fallback_cancel
+    ''')
+    assert result.returncode == 0 and not result.stderr, result.stderr
+    assert 'window=4600' in result.stdout
+    assert 'last attempt: deadline=4600 window=4600' in result.stdout
+    assert 'expired: done=1 attempts=2 pid=' in result.stdout
+    assert 'reset: window=0 attempts=0 done=0' in result.stdout
+    assert 'fresh window=8600' in result.stdout
+
+
+@pytest.mark.parametrize('setting,value', [('hotspot_retry_mode', 'forever'), ('hotspot_retry_minutes', '0'),
+                                         ('hotspot_retry_minutes', '1441'), ('hotspot_retry_minutes', 'x')])
+def test_runtime_validates_duration_before_power_changes(zsh, setting, value):
+    result = zsh('''
+        _nosleep_config() { print -r -- 'SETTING=VALUE'; }
+        sudo() { print unexpected-side-effect; }
+        nosleep; print rc=$?
+    '''.replace('SETTING', setting).replace('VALUE', value))
+    assert 'rc=2' in result.stdout and 'unexpected-side-effect' not in result.stdout
+    assert 'window must be 1–1440 minutes' in result.stderr

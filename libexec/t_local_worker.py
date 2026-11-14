@@ -18,10 +18,16 @@ import urllib.request
 import uuid
 
 DEFAULT_MODEL = 'gpt-oss:20b'
+ADAPTER_VERSION = '2'
+TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out', 'inactivity_timed_out', 'output_limit', 'busy'}
 MAX_OUTPUT = 8 * 1024 * 1024
 INSTRUCTIONS = (
     'Delegate only bounded investigations or small patches with concrete acceptance checks. '
-    'Use start_task, then wait_task for bounded waits; use cancel_task when no longer needed. '
+    'Use check_availability before start_task, then wait_task for bounded waits; use cancel_task when no longer needed. '
+    'Automatic workers skip busy or unknown runtimes; never interrupt another session. '
+    'Only accepted: true means the worker accepted the task; accepted: false means continue in the lead. '
+    'Omit timeout_seconds to inherit the workflow budget. Supply narrow paths and enough implementation context '
+    'to avoid broad repository exploration; return partial findings when the assignment cannot be completed. '
     'The local worker has a separate snapshot, not the lead checkout. Review its findings, '
     'patch and test evidence before applying anything. Failed or timed-out tasks return to '
     'the lead; never automatically retry indefinitely. Local requests take fair turns through the shared machine queue. '
@@ -248,6 +254,9 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
         'Use the exec_command shell tool to read files, edit with Python or shell, and run checks. '
         'Do not call apply_patch: this local provider does not expose that tool. '
         'Run available targeted checks. Report findings, changes, commands and exit outcomes, '
+        'Stay within the supplied paths and acceptance checks. Do not explore unrelated repository conventions. '
+        'If required context is missing, return concise partial findings and the missing information. '
+        f'Your execution budget is {timeout} seconds; report useful partial results before it expires. '
         'and remaining uncertainties honestly. Do not claim checks you did not run.\n\n'
         + json.dumps({'mode': assignment['mode'], 'assignment': assignment['assignment']})
     )
@@ -263,6 +272,7 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
         command[command.index('workspace-write')] = 'read-only'
     started = time.monotonic()
     last_activity, observed, offset, pending = 0, 0, 0, b''
+    commands = 0
     inactivity = assignment.get('inactivity_timeout_seconds', 300)
     with (job / 'prompt.txt').open() as stdin, (job / 'events.jsonl').open('w') as log:
         proc = subprocess.Popen(command, cwd=workspace, env=env, stdin=stdin, stdout=log,
@@ -293,6 +303,12 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
                     item = event.get('item', {}) if isinstance(event, dict) else {}
                     if isinstance(item, dict) and item.get('type') in ('command_execution', 'agent_message', 'reasoning', 'file_change'):
                         last_activity = elapsed
+                    if isinstance(item, dict) and item.get('type') == 'command_execution' and item.get('status') in ('completed', 'failed'):
+                        commands += 1
+                if progress:
+                    progress.observed = dict(completed_commands=commands, last_activity_execution_seconds=last_activity,
+                                             inactivity_seconds=max(0, elapsed - last_activity),
+                                             execution_seconds=max(0, elapsed))
                 if elapsed - last_activity > inactivity:
                     return 'inactivity_timed_out'
                 if log.tell() > MAX_OUTPUT or (job / 'events.jsonl').stat().st_size > MAX_OUTPUT:
@@ -334,8 +350,15 @@ def usage_status(job, task):
     if now - task.get('_usage_updated', 0) < 2:
         return
     task['_usage_updated'] = now
+    try:
+        task['partial_patch_available'] = bool(git(job / 'workspace', 'status', '--porcelain'))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        task['partial_patch_available'] = None  # Telemetry must not interrupt work.
     keys = ('task_id', 'status', 'model', 'provider', 'resolved_model', 'revision', 'runtime_model',
-            'identity_verified', 'parent_session_id', 'parent_identity_verified', 'started_at', 'generation_events', 'workflow_snapshot')
+            'identity_verified', 'parent_session_id', 'parent_identity_verified', 'started_at', 'generation_events', 'workflow_snapshot',
+            'adapter_version', 'manager_protocol', 'timeout_seconds', 'max_timeout_seconds', 'inactivity_timeout_seconds', 'queue_timeout_seconds', 'queue_seconds',
+            'loading_seconds', 'execution_seconds', 'request_ids', 'completed_commands', 'last_activity_execution_seconds',
+            'inactivity_seconds', 'partial_patch_available')
     record = {k: task.get(k) for k in keys}
     record['updated_at'] = now
     temporary = job / 'usage.tmp'
@@ -347,6 +370,40 @@ class Worker:
     def __init__(self):
         self.tasks = {}
         self.threads = []
+
+    def configuration(self, workspace):
+        if not isinstance(workspace, str) or not Path(workspace).is_absolute():
+            raise ValueError('workspace must be an absolute repository root')
+        config = settings()
+        routing = inference()['effective'](workspace)
+        limits = inference()['policy'](routing)
+        if routing:
+            config = dict(config, model=routing['model'], provider=routing['provider'], context=routing['context_tokens'])
+        chosen = dict(limits, provider=config.get('provider', 'ollama'), model=config['model'],
+                      context_tokens=config.get('context', 32768))
+        return config, chosen
+
+    def check_availability(self, args, deadline=None):
+        if not isinstance(args, dict) or set(args) != {'workspace'}:
+            raise ValueError('provide only workspace')
+        config, chosen = self.configuration(args['workspace'])
+        if not config['enabled'] or chosen['mode'] in ('disabled', 'local-only'):
+            view = dict(state='unknown', reason='Local delegation is disabled or requires a native local lead', blockers=[])
+        else:
+            probe = inference()['helper']('t_local_manager')['availability']
+            view = probe() if deadline is None else probe(deadline=deadline)
+        return dict(view, adapter_version=ADAPTER_VERSION, model=chosen['model'], provider=chosen['provider'],
+                    effective_limits={key: chosen[key] for key in ('timeout_seconds', 'max_timeout_seconds', 'inactivity_timeout_seconds', 'queue_timeout_seconds')})
+
+    def preflight(self, workspace):
+        view = self.check_availability({'workspace': workspace})
+        # A single short wait is justified only by observed completed generation.
+        if view.get('retry_after_seconds') == 15:
+            deadline = time.monotonic() + 15
+            while view.get('retry_after_seconds') == 15 and time.monotonic() < deadline:
+                time.sleep(min(.1, max(0, deadline - time.monotonic())))
+                view = self.check_availability({'workspace': workspace}, deadline=deadline)
+        return view
 
     def start(self, args):
         if not isinstance(args, dict) or set(args) - {'workspace', 'assignment', 'mode', 'timeout_seconds', 'routing_reason', 'parent_session_id'}:
@@ -362,21 +419,20 @@ class Worker:
         if mode not in ('investigate', 'patch') or ('timeout_seconds' in args and (type(timeout) is not int or not 10 <= timeout <= 1800)):
             raise ValueError('choose investigate/patch and a timeout from 10 to 1800 seconds')
         workspace = args.get('workspace')
-        if not isinstance(workspace, str) or not Path(workspace).is_absolute():
-            raise ValueError('workspace must be an absolute repository root')
-        config = settings()
-        routing = inference()['effective'](workspace)
-        if routing and routing['mode'] == 'disabled':
+        config, limits = self.configuration(workspace)
+        if limits['mode'] == 'disabled':
             raise ValueError('local delegation is disabled by the repository workflow')
-        if routing and routing['mode'] == 'local-only':
+        if limits['mode'] == 'local-only':
             raise ValueError('local-only work requires a new native local lead; this MCP connection cannot verify its lead identity')
-        if routing:
-            config = dict(config, model=routing['model'], provider=routing['provider'], context=routing['context_tokens'])
-        limits = inference()['policy'](routing)
         timeout = limits['timeout_seconds'] if timeout is None else min(timeout, limits['max_timeout_seconds'])
         if not config['enabled']:
             raise ValueError('local worker is disabled; run t config local')
+        if limits['mode'] == 'automatic':
+            admission = self.preflight(workspace)
+            if admission['state'] != 'available':
+                return dict(status='busy', accepted=False, availability=admission, adapter_version=ADAPTER_VERSION)
         state_root().mkdir(parents=True, exist_ok=True, mode=0o700)
+        admitted = None
         try:
             task_id = uuid.uuid4().hex
             job = state_root() / task_id
@@ -385,12 +441,22 @@ class Worker:
             source_head = snapshot(workspace, job / 'workspace')
             (job / 'assignment.json').chmod(0o600)
             cancel = threading.Event()
+            if limits['mode'] == 'automatic':
+                admitted = inference()['helper']('t_local_manager')['Client'](dict(limits, timeout_seconds=timeout), 'worker', cancel=cancel)
+                try:
+                    admitted.__enter__()
+                except (OSError, ValueError) as exc:
+                    shutil.rmtree(job)
+                    return dict(status='busy', accepted=False, adapter_version=ADAPTER_VERSION,
+                                availability=getattr(exc, 'availability', dict(state='unknown', reason=str(exc), blockers=[])))
             task = {'task_id': task_id, 'status': 'queued', 'source_head': source_head, 'model': config['model'],
+                    'accepted': True, 'adapter_version': ADAPTER_VERSION, 'mode': limits['mode'],
+                    'manager_protocol': admitted.info.get('protocol') if admitted else None,
                     'workspace': str(job / 'workspace'), 'source_workspace': workspace, 'started_at': time.time(),
                     'provider': config.get('provider', 'ollama'), 'context_tokens': config.get('context', 32768),
                     'routing_reason': str(args.get('routing_reason', 'explicit assignment'))[:1000],
                     'parent_session_id': str(args.get('parent_session_id', '')), 'identity_verified': False, 'parent_identity_verified': False,
-                    'timeout_seconds': timeout, 'inactivity_timeout_seconds': limits['inactivity_timeout_seconds'],
+                    'timeout_seconds': timeout, 'max_timeout_seconds': limits['max_timeout_seconds'], 'inactivity_timeout_seconds': limits['inactivity_timeout_seconds'],
                     'queue_timeout_seconds': limits['queue_timeout_seconds']}
             # Codex supplies this launch identity to its MCP child. A caller's
             # parent_session_id alone never establishes attribution.
@@ -404,18 +470,20 @@ class Worker:
             usage_status(job, task)
             self.tasks[task_id] = (task, cancel)
             thread = threading.Thread(target=self.execute,
-                                      args=(task, cancel, job, config['model'], timeout))
+                                      args=(task, cancel, job, config['model'], timeout, admitted))
             thread.start()
             self.threads.append(thread)
             return dict(task)
         except BaseException:
+            if admitted and admitted.info:
+                admitted.__exit__(None, None, None)
             self.tasks.pop(task_id, None)
             raise
 
-    def execute(self, task, cancel, job, model, timeout):
+    def execute(self, task, cancel, job, model, timeout, admitted=None):
         status = 'failed'
         local = inference()
-        chosen = local['policy']({'provider': task['provider'], 'model': model,
+        chosen = local['policy']({'mode': task['mode'], 'provider': task['provider'], 'model': model,
                                   'context_tokens': task['context_tokens'], 'timeout_seconds': timeout,
                                   'queue_timeout_seconds': task['queue_timeout_seconds'],
                                   'inactivity_timeout_seconds': task['inactivity_timeout_seconds']})
@@ -424,22 +492,27 @@ class Worker:
                 status = 'cancelled'
             else:
                 with local['helper']('t_local_status')['Activity'](model) as activity:
-                    leased = local['leased_runtime'](chosen)
+                    leased = None if admitted else local['leased_runtime'](chosen)
                     if leased:
                         task.update(resolved_model=model, revision=leased['revision'], runtime_model=leased['alias'], identity_verified=True)
                         with activity.endpoint(leased['base']) as observed:
                             status = run_worker(job, observed, leased['alias'], timeout, cancel, task['provider'], task['context_tokens'])
                     else:
-                        with local['helper']('t_local_manager')['Client'](chosen, 'worker', activity, cancel) as client:
+                        with admitted or local['helper']('t_local_manager')['Client'](chosen, 'worker', activity, cancel) as client:
+                            client.activity = activity
                             def progress():
                                 state = client.last.get('state', 'working')
                                 task.update(status=state if state in ('queued', 'loading', 'waiting_for_memory', 'waiting_for_legacy') else 'running',
-                                            queue_seconds=round(client.waited(), 2),
+                                            queue_seconds=round(client.last.get('queue_seconds', client.waited()), 2),
+                                            loading_seconds=round(client.last.get('loading_seconds', 0), 2),
+                                            request_ids=client.last.get('request_ids', []),
+                                            manager_protocol=client.last.get('protocol'),
                                             identity_verified=client.last.get('identity_verified', False),
                                             revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
                                             owner_verified=client.last.get('owner_verified', False))
                                 progress.generation_events = client.last.get('generation_events', 0)
                                 task['generation_events'] = progress.generation_events
+                                task.update(getattr(progress, 'observed', {}))
                                 if task['identity_verified']:
                                     task['resolved_model'] = model
                                 usage_status(job, task)
@@ -449,12 +522,19 @@ class Worker:
                             progress()
                         task.update(identity_verified=client.last.get('identity_verified', False),
                                     revision=client.last.get('revision'), runtime_model=client.last.get('runtime_model'),
-                                    queue_seconds=round(client.waited(), 2))
+                                    queue_seconds=round(client.last.get('queue_seconds', client.waited()), 2),
+                                    loading_seconds=round(client.last.get('loading_seconds', 0), 2))
                         if task['identity_verified']:
                             task['resolved_model'] = model
                         if client.error:
                             task['error'] = client.error
                             status = 'failed'
+                        outcome = client.last.get('outcome')
+                        if outcome in ('busy', 'timed_out') or (outcome == 'failed' and status == 'failed'):
+                            phase = client.last.get('timeout_phase') or 'queue'
+                            status = 'busy' if outcome == 'busy' else 'timed_out' if outcome == 'timed_out' and phase == 'execution' else 'failed'
+                            task['failure_reason'] = phase + '_timeout' if outcome == 'timed_out' else outcome
+                            task['error'] = client.last.get('failure_reason')
                 task.update(collect(job))
                 if status != 'completed':
                     events = job / 'events.jsonl'
@@ -462,13 +542,20 @@ class Worker:
         except Exception as exc:
             task['error'] = str(exc)
         finally:
+            if admitted and not admitted.closed.is_set():
+                admitted.__exit__(None, None, None)
             task['elapsed_seconds'] = round(time.time() - task['started_at'], 2)
-            task['execution_seconds'] = max(0, task['elapsed_seconds'] - task.get('queue_seconds', 0))
+            task.setdefault('execution_seconds', max(0, task['elapsed_seconds'] - task.get('queue_seconds', 0) - task.get('loading_seconds', 0)))
+            if status != 'completed':
+                task.setdefault('failure_reason', status)
+            task['partial_patch_available'] = bool(task.get('patch'))
             task['status'] = status
             (job / 'result.json').write_text(json.dumps(task))
             (job / 'result.json').chmod(0o600)
 
     def call(self, name, args):
+        if name == 'check_availability':
+            return self.check_availability(args)
         if name == 'start_task':
             return self.start(args)
         if name == 'wait_task':
@@ -486,7 +573,7 @@ class Worker:
         if not isinstance(args, dict) or set(args) != {'task_id'} or not isinstance(args['task_id'], str) or args['task_id'] not in self.tasks:
             raise ValueError('unknown task_id in this MCP connection')
         task, cancel = self.tasks[args['task_id']]
-        if name == 'cancel_task' and task['status'] not in ('completed', 'cancelled', 'failed', 'timed_out', 'inactivity_timed_out', 'output_limit'):
+        if name == 'cancel_task' and task['status'] not in TERMINAL:
             cancel.set()
             return {'task_id': task['task_id'], 'status': 'cancelling'}
         return dict(task)
@@ -500,6 +587,10 @@ class Worker:
 
 def tool_specs():
     return [
+        {'name': 'check_availability', 'description': 'Read shared-runtime availability, blockers and effective limits without starting inference. Automatic delegation skips busy or unknown runtimes.',
+         'annotations': {'readOnlyHint': True},
+         'inputSchema': {'type': 'object', 'additionalProperties': False, 'required': ['workspace'],
+                         'properties': {'workspace': {'type': 'string'}}}},
         {'name': 'wait_task', 'description': 'Wait up to 60 seconds for a task owned by this connection. Returns terminal evidence or pending; timeout does not cancel the task.',
          'annotations': {'readOnlyHint': True},
          'inputSchema': {'type': 'object', 'additionalProperties': False, 'required': ['task_id'],
@@ -535,7 +626,7 @@ def serve(api):
                 response = api['_mcp_error'](None, -32700, 'parse error')
             else:
                 response = api['_mcp_handle'](msg, tool_specs(), worker.call,
-                                             {'name': 't-local-worker', 'version': '1'}, INSTRUCTIONS)
+                                             {'name': 't-local-worker', 'version': ADAPTER_VERSION}, INSTRUCTIONS)
             if response is not None:
                 print(json.dumps(response), flush=True)
     finally:

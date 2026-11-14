@@ -33,7 +33,7 @@ jobs:
           path: .ci-alert-state.json
           key: scheduled-health-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: scheduled-health-v1-
-      - name: Report failed, cancelled, stuck or overdue scheduled runs
+      - name: Announce releases and report unhealthy scheduled runs
         env:
           GH_TOKEN: ${{ github.token }}
           CI_ALERT_WEBHOOK_URL: ${{ secrets.CI_ALERT_WEBHOOK_URL }}

@@ -108,13 +108,16 @@ def isolate_local_runtime_manager(monkeypatch, runtime_namespaces):
 class ManagedClientFixture:
     """Synthetic manager boundary for worker/launch unit tests; HTTP is tested separately."""
     def __init__(self, chosen, *args, **kwargs):
+        import threading
+        self.info = {'id': 'fixture'}
+        self.closed = threading.Event()
         self.chosen = chosen
         self.base = 'http://127.0.0.1:1234/client-token'
         self.error = None
         self.last = dict(state='running', identity_verified=True, revision='a'*40,
                          runtime_model=chosen['model'], owner_verified=True)
     def __enter__(self): return self
-    def __exit__(self, *args): pass
+    def __exit__(self, *args): self.closed.set()
     def waited(self): return 0
 
 

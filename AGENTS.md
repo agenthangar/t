@@ -17,6 +17,10 @@ Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
 
 Before changing user-facing behavior, read [the repository design system](DESIGN.md).
+For session-picker filtering or sorting requests, inspect the existing hotkeys
+in that design system and the shared picker before proposing an interaction.
+Extend the hotkey controls and preserve existing filter/sort choices. Add CLI
+flags only when the user explicitly requests flags or noninteractive control.
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use
@@ -76,8 +80,8 @@ Homebrew or a release. If the installed command predates this syntax, bootstrap
 with `./bin/t system update --local .`. Verify the installed `t --version` matches
 canonical main. Do not leave a ready PR for manual merge.
 
-Run `python3 -m pytest --cov --cov-fail-under=97`, Bash shellcheck, and `zsh -n`
-for changed shell files. Compile bin/t to `/tmp`, not the checkout. Preserve coverage.
+Run Bash shellcheck and `zsh -n` for changed shell files. Compile bin/t to `/tmp`,
+not the checkout. Preserve coverage.
 Use sandbox HOME/XDG directories and isolated tmux sockets in tests; never let an
 installer test mutate the developer's agent configuration or tmux server. Strip
 COV_CORE_* when launching copies of measured binaries.

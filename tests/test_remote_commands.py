@@ -472,8 +472,8 @@ ssh() { print -r -- "SSH ${(j:|:)@}"; }
     assert 'HOST beta' in text or 'SSH -t|user@beta|' in text
 
 
-@pytest.mark.parametrize('tab_rc', [0, 1])
-def test_remote_open_multiple_sessions_fans_out_on_controller_before_attach(zsh, tmp_path, tab_rc):
+@pytest.mark.parametrize('window_rc', [0, 1])
+def test_remote_open_multiple_sessions_all_get_controller_windows(zsh, tmp_path, window_rc):
     env = fake_picker(tmp_path)
     result = zsh(HOSTS + r'''
 _t_remote_open_inventory() {
@@ -483,15 +483,15 @@ _t_remote_open_inventory() {
 }
 _t_fzf_filtered() { print -r -- "$1"; }
 _t_open() { print -r -- "ATTACH ${(j:|:)@}"; }
-''' + f'_dev_open_tab() {{ print -r -- "TAB $*"; return {tab_rc}; }}; '
+''' + f'_dev_open_window() {{ print -r -- "WINDOW $*"; return {window_rc}; }}; '
                  + 't remote open beta api; print rc=$?', _tty=True, **env)
     text = output(result)
-    assert f'rc={tab_rc}' in text, text
+    assert f'rc={window_rc}' in text, text
     assert 'SCAN beta api' in text
-    assert 'TAB t open api 2 --cli --host beta' in text
-    assert 'ATTACH api|1|--cli|--host|beta' in text
-    assert text.index('TAB ') < text.index('ATTACH ')
-    assert ('Attach with:' in text) == bool(tab_rc)
+    assert 'WINDOW t open api 2 --cli --host beta' in text
+    assert 'WINDOW t open api 1 --cli --host beta' in text
+    assert 'ATTACH ' not in text
+    assert text.count('Attach with:') == 2 * window_rc
 
 
 @pytest.mark.parametrize('mode,rc', [('empty', 0), ('cancel', 130), ('failed', 1), ('scan_cancel', 130)])
@@ -503,7 +503,7 @@ def test_remote_open_local_selection_no_side_effects(zsh, tmp_path, mode, rc):
 _t_remote_open_inventory() {{ {scan}; }}
 _t_fzf_filtered() {{ return 130; }}
 _t_open() {{ print WRONG_OPEN; }}
-_dev_open_tab() {{ print WRONG_TAB; }}
+_dev_open_window() {{ print WRONG_WINDOW; }}
 t remote open beta api; print rc=$?
 ''', _tty=True, **env)
     assert f'rc={rc}' in output(result) and 'WRONG_' not in output(result)
@@ -519,7 +519,7 @@ _dev_session_rows() {
   printf 'four\t%s\tforeign-2\tapp\tactive\tDesktop\tcodex\n' "$HOME/remote/api"
 }
 _t_open() { print WRONG_OPEN; }
-_dev_open_tab() { print WRONG_TAB; }
+_dev_open_window() { print WRONG_WINDOW; }
 _t_open_picker() { print WRONG_PICK; }
 _t_remote_open_rows api; print rc=$?
 _t_remote_open_rows unknown; print unknown=$?

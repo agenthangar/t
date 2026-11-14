@@ -65,13 +65,27 @@ def _revision():
             ('bin/t', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py')]
 
 
-def _wire(operation, payload):
+def _wire(operation, payload, deadline=None):
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(2)
+        def budget():
+            remaining = 2 if deadline is None else min(2, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError('session cache deadline reached')
+            connection.settimeout(remaining)
+        budget()
         connection.connect(str(_runtime() / 'service.sock'))
+        budget()
         connection.sendall(json.dumps({'operation': operation, 'payload': payload, 'revision': _revision()}).encode() + b'\n')
-        with connection.makefile('rb') as stream:
-            raw = stream.readline(LIMIT + 1)
+        raw = bytearray()
+        while len(raw) <= LIMIT:
+            budget()
+            part = connection.recv(min(65536, LIMIT + 1 - len(raw)))
+            if not part:
+                break
+            raw.extend(part)
+            if b'\n' in part:
+                raw = raw.split(b'\n', 1)[0]
+                break
     if len(raw) > LIMIT:
         raise ValueError('session cache response too large')
     result = json.loads(raw)
@@ -80,14 +94,18 @@ def _wire(operation, payload):
     return result
 
 
-def request(operation, payload=None):
+def request(operation, payload=None, *, deadline=None):
     """Single API for discovery, lifecycle events, and private index artifacts."""
     payload = payload or {}
     _private(_runtime())
     try:
-        return _wire(operation, payload)
+        return _wire(operation, payload) if deadline is None else _wire(operation, payload, deadline)
     except (OSError, ValueError):
         pass
+    if deadline is not None:
+        # A waiter already contacted the service. Never restart it or extend the
+        # caller's deadline when that service disappears during observation.
+        return {'hosts': [], 'loading': False, 'unavailable': True}
     if operation == 'artifact':
         return {'value': None}  # Standalone live collectors must not start a daemon.
     _private(_runtime())
@@ -143,6 +161,7 @@ class _Memory:
     """No storage access: all request handlers operate on these dictionaries."""
     def __init__(self, collect=_collect, clock=time.time, persist=lambda: None, submit=None):
         self.entries, self.generations, self.artifacts = {}, {}, {}
+        self.failures, self.reset_epochs = {}, {}
         self.active_targets = set()
         self.waiting = {}
         self.overlays = {}
@@ -157,10 +176,28 @@ class _Memory:
         threading.Thread(target=callback, args=args, daemon=True).start()
 
     def restore(self, saved):
-        if not all(isinstance(saved.get(k, {}), dict) for k in ('entries', 'generations', 'artifacts', 'overlays')):
+        if not all(isinstance(saved.get(k, {}), dict) for k in ('entries', 'generations', 'artifacts', 'overlays', 'failures')):
             raise ValueError('invalid discovery snapshot')
         with self.lock:
             invalidated = set(self.generations)
+            failures = dict(saved.get('failures', {}))
+            if 'failures' not in saved:
+                # Upgrade old entry-scoped failures even if a lifecycle event
+                # invalidated the rows while disk restoration was in progress.
+                for entry in saved.get('entries', {}).values():
+                    if not isinstance(entry, dict) or not isinstance(entry.get('spec'), dict):
+                        continue
+                    target, retry = entry['spec'].get('target'), entry.get('retry')
+                    if (isinstance(target, str) and isinstance(entry.get('error'), str) and entry['error']
+                            and isinstance(retry, (int, float)) and math.isfinite(retry)
+                            and retry > failures.get(target, {}).get('retry_at', 0)):
+                        failures[target] = {'retry_at': retry, 'error': entry['error']}
+            for target, failure in failures.items():
+                if (isinstance(target, str) and target and isinstance(failure, dict)
+                        and isinstance(failure.get('error'), str) and failure['error']
+                        and isinstance(failure.get('retry_at'), (int, float))
+                        and math.isfinite(failure['retry_at']) and 0 < failure['retry_at'] <= self.clock() + TTL):
+                    self.failures.setdefault(target, dict(failure))
             for key, entry in saved.get('entries', {}).items():
                 if not isinstance(entry, dict) or not isinstance(entry.get('spec'), dict):
                     continue
@@ -188,7 +225,8 @@ class _Memory:
 
     def snapshot(self):
         with self.lock:
-            return copy.deepcopy(dict(entries=self.entries, generations=self.generations, artifacts=self.artifacts, overlays=self.overlays))
+            return copy.deepcopy(dict(entries=self.entries, generations=self.generations, artifacts=self.artifacts,
+                                      overlays=self.overlays, failures=self.failures))
 
     def handle(self, operation, payload):
         with self.lock:
@@ -200,6 +238,66 @@ class _Memory:
                     self.artifacts[key] = payload['value']
                     self.persist()
                 return {'value': copy.deepcopy(self.artifacts.get(key))}
+            if operation == 'reset-host':
+                target = payload.get('target')
+                if not isinstance(target, str) or not target:
+                    raise ValueError('invalid session discovery host')
+                if self.loading:
+                    raise ValueError('session cache is still loading; retry reset')
+                self.failures.pop(target, None)
+                self.generations[target] = self.generations.get(target, 0) + 1
+                self.reset_epochs[target] = self.reset_epochs.get(target, 0) + 1
+                for entry in self.entries.values():
+                    if entry['spec']['target'] == target:
+                        entry['checked'] = entry['retry'] = 0
+                        entry['error'] = ''
+                self.persist()
+                return {'reset': target}
+            if operation == 'forget':
+                target = payload.get('target', 'local')
+                workspace, sid = payload.get('workspace'), payload.get('sid', '')
+                if not isinstance(target, str) or not target or not isinstance(workspace, str) or not os.path.isabs(workspace) or not isinstance(sid, str):
+                    raise ValueError('invalid session cache reset target')
+                if self.loading:
+                    raise ValueError('session cache is still loading; retry reset')
+                def matches(row, resume=False):
+                    if isinstance(row, str):
+                        fields = row.split('\t')
+                        if resume:
+                            return len(fields) >= 5 and (bool(sid and fields[3] == sid) or fields[4] == workspace)
+                        return len(fields) >= 2 and (bool(sid and fields[0] == sid) or fields[1] == workspace)
+                    if not isinstance(row, dict):
+                        return False
+                    return bool(sid and row.get('sid', row.get('id')) == sid) or row.get('cwd') == workspace or any(
+                        a.get('workspace') == workspace for a in row.get('associations', []) if isinstance(a, dict))
+                count = 0
+                self.generations[target] = self.generations.get(target, 0) + 1
+                for entry in self.entries.values():
+                    if entry['spec']['target'] != target:
+                        continue
+                    entry['checked'] = entry['retry'] = 0
+                    value = entry.get('value', {})
+                    rows = value.get('rows', '').splitlines()
+                    kept = [row for row in rows if not matches(row)]
+                    count += len(rows) - len(kept)
+                    value['rows'] = '\n'.join(kept) + ('\n' if kept else '')
+                    rows = value.get('resume', [])
+                    value['resume'] = [row for row in rows if not matches(row, resume=True)]
+                    count += len(rows) - len(value['resume'])
+                    catalog = value.get('catalog', {})
+                    if 'conversations' in catalog:
+                        catalog['conversations'] = [r for r in catalog['conversations'] if not matches(r)]
+                    mcp = value.get('mcp', {})
+                    if 'recs' in mcp:
+                        mcp['recs'] = [r for r in mcp['recs'] if not matches(r)]
+                    for field in ('live', 'registry'):
+                        if isinstance(mcp.get(field), dict):
+                            mcp[field] = {key: row for key, row in mcp[field].items()
+                                          if not (sid and key == sid) and not matches(row)}
+                self.overlays[target] = {key: value for key, value in self.overlays.get(target, {}).items()
+                                         if not matches(value['row'])}
+                self.persist()
+                return {'forgotten': count}
             if operation == 'event':
                 targets = payload.get('targets', ['local'])
                 for target in targets:
@@ -234,15 +332,19 @@ class _Memory:
                 if entry is not None:
                     self._overlay(entry)
                     now = self.clock()
+                    failure = self.failures.get(spec['target'], {})
+                    retry = max(entry['retry'], failure.get('retry_at', 0))
                     stale = not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
-                    if stale and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets and now >= entry['retry']:
+                    if stale and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets and now >= retry:
                         entry['refreshing'] = True
                         self.active_targets.add(spec['target'])
                         generation = self.generations.get(spec['target'], 0)
-                        self.submit(self.refresh, key, generation)
+                        self.submit(self.refresh, key, generation, self.reset_epochs.get(spec['target'], 0))
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
-                                      checked=entry['checked'], stale=stale, refreshing=entry['refreshing'],
-                                      error=entry.get('error', ''), retry_at=entry['retry'],
+                                      checked=entry['checked'], stale=stale,
+                                      refreshing=entry['refreshing'] or (stale and now >= retry
+                                          and spec['target'] in self.active_targets),
+                                      error=failure.get('error', entry.get('error', '')), retry_at=retry,
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
                 else:
@@ -260,18 +362,34 @@ class _Memory:
         rows += [change['row'] for change in changes.values() if not change['close']]
         value['rows'] = '\n'.join(rows) + ('\n' if rows else '')
 
-    def refresh(self, key, generation):
+    def refresh(self, key, generation, reset_epoch=None):
         spec = self.entries[key]['spec']
+        target = spec['target']
+        if reset_epoch is None:
+            reset_epoch = self.reset_epochs.get(target, 0)
         try:
             value, error = self.collect(spec), ''
         except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired) as exc:
-            value, error = None, ' '.join(str(exc).split())[:512]
+            value, error = None, ' '.join(str(exc).split())[:512] or 'session scan failed'
         with self.lock:
             entry = self.entries[key]
             entry['refreshing'] = False
-            self.active_targets.discard(spec['target'])
-            if generation != self.generations.get(spec['target'], 0):
+            self.active_targets.discard(target)
+            if reset_epoch != self.reset_epochs.get(target, 0):
                 return
+            # Ordinary row invalidation must not erase evidence that a host is
+            # unreachable. Only an explicit reset can supersede this failure.
+            if error:
+                self.failures[target] = {'retry_at': self.clock() + TTL, 'error': error}
+                self.persist()
+            if generation != self.generations.get(target, 0):
+                return
+            if not error:
+                self.failures.pop(target, None)
+                for sibling in self.entries.values():
+                    if sibling['spec']['target'] == target:
+                        sibling['error'] = ''
+                        sibling['retry'] = 0
             entry['error'] = error
             entry['retry'] = self.clock() + TTL
             if value is not None:

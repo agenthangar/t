@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', choices=('warm', 'expired', 'offline', 'cold'), default='warm')
+    parser.add_argument('--wait', action='store_true', help='preview explicit bounded refresh observation')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='t-cache-preview-', dir='/tmp') as temporary:
         previous = dict(os.environ)
@@ -52,6 +53,15 @@ def main():
                 if args.scenario == 'offline':
                     entry['error'] = 'Sample host unavailable'
                     entry['retry'] = memory.clock() + 3600
+        # Subsequent refreshes finish asynchronously using only the synthetic
+        # collector, so --wait exercises completion without real discovery.
+        def refresh_later(callback, *values):
+            timer = threading.Timer(.5, callback, args=values)
+            timer.daemon = True
+            timer.start()
+        memory.submit = refresh_later
+        for callback, *values in jobs:
+            refresh_later(callback, *values)
         address = cache['_private'](cache['_runtime']()) / 'service.sock'
         try:
             with cache['_Server'](str(address), cache['_Handler']) as server:
@@ -60,7 +70,8 @@ def main():
                 thread.start()
                 try:
                     print('Synthetic preview · t session list --local · ' + args.scenario, flush=True)
-                    return subprocess.run([sys.executable, str(ROOT / 'bin/t'), 'session', 'list', '--local'],
+                    return subprocess.run([sys.executable, str(ROOT / 'bin/t'), 'session', 'list', '--local'] +
+                                          (['--wait'] if args.wait else []),
                                           cwd=temporary, env=dict(os.environ), check=False).returncode
                 finally:
                     server.shutdown()

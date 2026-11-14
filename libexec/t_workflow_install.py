@@ -63,7 +63,8 @@ def changes(w, document, roots):
     updates = []
     for path, (tool, global_file) in sorted(candidates.items()):
         if not global_file and path.is_symlink():
-            print('Preserving linked repository instructions: ' + str(path))
+            if not os.environ.get('T_UPDATE_QUIET'):
+                print('Preserving linked repository instructions: ' + str(path))
             continue  # Never replace a link or mutate its external destination.
         safe(path)
         before = w['snapshot'](path)
@@ -99,7 +100,7 @@ def install(w, *, roots=None, confirm=None):
     except EOFError:
         accepted = False
     if not accepted:
-        print('Instruction migration deferred; existing instructions preserved. Run t system update again to review.')
+        print('Instruction migration deferred; existing instructions preserved. Run t system update --relink to review.')
         return 0
     safe(backup)
     backup.mkdir(parents=True, mode=0o700)

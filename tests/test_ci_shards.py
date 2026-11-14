@@ -80,6 +80,30 @@ def test_missing_and_corrupt_coverage(tmp_path):
         ci.combine(directory, 2, tmp_path / 'output')
 
 
+@pytest.mark.parametrize('filename', [
+    '/checkout/scripts/offline_shell.py',
+    r'C:\checkout\scripts\offline_shell.py',
+    'scripts/offline_shell.py',
+])
+def test_normalized_coverage_accepts_offline_script(tmp_path, filename):
+    from coverage import CoverageData
+    path = tmp_path / '.coverage'
+    data = CoverageData(basename=str(path))
+    data.add_lines({filename: {2, 1}})
+    data.write()
+    assert ci.normalized_coverage(path) == {'scripts/offline_shell.py': [1, 2]}
+
+
+def test_normalized_coverage_rejects_unapproved_script(tmp_path):
+    from coverage import CoverageData
+    path = tmp_path / '.coverage'
+    data = CoverageData(basename=str(path))
+    data.add_lines({'/checkout/scripts/playground.py': {1}})
+    data.write()
+    with pytest.raises(ValueError, match='unexpected measured source'):
+        ci.normalized_coverage(path)
+
+
 def test_combined_threshold_and_reference(tmp_path, monkeypatch):
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
     monkeypatch.delenv('COVERAGE_FILE', raising=False)

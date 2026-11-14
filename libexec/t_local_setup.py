@@ -154,15 +154,24 @@ def run(args, api):
             dialog = onboarding['Dialog'](api)
             if not model and not disabling:
                 current = status()
-                dialog.notice(f"Local worker: {'enabled' if current['enabled'] else 'disabled'} · {current['model']}")
-                choice = dialog.choose('Local worker', [('setup', 'Install / configure local worker'),
-                                                        ('disable', 'Disable local delegation'), ('back', 'Back')])
-                if choice == 'back':
+                provider = current.get('provider', 'ollama')
+                details = [('Delegation', 'Enabled' if current['enabled'] else 'Disabled'),
+                           ('Provider', 'LM Studio' if provider == 'lmstudio' else 'Ollama'),
+                           ('Model', current['model'])]
+                choices = [('setup', 'Install / configure local worker'),
+                           ('disable', 'Disable local delegation'), ('back', 'Back')]
+                if getattr(dialog, 'ui', None):
+                    choice = dialog.ui.pick('Local worker', choices, context=details)
+                else:
+                    dialog.notice('\n'.join(f'{label}: {value}' for label, value in details))
+                    choice = dialog.choose('Local worker', choices)
+                if choice in (None, 'back'):
                     return 130
                 disabling = choice == 'disable'
                 if not disabling:
                     if getattr(dialog, 'ui', None):
-                        selected = runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))['select_model'](dialog.ui)
+                        selected = runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))['select_model'](
+                            dialog.ui, current['model'], provider=provider)
                         if not selected:
                             return 130
                         model = selected['model']

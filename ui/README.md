@@ -39,11 +39,52 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+## Session-open recovery
+
+Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
+refreshes discovery and retries, or revives a verified exited pane. If it fails,
+offer **Force open / Cancel**. Keep the reason brief and identify any live client
+that force open will stop. Cancel returns 130 and stops remaining batch actions.
+
+`t session open api 3 --force` enters the force confirmation directly. `--yes`
+confirms only an explicit numeric force target; redirected commands never prompt.
+`--new`, foreground mode and automatic remote selection cannot be forced; use
+`--host HOST` to select a remote target. Compatibility `t open` shares the flow.
+
+Force open saves private recovery evidence before resetting the selected session's
+t history and discovery state through their owning APIs. Reuse the worktree
+without freshening or changing files. Reconstruct a missing worktree from its
+local branch, published branch or uniquely linked PR. Starting from the published
+default branch requires a separate explicit choice. Resume native context if it
+is available; otherwise clearly report a fresh conversation. Transcripts and
+unrelated sessions are preserved. Ownership changes, held writers and unreachable
+hosts still block conflicting launches. No global database wipe, backend kill or
+held-lock deletion is a recovery action. Failed launches retain the backup path.
+
 ## Workflow settings and resets
 
 Group the main workflow editor into Models, Behavior and Manage using shared
 RailUI sections. Use this workflow stays above the groups. Keep focus on the
 selected row when returning, including after a reset; headings are not selectable.
+
+Named workflow editors include Repositories directly below Use this workflow.
+Group registered repositories into Using this workflow and Other repositories,
+including inherited global assignments without materializing them. Distinguish
+explicit assignments, inheritance, custom inline settings, exclusions and disabled
+definitions. Assign repositories uses the shared multi-picker with no initial
+marks; Space marks and Enter stages the entire selection. Back cancels those marks.
+Already using this workflow is omitted from the batch picker; no registered or
+available repositories is an explicit disabled-action state, never an empty picker.
+Individual repository actions offer this workflow, global inheritance, another
+workflow, disable, and the existing design-source picker.
+
+Assignments remain tool-scoped in the existing transaction. Use the shared action
+semantics: explicit assignment replaces custom overrides and clears exclusion,
+while retaining the design source. Build batches before replacing staged state.
+Refresh membership and preserve focus on return; all assignment changes appear in
+the final before/after review. Browsing never scans repositories or writes settings.
+An explicit Design system choice opens the existing read-only discovery picker.
+These extend the existing workflow wizard/single/multiple-selection modes.
 
 Every settings page offers Reset to defaults, and individual selectors offer a
 resolved default or inheritance choice, including binary toggles. The multiple-model
@@ -124,6 +165,11 @@ prompts, shell startup, MCP registrations, workflow preferences, or settings.
 Normal installs and canonical updates retain their existing integration behavior.
 The installed source selector must be upgraded once for older installations;
 development setup itself never replaces that shared installation.
+Source selection never probes an unrelated working repository with Git. Cancelling
+selection returns 130 without a traceback or command dispatch. Interrupted initial
+shell loading retains a retryable `t` function; the next invocation finishes loading
+the selected helpers before running the command. Reload failures retain the existing
+dispatcher and never run a command against a stale source.
 
 `t --version` is a read-only detail display. Preserve the release/revision on the
 first line, then show labeled `Source` and `Worktree` paths with their branches.
@@ -231,8 +277,14 @@ In a batch, cancellation stops the remaining actions; already completed actions
 are kept and reported. Cancellation never rolls back completed work or attaches
 to another target automatically.
 `t system update --all` is a direct batch action: update locally, then registered
-SSH targets in alias order (duplicate targets run once), streaming each updater's
-output. Report each result and continue after failures, including unreachable
+SSH targets in alias order (duplicate targets run once). Report one concise result
+per host: `up to date`, `updated`, or `failed (exit N)`. Suppress routine Git/setup
+chatter while streaming required prompts and actionable diagnostics. Quiet local
+Git checks use the shared terminal spinner; redirected output stays static.
+Already-current installations skip setup; failed setup is retried. `--relink`
+explicitly repairs links/integrations and reviews deferred instruction migration.
+`--local` still switches sources when another source is installed.
+Continue after failures, including unreachable
 hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
 hosts means a local-only update. Remote updates never fan out recursively.
 With no usable terminal, require explicit input or use the command's documented
@@ -285,6 +337,11 @@ notifications are detached from attachment and hook completion. Deferred discove
 only invalidates snapshots; it never publishes an old live-row overlay after a
 slot closes or is reused. Ownership, launch readiness and worktree preparation
 remain synchronous. No background task changes the active branch or checkout.
+Fresh allocation requests only remote reservation markers on hosts with retired
+desktop integrations, with the existing live inventory fallback for older peers.
+It does not rebuild local display discovery. Foreground launch preflight consumes
+identity and cwd without reading titles or resolving display labels. Cached
+inventory is never accepted as proof that a workspace has no live owner.
 Try `t open --codex --new` from a registered repository. The isolated
 `python3 scripts/preview_session_start.py` demonstrates history contention without
 starting an agent, touching personal settings or opening a desktop window.
@@ -768,9 +825,36 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
+Before freezing its snapshot, the open picker observes pending discovery for up
+to 30 seconds with the shared delayed spinner. A fresh snapshot opens immediately.
+Timeout or unavailable local discovery offers **Retry refresh / Browse older
+results / Cancel** through RailUI; omit browsing when no rows are available.
+An older or partial snapshot keeps a warning through filter and sort changes.
+An empty incomplete snapshot never starts a fresh session. Cancel returns 130
+without canceling the shared refresh. Settled remote failures retain reachable
+rows and their freshness notices without delaying each subsequent open.
+
+Failed discovery targets pause automatic retries for one hour across aliases and
+repository views, including normal invalidation and cache service restarts.
+`t hosts reset HOST` clears only that registered target's discovery cooldown and
+marks its snapshot stale. It is a direct action with no picker or connection;
+the next browse may retry. Registrations, sessions and worktrees are retained.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
+Ordinary lists return immediately. `t session list --wait` (also `t ls --wait`)
+explicitly observes a pending cache refresh for up to 30 seconds before printing
+the same table and freshness notices. It uses the shared delayed spinner only in
+capable terminals; redirected waits are silent and never prompt. Completion,
+failure or timeout ends observation; Ctrl-C returns 130 without cancelling the
+shared refresh. Fresh caches return immediately, and cold caches never claim a
+verified empty result. No picker, Return/Escape bindings or update prompt is added.
+
+Session-picker filtering and sorting are hotkey interactions. Improvements to
+these controls extend the existing picker and preserve its filter and sort
+choices. Do not introduce CLI flags for these interactions unless the user
+explicitly requests flags or noninteractive control. Inspect the existing
+bindings before proposing changes; history keeps its distinct pagination keys.
 
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
@@ -1015,6 +1099,14 @@ Repositories without a GitHub origin retain their exact local registration
 identity through selection and launch; an unregistered or changed path is refused.
 Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
+Slot history uses the same five sort choices as open/resume: last turn, repository,
+agent, host, and session. Ctrl-S toggles sorting; Ctrl-Y cycles choices.
+The highlighted `Sort: last turn ↓` label means newest actual user turn first,
+unknown times last. Text modes show ↑ and use natural ascending order.
+History sorts the complete search result before pagination; changing sort clears
+marks and returns to page 1. Search, paging, and refresh retain the sort choice.
+Sorting off restores snapshot order. Row timestamps use local time; full dates
+and timezone remain available in details. No new command or launch mode is added.
 Explicit resume options (`--cli`, `--fg`, `--host`, `--days`, `--live`,
 `--remote`) retain the filtered resume picker and their existing semantics,
 including the recency limit and nonterminal saved selection. Internal resume
@@ -1056,7 +1148,7 @@ Caller-shell-only operations, browser launches, private workers, and nested remo
 wrappers are rejected before connecting. Underlying command help remains local.
 
 Remote open reads and scopes inventory on the selected host, then uses the shared
-local picker and opens extra local tabs before the first attachment. Failed tab
+local picker and opens each multi-selected session in a new local window. Failed window
 creation reports an exact attach command and a nonzero result. Desktop rows are
 excluded from this CLI-only remote picker.
 
@@ -1130,13 +1222,15 @@ The filtered multi-selection mode of `t session open` prioritizes session identi
 and working-on text. It omits LAST TURN, previews, and the new-session shortcut.
 Compact rows use the shared Unicode width helpers; full task text and metadata
 remain searchable. Hidden host/session/state identity fields remain unchanged.
-Extra tabs target the originating terminal window and commands target only the
-new tab. Switching tabs or windows never redirects commands into an existing tab.
-Terminal tab creation requires the originating window in front. If focus moves
-away, the origin is unavailable, or tab creation fails or is ambiguous, create a
-new window with its command atomically, without an activate call. If window
-creation also fails, retain the attach-command fallback and expose the automation
-error. iTerm uses the tab returned by its creation API.
+One selection attaches in the invoking terminal. With multiple selections, every
+selected session, including the first, opens in its own new Terminal or iTerm2
+window; leave the invoking terminal available. Commands target only new windows:
+both Terminal and iTerm create the window with its command atomically. iTerm's
+command runs through `zsh -lic`. Do not send keystrokes or activate an existing
+window. If creation fails or the terminal is unsupported, report the exact attach
+command for each unopened selection, continue the batch, and return nonzero.
+Preserve each row's exact host and foreground/session identity. Single opens and
+`--fg` retain their existing attachment behavior.
 Explicit targets still bypass selection. Open and close pickers label displayed
 columns in a non-selectable header preserved across filter changes. Narrow
 filtered views use full height and smaller margins to retain controls and rows.
@@ -1161,8 +1255,13 @@ The preview includes the complete working-on text, status/context, UI, agent and
 model, host/session, date, repository and full conversation ID, every workspace
 association and branch/commit/evidence, all associated PRs and their states,
 incidental mentions labeled separately, and transcript availability. Show it by
-default at 70 or more columns and 22 or more rows, in a bottom preview occupying
-35% of the full-height picker; Ctrl-/ toggles it at every size. Use the shared
+default at 70 or more columns and 28 or more rows, in a bottom preview occupying
+35% of the full-height picker; Ctrl-/ toggles it at every size. Smaller terminals
+start with details hidden and use a four-row pane when toggled (three rows at
+14 or fewer terminal rows), preserving the focused result. Match `t open` with
+the shared two-line sort block, blank rows between header sections, and
+two-space table gutters at 60 or more content columns. Compact layouts reclaim
+section gaps before hiding controls or results. Use the shared
 paginated multi-picker: Tab marks exact conversations, Enter accepts marks
 or the focused row, and Esc/Ctrl-C cancels. Marks clear on search, page change,
 or refresh. Slot and revision choices remain single-selection.
@@ -1314,6 +1413,10 @@ without pickers, OS service registration, remediation or update prompts.
 `t config local` and the settings hub's **Local worker & models** entry use the
 shared Rail UI to review prerequisite installation, model downloads, and Codex MCP
 registration. Pending hub edits must be saved or discarded before opening setup.
+Clear the hub's painted frame before handing off to setup. Keep the current
+delegation state, provider and exact configured model inside the local-worker
+menu, not in a completed-step notice. Model selection starts on that worker's
+provider/model identity. Browsing and cancelling never change worker settings.
 `t config local --model NAME --yes` applies explicit setup without prompting;
 `--disable --yes` disables delegation while retaining models and registration.
 `t config local --show` is a read-only detail mode: no server startup, download,
@@ -1394,24 +1497,68 @@ does not publish; normal review/save/discard applies to the complete transaction
 
 `t workflow` includes a Codex **Inference & routing** submenu with Disabled,
 Manual, Automatic hybrid and Local only modes, explicit local model, context and
-task budget. **On cloud connection failure** stages Pause and retry (default), Ask which local
-model, or Continue locally with selected model. Only new native CLI launches opt into the
-owned runtime supervisor; the native client supplies progress and approvals.
-The transition displays the connection-failure reason, exact provider/model and
-private checkpoint path, then stays local. It never downloads weights or treats
-authentication, quota, HTTP application failures, auxiliary threads or cancellation
-as an outage. Unsupported resume/fork/exec/review or remote/profile/OSS/worktree
-overrides fail before launch and explain how to select Pause. These are conditional
-launch modes, not new public command families. These are staged workflow choices. The shared model picker keeps
-Memory fit ✓/✕/? visible on narrow screens. Unknown/non-fitting models are dimmed
-and inspectable; disabled Use/Install actions explain why and never execute.
-Benchmark suite selection is explicit; missing scores and speed are not invented.
-Every model list follows the model comparison summary contract below; do not hide
-all benchmark context in model details.
-Installation and measurement are explicit immediate actions with model selection;
-model download review precedes installation. `t config models show` is read-only;
-`install` and `measure` are direct explicit-artifact actions. `--download-only`
-does not claim inference readiness. No list/show mode starts a runtime or picker.
+task limit (15 minutes by default), maximum task limit (30 minutes), inactivity
+timeout (5 minutes) and queue wait (5 minutes). Reset time limits changes only
+these four values. **Cloud connection failure** opens grouped Cloud retries and Local
+fallback settings: **Retry cloud for** defaults to **Up to 5 minutes**, with
+15 seconds, 30 seconds, 1 minute, 2 minutes and 5 minutes available. **Then**
+defaults to **Pause**; **Continue locally** reveals the selected local model and
+readiness with direct access to its existing verification actions. Reset on this
+page changes only retry duration and the after-retries action; it preserves the
+model, context and task budget. All settings use the shared review/save/discard
+transaction, including completed changes before interruption. Readiness checks,
+installation and verification remain explicit immediate machine actions.
+
+The owned runtime supervisor observes native transport retries without replaying
+whole turns or replacing native backoff. The configured limit starts at the first
+typed connection failure; native exhaustion can end retries sooner. Recovery
+resets the clock. Pause interrupts only the owned cloud turn and retains the
+native client; successful interrupt acknowledgement confirms the paused state.
+A rejected or unacknowledged interrupt stops the owned runtime instead of claiming
+that it paused. Local fallback stops all owned cloud processes before starting a
+fresh local session from the bounded private checkpoint, displaying provider/model
+and checkpoint path. It stays local until the user starts a cloud session.
+Unavailable readiness or incomplete checkpoints pause the cloud turn visibly.
+It never downloads weights or treats authentication, quota, HTTP application
+failures, auxiliary threads or cancellation as an outage. Only fresh native CLI
+launches without remote/profile/OSS/worktree overrides support supervision.
+Unsupported resume/fork/exec/review or overridden launches reject local fallback;
+Pause launches use native retry behavior and explicitly report that the configured
+retry limit is unavailable. Local-only workflows disable this cloud settings row.
+These are conditional launch modes, not new public command families.
+The model chooser uses the shared RailUI comparison table with identity, size,
+provider, memory fit, readiness and a sourced benchmark score. Prefer SWE Pro when
+available, otherwise another published suite; show missing scores as —. A shared
+legend retains suite/version and base-model provenance. Number keys open the
+available publisher source/version/harness for the focused model; m opens optional
+model tools. Scores remain original-model publisher results, never local
+quantization or speed measurements.
+
+Model labels, metadata and actions align at the shared row text column. Wide
+terminals align numeric comparison columns; narrow terminals shorten labels and
+omit the same optional columns for every model, preserving one line per model. Keep the cursor and navigation inside the existing
+windowed frame. Distinguish the configured model from keyboard focus and disambiguate
+provider/model identities. Context includes file state, verification context and
+the next Enter action. Missing configured models, empty discovery and discovery
+errors have explicit refresh/back states. Browsing never downloads or loads models.
+
+Enter on a ready model stages its exact provider/model and returns to the workflow.
+Otherwise show one preparation screen: Verify & use for downloaded files, or
+Download, verify & use with size and location before downloading. Reuse existing
+reservation, context/hardware validation and runtime guardrails. Stage only after
+a refreshed exact-identity catalogue row confirms readiness. Failure, busy runtime,
+missing refreshed identity and cancellation preserve the workflow selection and
+retain downloaded files. Retries require another explicit choice. Compatibility
+or disk-space blocks show their reason and return to choosing another model.
+Use default and resets remain configuration-only and do not run/download a model.
+
+`t config models show` remains read-only; install and measure are explicit-artifact
+actions. `--download-only` does not claim inference readiness. No list/show mode
+starts a runtime or picker. Workflow configuration keeps its existing staged
+review/save/discard transaction; preparation is an explicit immediate machine action.
+
+Retain **Ask which local model** alongside Pause and Continue locally. Preserve
+queue wait, owned model unloading and cloud-return recovery from main.
 
 ## Standalone companion: nosleep
 
@@ -1438,12 +1585,40 @@ sleep hold is taken; subsequent checks run approximately every 10 seconds.
 
 `t config → Nosleep` opens the same `_RailUI` editor as `nosleep config`,
 returning to the hub afterward. Save or discard hub edits before opening the
-independently saved editor. Blank, nonselectable rail rows separate its sections.
-Nearby-network selection includes refresh, the saved network and manual entry.
-Explicit **Enable network discovery** builds the local CoreWLAN/CoreLocation app
-and requests Location permission; browsing and monitoring never request it.
-Password setup stays pending until review, then uses a private Keychain prompt.
+independently saved editor. On close, Automatic checks, Battery protection,
+Hotspot fallback and nested Retries share one staged transaction and retained
+focus. Blank nonselectable rail rows separate groups.
+
+Choose fallback starts with saved Wi-Fi names from narrowly scoped Keychain
+metadata. Opening it never scans or reads passwords. Nearby networks is a
+separate page; explicit Allow Wi-Fi discovery builds the CoreWLAN/CoreLocation
+helper and requests Location access. Scan progress and bounded timeouts remain
+visible. Both lists filter inline as the user types; arrows/Return navigate,
+Backspace edits, Esc clears then backs out, Ctrl-H optionally hides connected.
+Connected networks are visible initially and labeled on their selectable row.
+No separate Search or Filters section precedes the choices.
+
+Manual entry immediately prompts privately for a password, or offers a matching
+saved credential. Stage the candidate only after this step succeeds. Cancel
+retains the previous fallback; save errors retain the draft. Secrets stay out of
+JSON, argv, files, logs and review; explicit Save alone writes the selected
+credential to the nosleep Keychain service. Clearing a fallback disables it and
+drops its pending credential, never deleting known Wi-Fi or Keychain entries.
 `nosleep hotspot setup` remains a compatibility route.
+
+Hotspot retry limits offer elapsed time (60 minutes for new defaults) or total
+attempts, with 300 seconds between attempts and a 30-second attempt timeout.
+The window begins with the first attempt and includes cooldowns; attempts never
+overlap. Recovery resets the window; expiry returns to normal sleep checks.
+Legacy configured fallback retains its bounded attempt limit. Battery protection
+still overrides hotspot holds and `--forever`.
+
+The Local inference hub shows a compact worker/selected-model summary and puts
+Configure before Inspect. Runtime details retains endpoints, scheduler policy,
+loaded-model ownership and memory estimates without crowding the overview.
+Models, providers, machine settings, worker setup, requests and monitoring remain
+reachable even when the manager is unavailable. Workflow inference and its task,
+inactivity and queue budgets remain workflow-scoped.
 
 The runtime observes the selected SSID asynchronously even when fallback or
 checks are disabled. The dashboard separates fallback policy from association and
@@ -1535,7 +1710,7 @@ different evaluation methods and narrow terminal sizes with labeled sample data.
 
 ### Workflow model overview
 
-The existing local-model single-selection mode opens a compact RailUI overview
+The optional local-model tools view opens a compact RailUI overview
 with model identity, readiness, file size, memory fit, context and the next action.
 Use shared nonselectable context rows and the shared viewport; keep the focused
 action and footer visible at 80×24, 44×20 and 32×12. Include the same concise
@@ -1552,6 +1727,28 @@ old verification evidence. Special memory-mapped artifacts may be checked when
 the publisher's resident estimate and minimum RAM fit; fit remains unknown until
 verified. Runtime guardrails are never bypassed. These extend existing wizard,
 single-selection, detail and install action modes; no new public command.
+
+Model tests and measurements check shared runtime ownership before inference.
+The preflight lists every blocking session and its models; session rows open
+read-only details and remain navigable in narrow terminals. Offer Wait for a
+turn, Interrupt all sessions, and Back. Selecting interruption acts directly on
+the displayed set, with no second confirmation. Recheck the full owner set and
+each exact conversation before sending Escape; unidentified or unsupported owners
+disable interruption. Conversations remain open, but their current work may need
+resuming. Older workers must actually release their lock before a test can run.
+
+Reserve admission during interruption and testing; no other request may start in
+between. Report interruption requested until all affected generation has stopped.
+A failed or partial interruption never starts a test. Idle loaded models alone
+do not require interruption. A prior manager upgrades only when it has no clients;
+never restart a manager serving live sessions. Lists and machine output do not
+enter this preflight or interrupt sessions.
+
+The shared picker refreshes model-test progress and terminal outcomes without
+input, preserves focus, and suppresses background spinners. Cancellation affects
+only the test. Queue timeout retains downloaded files and valid earlier evidence.
+Worktree preview: `python3 scripts/preview_model_test.py` uses simulated owners
+and no real model, runtime, session or configuration changes.
 
 ### Prompted connection recovery
 
@@ -1598,7 +1795,8 @@ Installation shows the affected global and repository instruction paths and back
 location, then asks **Back up and rebuild these global and repository instructions?
 [y/N]**. Declining, EOF or unattended installation preserves existing instructions.
 Only t-owned marked blocks are rebuilt; custom Markdown and hand-written content
-remain. Linked repository instruction files are preserved and reported. Global
+remain. Linked repository instruction files are preserved; routine updates omit
+unchanged-link notices. Global
 instruction symlinks block migration. Original contents, permissions and hashes are backed up under the user's
 state directory. Unchanged files are not backed up or prompted for again.
 

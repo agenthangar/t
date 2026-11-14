@@ -361,10 +361,12 @@ requires a clean worktree and proof that its commits have landed; open/unknown
 PRs and uncertain work stay hidden until Ctrl-P or Ctrl-A. `t resume --live`
 and `t open --attached` start with all rows; Ctrl-F restores their defaults.
 
-CLI opens use this terminal for the first selection and new tabs for the rest,
-falling back to new windows in Terminal when tabs cannot be created safely
-(including switching away during creation). Attach commands remain available
-if opening a terminal fails. Commands never target an existing tab. `--fg` opens one session. In `t kill`, mark sessions with Tab and
+With `t open`, one selection opens in this terminal. Mark several sessions with
+Tab and press Enter to open every selection, including the first, in its own new
+window in Terminal or iTerm2. The invoking terminal stays free. If window creation
+is unavailable or fails, each unopened selection prints its exact attach command
+and the batch returns a failure status. Commands never target an existing window.
+`--fg` opens one session. In `t kill`, mark sessions with Tab and
 press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
@@ -403,6 +405,10 @@ For opening sessions, `t session open --help` shows a concise reference with
 examples; `t help session open` adds session targeting, defaults, and remote
 behavior. Start a fresh Codex session in the current repo with
 `t open --codex --new` (`codex` without `--` is a repository name).
+Fresh allocation checks remote reservation markers without rebuilding the local
+session inventory or reading session titles. Older hosts with desktop integrations
+retain their live reservation scan. Foreground ownership checks read identity and
+workspace metadata without collecting display details.
 Session-cache refresh and history indexing run in the background. Startup still
 prepares the worktree, checks ownership, and captures launch settings and revision
 evidence before returning control. It never changes an active checkout in the
@@ -458,6 +464,7 @@ for a host's login shell.
 | `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
 | `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
 | `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
+| `t hosts reset <alias>` | Clear a failed host's one-hour discovery cooldown; the next browse may retry |
 | `t hosts default [alias] [--clear]` | Show, set, or clear the legacy `t beam` default destination |
 
 `hosts` manages remote machines. Run `t hosts` to see its commands,
@@ -585,6 +592,8 @@ host aliases may attach to the existing owner. Desktop resume remains local.
 ### Configuration and tools
 
 For local coding delegation, open **t config → Local worker & models** or run
+`t config local` to see the current delegation state, provider and configured model.
+The model picker starts on that configured worker. To change it, run
 `t config local`. Review installation of Codex/Ollama, select and download a local
 model, and connect the worker to Codex through MCP. The lead keeps its conversation;
 workers use isolated repository snapshots and return findings, patches, and test
@@ -594,6 +603,13 @@ Inference & routing → Local model**, downloaded artifacts offer **Test model**
 without downloading them again. Benchmarks and artifact/runtime details have
 separate views. `t config models install MODEL --yes` also reuses completed files
 and verifies inference; downloaded weights alone do not mean Ready.
+
+Interactive tests first list any sessions using the shared runtime. Choose
+**Wait for a turn**, **Interrupt all sessions**, or **Back**. Interruption acts on
+the displayed sessions without a second confirmation; their conversations stay
+open. The test waits for confirmed release, and progress updates automatically.
+For example, `t workflow open NAME` → **Inference & routing → Local model →
+Test model** checks availability even when another session uses a different model.
 
 Shared local inference: `t config` → **Local worker & models** shows model usage,
 requests, provider setup, CLI help and desktop-app launch actions. Use
@@ -1141,6 +1157,34 @@ only that page and its nested settings. **Reset workflow to defaults** restores
 the selected tool's built-in policy while keeping the workflow's name, repository
 assignments and per-repository design sources.
 
+Choose **Inference & routing → Local model** to compare available benchmark scores
+and readiness in one screen. Enter selects a ready model directly. Downloaded
+models offer **Verify & use**; missing models offer **Download, verify & use** with
+an explicit review. Preparation failure or cancellation keeps the current model.
+The benchmark header keys show provenance for the focused model; **m** opens
+optional verification, measurement and artifact tools. Scores are publisher
+original-model results, not measurements of the local quantization. Unreported
+scores appear as **—**. Model choices stay pending until Save.
+
+In **Inference & routing → Cloud connection failure**, choose **Retry cloud for**
+(default **Up to 5 minutes**) and **Then → Pause** or **Continue locally**.
+Native retries can finish sooner; reconnecting resets the retry window. Local
+fallback shows the selected model and its readiness. Open **Readiness → Verify
+readiness** to verify downloaded files without downloading them again. A failed
+check keeps the files and displays its reason. Configuration changes remain staged;
+verification is an explicit machine action. Fresh native CLI sessions support the
+retry limit; unsupported launch modes report native retry behavior for Pause and
+reject automatic local fallback. Local continuation starts a separate session
+from a bounded checkpoint after stopping the cloud runtime.
+
+Inside a named workflow, open **Repositories → Assign repositories…** to assign
+one or several registered repositories. Space marks repositories; Enter stages
+the selected assignments. The page separates repositories using this workflow
+from other repositories and distinguishes explicit assignments, global inheritance,
+custom settings and disabled workflows. Select a repository to use this workflow,
+restore its global default, choose another workflow, disable workflows, or inspect
+its **Design system**. Assignments and design sources share the normal Save review.
+
 To inspect a repository's design source directly, open `t workflow`, choose its
 agent, then **Repository assignments → your repository → Design system**.
 The selection is stored in `~/.config/t/workflow.json` (or `$XDG_CONFIG_HOME/t/workflow.json`);
@@ -1496,6 +1540,17 @@ t system update --local   # switch to the registered/local t checkout and update
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
 
+If shell startup was interrupted and `t open` reports that it reached `bin/t`,
+reload the installed shell integration in your current zsh:
+
+```zsh
+source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
+```
+
+If startup wiring is missing, run `t doctor --repair` and the source command it
+prints. Cancelling source selection exits quietly; the next `t` invocation retries
+an interrupted initial load.
+
 `t --version` identifies the code being used separately from your current Git
 worktree. For example, inside a development worktree:
 
@@ -1513,12 +1568,25 @@ or `none (outside Git)`. Packaged sources show `release`; detached checkouts sho
 
 `--all` updates this machine first, then each registered host from `t hosts list`
 in alias order. Each machine uses its existing Homebrew, release, or Git updater.
+Already-current installations skip setup. Routine Git and setup chatter is quiet;
+each host gets a concise result, while required prompts and failure details remain
+visible. For example:
+
+```text
+local: up to date
+office: updated
+build: up to date
+```
+
 SSH authentication must already work without a password prompt. Unreachable
 hosts and failed updates are reported while the remaining hosts continue; any
 failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining
 updates, preserving completed work. With no registered hosts, only this machine
 is updated. `t update --all` is the equivalent compatibility alias. `--all`
 cannot be combined with `--check`, `--local`, `--dev`, or `--relink`.
+Use `--relink` to repair links/integrations or review a deferred instruction
+migration even when the installed version is current. `--local` still switches
+to the requested checkout when another source is installed.
 
 When you use `t` interactively, it checks for a newer version in the background
 about once a day (retrying sooner after a failed check). A later command offers
@@ -1727,6 +1795,15 @@ local test runs. Legacy saved choices remain readable and are converted into
 separate choices only when you edit them. Single-model launch defaults remain a
 separate setting from these instructions to the agent.
 
+## Preview last-turn sorting locally
+
+From a t development worktree, `python3 scripts/preview_open_picker.py --profile history`
+opens isolated sample conversation history. Use `--profile open` or `--profile resume`
+for the other pickers. Ctrl-Y cycles last turn, repository, agent, host, and session;
+Ctrl-S toggles sorting. Last turn ↓ means newest user turn first, with unknown times
+last. Selection only prints sample identities; it never starts or attaches a session.
+
+
 ## Standalone sleep protection
 
 The `t` package also installs [`nosleep`](docs/nosleep.md), a standalone macOS
@@ -1738,7 +1815,10 @@ macOS discovery permission setup, and hotspot passwords. Its live dashboard show
 the selected network's availability even when fallback is disabled.
 
 Session discovery is served from a shared in-memory cache with hourly expiry
-and asynchronous disk persistence. See [session cache behavior and storage](docs/session-cache.md).
+and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
+refresh before building its picker; fresh cached results open immediately. Failed
+hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
+early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
 
 ### Nightr
 

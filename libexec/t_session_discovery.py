@@ -1,6 +1,7 @@
 """Adapters and collectors for the single session-cache API; no cache policy/I/O."""
 import datetime
 import json
+import math
 import os
 from pathlib import Path
 import runpy
@@ -11,19 +12,92 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 _CACHE = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
+_spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 
 
-def request(operation, payload=None):
+def request(operation, payload=None, *, deadline=None):
+    if deadline is not None:
+        return _CACHE['request'](operation, payload, deadline=deadline)
     return _CACHE['request'](operation, payload)
 
 
-def discover(cfg, *, local=False, host=None, fields=('rows', 'resume')):
+def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
     if host is not None:
         targets = {host: 'local' if host == 'local' else cfg.hosts.get(host, host)}
+    options = {'deadline': deadline} if deadline is not None else {}
     return request('discover', {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
-                                         for host, target in targets.items()]})
+                                         for host, target in targets.items()]}, **options)
+
+
+def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=None):
+    """Observe the shared refresh without changing expiry, ownership or workers."""
+    deadline = time.monotonic() + timeout
+    with _spinner('Refreshing sessions'):
+        while not view.get('unavailable') and (view.get('loading') or any(
+                h.get('refreshing') for h in view.get('hosts', []))):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return dict(view, wait_timed_out=True)
+            time.sleep(min(.25, remaining))
+            if time.monotonic() >= deadline:
+                return dict(view, wait_timed_out=True)
+            options = {'host': host} if host is not None else {}
+            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=deadline, **options)
+            if latest.get('unavailable'):
+                return dict(view, wait_timed_out=True) if time.monotonic() >= deadline else dict(
+                    view, wait_unavailable=True)
+            view = latest
+    return view
+
+
+def open_snapshot(cfg, choose, *, local=False, host=None, fields=None):
+    """Finish pending discovery before freezing an interactive open snapshot.
+
+    A settled remote failure is skipped under its existing cooldown. An empty
+    partial inventory is never permission to start a fresh session.
+    """
+    options = dict(local=local, fields=fields or ['rows'])
+    if host is not None:
+        options['host'] = host
+    while True:
+        view = discover(cfg, **options)
+        view = wait_for_refresh(cfg, view, **options)
+        hosts = view.get('hosts', [])
+        partial = (view.get('unavailable') or view.get('wait_unavailable') or
+                   view.get('wait_timed_out') or view.get('loading') or
+                   any(h.get('error') or h.get('value') is None for h in hosts))
+        waiting = view.get('wait_timed_out') or view.get('loading')
+        local_failed = any(h.get('target') == 'local' and h.get('error') for h in hosts)
+        available = bool(rows(view).strip())
+        if not partial:
+            return view, ''
+        notice = 'Older or incomplete results · new sessions may be missing'
+        if not waiting and not local_failed and not view.get('unavailable') and not view.get('wait_unavailable') and available:
+            return view, notice
+        message = ('Session discovery is still refreshing' if waiting else
+                   'Session discovery is incomplete')
+        action = choose(message, available)
+        if action == 'cached' and available:
+            return view, notice
+        if action != 'retry':
+            raise KeyboardInterrupt
+        # Explicit retry can recover a failed local scan. Remote failures keep
+        # their cooldown until expiry or an explicit `t hosts reset HOST`.
+        if local_failed and not waiting:
+            result = request('reset-host', {'target': 'local'})
+            if result.get('unavailable'):
+                raise OSError('session discovery unavailable; retry shortly')
+
+
+def reset_host(cfg, alias):
+    if alias not in cfg.hosts:
+        raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
+    result = request('reset-host', {'target': cfg.hosts[alias]})
+    if result.get('unavailable') or result.get('error'):
+        raise ValueError(result.get('error') or 'session discovery unavailable; retry shortly')
+    return result
 
 
 def freshness(view):
@@ -32,6 +106,10 @@ def freshness(view):
 
 
 def announce(view):
+    if view.get('wait_timed_out'):
+        print('t: Refresh wait timed out; showing available sessions.', file=sys.stderr)
+    if view.get('wait_unavailable'):
+        print('t: Session discovery unavailable; showing the last available snapshot.', file=sys.stderr)
     if view.get('unavailable'):
         print('t: Session discovery unavailable; retry shortly.', file=sys.stderr)
     elif view.get('loading') or (not any(h.get('value') is not None for h in view.get('hosts', []))
@@ -46,6 +124,9 @@ def announce(view):
             if host.get('error'):
                 status += (' · unavailable; retaining last known sessions' if host.get('value') is not None
                            else ' · unavailable; retry after hourly expiry')
+                if host.get('target') != 'local':
+                    remaining = max(0, math.ceil((host.get('retry_at', 0) - time.time()) / 60))
+                    status += f' · retry in {remaining}m; reset: t hosts reset {shlex.quote(host["host"])}'
             print(f't: Cached {host["host"]} sessions · {status}', file=sys.stderr)
 
 

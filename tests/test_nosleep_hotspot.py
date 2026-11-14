@@ -179,7 +179,8 @@ def _alive(pid):
 
 
 @pytest.mark.parametrize("mode", ["cancel", "timeout", "leader-exits"])
-def test_owned_command_group_reaps_descendants_even_after_leader_exits(tmp_path, mode):
+@pytest.mark.parametrize("progress", [False, True])
+def test_owned_command_group_reaps_descendants_even_after_leader_exits(tmp_path, mode, progress):
     pidfile = tmp_path / "descendant.pid"
     command = tmp_path / "fork.py"
     command.write_text('''import os, pathlib, signal, sys, time
@@ -188,7 +189,10 @@ if os.fork() == 0:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     null = os.open(os.devnull, os.O_RDWR)
     for fd in (0, 1, 2): os.dup2(null, fd)
-    pathlib.Path(pidfile).write_text(str(os.getpid()))
+    # Existence signals readiness to both readers; never expose a partial PID.
+    pending = pathlib.Path(pidfile).with_suffix('.tmp')
+    pending.write_text(str(os.getpid()))
+    pending.replace(pidfile)
     while True: time.sleep(1)
 while not pathlib.Path(pidfile).exists(): time.sleep(.01)
 if mode == "leader-exits": sys.exit(0)
@@ -199,7 +203,7 @@ sys.path.insert(0, {str(LIB)!r})
 from nosleep_hotspot import Runner, HotspotError
 runner = Runner({.3 if mode == 'timeout' else 10})
 try:
-    runner.run({[sys.executable, str(command), str(pidfile), mode]!r})
+    runner.run({[sys.executable, str(command), str(pidfile), mode]!r}, on_wait={"lambda: None" if progress else "None"})
 except HotspotError:
     pass
 finally:
@@ -227,3 +231,17 @@ finally:
             process.communicate()
         if descendant is not None and _alive(descendant):
             os.kill(descendant, signal.SIGKILL)
+
+
+def test_progress_polling_preserves_input_and_output():
+    ticks = []
+    runner = hotspot.Runner(5)
+    try:
+        output = runner.run([sys.executable, '-c',
+                             'import sys,time; data=sys.stdin.buffer.read(); time.sleep(.5); sys.stdout.buffer.write(data)'],
+                            input=b'private input\n', on_wait=lambda: ticks.append(True))
+        assert output == b'private input\n'
+        assert len(ticks) >= 2
+        assert runner.child is None
+    finally:
+        runner.finish()

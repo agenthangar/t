@@ -61,7 +61,7 @@ def check_results(results, *, full, macos=False, reference=False):
         optional.add('macos')
     if not reference:
         optional.update(('reference', 'verify-shards'))
-    required = {'scope', 'cli-contract', 'shell', 'pytest', 'smoke', 'fzf-legacy',
+    required = {'scope', 'cli-contract', 'shell', 'startup-smoke', 'pytest', 'smoke', 'fzf-legacy',
                 'coverage', 'reference', 'verify-shards', 'macos', 'playground',
                 'gitleaks', 'pip-audit', 'codeql'}
     if set(results) != required:

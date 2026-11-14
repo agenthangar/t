@@ -467,6 +467,23 @@ def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):
     assert local.read_text() == "# keep me\n" and ui.restored
 
 
+def test_local_worker_entry_keeps_shared_manager(t_mod, config_cli, monkeypatch):
+    from test_tui import make_ui
+    cfg, local = config_cli
+    ui = make_ui(t_mod, ['j'] * (2 + len(t_mod.AGENTS)) + ['enter', 'q'], 100, 30)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    original = t_mod.runpy.run_path
+    visited = []
+    def load(path, *args, **kwargs):
+        if str(path).endswith('t_local_runtime_ui.py'):
+            return {'hub': lambda same_ui, api: visited.append(same_ui)}
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(t_mod.runpy, 'run_path', load)
+    assert t_mod._config_wizard(cfg) is None
+    assert visited == [ui] and ui.restored
+    assert local.read_text() == '# keep me\n'
+
+
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 def test_config_grouped_menu_narrow_navigation(t_mod, config_cli, monkeypatch, width, height):
     from test_tui import make_ui

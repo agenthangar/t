@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import plistlib
@@ -16,8 +17,8 @@ from nosleep_hotspot import Runner, HotspotError, Cancelled, validate_ssid
 
 SOURCE = Path(__file__).with_suffix('.swift')
 MESSAGES = {
-    'setup': 'Enable network discovery in config',
-    'permission': 'Location permission needed; enable network discovery in config',
+    'setup': 'Allow Location access to find nearby Wi-Fi',
+    'permission': 'Allow Location access to find nearby Wi-Fi',
     'denied': 'Allow Nosleep Wi-Fi in System Settings → Privacy & Security → Location Services',
     'disabled': 'Turn on Location Services in System Settings → Privacy & Security',
     'off': 'Wi-Fi off',
@@ -26,6 +27,18 @@ MESSAGES = {
     'unknown': 'Network availability unknown; refresh to retry',
     'ok': 'Nearby Wi-Fi networks',
 }
+REASONS = {
+    'scan_timeout': 'Wi-Fi scan timed out after 30s; retry',
+    'access_timeout': 'Wi-Fi access check timed out; retry',
+    'empty_scan': 'Wi-Fi scan returned no networks; retry',
+    'scan_failed': 'macOS could not complete the Wi-Fi scan; retry',
+    'launch_failed': 'Wi-Fi discovery helper failed; retry',
+    'invalid_response': 'Wi-Fi discovery returned an invalid response; retry',
+}
+
+
+def message(data):
+    return REASONS.get(data.get('reason'), MESSAGES[data['state']]) if data['state'] == 'unknown' else MESSAGES[data['state']]
 
 
 def helper_path():
@@ -102,17 +115,29 @@ def normalize(data):
         current = ''
     if redacted and state == 'ok':
         state = 'unknown'
+    observed_at = data.get('observed_at', time.time())
+    if type(observed_at) not in (int, float) or not math.isfinite(observed_at):
+        observed_at = time.time()
+    reason = data.get('reason')
+    if not isinstance(reason, str) or reason not in REASONS:
+        reason = ''
     return {'state': state, 'current': current,
+            'reason': reason,
             'networks': [{'ssid': ssid, 'rssi': strength} for ssid, strength in
                          sorted(networks.items(), key=lambda row: (row[0] != current, -row[1], row[0]))],
-            'observed_at': time.time()}
+            'observed_at': min(time.time(), observed_at)}
 
 
-def observe(authorize=False):
+def observe(authorize=False, *, progress=None):
+    if progress is not None:
+        progress('preparing' if authorize else 'checking', 0)
     if sys.platform != 'darwin':
         return normalize({'state': 'unsupported'})
     app = build_helper() if authorize else helper_path()
     if not (app / 'Contents/MacOS/NosleepWiFi').is_file():
+        return normalize({'state': 'setup'})
+    stamp = app / 'Contents/source.sha256'
+    if not stamp.is_file() or stamp.read_text() != hashlib.sha256(SOURCE.read_bytes()).hexdigest():
         return normalize({'state': 'setup'})
     # LaunchServices gives the app its own permission identity. The app watches
     # this private request directory and its owner's PID; removing it cancels
@@ -120,14 +145,34 @@ def observe(authorize=False):
     with tempfile.TemporaryDirectory(prefix='nosleep-wifi-') as directory:
         request = Path(directory)
         (request / 'request.json').write_text(json.dumps({'authorize': authorize, 'owner': os.getpid()}))
-        runner = Runner(125 if authorize else 12)
+        # Budget covers permission (120s) or access (10s), scan (30s), and launch.
+        runner = Runner(155 if authorize else 45)
+        phase, phase_started, last_tick = 'checking', time.monotonic(), None
+
+        def report_progress():
+            nonlocal phase, phase_started, last_tick
+            try:
+                native = json.loads((request / 'progress.json').read_text()).get('phase')
+            except (OSError, ValueError, AttributeError):
+                native = None
+            if native in ('permission', 'scanning') and native != phase:
+                phase, phase_started = native, time.monotonic()
+            tick = (phase, int(time.monotonic() - phase_started))
+            if tick != last_tick:
+                progress(*tick)
+                last_tick = tick
+
         try:
-            runner.run(['/usr/bin/open', '-n', '-g', '-W', str(app), '--args', str(request)])
-            return normalize(json.loads((request / 'response.json').read_text()))
+            runner.run(['/usr/bin/open', '-n', '-g', '-W', str(app), '--args', str(request)],
+                       **({'on_wait': report_progress} if progress is not None else {}))
+            try:
+                return normalize(json.loads((request / 'response.json').read_text()))
+            except (OSError, ValueError, TypeError, AttributeError):
+                return normalize({'state': 'unknown', 'reason': 'invalid_response'})
         except Cancelled:
             raise KeyboardInterrupt from None
-        except (OSError, ValueError, HotspotError, TypeError, AttributeError):
-            return normalize({'state': 'unknown'})
+        except (OSError, HotspotError):
+            return normalize({'state': 'unknown', 'reason': 'launch_failed'})
         finally:
             runner.finish()
 
@@ -146,9 +191,9 @@ def availability(data, ssid, now=None):
         if state == 'ok':
             return 'Not detected'
     return {'off': 'Wi-Fi off', 'missing': 'No Wi-Fi interface',
-            'permission': 'Permission needed · enable discovery in config',
-            'denied': 'Permission denied · enable discovery in config',
-            'disabled': 'Location Services off', 'setup': 'Enable discovery in config'}.get(state, 'Unknown')
+            'permission': 'Permission needed · choose Hotspot network in config',
+            'denied': 'Permission denied · choose Hotspot network in config',
+            'disabled': 'Location Services off', 'setup': 'Choose Hotspot network in config'}.get(state, 'Unknown')
 
 
 def main():

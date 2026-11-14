@@ -243,27 +243,49 @@ setup command is needed. The nosleep editor saves independently of the hub, so
 save or discard pending hub changes before opening it. Settings sections are
 separated by blank rail lines and remain navigable in small terminals.
 
-Select **Hotspot Wi-Fi name** to discover nearby networks, refresh the list, or
-enter a name manually. Select one trusted fallback network. The current connection
-is marked, duplicate SSIDs are combined, and other networks are ordered by signal
-strength. A saved network remains selectable when it is not currently detected.
+Open **Hotspot fallback → Hotspot network**. **Choose fallback** lists saved Wi-Fi
+names first, with **Connected** and **Selected fallback** on the network rows.
+Connected networks stay visible by default. Type directly to filter the list;
+Backspace edits, Esc clears a filter before returning, and Ctrl-H optionally hides
+the current connection. There is no separate search page or scan on this page.
+The saved list reads Wi-Fi-only Keychain metadata, never passwords. Saved names
+are not proof a network is nearby or that its password can be accessed. Unavailable
+Keychain access has an explicit retry state, with nearby and manual alternatives.
 
-Use **Enable network discovery** to set up the local macOS helper and request
-Location permission. Apple requires Location access to expose Wi-Fi names; allow
-**Nosleep Wi-Fi** under **System Settings → Privacy & Security → Location Services**.
-If permission is denied or Location Services are off, config explains how to fix
-it. Discovery does not collect geographic coordinates. The helper is built locally
-on explicit setup using Apple command-line tools (`xcode-select --install` if
-missing). It is stored under `~/Library/Application Support/t/nosleep`, with separate
-identities for different source checkouts. Unchanged builds reuse the helper;
-a rebuild or source change may require permission again. No background service is
-installed, and normal monitoring never requests permission or installs the helper.
+**Nearby networks…** opens a separate live scan. When needed, it presents
+**Allow Wi-Fi discovery** and explains macOS Location access. After approval,
+**Scanning nearby Wi-Fi** shows elapsed time and a 30-second limit; results arrive
+automatically. Ctrl-C cancels the wait. Permission denial, radio-off, timeout and
+empty scans remain distinct. Duplicate SSIDs are combined; results retain their
+signal order. Filters never guess whether a network is a phone hotspot.
 
-Selecting a new network stages its password setup. **Set/change hotspot password**
-also stages a credential update. Review and save first, then macOS `security`
-prompts privately for the password. Configuration is written only after credential
-storage succeeds. Passwords never appear in arguments, logs, review output or JSON.
+Manual entry proceeds immediately from network name to a private password prompt.
+If an accessible saved entry matches, choose **Use saved password** or **Enter a
+new password**. Cancel keeps the previous selection. **Set/change hotspot
+password** uses the same flow. Entered passwords stay in memory until review/save;
+review shows only that a credential will be stored. Selecting a saved Apple Wi-Fi
+credential copies only that selected credential into the nosleep Keychain service
+on Save, so automatic retries use the existing connector. A failed save keeps the
+changes pending. Passwords never appear in arguments, logs, review output or JSON.
 The existing `nosleep hotspot setup` command remains compatible.
+
+**Clear fallback** in the picker or **Remove hotspot network** in Hotspot fallback
+clears the staged name, disables fallback and drops its pending password update.
+Review and save to apply. This does not disconnect Wi-Fi, forget a macOS network,
+or delete any Keychain entry.
+
+Nosleep groups settings into **On close**, **Automatic checks**, **Battery
+protection**, **Hotspot fallback**, and its nested **Retries** page. Back retains
+pending changes; exiting offers review/save, keep editing or discard.
+
+The nearby discovery helper uses CoreWLAN/CoreLocation and requests permission
+only through **Allow Wi-Fi discovery**. Enable **Nosleep Wi-Fi** under **System
+Settings → Privacy & Security → Location Services**. It does not collect geographic
+coordinates. Native helpers are built locally using Apple command-line tools
+(`xcode-select --install` if missing) under
+`~/Library/Application Support/t/nosleep`, scoped to the source checkout. A changed
+discovery build can require permission again. No background service is installed;
+normal monitoring never requests permission or installs the discovery helper.
 
 ```sh
 t config                       # select Nosleep
@@ -272,19 +294,38 @@ nosleep --hotspot off           # disable fallback for this run
 nosleep --hotspot=on            # enable the configured fallback for this run
 ```
 
-The default outage delay is five minutes. Configure the delay and bounded attempt
-limit (1–300 seconds, default 30) in the same editor.
+The default outage delay is five minutes. Configure the following in the same
+editor; changes apply to the next run:
+
+- **Retry limit:** Elapsed time (new default) or Number of attempts.
+- **Retry for (minutes):** 1–1440 minutes from the first attempt (default 60).
+  The outage delay happens before this window starts.
+- **Hotspot attempts:** shown in count mode; 1–10 total including the first
+  try (default 3). One means no retries.
+- **Hotspot retry delay:** 1–300 seconds after each attempt (default 300, or 5m).
+- **Hotspot attempt timeout:** 1–300 seconds per attempt (default 30), capped by
+  the time left in the retry window.
+
+For example, use **Elapsed time**, **Retry for: 60m**, and a **300s retry delay**
+to retry periodically for an hour. Duration mode ignores the attempt-count
+limit. Saved configurations with an enabled fallback or an explicit attempt
+count keep count mode unless you choose elapsed time; existing saved timing
+values are preserved. Mode changes and timing edits are staged for review/save.
 
 The live **Hotspot** row reports fallback policy; **Network** reports the selected
 SSID and whether it is connected, available but not connected, not detected, or
 unknown. Wi-Fi off and permission problems have separate messages. Availability
 is checked every 30 seconds, including when fallback or automatic checks are off.
-Scans have a 10-second native deadline and do not block the sleep-control loop.
+Empty or failed scans retry automatically up to three times within a 30-second
+native scan deadline. The launcher allows for access checks and app startup
+separately. Timeout, scan failure and helper failure are explained in the picker;
+a timeout retains the connection observed before scanning with its original age.
+The connected Wi-Fi network stays visible even when nearby results are unavailable. Discovery does not block the sleep-control loop.
 Expired observations become unknown. Availability means the SSID was observed;
 it does not prove credentials, internet access, or the phone's hotspot toggle.
 Without a configured network, the row says **Not configured**.
 
-After the delay, `nosleep` makes one directed join to that exact SSID with
+After the outage delay, `nosleep` makes a directed join to that exact SSID with
 `networksetup`, even if the current Wi-Fi uplink is broken. This can work with the
 lid closed when the hotspot is advertising, Wi-Fi is already on, Keychain is
 accessible and macOS permits the Wi-Fi change. Discovery sees broadcasting Wi-Fi networks; it does not wake a dormant Instant Hotspot. Turn on Personal Hotspot's **Allow Others to
@@ -292,8 +333,19 @@ Join** and keep it broadcasting nearby. A locked Keychain or permission policy
 can prevent joining; unlock the Mac and use config to repair credentials.
 
 Internet checks verify recovery independently of a successful association.
-Automatic sleep waits for the outage delay and bounded attempt/recovery window,
-including when activity retries finish early. Recovery resets the timer for the
-next outage. Ctrl-C cancels the owned helper and releases the sleep hold.
+A failed join starts the retry delay immediately; a completed join gets the rest
+of its attempt timeout to establish internet recovery. If internet is still down,
+the next attempt starts after the retry delay and a fresh internet check. Only
+one join helper runs at a time. Duration status shows the next retry and time
+remaining in the window. At expiry, an active helper or pending cooldown is
+cancelled and no more attempts start during that outage. Count mode instead
+shows **Attempt 2/3**, **Retry 3/3 in 5m**, or **Attempts exhausted**.
+
+Automatic sleep waits for the outage delay, attempts and retry delays, including
+when activity retries finish early. Exhaustion resumes the normal check/sleep
+policy; it does not force sleep while that policy still requires staying awake.
+Verified internet recovery cancels the current helper or pending retry and resets
+the timer and attempt count for the next outage. Ctrl-C cancels the owned helper
+and pending retries and releases the sleep hold.
 Fallback is inactive with `--forever`, `--no-internet`, or `--checks none`.
 It is off by default and is never enabled on other Macs by `dots --all`.

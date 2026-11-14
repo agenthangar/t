@@ -1,4 +1,4 @@
-"""Notify Discord of failed or overdue scheduled workflows.
+"""Notify Discord of published releases and unhealthy scheduled workflows.
 
 Run from trusted main, with contents:read and actions:read. Only
 GitHub API metadata is read; source-run artifacts and logs are never executed.
@@ -153,6 +153,51 @@ def notify(repo, webhook, workflow, incident, reason, run, state, state_path):
     print(f'{name}: Discord confirmed {"recovery" if incident is None else "alert"} delivery')
 
 
+def notify_releases(repo, webhook, state, state_path):
+    pages = api(repo, 'releases?per_page=100', paginate=True)
+    releases = sorted((release for page in pages for release in page
+                       if not release['draft'] and not release['prerelease']
+                       and release.get('published_at')
+                       and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', release['tag_name'])),
+                      key=lambda release: (release['published_at'], release['id']))
+    if not releases:
+        return
+    # On initial setup announce only the latest publication, not old history.
+    # Keep the baseline fixed so a failed delivery cannot be skipped when a
+    # newer release appears, or when assets are attached after publication.
+    previous = state.get('release-announcements')
+    if previous is None:
+        previous = {'since': [releases[-1]['published_at'], releases[-1]['id']], 'seen': []}
+        # Persist the starting point even if the first delivery fails. This is
+        # not an acknowledgement; only confirmed deliveries enter `seen`.
+        state['release-announcements'] = previous
+        save_state(state_path, state)
+    baseline, seen = previous['since'], previous['seen']
+    for release in releases:
+        if (release['published_at'], release['id']) < tuple(baseline) or release['id'] in seen:
+            continue
+        assets = {asset['name']: asset for asset in release['assets']}
+        if not {'t.tar.gz', 'SHA256SUMS'} <= assets.keys():
+            continue  # A draft or incomplete publication is not installable yet.
+        tag = release['tag_name']
+        commit = api(repo, f'commits/{tag}')['sha']
+        embed = {
+            'author': {'name': repo}, 'title': f'{tag} released',
+            'url': release['html_url'], 'color': 0x57F287,
+            'description': 'A new stable release is available.',
+            'fields': [
+                {'name': 'Release', 'value': f"[Notes]({release['html_url']}) · [Commit {commit[:7]}](https://github.com/{repo}/commit/{commit})"},
+                {'name': 'Downloads', 'value': f"[Archive]({assets['t.tar.gz']['browser_download_url']}) · [Checksums]({assets['SHA256SUMS']['browser_download_url']})"},
+            ],
+            'timestamp': release['published_at'],
+        }
+        send_discord(webhook, embed)
+        seen = seen + [release['id']]
+        state['release-announcements'] = {'since': baseline, 'seen': seen}
+        save_state(state_path, state)
+        print(f'{tag}: Discord confirmed release announcement delivery')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--test', action='store_true', help='send a clearly labeled delivery test')
@@ -193,6 +238,7 @@ def main():
         else:
             incident, reason, run = assess(workflow, runs, now, metadata['created_at'])
         notify(repo, webhook, workflow, incident, reason, run, state, state_path)
+    notify_releases(repo, webhook, state, state_path)
 
 
 if __name__ == '__main__':

@@ -183,7 +183,7 @@ def test_multiple_model_default_is_an_exclusive_choice(t_mod, keys, expected):
 def test_inference_resets_and_individual_default_choices(local):
     ui = ToolMenu(['reset', 'back'])
     assert local.workflow_menu(ui, dict(local.DEFAULT, mode='automatic', timeout_seconds=900)) == local.DEFAULT
-    ui = ToolMenu(['mode', '', 'on_cloud_failure', '', 'context_tokens', '', 'timeout_seconds', '', 'back'])
+    ui = ToolMenu(['mode', '', 'on_cloud_failure', 'on_cloud_failure', '', 'back', 'context_tokens', '', 'timeout_seconds', '', 'back'])
     assert local.workflow_menu(ui, dict(local.DEFAULT, mode='automatic', context_tokens=8192, timeout_seconds=900, on_cloud_failure='local')) == local.DEFAULT
     ui = ToolMenu(['mode', None, 'context_tokens', None, 'on_cloud_failure', None, 'back'])
     original = dict(local.DEFAULT, mode='automatic')
@@ -206,7 +206,7 @@ def test_inference_reset_interrupt_preserves_staged_changes(local, workflow, t_m
 
 
 def test_local_model_default_is_configuration_only(local, monkeypatch):
-    monkeypatch.setattr(local, 'catalogue', lambda *args: {'models': []})
+    monkeypatch.setattr(local, 'catalogue', lambda *args, **kwargs: {'models': []})
     assert local.select_model(ToolMenu([''])) == {'provider': local.DEFAULT['provider'], 'model': local.DEFAULT_MODEL}
 
 
@@ -232,3 +232,16 @@ def test_all_permissions_page_reset_preserves_other_preferences(workflow, t_mod)
     policy = dict(copy.deepcopy(workflow.DEFAULT), permissions={'codex': 'full', 'claude': 'manual'}, behaviors={'pr_review': 'skip'})
     after = t_mod._workflow_permissions_menu(ToolMenu(['reset', 'back']), vars(workflow), policy)
     assert 'permissions' not in after and after['behaviors'] == policy['behaviors']
+
+
+def test_inference_browsing_interrupt_does_not_materialize_defaults(local, workflow, t_mod, monkeypatch):
+    cfg = config(workflow)
+    cfg._workflow_document['workflows']['standard']['inference'] = {'mode': 'automatic'}
+    before = copy.deepcopy(cfg._workflow_document)
+    monkeypatch.setattr(workflow, 'inference', lambda: vars(local))
+    monkeypatch.setattr(local, 'select_model', lambda *args: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt) as exc:
+        t_mod._workflow_policy_menu(ToolMenu(['inference', 'model']), cfg, vars(workflow), name='standard')
+    assert not hasattr(exc.value, 'workflow_inference')
+    assert cfg._workflow_document == before
+    assert not workflow.config_path().exists()

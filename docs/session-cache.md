@@ -10,6 +10,11 @@ The service starts on demand, without launchd or shell configuration. It owns
 expiry, refresh workers, invalidation, memory, and persistence. Commands do not
 query SQLite or retain independent process-local discovery caches. Live
 ownership checks before session actions remain uncached.
+Fresh allocation does not rebuild display discovery: it asks current peers only
+for retained worktree reservation markers, falling back to the existing live
+inventory on older hosts with desktop integrations. Local foreground preflight
+reads identity and cwd without transcript titles. The selected workspace still
+passes live local ownership and native writer checks before launch.
 
 ## Disk persistence
 
@@ -35,10 +40,36 @@ never replaces the installed command's service or snapshot namespace.
 ## Freshness
 
 Successful local/remote session snapshots expire after one hour. Failed host
-attempts are retried on the first discovery request after one hour. Browsing
-returns existing records immediately and refreshes expired or missing entries
-in the background. A failed refresh retains the last known sessions. Open
-pickers keep their current list; the next invocation sees refreshed results.
+attempts pause automatic retries for one hour, shared by aliases and repository
+views of the same SSH target. Normal lifecycle invalidation and service restarts
+preserve that cooldown. A failed refresh retains the last known sessions.
+`t hosts reset mini` clears only that registered target's discovery cooldown and
+marks its snapshots stale; it does not connect or alter sessions or registration.
+The next discovery request may retry. Live ownership checks remain uncached.
+
+The open picker waits up to 30 seconds for pending discovery before freezing its
+list. Fresh snapshots open immediately. Timeout or failed local discovery offers
+Retry refresh, Browse older results (when available), or Cancel through the
+shared rail. An explicitly chosen older view and settled remote failures carry a
+persistent incomplete-results warning. Remote cooldowns remain in force during
+Retry refresh; use `t hosts reset HOST` to retry a failed remote early. Incomplete
+empty discovery never triggers a new session. Once opened, the picker preserves
+its snapshot through filtering and sorting.
+
+To wait explicitly, use `t session list --wait` (or `t ls --wait`). It observes
+the shared refresh for at most 30 seconds, then prints the existing table and
+freshness information. Fresh caches return immediately. Failure or timeout
+retains available rows; losing the service while waiting preserves the caller's
+last snapshot. Ctrl-C cancels only this command with status 130. It never cancels
+shared workers, changes expiry policy, or bypasses live ownership checks.
+Ordinary lists and MCP remain immediate. Redirected `--wait` is bounded and
+silent until the result, with no spinner or prompt.
+
+```sh
+t ls                         # Continue immediately with available sessions
+t session list --wait        # Wait for local and registered hosts
+t session list api --local --wait
+```
 
 A cold cache reports that discovery is refreshing, rather than claiming there
 are no sessions. Human output reports cache age and unavailable hosts; MCP and
@@ -65,8 +96,13 @@ python3 scripts/preview_session_cache.py --scenario warm
 python3 scripts/preview_session_cache.py --scenario expired
 python3 scripts/preview_session_cache.py --scenario offline
 python3 scripts/preview_session_cache.py --scenario cold
+python3 scripts/preview_session_cache.py --scenario expired --wait
+python3 scripts/preview_open_discovery.py
+python3 scripts/preview_open_discovery.py --scenario timeout
+python3 scripts/preview_open_discovery.py --scenario offline
 ```
 
-These use the real session-list renderer and private socket service with synthetic
-records, temporary HOME/XDG paths, and no SSH or agent activity. The preview's
-service exits when the command returns.
+The session-cache preview uses the real list renderer and a private socket service
+with synthetic records. Its service exits when the command returns. The open
+preview uses the real refresh observer, recovery rail, and picker with sample
+discovery responses. Both use temporary HOME/XDG paths and no SSH or agent activity.
