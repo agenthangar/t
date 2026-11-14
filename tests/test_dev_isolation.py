@@ -169,6 +169,9 @@ def test_ctrl_c_during_startup_recovers_in_same_interactive_shell(trees, startup
     env.update(T_TEST_WAIT_INTERRUPT='1', PS1='READY> ', RPS1='', TERM='dumb',
                SHELL_SESSIONS_DISABLE='1')
     if startup == 'login':
+        # Ubuntu's global zshrc otherwise prompts about the CI user's fpath
+        # before our isolated .zshrc reaches t's startup code.
+        (home / '.zshenv').write_text('skip_global_compinit=1\n')
         rc = home / '.zshrc'
         rc.write_text('PS1="READY> "; RPS1=""\n' + rc.read_text())
     with (main / 'zsh/shim.zsh').open('a') as file:
