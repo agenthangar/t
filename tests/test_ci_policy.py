@@ -92,7 +92,7 @@ def test_required_gate_rejects_failures_cancellation_missing_and_unexpected_skip
 def test_startup_smoke_is_unconditional_and_pinned_to_validated_commit():
     workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
     smoke = workflow.split('  startup-smoke:\n', 1)[1].split('  pytest:\n', 1)[0]
-    assert '\n    if:' not in smoke
+    assert not any(line.lstrip().startswith('if:') for line in smoke.splitlines())
     assert 'ref: ${{ needs.scope.outputs.sha }}' in smoke
     for name in (
         'test_shell_helpers_switch_before_prompt_without_changing_path',
@@ -104,6 +104,7 @@ def test_startup_smoke_is_unconditional_and_pinned_to_validated_commit():
     ):
         assert f'tests/test_dev_isolation.py::{name}' in smoke
         assert policy.fast_node(f'tests/test_dev_isolation.py::{name}')
+    assert 'tests/test_update_prompt_shell.py::test_shell_command_reloads_after_update_then_runs_once' in smoke
     gate = workflow.split('  ci:\n', 1)[1]
     assert 'shell, startup-smoke, pytest' in gate
 
