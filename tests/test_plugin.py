@@ -28,7 +28,7 @@ def shell(tmp_path, code, *, local_text="", plugin=ROOT, extra_env=None):
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "XDG_STATE_HOME": str(home / ".local" / "state"),
-        "PATH": os.environ["PATH"],
+        "PATH": f"{plugin / 'bin'}:{os.environ['PATH']}",
         **(extra_env or {}),
     }
     env.pop("T_LOCAL_RC", None)

@@ -1540,6 +1540,17 @@ t system update --local   # switch to the registered/local t checkout and update
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
 
+If shell startup was interrupted and `t open` reports that it reached `bin/t`,
+reload the installed shell integration in your current zsh:
+
+```zsh
+source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
+```
+
+If startup wiring is missing, run `t doctor --repair` and the source command it
+prints. Cancelling source selection exits quietly; the next `t` invocation retries
+an interrupted initial load.
+
 `t --version` identifies the code being used separately from your current Git
 worktree. For example, inside a development worktree:
 

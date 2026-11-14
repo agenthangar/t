@@ -80,10 +80,19 @@ def select_root(source, cwd=None, env=None, explicit=False):
     pinned = env.get('T_DEV_CONTEXT')
     if pinned and (Path(pinned).resolve() == primary or valid(pinned, primary)) and invocation_owner(env.get('T_DEV_CONTEXT_OWNER', '')):
         return Path(pinned).resolve()
-    candidate = git(cwd or os.getcwd(), 'rev-parse', '--show-toplevel')
-    return Path(candidate).resolve() if candidate and valid(candidate, primary) else primary
+    # An unrelated checkout (or home directory) cannot supply t's helpers.
+    # Inspect only local ancestry before asking Git to validate a linked tree;
+    # probing arbitrary repositories here delays every prompt and shell load.
+    current = Path(cwd or os.getcwd()).resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / '.git').exists():
+            return candidate if valid(candidate, primary) else primary
+    return primary
 
 
 if __name__ == '__main__':
-    root = Path(sys.argv[1]).resolve()
-    print(select_root(root, explicit='--explicit' in sys.argv[2:]))
+    try:
+        root = Path(sys.argv[1]).resolve()
+        print(select_root(root, explicit='--explicit' in sys.argv[2:]))
+    except KeyboardInterrupt:
+        sys.exit(130)

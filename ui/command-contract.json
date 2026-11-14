@@ -3247,6 +3247,11 @@
         "tests/test_dev_isolation.py::test_cli_scopes_are_independent_and_preserve_explicit_paths",
         "tests/test_dev_isolation.py::test_shell_helpers_switch_before_prompt_without_changing_path",
         "tests/test_dev_isolation.py::test_child_login_shell_keeps_invocation_source_after_chdir",
+        "tests/test_dev_isolation.py::test_selector_does_not_probe_unrelated_repositories",
+        "tests/test_dev_isolation.py::test_source_selection_interrupt_exits_quietly",
+        "tests/test_dev_isolation.py::test_interrupted_initial_load_keeps_retryable_shell_function",
+        "tests/test_dev_isolation.py::test_ctrl_c_during_startup_recovers_in_same_interactive_shell",
+        "tests/test_dev_isolation.py::test_interrupted_reload_does_not_dispatch_stale_source",
         "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
       ],
       "modes": {
