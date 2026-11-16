@@ -13334,6 +13334,8 @@ REMOTE SESSIONS
   verified ownership before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   Browsing includes local and registered remote hosts by default.
+  If the OS blocks networking or has no usable IP route, browsing returns an
+  immediate error. Use t open --local to browse local sessions offline.
   --remote also attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")

@@ -1,11 +1,13 @@
 """Adapters and collectors for the single session-cache API; no cache policy/I/O."""
 import datetime
+import errno
 import json
 import math
 import os
 from pathlib import Path
 import runpy
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -63,6 +65,30 @@ def _usable(view, fields=None):
     return False
 
 
+def require_open_network(cfg, *, local=False, host=None):
+    """Reject a known OS network failure, without DNS, packets or a timed probe.
+
+    UDP connect only checks local routing/policy. Success is not evidence of
+    internet access: unknown failures and either usable IP family leave normal
+    discovery in charge. Never persist this caller's sandbox state in the cache.
+    """
+    if host == 'local' or (host is None and (local or not getattr(cfg, 'hosts', {}))):
+        return
+    unavailable = {errno.EPERM, errno.EACCES, errno.ENETDOWN, errno.ENETUNREACH,
+                   errno.EHOSTUNREACH, errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT,
+                   errno.EPROTONOSUPPORT}
+    for family, address in ((socket.AF_INET, '192.0.2.1'), (socket.AF_INET6, '2001:db8::1')):
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as connection:
+                connection.setblocking(False)
+                connection.connect((address, 9))
+            return
+        except OSError as error:
+            if error.errno not in unavailable:
+                return
+    raise OSError('network unavailable or blocked; use t open --local for local sessions')
+
+
 def _partial(view):
     return bool(view.get('unavailable') or view.get('wait_unavailable') or view.get('loading') or
                 view.get('wait_skipped') or view.get('wait_timed_out') or
@@ -70,7 +96,9 @@ def _partial(view):
                     for h in view.get('hosts', [])))
 
 
-def _browse_snapshot(cfg, choose, wait, options):
+def _browse_snapshot(cfg, choose, wait, options, *, preflight=None):
+    if preflight:
+        preflight()
     view = discover(cfg, **options)
     while True:
         # Retained results are useful immediately, even when a different host
@@ -110,6 +138,8 @@ def _browse_snapshot(cfg, choose, wait, options):
             return view, 'Older or incomplete results · new sessions may be missing'
         if action != 'retry':
             raise KeyboardInterrupt
+        if preflight:
+            preflight()
         # Explicit retry is scoped to failed targets, not a global reset. It
         # never touches agents, held ownership locks or saved conversations.
         for host in view.get('hosts', []):
@@ -122,7 +152,8 @@ def open_snapshot(cfg, choose, *, local=False, host=None, fields=None, wait=None
     options = dict(local=local, fields=fields or ['rows'])
     if host is not None:
         options['host'] = host
-    return _browse_snapshot(cfg, choose, wait, options)
+    return _browse_snapshot(cfg, choose, wait, options, preflight=lambda:
+                            require_open_network(cfg, local=local, host=host))
 
 
 def reset_host(cfg, alias):

@@ -30,6 +30,12 @@ Ordinary lists, MCP, JSON and redirected output remain immediate and noninteract
 `t session list --wait` / `t ls --wait` retain their explicit 30-second observation
 limit and never prompt. A failed observer retains its last available snapshot.
 
+Before remote-inclusive open browsing, a known OS network denial or missing
+IPv4 and IPv6 routes returns an immediate error. Use `t open --local` to browse
+local sessions offline. This caller-local check uses no DNS, sends no packets,
+and never resets or marks shared host caches failed. A usable route is not
+proof of internet access; ordinary discovery remains responsible for peer failures.
+
 ## Retention and observation
 
 Inventory reconciliation has a **24-hour TTL**. Expiry schedules background work;

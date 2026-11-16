@@ -205,3 +205,19 @@ def test_unwritable_diagnostics_cannot_leave_a_refresh_stuck(engine, cache, monk
     host = discover(memory)['hosts'][0]
     assert host['error'] == 'collector bug' and host['retry_at'] == now[0] + 5
     assert not memory.active_targets and not host['diagnostic']
+
+
+def test_open_retry_rechecks_network_before_resetting_shared_host(adapter, monkeypatch):
+    import errno
+    import socket
+    from test_offline_discovery import network
+    failures = {socket.AF_INET: None, socket.AF_INET6: None}
+    network(monkeypatch, failures)
+    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: {'hosts': [
+        dict(host='mini', target='mini', error='collector failed', value=None, refreshing=False)]})
+    monkeypatch.setattr(adapter, 'request', lambda *a, **k: pytest.fail('Offline retry reset a shared host'))
+    def choose(*a):
+        failures.update({socket.AF_INET: errno.EPERM, socket.AF_INET6: errno.EPERM})
+        return 'retry'
+    with pytest.raises(OSError, match='network unavailable'):
+        adapter.open_snapshot(SimpleNamespace(hosts={'mini': 'mini'}), choose)
