@@ -14,7 +14,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.fzf_compat
-@pytest.mark.parametrize('width,height', [(110,28),(80,24),(44,20),(32,12)])
+@pytest.mark.parametrize('width,height', [(110,28),(80,24),(44,20),(32,12),(80,29),(110,34),(110,35),(80,40),(80,41),(110,44)])
 def test_usage_picker_session_preview_and_resize(width,height):
     if not shutil.which('tmux') or not shutil.which('fzf'):
         pytest.skip('requires tmux and fzf')
