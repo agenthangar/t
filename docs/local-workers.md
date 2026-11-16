@@ -266,6 +266,10 @@ python3 scripts/offline_shell.py --check
 The checks are bounded and report failures directly. No model download or
 inference is required. Choose **Ask which local model** in the workflow to test
 the recovery picker; `-l` itself selects the local machine, not local inference.
+If cloud startup fails before creating a conversation, `t open` attaches to the
+owned **Start locally** picker. Selecting a ready model starts it directly;
+cancelling starts no local model. Reaching the picker does not mark a model or
+conversation as running.
 Use the separate headless acceptance test below for an automated model task.
 
 ## Opt-in acceptance test

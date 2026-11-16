@@ -41,6 +41,12 @@ this document defines how to make the previews faithful and safe.
 
 ## Session-open recovery
 
+Fresh Codex startup can attach to the existing **Start locally** rail before a
+model writer exists. Verify the recovery controller's process identity, pane
+ancestry and workspace; clear its attachable state on selection, retry or cancel.
+Keep the one-step ready-model selection and existing retry/cancel actions.
+This is terminal readiness only; saved-conversation writer checks remain strict.
+
 Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
 refreshes discovery and retries, or revives a verified exited pane. If it fails,
 offer **Force open / Cancel**. Keep the reason brief and identify any live client
