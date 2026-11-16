@@ -13288,6 +13288,7 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  If startup offers local recovery, the model picker opens in your terminal.
   Fresh allocation checks remote reservations without rebuilding the local
   session list. Older hosts retain their live reservation scan.
   Session-cache refresh and history indexing run in the background. Worktree
