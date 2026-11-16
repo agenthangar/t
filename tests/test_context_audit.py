@@ -49,6 +49,8 @@ def test_native_formats_images_and_unavailable(audit):
     assert report['text_outputs'] == 2 and report['total_output_characters'] == 7
     assert report['workflow_revision'] is None
     assert audit.analyze([])['measured']['output_characters']['max'] == 0
+    missing = dict(type='event_msg', payload=dict(type='token_count', info=None))
+    assert audit.analyze([missing])['measured']['usage_last_observed'] is None
     assert list(audit.images('text')) == []
     assert list(audit.images([dict(type='image_url', image_url='data:image/png;base64,AAAA')]))[0]['payload_hash']
     structured = dict(type='response_item', payload=dict(type='custom_tool_call_output', output=[

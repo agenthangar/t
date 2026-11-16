@@ -47,7 +47,7 @@ def events(row):
         else:
             yield from images(payload.get('content', []))
     elif row.get('type') == 'event_msg' and kind == 'token_count':
-        yield dict(kind='usage', value=payload.get('info', {}).get('total_token_usage'))
+        yield dict(kind='usage', value=(payload.get('info') or {}).get('total_token_usage'))
     message = row.get('message', {})
     if isinstance(message, dict):
         if message.get('usage'):
