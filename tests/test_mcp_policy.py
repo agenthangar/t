@@ -393,12 +393,12 @@ def test_config_inventory_and_workflow_controls(t_mod, mcp, monkeypatch):
     ui = RecordingMenu(['reset', 'back'])
     assert t_mod._workflow_mcp_menu(ui, changed, 'codex') == policy
     assert t_mod._workflow_mcp_menu(Menu([], pages=['enter']), changed, 'claude') == changed
-    row['sessions'] = True
+    row['name'], row['sessions'] = 'sessions', True
     calls = []
     monkeypatch.setattr(t_mod, '_config_sessions_mcp', lambda ui, pending, context=(): calls.append((pending, context)))
     ui = RecordingMenu(['server:0', 'back'])
     t_mod._config_mcp(ui, 0)
-    assert calls and any('t session tools' in label for key, label in ui.calls[0][1])
+    assert calls and any(label == 't MCP · sessions' for key, label in ui.calls[0][1])
 
 
 def test_workflow_schema_review_and_reset(t_mod, mcp):

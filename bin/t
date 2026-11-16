@@ -4017,6 +4017,11 @@ def _mcp_enabled(row):
     return 'Enabled' if row.get('enabled') is True else 'Disabled' if row.get('enabled') is False else 'Inherited'
 
 
+def _mcp_display_name(row):
+    name = 't MCP · ' + row['name'] if row.get('sessions') else row['name']
+    return name + (' · ' + row['plugin'] if row.get('plugin') else '')
+
+
 def _mcp_details(row):
     seconds = row.get('startup_seconds')
     details = [row['client'].title() + ' · ' + _mcp_enabled(row),
@@ -4067,7 +4072,7 @@ def _workflow_mcp_menu(ui, policy, agent, repository=None):
                 for name in mapping:
                     key = json.dumps([plugin, name], separators=(',', ':'))
                     by_id.setdefault(key, dict(id=key, name=name, plugin=plugin, enabled=None, unavailable=True))
-            rows = [(key, row['name'] + (' · ' + row['plugin'] if row.get('plugin') else '') +
+            rows = [(key, _mcp_display_name(row) +
                      (' · unavailable on this machine' if row.get('unavailable') else '')) for key, row in by_id.items()]
             values = {key: ('Enabled' if selected is True else 'Disabled' if selected is False else
                            'Inherit · ' + _mcp_enabled(row)) for key, row in by_id.items()
@@ -4089,7 +4094,7 @@ def _workflow_mcp_menu(ui, policy, agent, repository=None):
                            ('enabled', 'Enabled'), ('disabled', 'Disabled')]
                 unavailable = ('Server is unavailable on this machine' if server.get('unavailable') else
                                'Enable the parent plugin in client settings first' if server.get('plugin_enabled') is False else '')
-                value = ui.pick(server['name'], options, default=1 if selected is True else 2 if selected is False else 0,
+                value = ui.pick(_mcp_display_name(server), options, default=1 if selected is True else 2 if selected is False else 0,
                                 disabled={'enabled': unavailable} if unavailable else {})
                 if value is not None:
                     changed = api['update'](changed, server, {'inherit': None, 'enabled': True, 'disabled': False}[value])
@@ -4108,12 +4113,11 @@ def _config_mcp(ui, pending):
             ui.done('unavailable', str(exc))
             servers = []
         indexed = {f'server:{index}': row for index, row in enumerate(servers)}
-        rows = [(key, row['name'] + (' · t session tools' if row['sessions'] else
-                 ' · ' + row['plugin'] if row.get('plugin') else '')) for key, row in indexed.items()]
+        rows = [(key, _mcp_display_name(row)) for key, row in indexed.items()]
         values = {key: row['client'].title() + ' · ' + _mcp_enabled(row) for key, row in indexed.items()}
         rows += [('refresh', 'Refresh')]
         if not any(row['sessions'] for row in servers):
-            rows.append(('register', 'Set up t session tools ›'))
+            rows.append(('register', 'Set up t MCP server ›'))
         rows.append(('back', 'Back'))
         picked = ui.pick('MCP servers', rows, values=values, default=min(focus, len(rows) - 1),
                          context=['This machine · configuration inspection',
@@ -4128,7 +4132,7 @@ def _config_mcp(ui, pending):
             if row['sessions']:
                 _config_sessions_mcp(ui, pending, context=_mcp_details(row))
             else:
-                ui.page(row['name'], ['      ' + line for line in _mcp_details(row)],
+                ui.page(_mcp_display_name(row), ['      ' + line for line in _mcp_details(row)],
                         {'enter', 'q', 'esc'}, 'enter / q back')
 
 
@@ -4137,7 +4141,7 @@ def _config_sessions_mcp(ui, pending, context=()):
     states = helper["status"](HOME)
     note = "Configuration status only; use the client to check its active connection."
     while True:
-        choice = ui.pick("sessions · t session tools", [
+        choice = ui.pick("t MCP · sessions", [
             ('status', 'Check setup'), ('register', 'Set up in agents'),
             ('uninstall', 'Remove from agents'), ('back', 'Back')],
             values={'status': 't mcp status', 'register': 't mcp install', 'uninstall': 't mcp uninstall'},
@@ -4148,7 +4152,7 @@ def _config_sessions_mcp(ui, pending, context=()):
             return
         if choice == 'status':
             states = helper['status'](HOME)
-            ui.page("t session tools · setup", [
+            ui.page("t MCP · sessions · setup", [
                 *['      ' + client.title() + ': ' + state for client, state in states.items()],
                 "      " + note,
                 "      Provides session discovery and session controls via t mcp.",
@@ -12138,7 +12142,7 @@ def cmd_mcp(cfg, args):
             cells = []
             for row in rows:
                 duration = f"{row['startup_seconds']:.3f}s" if row.get('startup_seconds') is not None else 'Not measured'
-                cells.append((row['client'], row['name'] + (' · ' + row['plugin'] if row.get('plugin') else ''),
+                cells.append((row['client'], _mcp_display_name(row),
                               _mcp_enabled(row), row.get('observed_status') or 'Not measured', duration))
             print('\n'.join(_table_lines(('CLIENT', 'SERVER', 'CONFIGURED', 'LAST OBSERVED', 'STARTUP'), cells)))
             print('Configuration is not proof of an active connection.')
@@ -12150,7 +12154,7 @@ def cmd_mcp(cfg, args):
         if getattr(args, "json", False):
             print(json.dumps({"server": "sessions", "scope": "local machine", "clients": states}))
         else:
-            print("sessions MCP · this machine")
+            print("t MCP · sessions · this machine")
             for client, state in states.items():
                 print(f"  {client.title()}: {state}")
             print("Configuration status only; check the client for its active connection.")

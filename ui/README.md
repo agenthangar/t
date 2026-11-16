@@ -384,7 +384,7 @@ startup status and duration. Missing evidence reads Not measured; authentication
 state is never presented as connection health. Browsing never connects servers,
 writes client configuration, or fans out to remote hosts.
 
-The `sessions · t session tools` detail explains its purpose and the agent's bare
+The `t MCP · sessions` detail explains its purpose and the agent's bare
 `t mcp` stdio command. Check setup (`t mcp status`), Set up in agents (`t mcp install`)
 and Remove from agents (`t mcp uninstall`) stay inside that detail. Setup/removal
 retain immediate-action review, block while hub edits are pending, preserve

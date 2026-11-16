@@ -1458,7 +1458,7 @@ enabled state. Server details show observed startup status and duration when
 explicit native evidence is available; otherwise they say **Not measured**.
 Browsing and Refresh do not connect servers or change configuration.
 
-Select **sessions · t session tools** for **Check setup**, **Set up in agents**, or
+Select **t MCP · sessions** for **Check setup**, **Set up in agents**, or
 **Remove from agents**. Setup/removal reviews and applies registration immediately,
 separately from config Save; first save or discard pending edits. Existing custom
 or disabled entries are preserved. Reload the agent client to load newly registered
