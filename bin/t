@@ -5222,7 +5222,7 @@ def cmd_config(cfg, args):
         return _cmd_workflow_runners(cfg, args)
     if getattr(args, "local", False):
         return _local_setup(args)
-    if getattr(args, "local_model", None) or getattr(args, "disable_local", False) or getattr(args, "yes", False):
+    if getattr(args, "local_model", None) or getattr(args, "local_provider", None) or getattr(args, "disable_local", False) or getattr(args, "yes", False):
         print("local model options require t config local", file=sys.stderr)
         return 1
     workflow_action = getattr(args, "workflow_action", None)

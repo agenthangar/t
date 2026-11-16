@@ -482,7 +482,9 @@ normal idle timeout. It preserves model files, provider settings, workflows and
 MCP registration. Enable restores permission to submit requests; it does not load
 models, install dependencies or change routing. Both actions are idempotent,
 noninteractive and support `--json`. Status is read-only. A failed write preserves
-the previous setting; an invalid switch file fails closed.
+the previous setting; an invalid switch file fails closed. An older running
+manager that cannot enforce pause reports an error instead of claiming success;
+let its sessions finish before refreshing it.
 
 `config local --disable --yes` remains the older worker-only control. If that was
 used, configure the worker again before enabling delegation. The runtime switch

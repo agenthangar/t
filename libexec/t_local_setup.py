@@ -160,7 +160,7 @@ def run(args, api):
                 current = status()
                 provider = current.get('provider', 'ollama')
                 details = [('Delegation', 'Enabled' if current['enabled'] else 'Disabled'),
-                           ('Provider', 'LM Studio' if provider == 'lmstudio' else 'Ollama'),
+                           ('Provider', {'lmstudio': 'LM Studio', 'ollama': 'Ollama', 'mlx-vlm': 'MLX VLM'}.get(provider, provider)),
                            ('Model', current['model'])]
                 choices = [('setup', 'Install / configure local worker'),
                            ('disable', 'Disable local delegation'), ('back', 'Back')]
