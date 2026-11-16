@@ -115,10 +115,12 @@ def request(operation, payload=None, *, deadline=None):
     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'serve'],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True, cwd='/', env=env)
-    deadline = time.monotonic() + 1
+    # An old owner may need two seconds to flush before releasing its lock.
+    # One candidate waits for that handoff; do not fork repeatedly on each poll.
+    deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
         try:
-            return _wire(operation, payload)
+            return _wire(operation, payload, deadline)
         except (OSError, ValueError):
             time.sleep(.025)
     return {'hosts': [], 'loading': False, 'unavailable': True,
@@ -491,8 +493,33 @@ class _Handler(socketserver.StreamRequestHandler):
             pass
 
 
+def _socket_identity(address):
+    try:
+        info = os.lstat(address)
+    except FileNotFoundError:
+        return None
+    return (info.st_dev, info.st_ino) if stat.S_ISSOCK(info.st_mode) else None
+
+
+class _EndpointLost(OSError):
+    """The listener no longer owns a reachable filesystem endpoint."""
+
+
 class _Server(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
+
+    def server_bind(self):
+        super().server_bind()
+        self.endpoint_identity = _socket_identity(self.server_address)
+        if self.endpoint_identity is None:
+            raise _EndpointLost('session cache socket disappeared during bind')
+
+    def service_actions(self):
+        # A live process and lifetime lock do not prove that clients can reach
+        # the socket. Exit our own loop (shutdown() here would deadlock), flush,
+        # and release the lock so a requesting client can replace this daemon.
+        if _socket_identity(self.server_address) != self.endpoint_identity:
+            raise _EndpointLost('session cache socket disappeared or was replaced')
 
 
 def _serve():
@@ -500,7 +527,7 @@ def _serve():
     root = _private(_runtime())
     fd = os.open(root / 'service.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as lock:
-        deadline = time.monotonic() + 1
+        deadline = time.monotonic() + 3
         while True:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -526,11 +553,15 @@ def _serve():
             writer.start()
             try:
                 server.serve_forever(poll_interval=.25)
+            except _EndpointLost:
+                pass
             finally:
                 disk.stop.set()
                 disk.wake.set()
                 writer.join(2)
-                address.unlink(missing_ok=True)
+                # Never remove an endpoint installed after this listener bound.
+                if _socket_identity(address) == server.endpoint_identity:
+                    address.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':
