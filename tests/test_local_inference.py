@@ -182,7 +182,8 @@ def test_local_lead_fails_closed(local,monkeypatch,tmp_path):
     workflow=m.helper('t_workflow')
     toml=m.helper('t_toml')
     status=m.helper('t_local_status')
-    monkeypatch.setattr(m,'helper',lambda n: {'local_launch':lambda *a:None} if n=='t_usage' else status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
+    trust=m.helper('t_trust_state')
+    monkeypatch.setattr(m,'helper',lambda n: trust if n=='t_trust_state' else {'local_launch':lambda *a:None} if n=='t_usage' else status if n=='t_local_status' else toml if n=='t_toml' else {'hardware':hardware} if n=='t_local_models' else workflow if n=='t_workflow' else {'Client':ManagedClientFixture} if n=='t_local_manager' else {'reservation':nullcontext,'state_root':lambda:tmp_path,'environment':worker.environment})
     @contextmanager
     def runtime(*a,**kw):yield 'http://127.0.0.1:1234','local-alias',{'revision':'a'*40}
     monkeypatch.setattr(m,'runtime',runtime)
@@ -453,6 +454,27 @@ def test_exact_workspace_trust_only(local,tmp_path):
     assert not m.trusted_workspace(workspace)
 
 
+def test_linked_workspace_trust_follows_canonical_and_preserves_denial(local, tmp_path):
+    import subprocess
+    repo, tree = tmp_path / 'repo', tmp_path / 'linked'
+    repo.mkdir()
+    for args in (['init', '-q', '-b', 'main'], ['config', 'user.name', 'Fixture'],
+                 ['config', 'user.email', 'fixture@example.invalid'],
+                 ['commit', '-q', '--allow-empty', '-m', 'base'],
+                 ['worktree', 'add', '-q', '-b', 'dev/linked', str(tree)]):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+    home = Path(local.os.environ['CODEX_HOME'])
+    home.mkdir()
+    config = home / 'config.toml'
+    canonical = '[projects.' + json.dumps(str(repo)) + ']\ntrust_level="trusted"\n'
+    config.write_text(canonical)
+    assert local.trusted_workspace(tree)
+    config.write_text(canonical + '[projects.' + json.dumps(str(tree)) + ']\ntrust_level="untrusted"\n')
+    assert not local.trusted_workspace(tree)
+    config.write_text('[projects.' + json.dumps(str(tmp_path)) + ']\ntrust_level="trusted"\n')
+    assert not local.trusted_workspace(tree)
+
+
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12)])
 def test_outage_picker_narrow(local,t_mod,width,height):
     from test_tui import make_ui
@@ -666,7 +688,7 @@ def test_native_lead_stops_when_manager_lease_is_lost(local, monkeypatch, tmp_pa
     m = local
     calls = []
     worker = m.helper('t_local_worker')
-    modules = {name: m.helper(name) for name in ('t_local_status', 't_workflow', 't_toml')}
+    modules = {name: m.helper(name) for name in ('t_local_status', 't_workflow', 't_toml', 't_trust_state')}
     class LostLease(ManagedClientFixture):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)

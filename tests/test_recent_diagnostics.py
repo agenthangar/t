@@ -239,17 +239,16 @@ def test_adapter_attach_keeps_terminal_stderr(engine, tmp_path):
     import time
     root = tmp_path / 'runtime'
     (root / 'libexec').mkdir(parents=True)
-    # Tiny peer for the real zsh bridge; it requests attachment, then exits.
+    # Use the real local adapter so this PTY check follows its private framing.
+    # The tiny peer requests attachment without creating a session or agent.
     (root / 'libexec/t_lifecycle.py').write_text('''
-import json, sys
-if sys.argv[1] == 'bridge':
- print(json.dumps(dict(call='attach', args=['', 'dev-example-1', '0'])), flush=True)
- reply=json.loads(sys.stdin.readline())
- print(json.dumps(dict(done=reply['code'])), flush=True)
-elif sys.argv[1] == 'decode':
- print("_t_lifecycle_effect attach '' dev-example-1 0")
-elif sys.argv[1] == 'reply':
- print(json.dumps(dict(code=int(sys.argv[2]), output='')))
+import os, runpy, sys
+from pathlib import Path
+assert sys.argv[1] == 'bridge-shell'
+api = runpy.run_path(str(Path(os.environ['TEST_ROOT']) / 'libexec/t_lifecycle.py'))
+api['ShellAdapter'](sys.argv[2]).call('attach', '', 'dev-example-1', '0')
+sys.stdout.write('done' + chr(0) + '0' + chr(0))
+sys.stdout.flush()
 ''')
     script = '''source "$TEST_ROOT/zsh/lifecycle.zsh"
 _t_lifecycle_effect() { [[ -t 2 ]] || return 91; print -u2 'ATTACHED WITH TERMINAL'; }
@@ -274,6 +273,7 @@ _t_lifecycle_run_impl ignored
                 output.extend(chunk)
         assert proc.wait(timeout=1) == 0, output
         assert b'ATTACHED WITH TERMINAL' in output
+        assert b'bad file descriptor' not in output
     finally:
         if proc.poll() is None:
             proc.kill()

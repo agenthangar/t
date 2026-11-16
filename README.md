@@ -371,10 +371,26 @@ press Enter to confirm and close the whole selection without further prompts.
 Explicit targets still confirm live-agent interruption unless `-y` is supplied.
 Desktop ownership checks apply in both cases.
 
-Worktree sessions use the fetched default branch recorded in `origin/HEAD`,
-falling back to fetched `origin/main` or `origin/master` when that record is missing
-or dangling. After a remote default-branch change, refresh the record with
+Fresh worktree sessions (`t open api --new`) reserve the next local slot and pin
+the locally cached default-branch commit. They do not wait for Git fetches, GitHub
+merge checks, or retired desktop reservations on remote hosts. A shared counter
+avoids rescanning occupied slots; final workspace and live-owner checks still run
+under the launch lock. Existing branches and worktrees are never reclaimed by a
+fresh open, and skipped slot numbers are harmless.
+
+One detached worker per repository refreshes origin refs every five minutes, with refresh requests
+after t updates, pushes, and observed merges. It does not move a checked-out branch
+or change working files. Offline opens use the last cached revision, falling back
+to the local default branch if needed; an unavailable local base produces an error.
+The default comes from `origin/HEAD`, with `main`/`master` fallbacks. After a remote default-branch change, refresh the record with
 `git fetch origin` and `git remote set-head origin -a`.
+
+Fresh launches also cache resolved model, effort, permissions, routing, and MCP
+choices locally. The cache expires after 24 hours without a launch; each accepted
+launch extends that expiry. Configuration, workflow, native client settings, and
+source changes invalidate it immediately. Provider availability and ownership
+checks remain live. History reuses creation evidence for the starting commit,
+then associates the conversation ID and persists in the background.
 `t repo create` can create
 and register a GitHub repository with the expected setup, showing its plan first.
 To use an existing GitHub repository, run `t repo clone https://github.com/owner/repo.git`.
@@ -1459,20 +1475,25 @@ Ultrafast where supported), repository choices, and hosts. Teams can share those
 workflows and agent configurations to standardize the parts of their setup that
 matter.
 
-The settings screen groups **Session defaults**, **Agents**, **Workflows**, **Runners**, **MCP server**,
+The settings screen groups **Session defaults**, **Agents**, **Workflows**, **Runners**, **MCP servers**,
 **Repositories & worktrees**, **Remote hosts**, and **Finish**. Workflow has its
 own section, separate from agent settings and local model setup; host registration
 and the default beam destination stay together. Rows ending in **›** open a settings collection
 or setup screen. All existing choices remain directly accessible on this screen.
 
-The **MCP server → Sessions server** menu shows Codex enabled state and Claude
-user-scope registration on this machine. Refresh status is read-only.
-**Register missing clients now** reviews and applies registration immediately,
+The **MCP servers** menu lists configured servers and their client, source and
+enabled state. Server details show observed startup status and duration when
+explicit native evidence is available; otherwise they say **Not measured**.
+Browsing and Refresh do not connect servers or change configuration.
+
+Select **t MCP · sessions** for **Check setup**, **Set up in agents**, or
+**Remove from agents**. Setup/removal reviews and applies registration immediately,
 separately from config Save; first save or discard pending edits. Existing custom
 or disabled entries are preserved. Reload the agent client to load newly registered
 tools; configuration status alone does not verify an active client connection.
 
-Manage the same server directly with `t mcp status [--json]`, `t mcp install`,
+Use `t mcp list [--json]` for the same read-only server inventory. Manage t session
+tools directly with `t mcp status [--json]`, `t mcp install`,
 and `t mcp uninstall`. Uninstall removes only t-owned registrations and disables
 automatic registration across updates until explicit install. Custom entries,
 permissions, and transcripts are preserved. Bare `t mcp` remains the stdio server.
@@ -1500,11 +1521,15 @@ To change a repository alias, open `t config open` → Repositories → select t
 repository → Short name, then Save changes. Its tool, branch, and worktree
 overrides move to the new name.
 
-Configure which MCP tools load in each agent's own settings. t preserves those
-settings and provides its own optional sessions MCP server for Claude Code;
-it does not centrally manage other MCP servers. The optional permission policy
-below can also be shared across supported agents. See the [agent matrix](#agents)
-for the capabilities available in each vendor's tool.
+In **Workflows → Codex → a workflow → MCP servers**, choose **Inherit client
+setting**, **Enabled** or **Disabled** for individual direct or plugin servers.
+Choices stay staged until workflow Save and apply to subsequent launches. Native
+authentication and transport settings are preserved. Claude and Cursor inherit
+their own MCP settings; their per-workflow controls are explicitly unsupported.
+Local-only inference keeps MCP servers disabled in its isolated runtime and
+retains saved workflow choices for later cloud routing.
+The optional permission policy below can also be shared across supported agents.
+See the [agent matrix](#agents) for capabilities available in each vendor's tool.
 
 The plugin reads `${XDG_CONFIG_HOME:-~/.config}/t/local.zsh`; override its location
 with `T_LOCAL_RC` before sourcing the plugin. Start with [local.zsh.example](local.zsh.example)
@@ -1534,9 +1559,12 @@ maintainer's personal permission defaults are not enabled for a standalone insta
 Use `t agent trust <dir>` to make a deliberate folder-trust change. To opt into automatic
 trust for registered repositories, set `export T_AUTO_TRUST=1` in your local config.
 The `t config` TUI shows **Automatic folder trust** and lets you enable or disable it.
-Trust is synced when creating/reusing worktrees, starting or resuming terminal
-sessions, using each agent's CLI trust store; both canonical repositories and individual worktrees
-are registered. `t trust --all` also includes existing session worktrees.
+Setup, installation, updates, and repository registration establish canonical
+repository trust when automatic trust is enabled. Codex and Claude inherit that
+decision in new linked worktrees. Fresh launches check the native decision and
+repair missing setup only; they skip repeated trust synchronization when already
+covered. Explicit numbered opens and resumes retain their repair paths.
+`t trust --all` also includes existing session worktrees.
 Cursor desktop and VS Code use a separate workspace trust database, which is
 updated when present; restart those apps after syncing to load the saved trust.
 `t trust --status --all` reports the saved trust state. Explicit Codex `untrusted`

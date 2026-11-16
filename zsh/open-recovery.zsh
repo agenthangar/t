@@ -93,10 +93,6 @@ _t_open_recovery_preflight() {
       print -u2 't open: remote owner is present or could not be verified; use --host to recover there'
       return 1
     fi
-    remote_owner=$(_dev_remote_legacy_owner "$4" "$5"); resolve_rc=$?
-    if [[ -n $remote_owner ]] || (( resolve_rc > 1 )); then
-      print -u2 't open: remote reservation must be released on its host'; return 1
-    fi
   fi
   return 0
 }

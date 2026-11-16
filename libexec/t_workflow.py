@@ -474,7 +474,7 @@ def reset_policy(policy, scope='workflow', tool='codex'):
             after.pop(key, None)
             if key in default:
                 after[key] = copy.deepcopy(default[key])
-    elif scope in ('runners', 'inference'):
+    elif scope in ('runners', 'inference', 'mcp'):
         after.pop(scope, None)
     elif scope == 'permissions':
         after = update_permission(after, tool, '')
@@ -560,6 +560,10 @@ def validate_runners(value):
 def inference():
     import runpy
     return runpy.run_path(str(Path(__file__).with_name("t_local_inference.py")))
+
+
+def mcp():
+    return runpy.run_path(str(Path(__file__).with_name('t_mcp_policy.py')))
 
 
 def config_path():
@@ -659,6 +663,7 @@ def _legacy_claude_catalogue(document):
                 *(entry['inline'] for entry in catalogue['repositories'].values() if 'inline' in entry)]
     for policy in policies:
         policy.pop('inference', None)
+        policy.pop('mcp', None)
         policy['stages_enabled'] = False
         for stage in MODEL_STAGES:
             policy[stage] = {'model': '', 'effort': 'auto'}
@@ -684,7 +689,7 @@ def _ensure_claude_catalogue(document, previous=None):
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions', 'inference'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions', 'inference', 'mcp'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
@@ -693,6 +698,8 @@ def validate_policy(value):
         raise ValueError('workflow enabled must be true or false')
     if 'inference' in value:
         inference()['policy'](value['inference'])
+    if 'mcp' in value:
+        mcp()['validate'](value['mcp'])
     if 'runners' in value:
         validate_runners(value['runners'])
     permissions = value.get('permissions', {})
@@ -773,6 +780,8 @@ def validate(value, *, migrate=True):
             policies = [*catalogue['workflows'].values(), *(entry['inline'] for entry in catalogue['repositories'].values() if 'inline' in entry)]
             if any('inference' in policy for policy in policies):
                 raise ValueError('local inference workflows currently support Codex only')
+            if any(policy.get('mcp') for policy in policies):
+                raise ValueError('workflow MCP controls currently support Codex only')
     if not isinstance(value['repositories'], dict):
         raise ValueError('workflow repositories must be an object')
     if legacy:
@@ -1172,6 +1181,7 @@ def pr_review_skipped(policy):
 
 def policy_summary(policy):
     return {'inference': copy.deepcopy(policy.get('inference')),
+            'mcp': copy.deepcopy(policy.get('mcp', {})),
             'stages_enabled': policy.get('stages_enabled', True),
             'stages_active': policy['enabled'] and policy.get('stages_enabled', True) and policy.get('inference', {}).get('mode') != 'local-only',
             'separate_stages': separate_stages(policy),
@@ -1191,6 +1201,7 @@ def summary_lines(policy, tool='codex'):
     if policy.get('inference', {}).get('mode') == 'local-only':
         state = 'inactive (local-only inference)'
     lines = ['Model stages: ' + state]
+    lines.append('MCP servers: ' + mcp()['summary'](policy))
     if policy.get('inference'):
         routing = inference()['policy'](policy['inference'])
         lines += [f"Inference: {routing['mode']} · {routing['provider']} · {routing['model']}",

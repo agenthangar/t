@@ -216,7 +216,7 @@ time.sleep(60)
     _dev_repo_prepare() {{ :; }}
     _dev_recovery_watch() {{ :; }}
     '''
-    launch_code = (f'_dev_slot_fresh() {{ [[ $2 == 4 ]]; }}; t open {repo} --new --codex' if launch == "new"
+    launch_code = (f'_dev_slot_unused() {{ [[ $2 == 4 ]]; }}; t open {repo} --new --codex' if launch == "new"
                    else f'_dev_resume_session {session} "$HOME/code/{repo}" {sid} codex')
     local = (f'DEV_REPOS[{repo}]="$HOME/code/{repo}"\n'
              f'DEV_WORKTREE[{repo}]=0\n')

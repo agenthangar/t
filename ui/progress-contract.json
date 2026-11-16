@@ -277,6 +277,10 @@
       "kind": "passthrough",
       "reason": "The configured terminal editor owns input and rendering until it exits."
     },
+    "libexec/t_mcp_policy.py:_native_entries:subprocess.run": {
+      "kind": "phase",
+      "reason": "Bounded local Codex configuration listing only; read-only inventory stays static, and a launch-policy cache miss already runs inside session preparation. It never connects MCP transports."
+    },
     "libexec/t_mcp_setup.py:status:subprocess.run": {
       "kind": "protocol",
       "reason": "Read-only client configuration inspection supports JSON status and inline UI; bounded to ten seconds and never starts servers."
@@ -588,6 +592,26 @@
     "libexec/t_model_preflight.py:legacy_owners:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded read-only lock-holder discovery runs within model-test preflight; RailUI owns feedback and no session is interrupted during discovery."
+    },
+    "libexec/t_fresh.py:git:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded local Git metadata and strict worktree creation run inside the foreground shell launch progress rail; stdout is a private launch-evidence protocol."
+    },
+    "libexec/t_fresh.py:seed:subprocess.run": {
+      "kind": "protocol",
+      "reason": "A bounded local tmux snapshot seeds a lost allocation counter without contacting any remote host or repainting its private numeric response."
+    },
+    "libexec/t_fresh.py:schedule:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts only a detached coalesced origin-ref maintenance worker; foreground startup never waits for a fetch."
+    },
+    "libexec/t_fresh.py:refresh:subprocess.run": {
+      "kind": "background",
+      "reason": "A bounded noninteractive fetch updates only origin refs in the detached periodic worker, never a foreground checkout."
+    },
+    "libexec/t_fresh.py:watch:time.sleep": {
+      "kind": "background",
+      "reason": "The detached per-repository ref worker polls quiet refresh requests and its five-minute deadline without owning a terminal."
     },
     "bin/t:_cmd_update_t:subprocess.run": {
       "kind": "passthrough",

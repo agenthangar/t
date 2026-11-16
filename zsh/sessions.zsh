@@ -186,15 +186,6 @@ _t_paste() {
     return
   fi
 
-  if (( ${#REMOTE_HOSTS} )); then
-    local app_owner app_rc; app_owner=$(_dev_remote_legacy_owner "$repo" "$slot"); app_rc=$?
-    (( app_rc == 3 )) && return 1
-    if [[ -n $app_owner ]]; then
-      print -u2 -- "t paste: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
-      return 1
-    fi
-  fi
-
   # new session → bootstrap Claude, wait for it to come up, queue the path, attach
   local _pdir="${DEV_REPOS[$repo]}" _pskip=
   if _dev_worktree_enabled "$repo"; then
@@ -736,7 +727,7 @@ _dev_fg_rows() {
   # the claude THIS shell is running under (walk up $$), so we don't list ourselves.
   local me up=$$
   local -a claudes
-  if _dev_snap_ok; then                     # snapshot: no ps fork per ancestor level
+  if (( ${#_DEV_PS_COMM} )); then            # process data is valid even without a tmux server
     while [[ -n $up && $up != 1 ]]; do
       _dev_agent_is_proc "${_DEV_PS_COMM[$up]:-}" && { me=$up; break; }
       up=${_DEV_PS_PPID[$up]:-}
@@ -1513,27 +1504,6 @@ _dev_rows_all() {
   _t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl "$@"
 }
 
-# Current hosts have no live desktop integration, but retain old worktree
-# reservation markers. Fresh allocation needs only those markers, not a session
-# inventory. This body can also run on already-installed hosts with the retired
-# integration guard, so a local upgrade does not require a simultaneous peer upgrade.
-_dev_slot_reservation_rows() {
-  setopt local_options null_glob
-  local base=$1 repo wt slot
-  local -A seen
-  for repo in ${(k)DEV_REPOS}; do
-    [[ ${DEV_REPOS[$repo]:t} == "$base" && -z ${seen[${DEV_REPOS[$repo]}]:-} ]] || continue
-    seen[${DEV_REPOS[$repo]}]=1
-    for wt in "$DEV_WORKTREE_ROOT/$base"/*(N/); do
-      slot=$(_dev_worktree_slot "$base" "${wt:t}") || continue
-      [[ -e $wt/.git ]] || continue
-      _dev_legacy_workspace_reserved "$wt" || continue
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' - "$wt" "$repo-$slot" app unknown reserved codex
-    done
-  done
-  return 0
-}
-
 _dev_rows_all_impl() {
   # Remote aggregate queries enumerate this host only. Lifecycle workers do not
   # set this marker and retain their cross-host ownership checks.
@@ -1555,23 +1525,14 @@ _dev_rows_all_impl() {
   local -a scan_pids
   {
   ( local scan_rc=0
-    # Fresh allocation's caller checks local worktrees and owners itself. There
-    # is no local display inventory to collect for a remote reservation query.
-    if [[ ${1:-} == --reservations ]]; then : > "$tmpd/.local"
-    else _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null || scan_rc=$?; fi
+    # Aggregate discovery retains authoritative local session rows.
+    _dev_session_rows "$@" > "$tmpd/.local" 2>/dev/null || scan_rc=$?
     print -r -- $scan_rc > "$tmpd/.local.rc" ) &
   scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
   [[ ${1:-} == --ownership ]] && scan='if (( ${+functions[_dev_ownership_rows]} )); then _dev_ownership_rows; else _dev_session_rows; fi'
   [[ ${1:-} == --repo ]] && scan=$(_dev_repo_rows_command "$2" "$3")
-  if [[ ${1:-} == --reservations ]]; then
-    # Old peers with the active integration must still report their live app
-    # reservations. Do not send them an unknown option that they might ignore.
-    scan='if (( ${+functions[_dev_legacy_workspace_reserved]} && ${+functions[_dev_worktree_slot]} )); then '
-    scan+="_t_slot_reservations() { ${functions[_dev_slot_reservation_rows]}"$'\n'"}; _t_slot_reservations ${(q)2}; "
-    scan+='else _dev_session_rows; fi'
-  fi
   remote_scan="zsh -lic ${(q)scan}"
   local h
   for h in ${(k)REMOTE_HOSTS}; do
@@ -2212,7 +2173,9 @@ _dev_kill() {
 # disable its recovery menu. It exits when no managed sessions remain.
 _dev_recovery_watch() {
   [[ -z ${T_RECOVERY_DISABLE:-} ]] || return 0
-  command t __recovery start "$1" >/dev/null 2>&1 || true
+  ( local key; for key in ${(k)parameters}; do [[ $key == COV_CORE_* ]] && unset "$key"; done
+    python3 "$T_HOME/libexec/t_recovery.py" start "$1" ) </dev/null >/dev/null 2>&1 &!
+  return 0
 }
 
 # _dev_new_session <session> <dir> [branch] [skip_prepare] — create a detached tmux
@@ -2238,9 +2201,11 @@ _dev_recovery_watch() {
 # Durable revision evidence belongs to the conversation, never just a slot branch.
 _dev_history_record() {
   local sid=$1 agent=$2 dir=$3 event=${4:-launch} interface=${5:-cli} tx mode=record
-  [[ -n $sid && $sid != - ]] || { _t_discovery_event local; return 0; }
+  [[ -n $sid && $sid != - ]] || return 0
   [[ $event == (launch|resume) ]] && mode=record-deferred
-  tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
+  # SessionStart supplies its known transcript independently. Initial history
+  # must freeze the revision now, without waiting for transcript discovery.
+  [[ $mode == record-deferred ]] || tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
   python3 "$T_HOME/libexec/t_history.py" "$mode" "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
 }
 
@@ -2283,6 +2248,8 @@ _dev_launch_preflight() {
   if [[ -f $history_reservation && $(<$history_reservation) != ${T_HISTORY_TOKEN:-} ]]; then
     print -u2 -- 't: workspace launch is reserved; retry after preparation completes'; return 1
   fi
+  _DEV_PS_AT=0
+  _dev_ps_snapshot
   while IFS='|' read -r name owner_path; do
     [[ -n $name ]] || continue
     if [[ $name == $session || ( -n $owner_path && ${owner_path:A} == $dir ) ]]; then
@@ -2407,9 +2374,12 @@ _dev_new_session_effect() {
   if [[ -z $7 ]] && (( ${+functions[_dev_issue_preparing]} )) && _dev_issue_preparing "$dir"; then
     print -u2 't: issue launch is reserved; rerun t issue start <issue> to recover it'; return 1
   fi
-  _dev_auto_trust "$dir"
+  local trust_checked= launch_rc=0
+  _dev_auto_trust "$dir" "$agent" && trust_checked=1
   local logfile="$HOME/.tmux-logs/${session}.log"
   local sid; sid="$(uuidgen | tr 'A-Z' 'a-z')"
+  local launch_command
+  launch_command=$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir") || return 1
   mkdir -p "$HOME/.tmux-logs"
   # No fixed -x/-y geometry: a session seeded oversized (was 220x50) stays bigger
   # than a narrow client until it resizes, so attaching from a phone (Termius)
@@ -2427,6 +2397,12 @@ _dev_new_session_effect() {
   # claude takes a pre-assigned id; a codex slot is stamped by its SessionStart hook once
   # codex has minted one (there is no `codex --session-id`).
   tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
+  # tmux's server environment may predate this launch. Transfer creation
+  # evidence explicitly so the SessionStart hook receives the pinned revision.
+  tmux set-environment -t "=$session" T_LAUNCH_CONTEXT "${T_LAUNCH_CONTEXT:-}" || { tmux kill-session -t "=$session:"; return 1; }
+  if [[ $trust_checked == 1 ]]; then
+    tmux set-environment -t "=$session" _T_LAUNCH_TRUST_DONE "$dir" || { tmux kill-session -t "=$session:"; return 1; }
+  fi
   if [[ -n $7 ]]; then
     tmux set-environment -t "=$session" T_ISSUE_TOKEN "$7" || { tmux kill-session -t "=$session:"; return 1; }
   fi
@@ -2446,8 +2422,17 @@ _dev_new_session_effect() {
   fi
   # A failed barrier may mean the pane changed. Retain it for inspection rather
   # than killing whatever now occupies the session name.
-  _dev_start_session_command "$session" "${prep}$(_dev_agent_new_cmd "$agent" "$sid" "$6" "$dir")" "$logfile" || return 1
-  _dev_launch_startup_check "$session" "$logfile" || return 1
+  # The wrapper in this new pane may skip its duplicate sync. It consumes the
+  # marker before running the agent, so later independent launches check again.
+  _dev_start_session_command "$session" "${prep}$launch_command" "$logfile" || launch_rc=$?
+  # The new process already copied these values. Future panes/respawns in this
+  # tmux session must perform their own trust checks and capture fresh evidence.
+  tmux set-environment -r -t "=$session" _T_LAUNCH_TRUST_DONE 2>/dev/null || true
+  tmux set-environment -r -t "=$session" T_LAUNCH_CONTEXT 2>/dev/null || true
+  (( launch_rc == 0 )) || return $launch_rc
+  # The lifecycle controller immediately verifies the actual agent process and
+  # immutable pane. Direct legacy callers retain the early-exit check.
+  [[ ${_T_LIFECYCLE_VERIFY_READY:-} == 1 ]] || _dev_launch_startup_check "$session" "$logfile" || return 1
 }
 
 # Resolve an exact owner. Fresh launches may need time to publish their identity;
@@ -2538,10 +2523,6 @@ _t_issue_prepare() {
     fi
     (( slot++ ))
   done
-  if (( ${#REMOTE_HOSTS} )); then
-    owner=$(_dev_remote_legacy_owner "$repo" "$slot")
-    [[ -z $owner ]] || { print -u2 "t issue: slot reserved by desktop on $owner"; return 1; }
-  fi
   # Git atomically refuses a competing branch creation. Start at the published
   # handoff commit directly; no reset of a potentially reused worktree is needed.
   git -C "${DEV_REPOS[$repo]}" worktree add -q -b "$br" "$wt" "$start_ref" || return 1
@@ -2818,25 +2799,9 @@ _t_dev() {
   local agent
   agent=$(_dev_agent_for "$repo" "$agent_over") || return 1
 
-  # Automatic fresh allocation uses one remote snapshot for every candidate and
-  # the final desktop guard. Keep explicit numbered opens on their strict path.
-  local _T_OPEN_REMOTE_ROWS_READY= _T_OPEN_REMOTE_ROWS_ROWS= _T_OPEN_REMOTE_ROWS_RC=0
-  if [[ -z $slot || $slot == new ]] && (( ${#REMOTE_HOSTS} )); then
-    _T_OPEN_REMOTE_ROWS_ROWS=$(_dev_rows_all --reservations "${dir:t}"); _T_OPEN_REMOTE_ROWS_RC=$?
-    (( _T_OPEN_REMOTE_ROWS_RC == 130 )) && return 130
-    _T_OPEN_REMOTE_ROWS_READY=1
-  fi
-
-  # An explicit foreground slot must respect desktop ownership before the
-  # no-tmux branch, which otherwise bypasses the ordinary slot preflight.
+  # Explicit foreground slots still verify actual remote CLI owners.
   if [[ -n $no_tmux && $slot == <-> ]] && (( ${#REMOTE_HOSTS} )) \
      && ! tmux has-session -t "=dev-${repo}-${slot}:" 2>/dev/null; then
-    local app_owner app_rc; app_owner=$(_dev_remote_legacy_owner "$repo" "$slot" "$allow_unverified_new"); app_rc=$?
-    (( app_rc == 3 )) && return 1
-    if [[ -n $app_owner ]]; then
-      print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
-      return 1
-    fi
     local remote_cli remote_rc
     remote_cli=$(_dev_remote_resolve "$repo" "$slot" '' quiet "$allow_unverified_new"); remote_rc=$?
     if [[ -n $remote_cli ]]; then
@@ -2844,6 +2809,21 @@ _t_dev() {
       return 1
     fi
     (( remote_rc > 1 )) && return $remote_rc
+  fi
+
+  # A fresh isolated request reserves a monotonic number, then prepares and
+  # launches under the existing workspace claim. No remote discovery or merge
+  # verdict participates in local fresh allocation.
+  if [[ $slot == new || ( -z $slot && -n $no_tmux ) ]] && _dev_worktree_enabled "$repo"; then
+    local _T_FRESH_SESSION= fresh_rc=0
+    if [[ -n $no_tmux ]]; then
+      _dev_fresh_open "$repo" "$agent" foreground
+      return $?
+    fi
+    _dev_fresh_open "$repo" "$agent" || fresh_rc=$?
+    (( fresh_rc == 0 )) || return $fresh_rc
+    _t_session_attach "$_T_FRESH_SESSION" "$agent" fresh
+    return $?
   fi
 
   # -f/--fg (a.k.a. --no-tmux): run claude inline, no tmux. If a SPECIFIC slot is
@@ -2866,17 +2846,9 @@ _t_dev() {
       local _wslot="$slot"
       if [[ -z $_wslot || $_wslot == new ]]; then
         _wslot=1
-        while ! _dev_slot_fresh_unreserved "$repo" "$_wslot"; do (( _wslot++ )); done
+        while ! _dev_slot_unused "$repo" "$_wslot"; do (( _wslot++ )); done
       fi
-      if [[ $slot != <-> ]] && (( ${#REMOTE_HOSTS} )); then
-        local app_owner app_rc; app_owner=$(_dev_remote_legacy_owner "$repo" "$_wslot" "$allow_unverified_new"); app_rc=$?
-        (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
-        if [[ -n $app_owner ]]; then
-          print -u2 -- "t open: $repo $_wslot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
-          return 1
-        fi
-      fi
-      local _wt; _wt="$(_dev_worktree_create "$repo" "$_wslot")"
+      local _wt; _wt="$(_dev_with_launch_locks "$(_dev_worktree_path "$repo" "$_wslot")" '' _dev_worktree_create "$repo" "$_wslot")"
       if [[ -n $_wt ]]; then dir="$_wt"; skip_prepare=1
       else _dev_worktree_refuse "$repo" "$_wslot"; return 1; fi
     fi
@@ -2885,20 +2857,10 @@ _t_dev() {
     echo "Starting $agent in $dir (no tmux)"
     cd "$dir" || return 1
     [[ -n $skip_prepare ]] || _dev_repo_prepare "$branch"
-    local -a model_args=()
-    model_args=("${(@f)$(_dev_agent_default_args "$agent" "$dir")}")
-    model_args=("${(@)model_args:#}")
-    case "$agent:${DEV_FAST[$agent]:-}" in
-      codex:1|codex:fast) model_args+=(-c service_tier=fast --enable fast_mode) ;;
-      codex:ultrafast) model_args+=(-c service_tier=ultrafast --enable fast_mode) ;;
-      codex:0) model_args+=(-c service_tier=default) ;;
-      claude:1) model_args+=(--settings '{"fastMode":true}') ;;
-      claude:0) model_args+=(--settings '{"fastMode":false}') ;;
-    esac
-    [[ $agent == codex ]] && model_args+=(--no-daemon)
+    local foreground_command
+    foreground_command=$(_dev_agent_new_cmd "$agent" '' '' "$dir") || return 1
     _dev_with_launch_locks "$dir" '' _dev_foreground_new "$dir" || return 1
-    local executable; executable=$(_dev_agent_executable "$agent") || return 1
-    "$executable" "${model_args[@]}"   # keep PATH wrappers and their t push sentinel
+    eval "$foreground_command"   # keep PATH wrappers and their t push sentinel
     return $?
   fi
 
@@ -2908,9 +2870,12 @@ _t_dev() {
   # branch — the same one the auto-pick and --fg use.
   if [[ "$slot" == new ]]; then
     local n=1
-    while ! _dev_slot_fresh_unreserved "$repo" "$n"; do (( n++ )); done
+    while ! _dev_slot_unused "$repo" "$n"; do (( n++ )); done
     slot=$n
   fi
+
+  local automatic_fresh=
+  [[ -z $slot ]] && automatic_fresh=1
 
   # auto-pick slot: REATTACH to the lowest-numbered existing-but-unattached
   # session before ever spawning a fresh one — so `t open <repo>` lands on the
@@ -2927,7 +2892,7 @@ _t_dev() {
     while (( n <= 20 )); do
       local sname="dev-${repo}-${n}"
       if ! tmux has-session -t "=$sname:" 2>/dev/null; then
-        [[ -z $free ]] && _dev_slot_fresh_unreserved "$repo" "$n" && free=$n  # lowest fresh slot → fallback
+        [[ -z $free ]] && _dev_slot_unused "$repo" "$n" && free=$n  # lowest fresh slot → fallback
       elif ! tmux list-clients -t "=$sname:" 2>/dev/null | grep -q .; then
         slot=$n; break                                            # existing + unattached → reattach (wins)
       fi
@@ -2939,7 +2904,7 @@ _t_dev() {
       else
         # nothing fresh in 1..20 → keep scanning unbounded, still preferring an
         # existing-but-unattached session above 20 over a fresh slot.
-        while ! _dev_slot_fresh_unreserved "$repo" "$n"; do
+        while ! _dev_slot_unused "$repo" "$n"; do
           if tmux has-session -t "=dev-${repo}-${n}:" 2>/dev/null \
              && ! tmux list-clients -t "=dev-${repo}-${n}:" 2>/dev/null | grep -q .; then
             slot=$n; break
@@ -2951,24 +2916,20 @@ _t_dev() {
     fi
   fi
 
+  if [[ -n $automatic_fresh ]] && _dev_worktree_enabled "$repo" && ! _dev_local_slot_live "$repo" "$slot"; then
+    local _T_FRESH_SESSION= fresh_rc=0
+    _dev_fresh_open "$repo" "$agent" || fresh_rc=$?
+    (( fresh_rc == 0 )) || return $fresh_rc
+    _t_session_attach "$_T_FRESH_SESSION" "$agent" fresh
+    return $?
+  fi
+
   local session="dev-${repo}-${slot}"
 
   # The public controller can recover this exact failed target after locks unwind.
   _T_OPEN_FAILED_REPO=$repo
   _T_OPEN_FAILED_SLOT=$slot
   _T_OPEN_FAILED_AGENT=$agent
-
-  # Remote Codex desktop workspaces own their numbered slot without tmux. The
-  # attach resolver deliberately excludes them, so check their reservation before
-  # creating a local CLI on the same worktree/branch.
-  if ! tmux has-session -t "=$session:" 2>/dev/null && (( ${#REMOTE_HOSTS} )); then
-    local app_owner app_rc; app_owner=$(_dev_remote_legacy_owner "$repo" "$slot" "$allow_unverified_new"); app_rc=$?
-    (( app_rc == 3 )) && [[ -z $allow_unverified_new ]] && return 1
-    if [[ -n $app_owner ]]; then
-      print -u2 -- "t open: $repo $slot is reserved by the Codex desktop app on $app_owner; close it there and release the reservation before opening here"
-      return 1
-    fi
-  fi
 
   local logdir="$HOME/.tmux-logs"
   local logfile="$logdir/${session}.log"
@@ -2997,7 +2958,7 @@ _t_dev() {
     local skip_prepare= new_workspace=
     if _dev_worktree_enabled "$repo"; then
       local -a created_worktree
-      created_worktree=("${(@f)$(_dev_worktree_create "$repo" "$slot" '' new-launch)}")
+      created_worktree=("${(@f)$(_dev_with_launch_locks "$(_dev_worktree_path "$repo" "$slot")" '' _dev_worktree_create "$repo" "$slot" '' new-launch)}")
       local _wt=${created_worktree[1]}
       new_workspace=${created_worktree[2]}
       if [[ -n $_wt ]]; then dir="$_wt"; skip_prepare=1
@@ -3016,8 +2977,12 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
-  _t_discovery_event local --activity
-  _dev_workflow_attach "${2:-}"
+  # Fresh lifecycle completion already queues discovery; its launch applied the
+  # resolved policy, so the live-attach advisory has no pending work to report.
+  if [[ $3 != fresh ]]; then
+    _t_discovery_event local --activity
+    _dev_workflow_attach "${2:-}"
+  fi
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1
     print -r -- "Available: $1 (detached control; existing viewers unchanged)"

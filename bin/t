@@ -2829,6 +2829,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows.append(("job_watching", "Job watching ›"))
             if helper["PERMISSIONS"]:
                 rows.append(("permissions", "Permissions ›"))
+            rows.append(('mcp', 'MCP servers ›'))
             rows += [("instructions", "Text instructions ›")]
             rows += [("edit", "Advanced JSON editor"), ("reset", "Reset workflow to defaults")]
             if name:
@@ -2856,6 +2857,7 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values["instructions"] = (f"text · {len(policy['instructions'].splitlines())} lines · Edit or clear"
                                       if policy.get("instructions") else "Default · No additional instructions")
             values["permissions"] = _workflow_permission_summary(helper, policy)
+            values['mcp'] = _mcp_policy()['summary'](policy)
             reset = helper['reset_policy'](policy, tool=agent)
             values['reset'] = _workflow_reset_value(policy, reset)
             model_key = next((key for key, _ in rows if key in ('stages_enabled', 'inference')), None)
@@ -2925,6 +2927,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 policy = (copy.deepcopy(document["workflows"][name]) if name else helper["resolved"](document, repository))
             elif choice == "permissions":
                 changed = _workflow_permissions_menu(ui, helper, policy)
+            elif choice == 'mcp':
+                changed = _workflow_mcp_menu(ui, policy, agent, repository)
             elif choice == 'main_speed':
                 changed = _workflow_speed(ui, cfg, policy, agent)
             elif choice == 'job_watching':
@@ -3733,6 +3737,8 @@ def _workflow_changed_review(helper, document, before, activate=False):
 
     def value_text(path, value, policy):
         if value is missing:
+            if path[0] == 'mcp':
+                return 'Inherit client settings'
             if path[0] == 'behaviors' and len(path) == 2 and path[1] in helper['BEHAVIOR_DEFAULTS']:
                 return _workflow_field_value(helper, policy.get('behaviors', {}), path[1])
             if path == ('behaviors', 'pr_review'):
@@ -3760,6 +3766,10 @@ def _workflow_changed_review(helper, document, before, activate=False):
         return str(value)
 
     def path_label(path):
+        if path[:2] == ('mcp', 'servers') and len(path) == 3:
+            return 'MCP · ' + path[2]
+        if path[:2] == ('mcp', 'plugins') and len(path) == 4:
+            return 'MCP · ' + path[2] + ' / ' + path[3]
         if len(path) == 3 and path[0] == 'session_defaults':
             return path[1].title() + ' · Lead ' + {'model': 'model', 'effort': 'reasoning effort', 'speed': 'speed'}[path[-1]]
         if path[0] == 'behaviors' and len(path) == 2:
@@ -4035,21 +4045,151 @@ def _host_verify_offer(targets):
         _host_verify_targets(targets)
 
 
+def _mcp_policy():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_mcp_policy.py'))
+
+
+def _mcp_enabled(row):
+    return 'Enabled' if row.get('enabled') is True else 'Disabled' if row.get('enabled') is False else 'Inherited'
+
+
+def _mcp_display_name(row):
+    name = 't MCP · ' + row['name'] if row.get('sessions') else row['name']
+    return name + (' · ' + row['plugin'] if row.get('plugin') else '')
+
+
+def _mcp_details(row):
+    seconds = row.get('startup_seconds')
+    details = [row['client'].title() + ' · ' + _mcp_enabled(row),
+               'Source: ' + row['source'], 'Transport: ' + row['transport'],
+               'Last observed connection: ' + (row.get('observed_status') or 'Not measured'),
+               'Startup duration: ' + (f'{seconds:.3f}s' if isinstance(seconds, (float, int)) else 'Not measured')]
+    if row.get('plugin'):
+        details.append('Plugin: ' + row['plugin'])
+        if row.get('plugin_enabled') is False:
+            details.append('The plugin is disabled in client settings.')
+    if row.get('observed_at') is not None:
+        details.append('Observed at: ' + time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(row['observed_at'])))
+    if row.get('observed_workspace'):
+        details.append('Observed workspace: ' + row['observed_workspace'])
+    if row.get('provenance'):
+        details.append('Observation source: ' + row['provenance']['path'])
+    details.append('Configuration is not proof of an active connection.')
+    return details
+
+
+def _workflow_mcp_menu(ui, policy, agent, repository=None):
+    api = _mcp_policy()
+    changed = copy.deepcopy(policy)
+    if policy.get('inference', {}).get('mode') == 'local-only':
+        ui.page('Workflow MCP servers', [
+            '      Local-only sessions use an isolated runtime with MCP servers disabled.',
+            '      Saved MCP choices apply when routing uses the cloud.',
+            '      Existing choices are retained.'], {'enter', 'q', 'esc'}, 'enter / q back')
+        return changed
+    if agent != 'codex':
+        ui.page(agent.title() + ' MCP servers', [
+            '      Inherit the client’s configured MCP servers.',
+            '      Per-workflow server controls are not supported for this client.',
+            '      Inspect configured servers in t config → MCP servers.'], {'enter', 'q', 'esc'}, 'enter / q back')
+        return changed
+    def inspect():
+        try:
+            return api['inventory'](agent, repository)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            ui.done('unavailable', str(exc))
+            return []
+    servers = inspect()
+    try:
+        while True:
+            by_id = {row['id']: row for row in servers}
+            saved = api['choices'](changed)
+            for plugin, mapping in [('', saved.get('servers', {})), *saved.get('plugins', {}).items()]:
+                for name in mapping:
+                    key = json.dumps([plugin, name], separators=(',', ':'))
+                    by_id.setdefault(key, dict(id=key, name=name, plugin=plugin, enabled=None, unavailable=True))
+            rows = [(key, _mcp_display_name(row) +
+                     (' · unavailable on this machine' if row.get('unavailable') else '')) for key, row in by_id.items()]
+            values = {key: ('Enabled' if selected is True else 'Disabled' if selected is False else
+                           'Inherit · ' + _mcp_enabled(row)) for key, row in by_id.items()
+                      for selected in [api['choice'](changed, row)]}
+            rows += [('refresh', 'Refresh configured servers'), ('reset', 'Use client settings for every server'), ('back', 'Back')]
+            picked = ui.pick('Workflow MCP servers', rows, values=values, sections={'reset': 'Manage', 'back': 'Navigation'},
+                             context=['Applies to new sessions; choices remain staged until Save.',
+                                      *(['No MCP servers configured.'] if not by_id else [])])
+            if picked in (None, 'back'):
+                return changed
+            if picked == 'refresh':
+                servers = inspect()
+            elif picked == 'reset':
+                changed.pop('mcp', None)
+            else:
+                server = by_id[picked]
+                selected = api['choice'](changed, server)
+                options = [('inherit', 'Inherit client setting · ' + _mcp_enabled(server)),
+                           ('enabled', 'Enabled'), ('disabled', 'Disabled')]
+                unavailable = ('Server is unavailable on this machine' if server.get('unavailable') else
+                               'Enable the parent plugin in client settings first' if server.get('plugin_enabled') is False else '')
+                value = ui.pick(_mcp_display_name(server), options, default=1 if selected is True else 2 if selected is False else 0,
+                                disabled={'enabled': unavailable} if unavailable else {})
+                if value is not None:
+                    changed = api['update'](changed, server, {'inherit': None, 'enabled': True, 'disabled': False}[value])
+    except KeyboardInterrupt as exc:
+        exc.workflow_policy = changed
+        raise
+
+
 def _config_mcp(ui, pending):
+    api = _mcp_policy()
+    focus = 0
+    while True:
+        try:
+            servers = api['inventory']()
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            ui.done('unavailable', str(exc))
+            servers = []
+        indexed = {f'server:{index}': row for index, row in enumerate(servers)}
+        rows = [(key, _mcp_display_name(row)) for key, row in indexed.items()]
+        values = {key: row['client'].title() + ' · ' + _mcp_enabled(row) for key, row in indexed.items()}
+        rows += [('refresh', 'Refresh')]
+        if not any(row['sessions'] for row in servers):
+            rows.append(('register', 'Set up t MCP server ›'))
+        rows.append(('back', 'Back'))
+        picked = ui.pick('MCP servers', rows, values=values, default=min(focus, len(rows) - 1),
+                         context=['This machine · configuration inspection',
+                                  *(['No MCP servers configured.'] if not servers else [])])
+        if picked in (None, 'back'):
+            return
+        focus = next(index for index, row in enumerate(rows) if row[0] == picked)
+        if picked == 'register':
+            _config_sessions_mcp(ui, pending)
+        elif picked in indexed:
+            row = indexed[picked]
+            if row['sessions']:
+                _config_sessions_mcp(ui, pending, context=_mcp_details(row))
+            else:
+                ui.page(_mcp_display_name(row), ['      ' + line for line in _mcp_details(row)],
+                        {'enter', 'q', 'esc'}, 'enter / q back')
+
+
+def _config_sessions_mcp(ui, pending, context=()):
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
     states = helper["status"](HOME)
     note = "Configuration status only; use the client to check its active connection."
     while True:
-        choice = ui.pick("sessions MCP · this machine", [
-            ("codex", "Codex"), ("claude", "Claude"),
-            ("refresh", "Refresh status"), ("register", "Register missing clients now"),
-            ("uninstall", "Uninstall t registrations now"),
-            ("back", "Back")], values=states, accents={"register": "g", "uninstall": "w"})
+        choice = ui.pick("t MCP · sessions", [
+            ('status', 'Check setup'), ('register', 'Set up in agents'),
+            ('uninstall', 'Remove from agents'), ('back', 'Back')],
+            values={'status': 't mcp status', 'register': 't mcp install', 'uninstall': 't mcp uninstall'},
+            accents={"register": "g", "uninstall": "w"},
+            context=[*context, 'Find and control t sessions from your agent.',
+                     'Agent server command: t mcp (stdio).'])
         if choice in (None, "back"):
             return
-        if choice in ("codex", "claude"):
-            ui.page("sessions MCP", [
-                "      " + choice.title() + ": " + states[choice],
+        if choice == 'status':
+            states = helper['status'](HOME)
+            ui.page("t MCP · sessions · setup", [
+                *['      ' + client.title() + ': ' + state for client, state in states.items()],
                 "      " + note,
                 "      Provides session discovery and session controls via t mcp.",
                 "      Existing disabled or custom entries are preserved during registration.",
@@ -4072,6 +4212,7 @@ def _config_mcp(ui, pending):
                 "      Existing registrations and disabled settings are preserved.",
                 "      Claude lookup permissions may be added; controls retain approval.",
                 "      Reload the client afterward to load its tools."])
+            body.append('      Command: t mcp ' + ('uninstall' if removing else 'install'))
             answer = ui.page("Uninstall MCP registrations" if removing else "Register missing MCP clients", body,
                 {"enter", "q", "esc"}, "enter apply now · q back",
                 primary=("enter", "APPLY NOW", "applies immediately"))
@@ -4083,8 +4224,6 @@ def _config_mcp(ui, pending):
             finally:
                 ui.raw()
             ui.done("MCP", "MCP setup finished" if rc == 0 else "MCP setup incomplete; check client status")
-            states = helper["status"](HOME)
-        elif choice == "refresh":
             states = helper["status"](HOME)
 
 
@@ -4124,7 +4263,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     if edited.fast.get(a) == "1":
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
-                         ("mcp", "Sessions server ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
+                         ("mcp", "MCP servers ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
                          ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
@@ -4148,7 +4287,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                 else:
                     choice = ui.pick("Local settings", rows, values=values,
                                      sections={"tool": "Session defaults", AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
-                                               "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "nosleep": "Sleep & connectivity", "edit": "Finish"},
+                                               "mcp": "MCP servers", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "nosleep": "Sleep & connectivity", "edit": "Finish"},
                                      accents={"cancel": "y"},
                                      primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
                                      default=next(i for i, row in enumerate(rows) if row[0] == last))
@@ -6748,6 +6887,10 @@ def _new_walk(steps, answers, pre="", close=False):
                 if close:
                     print(f"{st.y}└{st.r} {st.y}· stopped{st.r}")
                 return 1
+            if s["step"] == "push":
+                _t_refs_refresh(s["cmd"][2] if s["cmd"][:2] == ["git", "-C"] else "")
+            elif s["step"] == "remote" and "--source" in s["cmd"] and "--push" in s["cmd"]:
+                _t_refs_refresh(s["cmd"][s["cmd"].index("--source") + 1])
         print(f"{pre}✓ {s['label']}")
         if s.get("warn"):
             print(f"{pre}{st.y}  ⚠ {s['warn']}{st.r}")
@@ -8159,7 +8302,7 @@ def _command_readonly(argv, *, terminal=None):
         return (len(words) == 2 or words[2] in ("list", "context") or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
                 (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "inspect", "logs")))
-    if verb == "mcp" and tail and tail[0] == "status":
+    if verb == "mcp" and tail and tail[0] in ('list', 'status'):
         return True
     if verb == "__advisories":
         return not tail or tail[0] == "status"
@@ -8344,8 +8487,21 @@ def _t_update_remote(target):
             raise
 
 
+def _t_refs_refresh(repository):
+    """Notify the independent ref worker after a t-managed Git change."""
+    if not repository or os.environ.get("T_FRESH_REFRESH_DISABLE"):
+        return
+    try:
+        helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_fresh.py"))
+        helper["schedule"](repository, force=True)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass  # Ref freshness never changes a successful update/push result.
+
+
 def _t_update_result(args, status):
     args._update_status = status
+    if status == "updated":
+        _t_refs_refresh(_t_source_root())
     if not getattr(args, "_update_batch", False):
         print(f"t: {status}", flush=True)
     return 0
@@ -12053,13 +12209,34 @@ def cmd_mcp(cfg, args):
     if action and any(getattr(args, key, False) for key in ("install", "local_worker", "list_tools", "reindex", "call")):
         print("t mcp: management commands cannot be combined with protocol flags", file=sys.stderr)
         return 2
+    if action == 'list':
+        try:
+            rows = _mcp_policy()['inventory']()
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print('t mcp list: ' + str(exc), file=sys.stderr)
+            return 1
+        if getattr(args, 'json', False):
+            print(json.dumps({'scope': 'this machine', 'servers': rows}))
+        elif not rows:
+            print('No MCP servers configured on this machine.')
+        else:
+            print('MCP servers · this machine · configuration inspection')
+            cells = []
+            for row in rows:
+                duration = f"{row['startup_seconds']:.3f}s" if row.get('startup_seconds') is not None else 'Not measured'
+                cells.append((row['client'], _mcp_display_name(row),
+                              _mcp_enabled(row), row.get('observed_status') or 'Not measured', duration))
+            print('\n'.join(_table_lines(('CLIENT', 'SERVER', 'CONFIGURED', 'LAST OBSERVED', 'STARTUP'), cells)))
+            print('Configuration is not proof of an active connection.')
+            print('Source details: t config → MCP servers, or t mcp list --json.')
+        return 0
     if action == "status":
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
         states = helper["status"](HOME)
         if getattr(args, "json", False):
             print(json.dumps({"server": "sessions", "scope": "local machine", "clients": states}))
         else:
-            print("sessions MCP · this machine")
+            print("t MCP · sessions · this machine")
             for client, state in states.items():
                 print(f"  {client.title()}: {state}")
             print("Configuration status only; check the client for its active connection.")
@@ -12188,7 +12365,7 @@ COMMAND_GROUPS = {
         "benchmarks": {"list": ("eval", "benchmarks", "list")},
         "runs": {v: ("eval", "runs", v) for v in ("start", "list", "show", "compare", "resume", "cancel")},
     },
-    "mcp": {"status": ("mcp", "status"), "install": ("mcp", "install"), "uninstall": ("mcp", "uninstall")},
+    "mcp": {"list": ("mcp", "list"), "status": ("mcp", "status"), "install": ("mcp", "install"), "uninstall": ("mcp", "uninstall")},
     "remote": {"open": ("remote", "open"), "move": ("remote", "move"),
                "resume": ("remote", "resume"), "kill": ("remote", "kill")},
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
@@ -12267,7 +12444,7 @@ def cmd_remote(cfg, args):
 
 GROUP_DESCRIPTIONS = {
     "eval": "Evaluate frontier and local coding workflows against third-party benchmarks",
-    "mcp": "Inspect and manage the sessions MCP server on this machine",
+    "mcp": "Inspect MCP servers and manage t session tools on this machine",
     "remote": "Run command families on registered SSH hosts",
     "issue": "List GitHub issues, inspect work, start agents, or open issues in a browser",
     "agentcore": "Submit work to an existing Amazon Bedrock AgentCore runtime",
@@ -12429,7 +12606,7 @@ WORK
 CONFIGURATION
   runners   Configure test targets and run worktree snapshots
   config    Manage local settings
-  mcp       Inspect, install, or uninstall session tools
+  mcp       Inspect MCP servers and manage t session tools
   workflow  Manage named workflows and instructions
   profile   Manage reusable AGENTS.md instructions
   policy    Inspect and apply agent permissions
@@ -12746,10 +12923,11 @@ Run `t help issue <verb>` for flags and arguments.
              "  t hosts reset mini   Clear the one-hour discovery failure cooldown\n"
              "  t hosts run mini t session list\n" if group == "hosts" else "")
     if group == "mcp":
-        extra = ("\nSCOPE\n  Commands affect this machine only. Status is read-only; --json prints structured state.\n"
+        extra = ("\nSCOPE\n  List inspects configured MCP servers on this machine, including project settings from the current checkout.\n"
+                 "  List and status are read-only; --json prints structured state. Status checks t session tools.\n"
                  "  Install preserves custom and disabled entries; uninstall removes only t-owned entries.\n"
                  "  Bare t mcp remains the stdio protocol server used by agent clients.\n"
-                 "\nEXAMPLES\n  t mcp status --json\n  t mcp install\n  t mcp uninstall\n")
+                 "\nEXAMPLES\n  t mcp list\n  t mcp status --json\n  t mcp install\n")
     if group == "repo":
         extra = ("\nEXAMPLES\n  t repo add [path] [--alias NAME]\n"
                  "  t repo add ~/config/my-project\n"
@@ -12786,7 +12964,7 @@ Run `t help issue <verb>` for flags and arguments.
 
 def _command_description(group, action):
     descriptions = {
-        "mcp": {"status": "Show client registration and enabled state", "install": "Register missing clients", "uninstall": "Remove t-owned registrations"},
+        "mcp": {"list": "List configured MCP servers without connecting", "status": "Show t session-tools registration and enabled state", "install": "Register missing clients", "uninstall": "Remove t-owned registrations"},
         "remote": {"open": "Open a session on a chosen host", "move": "Move a current conversation between hosts",
                    "resume": "Resume saved history on a chosen host", "kill": "Close sessions on their remote hosts"},
         "issue": {"list": "List repository issues", "status": "Inspect existing issue work",
@@ -13292,8 +13470,10 @@ SELECTION
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
   If startup offers local recovery, the model picker opens in your terminal.
-  Fresh allocation checks remote reservations without rebuilding the local
-  session list. Older hosts retain their live reservation scan.
+  Fresh local allocation uses a durable next-slot counter and local refs.
+  It skips existing paths and branches without reclaiming or contacting hosts.
+  A background worker refreshes origin refs every five minutes; a cached origin
+  or local default commit is pinned before the new worktree is created.
   Session-cache refresh and history indexing run in the background. Worktree
   preparation, ownership checks and launch settings finish before you enter.
   Unidentified Codex writers do not block newly allocated worktrees globally.
@@ -13328,10 +13508,9 @@ RECOVERY
 
 REMOTE SESSIONS
   A slot live only on another host attaches there automatically.
-  Fresh local slots can open when a configured host is offline. Automatic
-  fresh-slot allocation skips known remote desktop reservations; an explicit
-  slot still refuses a conflicting owner. Existing workspaces still require
-  verified ownership before a new owner starts.
+  Fresh local slots can open when a configured host is offline. Retired remote
+  desktop reservations are not queried. Actual CLI attachment and existing
+  workspaces retain live ownership checks before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   Browsing includes local and registered remote hosts by default.
   If the OS blocks networking or has no usable IP route, browsing returns an
@@ -14474,13 +14653,13 @@ PERIODIC CHECKS
     gp.add_argument("goal", help="new objective, quoted as one argument")
     gp.add_argument("--json", action="store_true", help="print a structured delivery result")
 
-    mp = sub.add_parser("mcp", help="Manage session MCP registration or serve stdio",
-        description="Manage the sessions MCP server on this machine. Bare t mcp serves stdio for agent clients, registered at user "
+    mp = sub.add_parser("mcp", help="Inspect MCP servers, manage t session tools, or serve stdio",
+        description="List configured MCP servers or manage t session tools on this machine. Bare t mcp serves stdio for agent clients, registered at user "
             "scope as sessions by install.sh or t mcp install. Exposes live slots, "
             "keyword search over every saved transcript's prompts, and per-session detail, "
             "plus explicit session controls and the full session command family through session_command. "
             "Controls require user authorization; only the three lookup tools are automatically allowed. "
-            "Use status, install, or uninstall to manage registration.")
+            "Use list to inspect configured servers, or status, install and uninstall for t session tools.")
     mp.add_argument("--local-worker", action="store_true", help="serve bounded local Codex worker tools")
     mp.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     mp.add_argument("--list-tools", action="store_true", help="print the tool names")
@@ -14489,6 +14668,8 @@ PERIODIC CHECKS
                     help="run one tool by hand and print its result, e.g. "
                          "--call find_sessions '{\"query\":\"accounts redesign\"}'")
     mcp_sub = mp.add_subparsers(dest="mcp_action")
+    mcp_list = mcp_sub.add_parser('list', help='List configured MCP servers without connecting')
+    mcp_list.add_argument('--json', action='store_true', help='print structured inventory')
     mcp_status = mcp_sub.add_parser("status", help="Show client registration and enabled state")
     mcp_status.add_argument("--json", action="store_true", help="print structured state")
     mcp_sub.add_parser("install", help="Register missing clients; preserve existing settings")

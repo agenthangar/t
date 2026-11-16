@@ -51,6 +51,74 @@ _dev_origin_base() {
   return 1
 }
 
+# Strict fresh allocation never reclaims parked branches or waits for a host.
+# The counter claim is short; the existing workspace claim covers create+launch.
+_dev_fresh_open() {
+  local repo=$1 agent=$2 mode=${3:-tmux} fresh_slot fresh_dir fresh_rc
+  _dev_agent_check "$agent" || return 1
+  while true; do
+    fresh_slot=$(python3 "$T_HOME/libexec/t_fresh.py" reserve "${DEV_REPOS[$repo]}" "$DEV_WORKTREE_ROOT") || return $?
+    fresh_dir="$DEV_WORKTREE_ROOT/${DEV_REPOS[$repo]:t}/${DEV_REPOS[$repo]:t}-$fresh_slot"
+    _T_OPEN_FAILED_REPO=$repo
+    _T_OPEN_FAILED_SLOT=$fresh_slot
+    _T_OPEN_FAILED_AGENT=$agent
+    fresh_rc=0
+    _dev_with_launch_locks "$fresh_dir" '' _dev_fresh_open_claimed "$repo" "$fresh_slot" "$agent" "$mode" || fresh_rc=$?
+    (( fresh_rc == 3 )) && continue
+    return $fresh_rc
+  done
+}
+
+_dev_fresh_open_claimed() {
+  local repo=$1 fresh_slot=$2 agent=$3 mode=$4 fresh_rc=0 fresh_output
+  local -a fresh_fields
+  fresh_output=$(python3 "$T_HOME/libexec/t_fresh.py" prepare-shell "${DEV_REPOS[$repo]}" "$DEV_WORKTREE_ROOT" "$fresh_slot") || fresh_rc=$?
+  (( fresh_rc == 0 )) || return $fresh_rc
+  fresh_fields=("${(@f)fresh_output}")
+  (( ${#fresh_fields} == 3 )) || return 1
+  local -x T_LAUNCH_CONTEXT=${fresh_fields[1]}
+  local fresh_dir=${fresh_fields[2]} fresh_identity=${fresh_fields[3]} session="dev-$repo-$fresh_slot"
+  python3 "$T_HOME/libexec/t_fresh.py" schedule "${DEV_REPOS[$repo]}" >/dev/null 2>&1 || true
+  _T_FRESH_SESSION=$session
+  if [[ $mode == foreground ]]; then
+    _dev_launch_preflight "$session" "$fresh_dir" '' || return 1
+    python3 "$T_HOME/libexec/t_lifecycle.py" preflight "$agent" '' "$fresh_dir" "$fresh_identity" || return 1
+    _dev_auto_trust "$fresh_dir" "$agent"
+    print -r -- "Starting $agent in $fresh_dir (no tmux)"
+    cd "$fresh_dir" || return 1
+    local fresh_command; fresh_command=$(_dev_agent_new_cmd "$agent" '' '' "$fresh_dir") || return 1
+    eval "$fresh_command"
+  else
+    print -r -- "Starting $session in $fresh_dir · $agent"
+    _dev_new_session_claimed "$session" "$fresh_dir" "$(_dev_branch_for "$repo")" 1 "$agent" '' '' '' "$fresh_identity"
+  fi
+}
+
+_dev_refs_refresh() {
+  [[ -n ${DEV_REPOS[$1]:-} && -z ${T_FRESH_REFRESH_DISABLE:-} ]] || return 0
+  python3 "$T_HOME/libexec/t_fresh.py" schedule "${DEV_REPOS[$1]}" --force >/dev/null 2>&1 || true
+}
+
+_dev_refs_refresh_path() {
+  [[ -n $1 && -z ${T_FRESH_REFRESH_DISABLE:-} ]] || return 0
+  python3 "$T_HOME/libexec/t_fresh.py" schedule "$1" --force >/dev/null 2>&1 || true
+}
+
+# Local-only cheap predicate for automatic fallbacks. Explicit numbered opens
+# retain their existing materialization/resume behavior.
+_dev_slot_unused() {
+  local repo=$1 slot=$2 candidate branch
+  _dev_local_slot_live "$repo" "$slot" && return 1
+  _dev_worktree_enabled "$repo" || return 0
+  for candidate in "${(@f)$(_dev_worktree_paths "$repo" "$slot")}"; do
+    [[ -e $candidate || -L $candidate || -e ${candidate:h}/.${candidate:t}.history-reservation ]] && return 1
+  done
+  branch=$(_dev_worktree_branch "$repo" "$slot")
+  git -C "${DEV_REPOS[$repo]}" show-ref --verify --quiet "refs/heads/$branch" && return 1
+  git -C "${DEV_REPOS[$repo]}" show-ref --verify --quiet "refs/remotes/origin/$branch" && return 1
+  return 0
+}
+
 # Read-only transfer negotiation. The wire cwd is immutable: hosts with different
 # roots must attach at the source or use history's verified fresh-workspace resume.
 _dev_worktree_accept_cwd() {
@@ -288,6 +356,7 @@ _dev_worktree_drop_remote() {
   git -C "$repodir" show-ref --verify --quiet "refs/remotes/origin/$br" || return 0
   _dev_branch_merged "$repodir" "$br" "refs/remotes/origin/$br" || return 0
   if git -C "$repodir" push -q origin --delete "$br" >/dev/null 2>&1; then
+    _dev_refs_refresh_path "$repodir"
     print -r -- "  deleted origin/$br (merged $_DEV_MERGED_HOW — what delete-branch-on-merge would have done)" >&2
   else
     print -r -- "  ⚠ couldn't delete origin/$br — the slot's first push may be rejected as non-fast-forward" >&2
@@ -404,6 +473,7 @@ _dev_worktree_beam_push() {
     print -u2 -r -- "$output"
     return 1
   }
+  _dev_refs_refresh_path "$wt"
   print -r -- "↑ carried $br → origin${TB_TRANSFER_REF:+ (transfer snapshot)}"
 }
 
@@ -745,6 +815,7 @@ _dev_branch_merged() {
     pr=$(cd "$repodir" 2>/dev/null && gh pr list --head "$br" --state merged --json number,headRefOid -q '.[0] // empty | "\(.number)\t\(.headRefOid)"' 2>/dev/null)
     merged_oid=${pr#*$'\t'}
     if [[ -n $merged_oid && $merged_oid == "$tip" ]]; then   # this exact commit was merged
+      _dev_refs_refresh_path "$repodir"
       _DEV_MERGED_HOW="#${pr%%$'\t'*}"; return 0
     fi
     open=$(cd "$repodir" 2>/dev/null && gh pr list --head "$br" --state open --json number -q '.[0].number' 2>/dev/null)
@@ -756,6 +827,7 @@ _dev_branch_merged() {
   [[ -n $main_oid ]] || return 1
   [[ "$tip" != "$main_oid" ]] || return 1         # equal to the default → no unique history yet; uncommitted edits may still be live
   git -C "$repodir" merge-base --is-ancestor "$tip" "$main_oid" 2>/dev/null || return 1
+  _dev_refs_refresh_path "$repodir"
   _DEV_MERGED_HOW="in $origin_base"
 }
 # _dev_worktree_sweep_run — the actual reap (runs detached). Walks every

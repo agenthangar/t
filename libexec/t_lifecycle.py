@@ -468,13 +468,26 @@ class Operation:
 
 
 class ShellAdapter:
-    """Length-bounded JSON frames. User data is never executable shell code."""
+    """Literal local fields or remote JSON; user data is never shell code."""
+    def __init__(self, scratch=None):
+        # The local shell shares private files with this persistent process. The
+        # remote peer protocol remains JSON; only its local transport differs.
+        self.scratch = Path(scratch) if scratch is not None else None
+
     def call(self, action, *args):
-        print(json.dumps(dict(call=action, args=list(args))), flush=True)
+        if self.scratch is not None:
+            fields = ['call', action, str(len(args)), *args]
+            if any(not isinstance(field, str) or '\0' in field for field in fields):
+                raise LifecycleError('invalid local lifecycle frame')
+            sys.stdout.write('\0'.join(fields) + '\0')
+            sys.stdout.flush()
+        else:
+            print(json.dumps(dict(call=action, args=list(args))), flush=True)
         line = sys.stdin.readline(8 * 1024 * 1024)
         if not line or not line.endswith('\n'):
             raise LifecycleError('lifecycle adapter disconnected; reconcile with t resume')
-        result = json.loads(line)
+        result = (shell_reply(int(line), self.scratch / 'output', self.scratch / 'error')
+                  if self.scratch is not None else json.loads(line))
         if result['code']:
             detail = diagnostic_text(result.get('stderr', '')).strip()
             message = f'{action} failed; work and recovery details retained'
@@ -485,7 +498,22 @@ class ShellAdapter:
 
     def output(self, value):
         if value:
-            print(json.dumps(dict(output=value)), flush=True)
+            if self.scratch is not None:
+                sys.stdout.write('output\0' + value.replace('\0', '\ufffd') + '\0')
+                sys.stdout.flush()
+            else:
+                print(json.dumps(dict(output=value)), flush=True)
+
+
+def shell_reply(code, output, error=None):
+    value = dict(code=code, output=Path(output).read_text(errors='replace'))
+    if error is not None and code:
+        with Path(error).open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - DIAGNOSTIC_BYTES))
+            detail = diagnostic_text(stream.read(DIAGNOSTIC_BYTES).decode('utf-8', errors='replace'), DIAGNOSTIC_BYTES)
+            value['stderr'] = ('[earlier stderr truncated]\n' + detail[-4000:]) if len(detail) > 4096 else detail
+    return value
 
 
 def git(workspace, *args, optional=False):
@@ -852,7 +880,8 @@ def _discovery_changed(targets):
 
 def main(argv):
     if argv and argv[0] == 'preflight':
-        native_preflight(*argv[1:4])
+        options = {'new_workspace': argv[4]} if len(argv) > 4 else {}
+        native_preflight(*argv[1:4], **options)
         return 0
     if argv == ['protocol']:
         print(PROTOCOL)
@@ -902,18 +931,15 @@ def main(argv):
             print(shlex.join(['print', '-r', '--', frame['output']]))
         return 0
     if argv and argv[0] == 'reply':
-        value = dict(code=int(argv[1]), output=Path(argv[2]).read_text(errors='replace'))
-        if len(argv) > 3 and value['code']:
-            # This file belongs to the shell adapter's private temporary directory.
-            with Path(argv[3]).open('rb') as stream:
-                stream.seek(0, os.SEEK_END)
-                stream.seek(max(0, stream.tell() - DIAGNOSTIC_BYTES))
-                detail = diagnostic_text(stream.read(DIAGNOSTIC_BYTES).decode('utf-8', errors='replace'), DIAGNOSTIC_BYTES)
-                value['stderr'] = ('[earlier stderr truncated]\n' + detail[-4000:]) if len(detail) > 4096 else detail
+        value = shell_reply(int(argv[1]), argv[2], argv[3] if len(argv) > 3 else None)
         print(json.dumps(value))
         return 0
+    scratch = None
+    if argv and argv[0] == 'bridge-shell':
+        scratch = argv[1]
+        argv = ['bridge', *argv[2:]]
     if argv and argv[0] == 'bridge':
-        adapter = ShellAdapter()
+        adapter = ShellAdapter(scratch)
         code = 0
         try:
             if argv[1] == 'peer':
@@ -924,7 +950,11 @@ def main(argv):
         except (ValueError, OSError, sqlite3.Error) as error:
             print('t: ' + str(error), file=sys.stderr)
             code = getattr(error, 'code', 1)
-        print(json.dumps(dict(done=code)), flush=True)
+        if scratch is not None:
+            sys.stdout.write('done\0' + str(code) + '\0')
+            sys.stdout.flush()
+        else:
+            print(json.dumps(dict(done=code)), flush=True)
         return code
     raise LifecycleError('invalid lifecycle helper request')
 

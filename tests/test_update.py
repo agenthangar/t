@@ -703,3 +703,53 @@ def test_doctor_reports_archive_release_without_checkout_probe(t_mod, tmp_path, 
     assert "release        v1.2.3" in output
     assert "source type    versioned archive" in output
     assert "git checkout   unavailable" not in output
+
+
+def test_disabled_update_refresh_performs_no_git_or_subprocess(t_mod, monkeypatch, capsys):
+    monkeypatch.setenv('T_FRESH_REFRESH_DISABLE', '1')
+    monkeypatch.setattr(t_mod, '_t_source_root', lambda: '/release')
+    monkeypatch.setattr(t_mod, '_t_canonical_root', lambda *a: pytest.fail('disabled refresh must not inspect Git'))
+    monkeypatch.setattr(t_mod.subprocess, 'run', lambda *a, **k: pytest.fail('disabled refresh must not run a command'))
+    monkeypatch.setattr(t_mod.subprocess, 'Popen', lambda *a, **k: pytest.fail('disabled refresh must not start a worker'))
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda *a: pytest.fail('disabled refresh must not load a helper'))
+    args = argparse.Namespace()
+    assert t_mod._t_update_result(args, 'updated') == 0
+    assert args._update_status == 'updated'
+    assert capsys.readouterr().out == 't: updated\n'
+    t_mod._t_refs_refresh('')
+
+
+def test_enabled_update_refresh_schedules_canonical_worker(t_mod, local_checkout, monkeypatch):
+    main, home = local_checkout
+    dev = main.parent / 'refresh-worktree'
+    git(main, 'worktree', 'add', '-qb', 'cursor/refresh', str(dev))
+    source = pathlib.Path(t_mod.__file__).resolve().parent.parent
+    helper = t_mod.runpy.run_path(str(source / 'libexec/t_fresh.py'))
+    calls = []
+    original = subprocess.Popen
+    def popen(argv, **kwargs):
+        if len(argv) >= 3 and argv[-2] == 'watch':
+            calls.append((argv, kwargs))
+            return None
+        return original(argv, **kwargs)
+    monkeypatch.delenv('T_FRESH_REFRESH_DISABLE')
+    monkeypatch.setattr(t_mod, '_t_source_root', lambda: str(dev))
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: helper)
+    monkeypatch.setattr(t_mod.subprocess, 'Popen', popen)
+    assert t_mod._t_update_result(argparse.Namespace(_update_batch=True), 'updated') == 0
+    (argv, options), = calls
+    assert argv[-2:] == ['watch', str(main)]
+    assert options['start_new_session'] and options['close_fds']
+    assert (main / '.git/t-fresh/refresh-request').is_file()
+
+
+@pytest.mark.parametrize('failure', [OSError('missing helper'), ValueError('not a checkout'),
+                                     subprocess.TimeoutExpired(['git'], 30)])
+def test_optional_refresh_failure_preserves_successful_update(t_mod, monkeypatch, capsys, failure):
+    monkeypatch.delenv('T_FRESH_REFRESH_DISABLE')
+    monkeypatch.setattr(t_mod, '_t_source_root', lambda: '/release')
+    def schedule(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda path: {'schedule': schedule})
+    assert t_mod._t_update_result(argparse.Namespace(), 'updated') == 0
+    assert capsys.readouterr().out == 't: updated\n'

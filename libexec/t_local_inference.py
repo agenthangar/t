@@ -1032,15 +1032,8 @@ def provider_runtime(chosen):
 
 
 def trusted_workspace(cwd):
-    """Carry only an existing explicit trust decision for this exact workspace."""
-    try:
-        config = Path(os.environ.get('CODEX_HOME', Path.home()/'.codex'))/'config.toml'
-        projects = helper('t_toml')['loads'](config.read_text()).get('projects', {})
-        return any(Path(path).is_absolute() and Path(path).resolve() == Path(cwd).resolve()
-                   and isinstance(value, dict) and value.get('trust_level') == 'trusted'
-                   for path, value in projects.items())
-    except (OSError, ValueError, TypeError, AttributeError):
-        return False
+    """Carry the native exact/canonical decision into the isolated local client."""
+    return helper('t_trust_state')['trusted']('codex', cwd)
 
 
 @contextmanager
@@ -1056,6 +1049,7 @@ def lead_client(chosen, activity, leased=None):
 
 def lead(argv, cwd=None, chosen=None, runner=None):
     """Dedicated native CLI launch: no cloud auth, models or providers inherited."""
+    os.environ.pop('_T_LAUNCH_TRUST_DONE', None)
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
         if chosen:
@@ -1157,6 +1151,16 @@ def lead(argv, cwd=None, chosen=None, runner=None):
 
 
 
+def prepared_lead(argv, payload):
+    """Use the launcher's validated policy snapshot; still check live runtime fit."""
+    if not argv or len(payload) > 16384:
+        raise ValueError('invalid prepared launch policy')
+    chosen = json.loads(payload)
+    if not isinstance(chosen, dict):
+        raise ValueError('invalid prepared launch policy')
+    return lead(argv, chosen=policy(chosen))
+
+
 if __name__ == '__main__':
     try:
         if sys.argv[1:2] == ['--launch-prefix']:
@@ -1168,11 +1172,15 @@ if __name__ == '__main__':
             if required:
                 print('python3\n' + str(Path(__file__).resolve()) + '\n--lead')
             raise SystemExit(0)
-        if sys.argv[1:2] == ['--lead']:
+        if sys.argv[1:2] in (['--lead'], ['--lead-policy']):
             def interrupted(signum, frame):
                 raise KeyboardInterrupt
             for signum in (signal.SIGTERM, signal.SIGHUP):
                 signal.signal(signum, interrupted)
+            if sys.argv[1] == '--lead-policy':
+                if len(sys.argv) < 4:
+                    raise ValueError('invalid prepared launch policy')
+                raise SystemExit(prepared_lead(sys.argv[3:], sys.argv[2]))
             raise SystemExit(lead(sys.argv[2:]))
         raise SystemExit('use t config models or the workflow launcher')
     except KeyboardInterrupt:
