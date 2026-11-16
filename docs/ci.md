@@ -1,25 +1,58 @@
 # CI test scheduling and coverage
 
-Routine PRs and pushes to main use two Linux shards for a fast regression tier.
-It keeps most tests plus representative lifecycle/ownership smoke cases, while
-deferring expensive integration matrices listed in
-[`scripts/ci_policy.py`](../scripts/ci_policy.py). It is broader than an
-installation-only smoke test. New test files join the fast tier by default.
+Routine PRs and pushes to main run one **Essential Linux smoke** job using
+[`scripts/smoke.py`](../scripts/smoke.py). Local pre-push validation uses the exact
+same explicit pytest node IDs, including parameter IDs. New files, tests and
+parameter values do not silently enlarge smoke. Missing, skipped or unexpected
+cases fail the smoke gate. The list covers shell startup and Ctrl-C recovery,
+session discovery, open/reattach/resume, concurrent ownership, preservation of
+uncommitted work, and the remote `zsh -lic` contract.
 
-The separate **Shell startup smoke** job is mandatory on every PR, main push,
-full nightly run and release validation. It tests normal shell dispatch, real
-Ctrl-C during both login startup and explicit sourcing, retrying the next command,
-quiet cancellation and failed reloads. The CI gate rejects failed, cancelled or
-skipped startup smoke even when the fast regression tier is replaced by full CI.
+CLI, history, installer and CI changes all select smoke in routine PR/push CI.
+There is no changed-path escalation. Dispatch **CI** with `run_full=true` for
+explicit complete Linux validation. Nightly/release runs always select full
+validation for the exact pinned commit, even without a pending release; a smoke
+result cannot authorize publication. Full validation enforces 97% coverage.
+Gitleaks, pip-audit, CodeQL, shell/CLI contracts, design adherence and install smoke
+remain required. Scorecard and scheduled failure/recovery alerts are unchanged.
 
-Critical runtime, installer, shell, test-harness and CI changes automatically
-select full Linux validation on PRs. Nightly/release runs always select it for
-the exact pinned commit; a fast PR result cannot authorize publication.
-Gitleaks, pip-audit, CodeQL, shell/CLI contracts and install smoke remain required
-in both tiers. Scorecard runs separately each week. Coverage is enforced at 97%
-on full validation; the fast tier does not lower that threshold.
+## Local publication gate
 
-Full validation keeps the Linux suite serial within four independent
+Commit the intended work, then run from the worktree root:
+
+```sh
+python3 -m venv /tmp/t-smoke-venv
+/tmp/t-smoke-venv/bin/python -m pip install -r requirements-dev.txt
+/tmp/t-smoke-venv/bin/python scripts/local_smoke.py
+```
+
+The host needs zsh, tmux, git, a C compiler and fzf. The script calls the same
+local snapshot runner backend as `t runners runs start --target local`, explicitly
+selects local execution, and runs `scripts/smoke.py` with that Python interpreter.
+It uses clean HOME/XDG and the tests' isolated tmux sockets; native desktop tests
+remain opt-in. Do not replace this with a full local regression/coverage run.
+Run focused policy or regression checks when needed for the specific change.
+
+The runner retains logs and artifacts under its private state directory. The
+script prints the run ID, snapshot ID and source commit; inspect with
+`t runners runs inspect ID` or `t runners runs logs ID`. Its latest receipt is
+stored in the worktree's private Git directory, never committed. Record those
+identifiers in the PR validation evidence without publishing private logs/config.
+
+The installed repository hooks (`core.hooksPath=.githooks`, configured by
+`install.sh`) check this receipt before branch pushes. Configure that same path
+in a fresh development clone before publishing. The hook checks the pushed HEAD,
+clean tracked files, snapshot contents and success. It does not run broad tests.
+After integrating main, resolving conflicts, amending or changing source, commit
+and rerun smoke before pushing. A different commit or file content invalidates
+previous evidence, even when an earlier run passed. A failed new run replaces
+old success and blocks the push. Push other branches from their own tested
+worktrees; branch deletions and tag-only pushes do not publish source changes.
+
+## Full Linux validation
+
+Full validation includes every smoke flow in the complete collection instead of
+rerunning the separate smoke job. It keeps the Linux suite serial within four independent
 GitHub-hosted runners, with fzf 0.74.5. Each runner collects the full suite,
 then selects complete files. `scripts/ci_shards.py` assigns longest estimated
 files first to the least-loaded shard; filename and shard index break ties.
@@ -27,7 +60,7 @@ New files receive the median known weight. `tests/ci-file-durations.json`
 starts with approximate file timings from [the previous full Linux run](https://github.com/agenthangar/t/actions/runs/41232234489)
 (fzf 0.74.5, 638.75 seconds). These estimates affect scheduling only.
 
-Every shard requires real fzf/tmux/zsh before testing and sets
+Every full shard requires real fzf/tmux/zsh before testing and sets
 `T_REQUIRE_AWS_CONTRACT=1`, so the AWS contract runs once in its assigned file.
 A separate fzf 0.44.1 compatibility job selects the real-fzf compatibility
 cases during full validation. It writes the same explicit selected-test manifest.
@@ -63,15 +96,15 @@ completion below six minutes, at least 40% faster than the approximately
 setup and aggregation, rather than only pytest execution time.
 
 macOS remains default-off. Dispatch with `run_macos=true` to run the full suite
-against both fzf versions with native desktop tests enabled. No local validation
-suite is needed for the CI workflow; required pre-merge jobs provide validation.
+against both fzf versions with native desktop tests enabled. The shared local smoke gate is required before publishing; full regression and
+coverage stay in nightly or explicitly requested validation.
 
 ### Required design adherence
 
 The `design-adherence` matrix runs on every PR, against pinned fzf 0.44.1 and
 0.74.5. It validates `ui/layout-contract.json` references and every command/mode's
 layout declaration, then runs those rendered fixtures with a no-skips outcome
-audit. The aggregate `CI` gate requires both matrix jobs even on the fast path.
+audit. The aggregate `CI` gate requires both matrix jobs even on the smoke path.
 Artifacts named `design-<version>` include JUnit, exact collected/outcome records,
 and failure output with rendered frames and coordinate comparisons. Tests use
 private tmux sockets and sandbox homes; no native desktop windows are opened.
