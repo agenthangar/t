@@ -432,7 +432,7 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         ]
         assert kwargs["sections"] == {
             "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
-            "mcp": "MCP server", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "nosleep": "Sleep & connectivity", "edit": "Finish",
+            "mcp": "MCP servers", "repos": "Repositories & worktrees", "hosts": "Remote hosts", "nosleep": "Sleep & connectivity", "edit": "Finish",
         }
         assert dict(rows)["workflow"] == "Workflows ›"
         assert kwargs['primary'][:2] == ('s', 'SAVE CHANGES')
@@ -1147,12 +1147,12 @@ def test_config_host_rename_preserves_target_defaults_and_same_name(t_mod, confi
 
 @pytest.mark.parametrize('pending,answer,expected', [(1, None, 0), (0, 'q', 0), (0, 'enter', 1)])
 def test_config_mcp_registration_review(t_mod, monkeypatch, pending, answer, expected):
-    ui = Menu(['codex', 'refresh', 'register', 'back'], pages=['enter'] + ([answer] if answer else []))
+    ui = Menu(['status', 'register', 'back'], pages=['enter'] + ([answer] if answer else []))
     inspections, installs = [], []
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: inspections.append(home) or
                         {'codex': 'Disabled', 'claude': 'Registered (user scope)'}})
     monkeypatch.setattr(t_mod, '_mcp_install', lambda: installs.append(True) or 1)
-    t_mod._config_mcp(ui, pending)
+    t_mod._config_sessions_mcp(ui, pending)
     assert len(installs) == expected
     assert len(inspections) == 2 + expected
     assert ui.restored == bool(expected)
@@ -1174,7 +1174,7 @@ def test_config_mcp_uninstall_review(t_mod, monkeypatch, pending, answer, expect
     installs = []
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda _: {'status': lambda home: {'codex': 'Enabled'}})
     monkeypatch.setattr(t_mod, '_mcp_uninstall', lambda: installs.append(True) or 0)
-    t_mod._config_mcp(ui, pending)
+    t_mod._config_sessions_mcp(ui, pending)
     assert len(installs) == expected and ui.restored == bool(expected)
 
 
@@ -1187,7 +1187,7 @@ def test_config_mcp_narrow_navigation(t_mod, monkeypatch, width, height):
         {'status': lambda home: {'codex': 'Registered; enabled state unknown',
                                  'claude': 'Registered (user scope)'}}
         if str(path).endswith('t_mcp_setup.py') else real_run_path(path))
-    t_mod._config_mcp(ui, 0)
+    t_mod._config_sessions_mcp(ui, 0)
     for frame in ui.frames:
         assert sum(t_mod._term_rows(line, width) for line in frame) <= height
         assert any('▸' in line for line in frame)

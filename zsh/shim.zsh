@@ -796,7 +796,7 @@ _t() {
     return
   fi
   case $group in
-    mcp) actions=(status install uninstall) ;;
+    mcp) actions=(list ls status install uninstall) ;;
     remote) actions=(open move resume kill) ;;
     session) actions=(open list ls close restart push pop resume cd move read view-plan paste search goal) ;;
     repo) actions=(list ls cd locate create clone add) ;;
@@ -825,7 +825,7 @@ _t() {
     return
   fi
   if [[ $group == mcp ]]; then
-    if [[ $action == status ]]; then _values 'flag' --json -h --help
+    if [[ $action == (list|ls|status) ]]; then _values 'flag' --json -h --help
     else _values 'flag' -h --help; fi
     return
   fi

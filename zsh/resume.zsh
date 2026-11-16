@@ -1638,7 +1638,7 @@ _t_restart_slot() {
       if [[ -n $sid ]]; then
         launch=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
       else
-        launch=$(_dev_agent_new_cmd "$agent" '' '' "$dir")
+        launch=$(_dev_agent_new_cmd "$agent" '' '' "$dir") || return 1
       fi
     else
       launch=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
@@ -1826,7 +1826,10 @@ _dev_agent_wrap() {
     print -u2 -r -- "t: '$agent' is not installed here — run: t agent install $agent"
     return 127
   }
-  _dev_auto_trust "$PWD"
+  if [[ ${_T_LAUNCH_TRUST_DONE:-} != "$PWD" ]]; then
+    _dev_auto_trust "$PWD" "$agent"
+  fi
+  unset _T_LAUNCH_TRUST_DONE
   local sentinel="${TMPDIR:-/tmp}/claude-tpush-attach.$$"
   rm -f "$sentinel"
   CLAUDE_TPUSH_ATTACH="$sentinel" command "$executable" "$@"

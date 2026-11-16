@@ -382,6 +382,49 @@ def test_shell_protocol_handles_disconnects_and_preserves_exit_status(engine, mo
     adapter.output('')
 
 
+def test_local_shell_bridge_keeps_literal_arguments_and_diagnostics(engine, monkeypatch, capsys, tmp_path):
+    (tmp_path / 'output').write_text('ready\n')
+    (tmp_path / 'error').write_text('failed safely\n')
+    adapter = engine.ShellAdapter(tmp_path)
+    monkeypatch.setattr(engine.sys, 'stdin', io.StringIO('0\n'))
+    assert adapter.call('ready', '', 'a\nb; $(not-a-command)') == 'ready'
+    assert capsys.readouterr().out.split('\0') == ['call', 'ready', '2', '', 'a\nb; $(not-a-command)', '']
+    monkeypatch.setattr(engine.sys, 'stdin', io.StringIO('17\n'))
+    with pytest.raises(ValueError, match='failed safely') as error:
+        adapter.call('new')
+    assert error.value.code == 17
+    capsys.readouterr()
+    with pytest.raises(ValueError, match='invalid local'):
+        adapter.call('ready', 'bad\0argument')
+    adapter.output('literal\noutput')
+    assert capsys.readouterr().out == 'output\0literal\noutput\0'
+
+
+def test_local_zsh_bridge_runs_without_per_frame_python(engine, tmp_path):
+    folder = tmp_path / 'source/libexec'
+    folder.mkdir(parents=True)
+    helper = folder / 't_lifecycle.py'
+    helper.write_text('import runpy, sys\n'
+        + 'scope = runpy.run_path(' + repr(str(ROOT / 'libexec/t_lifecycle.py')) + ')\n'
+        + 'def execute(verb, args, adapter, **kwargs):\n'
+        + '    assert adapter.call("echo", *args) == "|".join(args)\n'
+        + '    adapter.output("verified")\n'
+        + 'scope["main"].__globals__["execute"] = execute\n'
+        + 'assert sys.argv[1] == "bridge-shell"\n'
+        + 'sys.exit(scope["main"](sys.argv[1:]))\n')
+    value = 'spaces\nquotes\'\"; $(touch ' + str(tmp_path / 'injected') + ')'
+    command = ('source ' + shlex.quote(str(ROOT / 'zsh/lifecycle.zsh')) + '; '
+               '_t_lifecycle_effect() { shift; print -r -- "${(j:|:)@}"; }; '
+               '_t_lifecycle_run_impl fixture ' + shlex.quote(value) + " '' tail")
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    result = subprocess.run(['zsh', '-fc', command], env={**env, 'T_HOME': str(folder.parent)},
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'verified\n'
+    assert result.stderr == ''
+    assert not (tmp_path / 'injected').exists()
+
+
 def test_auxiliary_transcripts_preserve_bytes_and_refuse_divergence(engine, tmp_path):
     source = tmp_path / 'rollout.jsonl'
     value = manifest(engine, tmp_path, 'claude')

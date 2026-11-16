@@ -233,6 +233,8 @@ def test_spinner_output_and_exception_cleanup(t_mod, monkeypatch, machine, tty):
     out, err = Stream(), Stream()
     monkeypatch.setattr(t_mod.sys, 'stdout', out)
     monkeypatch.setattr(t_mod.sys, 'stderr', err)
+    monkeypatch.setattr(t_mod.sys, 'argv', ['t', 'session', 'open'])
+    monkeypatch.delenv('T_UPDATE_QUIET', raising=False)
     monkeypatch.setenv('TERM', 'xterm-256color')
     with pytest.raises(KeyboardInterrupt):
         with t_mod._spinner('Waiting', machine=machine):
@@ -299,7 +301,7 @@ def test_real_tmux_literal_bracketed_paste_and_pause(controls, tmp_path, monkeyp
     program = ("import os,tty,pathlib; tty.setraw(0); os.write(1,b'\\x1b[?2004h'); "
                f"pathlib.Path({str(ready)!r}).touch(); f=open({str(captured)!r},'ab',buffering=0); "
                "exec('while True: f.write(os.read(0,4096))')")
-    with tempfile.TemporaryDirectory(prefix='t188-') as directory:
+    with tempfile.TemporaryDirectory(prefix='t188-', dir='/tmp') as directory:
         socket = directory + '/tmux'
         def tmux(*args):
             return subprocess.run(['tmux', '-S', socket, *args], capture_output=True, text=True, timeout=5)
