@@ -621,9 +621,9 @@ def test_usage_and_watcher_metadata_share_session_rows(modules, tmp_path, monkey
     enriched = details.enrich([wire], Path(os.environ['HOME']), Path(os.environ['CODEX_HOME']))[0]
     for row_wire in (enriched, '\t'.join([*enriched.split('\t')[:-2], *reversed(enriched.split('\t')[-2:])])):
         row = api._parse_rows('remote\t' + row_wire, host_prefixed=True)[0]
-        assert row['usage']['local_cloud_percent'] == [0, 100]
+        assert row['usage']['local_cloud_percent'] is None
         assert row['watchers'][0]['id'] == activity.data['id']
     monkeypatch.setattr(api.sys.stdout, 'isatty', lambda: False)
     output = '\n'.join(api._session_table_lines([row], remote=True))
-    assert '0/100' in output and activity.data['id'] in output
+    assert '0/100' not in output and activity.data['id'] in output
     assert output.index('MODELS') < output.index('WATCHER') < output.index('LAST TURN')
