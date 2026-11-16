@@ -41,6 +41,12 @@ this document defines how to make the previews faithful and safe.
 
 ## Session-open recovery
 
+Remote-inclusive browsing fails before discovery when the OS denies outbound
+networking or neither IP family has a usable route. Report the error on stderr
+and point to `t open --local`; do not show a refresh spinner, open a recovery
+picker or turn the failure into empty inventory. Local-only browsing retains its
+normal discovery and ownership checks.
+
 Fresh Codex startup can attach to the existing **Start locally** rail before a
 model writer exists. Verify the recovery controller's process identity, pane
 ancestry and workspace; clear its attachable state on selection, retry or cancel.

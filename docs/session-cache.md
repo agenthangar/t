@@ -56,7 +56,12 @@ marks its snapshots stale; it does not connect or alter sessions or registration
 The next discovery request may retry. Live ownership checks remain uncached.
 
 The open picker waits up to 30 seconds for pending discovery before freezing its
-list. Fresh snapshots open immediately. Timeout or failed local discovery offers
+list. Before remote-inclusive browsing starts discovery, an OS network denial or
+missing IPv4 and IPv6 routes returns an immediate error; use `t open --local` to
+browse local sessions offline. This caller-local check uses no DNS, sends no
+packets, and never resets or marks shared host caches failed. A usable route is
+not proof of internet access: silent network failures retain the bounded wait.
+Fresh snapshots open immediately. Timeout or failed local discovery offers
 Retry refresh, Browse older results (when available), or Cancel through the
 shared rail. An explicitly chosen older view and settled remote failures carry a
 persistent incomplete-results warning. Remote cooldowns remain in force during
