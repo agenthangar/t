@@ -7,7 +7,8 @@
         "tests/test_tui.py::test_air_unicode_check_gutter_and_physical_frame_budget",
         "tests/test_tui.py::test_shared_picker_keeps_focus_and_primary_action_visible",
         "tests/test_tui.py::test_unset_gap_checklist_keeps_viewport_focus_and_action_visible",
-        "tests/test_design_geometry.py::test_rail_columns_keep_coordinates"
+        "tests/test_design_geometry.py::test_rail_columns_keep_coordinates",
+        "tests/test_resume_wait.py::test_resume_wait_rail_layout"
       ],
       "renderers": [
         "rail"

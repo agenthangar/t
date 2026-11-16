@@ -675,7 +675,7 @@ def format_row(row, width=80):
     return prefix + gap + summary
 
 
-def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, height=None):
+def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, height=None, notice=''):
     _, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     pages = max(1, (total + limit - 1) // limit)
     page_label = f'Page {page} · {total} conversations · {limit} per page' if width >= 60 else f'Page {page}/{pages} · {total} conversations'
@@ -684,6 +684,8 @@ def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=
     heading = gap.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + gap + 'WORKING ON'
     compact = width <= 40 or int(height or os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     lines = [clip_columns(page_label, width)]
+    if notice:
+        lines.insert(0, clip_columns(notice, width))
     if sort != 'updated':
         if not compact:
             lines.append('')
@@ -1320,10 +1322,11 @@ class HistoryCommand:
             width = max(12, terminal.columns - (16 if terminal.columns > 60 else 12))
             sortable = all(row['agent'] in ('codex', 'claude') for row in rows)
             sort, sort_enabled = getattr(self, 'picker_sort', ('turn', True)) if sortable else ('updated', True)
-            private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled))
+            notice = getattr(self, 'discovery_notice', '')
+            private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled, notice=notice))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')
-            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines))
+            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines, notice=notice))
             rows_file = state.with_suffix('.rows')
             rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled))
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
@@ -1898,7 +1901,8 @@ class HistoryCommand:
             except (HistoryError, OSError, ValueError) as error:
                 print(f't resume: {error}', file=sys.stderr)
                 return 1
-        print('No matching cached conversations; discovery may still be refreshing.' if cached else 'No retained conversations for this slot.')
+        print('No matching cached conversations; discovery is incomplete. Run t resume again later.'
+              if getattr(self, 'discovery_notice', '') else 'No retained conversations for this slot.')
         return 0
 
 
@@ -1935,7 +1939,7 @@ def picker(argv):
     elif action == 'previous':
         settings['page'] = max(1, settings['page'] - 1)
     private_write(state, settings)
-    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled))
+    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled, notice=settings.get('notice', '')))
     output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled)
     Path(state).with_suffix('.rows').write_text(output)
     print(output, end='')
