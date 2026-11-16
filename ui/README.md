@@ -189,6 +189,11 @@ prompts, shell startup, MCP registrations, workflow preferences, or settings.
 Normal installs and canonical updates retain their existing integration behavior.
 The installed source selector must be upgraded once for older installations;
 development setup itself never replaces that shared installation.
+Source selection never probes an unrelated working repository with Git. Cancelling
+selection returns 130 without a traceback or command dispatch. Interrupted initial
+shell loading retains a retryable `t` function; the next invocation finishes loading
+the selected helpers before running the command. Reload failures retain the existing
+dispatcher and never run a command against a stale source.
 
 `t --version` is a read-only detail display. Preserve the release/revision on the
 first line, then show labeled `Source` and `Worktree` paths with their branches.
@@ -1867,3 +1872,16 @@ Percentages describe observed tokens, not task counts or completeness. Throughpu
 uses matched request time including prefill, never entire task duration. Costs
 are dated API estimates; savings need a compatible frontier-only baseline.
 Reports read existing local evidence only: no model start, downloads or network.
+
+## Optional desktop apps
+
+`t system apps install nightr` reviews installation or adopts an existing Nightr
+installation for updates. `t install nightr` is its compatibility convenience.
+`--yes` explicitly runs installation without review; `--dry-run` is read-only.
+`t system apps status nightr [--json]` never starts an app, prompts or downloads.
+These commands target this Mac and do not infer a repository. Nightr is optional
+in the installer and has its own `t config` entry, separate from coding agents.
+
+`t system update` includes opted-in Nightr installations, preserving Homebrew or
+direct ownership. It never installs an absent app. App setup and helper approval
+remain explicit in `nightr setup`; uninstalling t leaves Nightr installed.

@@ -164,7 +164,7 @@ def test_plain_install_fallback_distinguishes_empty_selection_from_eof(
     monkeypatch.setattr('builtins.input', respond)
     args = t_mod.build_parser().parse_args(['install'])
     assert t_mod.cmd_install(SimpleNamespace(hosts={}), args) == expected
-    assert len(calls) == prompts
+    assert len(calls) == prompts + (1 if answer == "n" and t_mod.sys.platform == "darwin" else 0)
 
 
 def test_install_result_collects_checked_toggles(t_mod):

@@ -169,6 +169,13 @@ source "$_NOSLEEP_ROOT/zsh/nosleep-fallback.zsh"
 #   -C / --no-checks skips checks; -F / --no-forever resumes selected checks.
 #   Modes take separate or =values; numeric settings allow attached values.
 nosleep() {
+  # Installed Nightr owns the shared app/CLI monitor. Never start a second legacy
+  # monitor when the standalone package is present; no PATH/worktree selection.
+  local nightr_cli=/Applications/Nightr.app/Contents/MacOS/nightr-native
+  if [[ ${NIGHTR_TEST_NO_NATIVE:-0} != 1 && -x $nightr_cli ]]; then
+    command "$nightr_cli" "$@"
+    return $?
+  fi
   # Like the binary, select and load current code on every invocation, including
   # cd && nosleep and uncommitted edits. Preserve shell-local tuning and config.
   if (( $+functions[_t_reload_if_moved] )) && [[ -z ${_NOSLEEP_SOURCE_SELECTED:-} ]]; then

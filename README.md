@@ -1556,6 +1556,17 @@ t system update --local   # switch to the registered/local t checkout and update
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
 
+If shell startup was interrupted and `t open` reports that it reached `bin/t`,
+reload the installed shell integration in your current zsh:
+
+```zsh
+source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
+```
+
+If startup wiring is missing, run `t doctor --repair` and the source command it
+prints. Cancelling source selection exits quietly; the next `t` invocation retries
+an interrupted initial load.
+
 `t --version` identifies the code being used separately from your current Git
 worktree. For example, inside a development worktree:
 
@@ -1824,3 +1835,14 @@ and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
 refresh before building its picker; fresh cached results open immediately. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
+
+### Nightr
+
+Install the optional macOS keep-awake app with `t system apps install nightr`
+(or `t install nightr`). Use `--dry-run` to review the acquisition path.
+After installation, `nightr setup` configures the helper and login behavior;
+`nightr config` edits preferences. `t config` includes a Nightr entry.
+
+`t system apps status nightr --json` is read-only. `t system update` includes
+Nightr only after opting in, preserves its package owner, and never installs a
+missing app. Installation requires a published, verified Nightr release.

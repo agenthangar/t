@@ -3293,6 +3293,11 @@
         "tests/test_dev_isolation.py::test_cli_scopes_are_independent_and_preserve_explicit_paths",
         "tests/test_dev_isolation.py::test_shell_helpers_switch_before_prompt_without_changing_path",
         "tests/test_dev_isolation.py::test_child_login_shell_keeps_invocation_source_after_chdir",
+        "tests/test_dev_isolation.py::test_selector_does_not_probe_unrelated_repositories",
+        "tests/test_dev_isolation.py::test_source_selection_interrupt_exits_quietly",
+        "tests/test_dev_isolation.py::test_interrupted_initial_load_keeps_retryable_shell_function",
+        "tests/test_dev_isolation.py::test_ctrl_c_during_startup_recovers_in_same_interactive_shell",
+        "tests/test_dev_isolation.py::test_interrupted_reload_does_not_dispatch_stale_source",
         "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
       ],
       "modes": {
@@ -10103,6 +10108,179 @@
         }
       },
       "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved."
+    },
+    "system apps install": {
+      "patterns": [
+        "action",
+        "detail",
+        "review"
+      ],
+      "renderer": "rail",
+      "scope": "optional desktop app on this Mac; no repository inference",
+      "confirmation": "enter",
+      "tests": [
+        "tests/test_nightr.py::test_app_command_routes_and_readonly",
+        "tests/test_nightr.py::test_install_records_only_successful_verified_package"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "apps",
+            "install",
+            "nightr"
+          ],
+          "patterns": [
+            "review",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_install_records_only_successful_verified_package"
+          ]
+        },
+        "dry_run": {
+          "argv": [
+            "system",
+            "apps",
+            "install",
+            "nightr",
+            "--dry-run"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_nightr.py::test_install_dry_run_and_linux_are_safe"
+          ]
+        },
+        "yes": {
+          "argv": [
+            "system",
+            "apps",
+            "install",
+            "nightr",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_install_records_only_successful_verified_package"
+          ]
+        }
+      },
+      "notes": "t install nightr is the compatibility convenience. Installation never authorizes the privileged helper or starts protection."
+    },
+    "system apps status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "optional desktop app on this Mac; no repository inference",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_nightr.py::test_app_command_routes_and_readonly",
+        "tests/test_nightr.py::test_status_never_installs_or_probes_network"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "apps",
+            "status",
+            "nightr"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_status_never_installs_or_probes_network"
+          ]
+        },
+        "json": {
+          "argv": [
+            "system",
+            "apps",
+            "status",
+            "nightr",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_nightr.py::test_app_command_routes_and_readonly",
+            "tests/test_nightr.py::test_status_never_installs_or_probes_network"
+          ]
+        }
+      }
+    },
+    "remote system apps install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "apps",
+            "install",
+            "nightr"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
+    },
+    "remote system apps status": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host",
+      "confirmation": "external",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "apps",
+            "status",
+            "nightr"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ]
+        }
+      }
     }
   },
   "display_schemas": {

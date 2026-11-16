@@ -16,7 +16,7 @@
 # Keep the title lifecycle in the calling shell: dispatch may change its cwd.
 t() {
   emulate -L zsh
-  _t_reload_if_moved
+  _t_reload_if_moved || return $?
   # Dynamic scope ends when this command returns; child helpers may change cwd
   # while retaining this invocation's source. The selector rejects tmux leaks.
   local -x T_DEV_CONTEXT="$T_HOME" T_DEV_CONTEXT_OWNER=$$
@@ -809,7 +809,7 @@ _t() {
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose advisories usage) ;;
+    system) actions=(integrate update diagnose advisories usage apps) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -1073,6 +1073,11 @@ _t() {
       if [[ ${words[CURRENT-1]} == --interval-hours ]]; then _message 'refresh interval in hours (1–720)'
       elif (( CURRENT == first )); then _values 'action' enable disable status
       else _values 'flag' --interval-hours -h --help; fi ;;
+    system/apps)
+      if (( CURRENT == first )); then _values 'action' install status
+      elif (( CURRENT == first + 1 )); then _values 'app' nightr
+      elif [[ ${words[first]} == status ]]; then _values 'flag' --json -h --help
+      else _values 'flag' --yes --dry-run -h --help; fi ;;
     system/diagnose)
       _values 'flag' --repair -h --help ;;
     policy/show|agent/status|system/integrate)
