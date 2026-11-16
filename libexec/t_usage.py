@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import re
 import runpy
+import shutil
+import sqlite3
 import sys
 import time
 
@@ -101,8 +103,10 @@ def summarize(requests):
         if identity not in result['models']:
             result['models'].append(identity)
     result['coverage'] = 'observed records only; missing historical requests are not counted'
-    local, cloud = (result['tokens'][p] or 0 for p in ('local', 'cloud'))
-    result['local_cloud_percent'] = [round(100 * local / (local + cloud)), 100 - round(100 * local / (local + cloud))] if local + cloud and not result['tokens']['unknown'] else None
+    local, cloud = (result['tokens'][p] for p in ('local', 'cloud'))
+    complete = all(r.get('usage') is not None and r['location'] in ('local', 'cloud') for r in requests)
+    result['local_cloud_percent'] = ([round(100 * local / (local + cloud)), 100 - round(100 * local / (local + cloud))]
+                                     if local is not None and cloud is not None and local + cloud and complete else None)
     cloud_rows = [r for r in requests if r['location'] == 'cloud']
     if cloud_rows and all(r.get('cost_usd') is not None for r in cloud_rows):
         result['estimated_cloud_cost_usd'] = sum(r['cost_usd'] for r in cloud_rows)
@@ -312,6 +316,11 @@ def worker_rows():
                                  provider=record.get('provider'), location='local', usage=tokens(event.get('usage')),
                                  mechanism='MCP local worker', outcome=status,
                                  task_id=record['task_id']))
+        generated = record.get('generation_events')
+        if not requests and record.get('identity_verified') and type(generated) is int and generated > 0:
+            requests.append(dict(id=record['task_id'] + ':unmetered', model=record.get('resolved_model'),
+                                 provider=record.get('provider'), location='local', usage=None,
+                                 mechanism='MCP local worker', outcome=status, task_id=record['task_id']))
         rows.append(dict(id='worker:' + record['task_id'], label=record['task_id'], kind='worker', status=status,
                          requested_model=record.get('model'), workflow_snapshot=record.get('workflow_snapshot'),
                          parent=record.get('parent_session_id') if record.get('parent_identity_verified') else None,
@@ -411,6 +420,90 @@ def snapshot():
     return sessions + workflow_rows(sessions) + unassigned + eval_rows()
 
 
+def display_metadata(rows, live=()):
+    """Read names by exact native identity; live status additionally requires cwd.
+
+    Do not open the history writer or infer ownership from a workspace name.
+    """
+    read_rows = helper('t_codex_store')['rows']
+    index = {}
+    path = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'state_5.sqlite'
+    try:
+        columns = {r[1] for r in read_rows(path, 'pragma table_info(threads)', initialize_sidecars=False)}
+        fields = [v for v in ('id', 'name', 'title', 'cwd', 'archived') if v in columns]
+        if 'id' in fields:
+            index = {r['id']: dict(r) for r in read_rows(path, 'select ' + ','.join(fields) + ' from threads',
+                                                       initialize_sidecars=False, row_factory=sqlite3.Row)}
+    except (OSError, sqlite3.Error):
+        pass
+    history = {}
+    try:
+        for raw, in read_rows(state_root() / 'history/v1/history.sqlite3', 'select record from conversations', initialize_sidecars=False):
+            try:
+                record = json.loads(raw)
+                if isinstance(record, dict) and all(isinstance(record.get(k), str) for k in ('agent', 'sid')):
+                    history[(record.get('agent'), record.get('sid'))] = record
+            except ValueError:
+                continue
+    except (OSError, sqlite3.Error):
+        pass
+    owners = {}
+    for item in live:
+        key = (item.get('agent'), item.get('sid'), item.get('cwd'))
+        owners.setdefault(key, []).append(item)
+    display = helper('t_session_details')
+    for row in rows:
+        if row['kind'] != 'session':
+            continue
+        recorded = history.get((row['agent'], row['sid']), {})
+        native = index.get(row['sid'], {}) if row['agent'] == 'codex' else {}
+        cwd = row.get('cwd') or ''
+        slot = Path(cwd).name or row['sid'][:8]
+        if slot.isdigit():
+            slot = Path(cwd).parent.name + '-' + slot
+        summary = native.get('name') or native.get('title') or recorded.get('summary') or recorded.get('title') or 'Task unrecorded'
+        state = 'archived' if native.get('archived') else 'unknown'
+        metadata = dict(slot=clean(slot), summary=clean(summary), state=state, context='unknown', agent=row['agent'],
+                        last_turn_started_at=display['transcript_last_turn'](row['transcript'], row['agent']))
+        matches = owners.get((row['agent'], row['sid'], cwd), [])
+        if len(matches) == 1:
+            owner = matches[0]
+            metadata.update({k: owner[k] for k in ('slot', 'summary', 'state', 'context') if k in owner})
+        row['session_display'] = metadata
+        row['label'] = clean(metadata['slot'] + ' · ' + metadata['summary'])
+
+
+def usage_note(row):
+    missing = [p for p in ('local', 'cloud') if row['tokens'].get(p) is None]
+    if missing:
+        return '/'.join(missing).capitalize() + ' tokens unrecorded; percentage unavailable.'
+    if row.get('local_cloud_percent') is None:
+        return 'Percentage unavailable: incomplete, unknown-provider or zero-total usage.'
+    return 'Percentage of measured tokens; history may be partial.'
+
+
+def session_preview(row, width=100):
+    return helper('t_session_details')['usage_preview'](row, width)
+
+
+def picker_rows(rows, width):
+    display = helper('t_session_details')
+    clip, size = display['clip_columns'], display['display_width']
+    full = width >= 60
+    name_width = max(8, width - (30 if full else 13))
+    def cell(value, length):
+        value = clip(clean(value), length)
+        return value + ' ' * max(0, length - size(value))
+    def label(kind, name, share):
+        # fzf searches displayed fields: preserve names even when the viewport clips them.
+        name = clean(name)
+        padded = name + ' ' * max(0, name_width - size(name))
+        return (cell(kind, 9) + '  ' if full else '') + padded + '  ' + share
+    header = label('KIND', 'SESSION / NAME', 'LOC/CLD%' if full else 'L/C%')
+    choices = [dict(key=r['id'], label=label(r['kind'], r['label'], percent(r)), preview_data=r) for r in rows]
+    return choices, header
+
+
 def percent(row):
     value = row.get('local_cloud_percent')
     return '/'.join(map(str, value)) if value is not None else '—'
@@ -420,11 +513,12 @@ def clean(value):
     return ''.join(c if c.isprintable() else ' ' for c in str(value))
 
 
-def detail(row):
+def detail(row, width=100):
     value = lambda x: str(x) if x is not None else 'unavailable'
-    lines = [row['id'], 'Kind: ' + row['kind'], 'Models: ' + ', '.join(v['model'] for v in row['models']),
+    lines = (session_preview(row, width) + ['', 'Worktree: ' + str(row.get('cwd') or 'unrecorded')] if row['kind'] == 'session' else [])
+    lines += [row['id'], 'Kind: ' + row['kind'], 'Models: ' + ', '.join(v['model'] for v in row['models']),
              'Tokens local/cloud: ' + '/'.join(value(row['tokens'][p]) for p in ('local', 'cloud')),
-             'Local/cloud token %: ' + percent(row),
+             'Local/cloud token %: ' + percent(row), usage_note(row),
              f"Measured usage records: {row['measured_records']}/{len(row['requests'])}", row['coverage'],
              'Observed output tok/s (request time incl. prefill): ' + '/'.join(value(row['observed_tokens_per_second'][p]) for p in ('local', 'cloud')),
              'Estimated cloud USD: ' + value(row['estimated_cloud_cost_usd']),
@@ -451,7 +545,7 @@ def detail(row):
     return [clean(s) for s in lines]
 
 
-def command(args, spinner=None):
+def command(args, spinner=None, live_rows=None):
     ui = helper('t_eval_cli')
     try:
         if spinner:
@@ -459,14 +553,17 @@ def command(args, spinner=None):
                 rows = snapshot()
         else:
             rows = snapshot()
+        display_metadata(rows, live_rows() if live_rows else ())
+        width = shutil.get_terminal_size((100, 24)).columns
         machine = getattr(args, 'json', False)
         ident = getattr(args, 'usage_id', None)
         if args.usage_action == 'show':
             if not ident:
                 if machine:
                     raise ValueError('specify ID with --json')
-                ident = ui['choose']([{'key': r['id'], 'label': r['kind'] + ' · ' + r['label'] + ' · ' + percent(r),
-                                      'preview': '\n'.join(detail(r))} for r in rows], 'Workflow, session and evaluation usage', 'show', prompt='usage')
+                choices, header = picker_rows(rows, max(20, width - 8))
+                ident = ui['choose'](choices, 'Usage · this machine\n\n' + header, 'show', prompt='usage',
+                                     preview_script=str(Path(__file__).resolve()), preview_window='down:50%:wrap')
                 if ident is None:
                     return 130
             rows = [r for r in rows if r['id'] == ident]
@@ -475,7 +572,7 @@ def command(args, spinner=None):
         if machine:
             print(json.dumps(rows[0] if args.usage_action == 'show' else rows, indent=2))
         elif args.usage_action == 'show':
-            print('\n'.join(detail(rows[0])))
+            print('\n'.join(detail(rows[0], width)))
         else:
             print('Usage · this machine · observed records (workflow rows aggregate sessions)')
             print('  KIND      LOC/CLD TOKEN%  ID')
@@ -491,5 +588,9 @@ def command(args, spinner=None):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 6 and sys.argv[1] == 'record':
+    if len(sys.argv) == 3 and sys.argv[1] == 'preview':
+        row = read(sys.argv[2], {})
+        width = max(20, min(1000, int(os.environ.get('FZF_PREVIEW_COLUMNS', '80'))))
+        print('\n'.join(detail(row, width)))
+    elif len(sys.argv) == 6 and sys.argv[1] == 'record':
         snapshot_start(*sys.argv[2:])

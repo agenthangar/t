@@ -116,6 +116,13 @@
         "tests/test_nosleep_config.py::test_frame_inserts_nonselectable_breaks_between_sections"
       ],
       "renderers": []
+    },
+    "usage": {
+      "tests": [
+        "tests/test_usage.py::test_usage_preview_geometry_and_labels",
+        "tests/test_usage_picker.py::test_usage_picker_session_preview_and_resize"
+      ],
+      "renderers": []
     }
   },
   "nested_screens": {

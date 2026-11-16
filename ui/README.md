@@ -1864,6 +1864,20 @@ and all tool icons. UI remains metadata; estimated costs live in usage details.
 `t system usage list [--json]` prints recorded usage on this machine without
 selection. `t system usage show [ID] [--json]` opens the shared fzf picker when
 ID is omitted in a terminal; Enter prints full details. JSON requires a show ID.
+The usage picker has KIND, SESSION / NAME and LOC/CLD% column labels. Its session
+preview repeats STATUS, SESSION and WORKING ON first, then token split, icon-only
+tool, models with ★ on the lead, and last turn. Narrow preview panes stack the
+optional fields; full models, task and workspace remain in details. The private
+preview renderer uses the current fzf pane width, including after a resize.
+Current marks require an exact tool/session/workspace match with the shared local
+session scan; missing or ambiguous owners retain unknown status. Native index and
+saved history names never establish live ownership. No lookup uses a new occupant
+of the same worktree as the historical session's status.
+Both local and cloud counts must be measured to show a percentage. Unmeasured
+requests, unknown providers and zero totals also leave the split unavailable;
+explicit measured zero remains zero. The preview says which count is unrecorded.
+List, full detail, t ls and JSON share this calculation. Reports still collect
+usage on demand; this change does not add a background usage cache.
 Workflow rows aggregate their attributed session requests and are not extra usage
 that can be added to session totals. Launch snapshots freeze workflow revisions;
 unrecorded history stays unattributed. Copies of a session are deduplicated.
