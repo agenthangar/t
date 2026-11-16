@@ -2975,7 +2975,7 @@ _t_dev() {
   fi
 }
 
-# MCP lifecycle calls leave the existing or newly created slot detached.
+# MCP lifecycle calls stay detached unless a separate viewer is requested.
 _t_session_attach() {
   # Fresh lifecycle completion already queues discovery; its launch applied the
   # resolved policy, so the live-attach advisory has no pending work to report.
@@ -2985,6 +2985,16 @@ _t_session_attach() {
   fi
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1
+    if [[ ${T_MCP_NEW_WINDOW:-0} == 1 ]]; then
+      local target="=$1:" attach_command
+      attach_command="unset TMUX T_MCP_DETACHED T_MCP_NEW_WINDOW; tmux attach-session -t ${(q)target}"
+      if ! _dev_open_window "$attach_command"; then
+        print -u2 -r -- "t mcp: session $1 is available, but its window could not be opened. Attach with: tmux attach-session -t ${(q)target}"
+        return 1
+      fi
+      print -r -- "Available: $1 (separate window requested; existing viewers unchanged)"
+      return 0
+    fi
     print -r -- "Available: $1 (detached control; existing viewers unchanged)"
   else
     tmux attach-session -t "=$1:"

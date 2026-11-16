@@ -675,6 +675,14 @@ objective". Instruction, pause, and goal tools require the full current
 `session_id` and refuse stale owners or the calling agent. Use
 `session_command` with `{"command":"list"}` to retrieve current IDs for both agents.
 
+To resume in a separate local Terminal or iTerm2 window, call `resume_session`
+with `{"repo":"api","slot":3,"new_window":true}`. The window attaches to the
+guarded resume result without starting another owner or changing existing viewers.
+`session_command` also accepts `new_window: true` with `command: "resume"`.
+The default remains detached. Unsupported terminals, SSH contexts, and window
+creation failures return an error with an attach command; the resumed session
+remains available. A successful window request is not confirmation of agent activity.
+
 `session_command` covers every `t session` verb, using `command` and an array of
 literal CLI `arguments`. For example:
 

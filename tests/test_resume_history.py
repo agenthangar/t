@@ -49,6 +49,26 @@ def shell_candidates(rows):
     return '_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(rows)) + '; }; '
 
 
+@pytest.mark.parametrize('new_window,window_code', [(False, 0), (True, 0), (True, 1)])
+def test_mcp_resume_window_uses_resolved_history_slot(zsh, new_window, window_code):
+    setup = shell_candidates([history_row()]) + f'''
+      T_MCP_DETACHED=1
+      T_MCP_NEW_WINDOW={int(new_window)}
+      _t_resume_history_launch() {{ print -u2 LAUNCH; print dev-api-99; }}
+      _t_resume_history_registered() {{ return 0; }}
+      _dev_open_window() {{ print -r -- "WINDOW $*"; return {window_code}; }}
+    '''
+    result = zsh(setup + '_t_resume api 3 --cli --days all', FAKE_SESSIONS='dev-api-99', FAKE_HAS_SESSION='1')
+    assert result.returncode == window_code, result.stdout + result.stderr
+    assert result.stderr.count('LAUNCH') == 1
+    assert ('WINDOW ' in result.stdout) == new_window
+    if new_window:
+        assert r'tmux attach-session -t \=dev-api-99:' in result.stdout
+        assert 'tmux attach-session -t =dev-api-3:' not in result.stdout
+    else:
+        assert 'detached control' in result.stdout
+
+
 @pytest.mark.parametrize('agent', ['claude', 'codex'])
 @pytest.mark.parametrize('batch', [False, True])
 @pytest.mark.parametrize('aliases', [False, True])
