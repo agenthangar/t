@@ -31,7 +31,7 @@ def test_cumulative_dedup_and_exact_model_attribution(usage, tmp_path):
     p = rollout(tmp_path / 'one.jsonl')
     row = usage.session(p, 'codex')
     assert row['tokens'] == {'local': None, 'cloud': 180, 'unknown': None}
-    assert row['local_cloud_percent'] == [0, 100]
+    assert row['local_cloud_percent'] is None
     assert [r['usage']['input_tokens'] for r in row['requests']] == [100, 50]
     assert [r['model'] for r in row['requests']] == ['first', 'second']
     assert row['estimated_cloud_cost_usd'] is None
@@ -119,13 +119,14 @@ def test_usage_command_contract(usage, t_mod, monkeypatch, capsys, tmp_path):
         data=json.loads(capsys.readouterr().out)
         assert (data if action=='show' else data[0])['tokens']['cloud']==180
     cli=usage.helper('t_eval_cli')
-    monkeypatch.setattr(usage,'helper',lambda _:dict(cli,choose=lambda *a, **kw:row['id']))
+    original_helper=usage.helper
+    monkeypatch.setattr(usage,'helper',lambda name:dict(cli,choose=lambda *a, **kw:row['id']) if name=='t_eval_cli' else original_helper(name))
     assert usage.command(SimpleNamespace(usage_action='show',usage_id=None,json=False))==0
     assert 'Tokens local/cloud: unavailable/180' in capsys.readouterr().out
     assert usage.command(SimpleNamespace(usage_action='show',usage_id=None,json=True))==1
     assert usage.command(SimpleNamespace(usage_action='show',usage_id='bad',json=False))==1
     assert usage.command(SimpleNamespace(usage_action='list',json=False))==0
-    monkeypatch.setattr(usage,'helper',lambda _:dict(cli,choose=lambda *a, **kw:None))
+    monkeypatch.setattr(usage,'helper',lambda name:dict(cli,choose=lambda *a, **kw:None) if name=='t_eval_cli' else original_helper(name))
     assert usage.command(SimpleNamespace(usage_action='show',usage_id=None,json=False))==130
     monkeypatch.setattr(usage,'snapshot',lambda:[])
     assert usage.command(SimpleNamespace(usage_action='list',json=False))==0
@@ -196,7 +197,8 @@ def test_missing_empty_cancel_and_corrupt_stores(usage,tmp_path,monkeypatch,caps
     cli=usage.helper('t_eval_cli')
     monkeypatch.setattr(usage,'snapshot',lambda:[])
     def empty(*args, **kwargs):raise cli['EmptySelection']()
-    monkeypatch.setattr(usage,'helper',lambda _:dict(cli,choose=empty))
+    original_helper=usage.helper
+    monkeypatch.setattr(usage,'helper',lambda name:dict(cli,choose=empty) if name=='t_eval_cli' else original_helper(name))
     assert usage.command(SimpleNamespace(usage_action='show',usage_id=None,json=False))==0
     p=tmp_path/'big';p.write_text('x'*20)
     monkeypatch.setattr(usage,'LIMIT',10)
@@ -292,7 +294,7 @@ def test_discovery_includes_saved_and_archived_without_side_effects(usage,tmp_pa
     before=set(tmp_path.rglob('*'))
     rows=usage.session_rows()
     assert {r['sid'] for r in rows}=={'active','saved'}
-    assert next(r for r in rows if r['sid']=='active')['local_cloud_percent']==[100,0]
+    assert next(r for r in rows if r['sid']=='active')['local_cloud_percent'] is None
     assert set(tmp_path.rglob('*'))==before
 
 
@@ -353,7 +355,7 @@ def test_isolated_local_lead_history_and_launch_policy(usage):
     p=rollout(home/'.codex/sessions/2026/rollout-local.jsonl','local','lmstudio')
     rows=usage.session_rows()
     assert len(rows)==1 and rows[0]['tokens']['local']==180
-    assert rows[0]['tokens']['cloud'] is None and rows[0]['local_cloud_percent']==[100,0]
+    assert rows[0]['tokens']['cloud'] is None and rows[0]['local_cloud_percent'] is None
     assert rows[0]['requests'][0]['workflow'] is not None
     assert rows[0]['launches'][0]['offset']==0
 
@@ -384,3 +386,97 @@ def test_worker_uses_its_own_launch_revision_after_workflow_edit(usage,tmp_path)
     assert changed['tokens']['local']==80 and changed['tokens']['cloud'] is None
     record.pop('workflow_snapshot');(root/'result.json').write_text(json.dumps(record))
     assert usage.session_rows([(p,'codex')])[0]['requests'][-1]['workflow'] is None
+
+
+@pytest.mark.parametrize('local,cloud,extra,expected', [
+    (None, 180, [], None), (120, None, [], None), (0, 180, [], [0, 100]),
+    (120, 0, [], [100, 0]), (0, 0, [], None), (280, 120, [], [70, 30]),
+    (280, 120, [dict(location='local', usage=None)], None),
+    (280, 120, [dict(location='unknown', usage=None)], None),
+])
+def test_usage_percent_requires_both_measurements(usage, local, cloud, extra, expected):
+    requests = [dict(location=p, usage=dict(input_tokens=n, output_tokens=0))
+                for p,n in [('local',local),('cloud',cloud)] if n is not None] + extra
+    row=usage.summarize(requests)
+    assert row['tokens']['local']==local and row['tokens']['cloud']==cloud
+    assert row['local_cloud_percent']==expected
+    assert 'unavailable' in usage.usage_note(row) if expected is None else 'measured' in usage.usage_note(row)
+
+
+def test_usage_metadata_identity_and_read_only(usage,tmp_path):
+    import sqlite3
+    from contextlib import closing
+    p=rollout(tmp_path/'one.jsonl');row=usage.session(p,'codex')
+    index=Path(__import__('os').environ['CODEX_HOME'])/'state_5.sqlite';index.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(index)) as db:
+        db.execute('create table threads(id text,name text,title text,cwd text,archived int)')
+        db.execute('insert into threads values(?,?,?,?,?)',('one','Recorded title',None,'/repo',1));db.commit()
+    history=usage.state_root()/'history/v1/history.sqlite3';history.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(history)) as db:
+        db.execute('create table conversations(record text)')
+        db.executemany('insert into conversations values(?)', [('broken',),('[]',),(json.dumps({'agent':'claude','sid':'one','title':'Claude title'}),)]);db.commit()
+    before=(index.read_bytes(),history.read_bytes())
+    owner=dict(agent='codex',sid='other',cwd='/repo',slot='t-7',summary='Wrong task',state='attached',context='active')
+    usage.display_metadata([row], [owner])
+    assert row['session_display']['state']=='archived' and row['session_display']['summary']=='Recorded title'
+    owner['sid']='one';usage.display_metadata([row], [owner])
+    assert row['session_display']['slot']=='t-7' and row['session_display']['state']=='attached'
+    usage.display_metadata([row], [owner,owner])
+    assert row['session_display']['state']=='archived'  # ambiguous owners never promote status
+    row['agent']='claude';row['cwd']='/worktrees/t/9';usage.display_metadata([row])
+    assert row['session_display']['summary']=='Claude title' and row['session_display']['slot']=='t-9'
+    assert row['session_display']['state']=='unknown'
+    assert before==(index.read_bytes(),history.read_bytes())
+    assert not list(index.parent.glob('*-wal'))
+    usage.display_metadata([dict(kind='workflow')])
+
+
+@pytest.mark.parametrize('width', [20,32,44,80,110,160])
+def test_usage_preview_geometry_and_labels(usage,tmp_path,width):
+    row=usage.session(rollout(tmp_path/'one.jsonl'),'codex')
+    row['session_display']=dict(slot='t-13',summary='Parser fix #1 merged, still in progress',state='attached',context='active',
+                                last_turn_started_at='2026-11-15T10:00:00Z')
+    row['models']=[dict(model='very-long-local-model-identity-never-lost-8bit'),dict(model='second')]
+    lines=usage.session_preview(row,width)
+    display=usage.helper('t_session_details')
+    assert all(display['display_width'](line)<=width for line in lines),lines
+    assert 'STATUS' in lines[1]
+    if width>=32: assert 'SESSION' in lines[1]
+    assert '● ✓ ↻' in '\n'.join(lines) and '★ second' in '\n'.join(lines)
+    assert 'very-long-local-model-identity-never-lost-8bit' in ''.join(s.strip() for s in lines)
+    assert 'unrecorded' in ''.join(lines)
+    choices,header=usage.picker_rows([row],width)
+    assert choices[0]['key']==row['id'] and choices[0]['preview_data'] is row
+    assert choices[0]['label'].endswith('  —')
+    assert 'L/C%' in header or 'LOC/CLD%' in header
+
+
+def test_usage_unknown_status_and_dynamic_preview(usage,tmp_path,monkeypatch):
+    import subprocess,sys,os
+    row=usage.session(rollout(tmp_path/'one.jsonl'),'codex')
+    usage.display_metadata([row])
+    assert row['session_display']['state']=='unknown'
+    assert not any(mark in '\n'.join(usage.session_preview(row)) for mark in ('●','○','✓'))
+    row['tokens'].update(local=0);row['local_cloud_percent']=[0,100]
+    assert '0/100' in '\n'.join(usage.session_preview(row))
+    row['local_cloud_percent']=None
+    assert 'incomplete' in '\n'.join(usage.session_preview(row))
+    path=tmp_path/'row.json';path.write_text(json.dumps(row))
+    env={k:v for k,v in os.environ.items() if not k.startswith('COV_CORE_')}
+    env['FZF_PREVIEW_COLUMNS']='32'
+    result=subprocess.run([sys.executable,str(ROOT/'libexec/t_usage.py'),'preview',str(path)],env=env,capture_output=True,text=True)
+    assert result.returncode==0 and result.stdout.startswith('SESSION · repo')
+    assert 'Worktree: /repo' in result.stdout
+
+
+def test_verified_worker_generation_without_usage_is_not_zero(usage,tmp_path):
+    directory=usage.state_root()/'local-worker/unmetered';directory.mkdir(parents=True)
+    record=dict(task_id='unmetered',identity_verified=True,generation_events=2,resolved_model='local-model',
+                provider='lmstudio',parent_identity_verified=True,parent_session_id='one',status='failed')
+    (directory/'result.json').write_text(json.dumps(record))
+    row=usage.session_rows([(rollout(tmp_path/'one.jsonl'),'codex')])[0]
+    assert row['tokens']['local'] is None and row['local_cloud_percent'] is None
+    assert any(v['model']=='local-model' for v in row['models'])
+    assert row['requests'][-1]['usage'] is None
+    record['generation_events']=0;(directory/'result.json').write_text(json.dumps(record))
+    assert usage.worker_rows()[0]['requests']==[]

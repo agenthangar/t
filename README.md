@@ -1846,3 +1846,7 @@ After installation, `nightr setup` configures the helper and login behavior;
 `t system apps status nightr --json` is read-only. `t system update` includes
 Nightr only after opting in, preserves its package owner, and never installs a
 missing app. Installation requires a published, verified Nightr release.
+
+Usage inspection: `t system usage show` selects a record with named columns and a compact
+session summary like `t ls`. Missing local/cloud token counts leave the percentage
+unavailable; `t system usage list --json` retains null measurements.

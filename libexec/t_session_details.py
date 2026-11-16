@@ -265,3 +265,55 @@ if __name__ == '__main__':
     home = str(Path.home())
     for line in enrich(sys.stdin, home, os.environ.get('CODEX_HOME') or str(Path(home) / '.codex')):
         print(line)
+
+
+def usage_preview(row, width=100):
+    """Compact t ls vocabulary for one recorded session, with full models on wrap."""
+    width = max(20, width)
+    safe = lambda value: ''.join(c if c.isprintable() else ' ' for c in str(value))
+    meta = row.get('session_display') or {}
+    slot = safe(meta.get('slot') or Path(row.get('cwd') or '').name or row.get('sid', '')[:8] or '—')
+    task = safe(meta.get('summary') or 'Task unrecorded')
+    marks = session_cells(dict(meta, slot=slot), '')[0] if meta.get('state') not in (None, 'unknown') else '—'
+    lead = safe(row.get('lead_model') or '')
+    models = list(dict.fromkeys(safe(v['model']) for v in row['models'] if v.get('model')))
+    if lead:
+        models = ['★ ' + lead] + [v for v in models if v != lead]
+    glyph = {'codex': '⬡', 'claude': '✱', 'cursor': '◆'}.get(row.get('agent'), '·')
+    share = row.get('local_cloud_percent')
+    percent = '/'.join(map(str, share)) if share is not None else '—'
+    last = format_last_turn(meta.get('last_turn_started_at'))
+    last = last[11:16] if last != '-' else '—'
+    def cells(values, widths):
+        result = []
+        for value, size in zip(values, widths):
+            value = clip_columns(value, size)
+            result.append(value + ' ' * max(0, size - display_width(value)))
+        return '  '.join(result).rstrip()
+    first = [max(6, display_width(marks)), min(12, max(7, display_width(slot)))]
+    # Small previews retain the first three columns; optional fields stack below.
+    first[1] = min(first[1], max(3, width - first[0] - 8))
+    first.append(max(1, width - sum(first) - 4))
+    lines = ['SESSION · ' + slot]
+    if width >= 100:
+        widths = [first[0], first[1], 18, 14, 4, max(10, width - first[0] - first[1] - 18 - 14 - 4 - 9 - 12), 9]
+        lines += [cells(['STATUS', 'SESSION', 'WORKING ON', 'LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'LAST TURN'], widths),
+                  cells([marks, slot, task, percent, glyph, (models or ['—'])[0], last], widths)]
+        # Never discard a model suffix or secondary model in a narrow model cell.
+        model_column = sum(widths[:5]) + 10
+        wrapped = [part for model in models for part in wrap_columns(model, widths[5])]
+        lines[2] = cells([marks, slot, task, percent, glyph, (wrapped or ['—'])[0], last], widths)
+        lines += [' ' * model_column + part for part in wrapped[1:]]
+    else:
+        lines += [cells(['STATUS', 'SESSION', 'WORKING ON'], first), cells([marks, slot, task], first)]
+        lines += wrap_columns(glyph + ' ' + (', '.join(models) or '—'), width)
+        lines += wrap_columns('LOC/CLD TOKEN% ' + percent + ' · Last ' + last, width)
+    token = lambda place: f"{row['tokens'][place]:,}" if row['tokens'].get(place) is not None else 'unrecorded'
+    lines += wrap_columns('Tokens  local ' + token('local') + ' / cloud ' + token('cloud'), width)
+    missing = [p for p in ('local', 'cloud') if row['tokens'].get(p) is None]
+    note = ('/'.join(missing).capitalize() + ' tokens unrecorded; percentage unavailable.' if missing else
+            'Percentage of measured tokens; history may be partial.' if share is not None else 'Percentage unavailable: incomplete or zero-total usage.')
+    lines += wrap_columns(note, width)
+    # Exact task and slot remain available in the full report below the overview.
+    lines += ['', 'Session: ' + slot, 'Working on: ' + task, 'Last turn: ' + format_last_turn(meta.get('last_turn_started_at'))]
+    return [part for line in lines for part in (wrap_columns(line, width) or [''])]
