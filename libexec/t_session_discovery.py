@@ -1,11 +1,13 @@
 """Adapters and collectors for the single session-cache API; no cache policy/I/O."""
 import datetime
+import errno
 import json
 import math
 import os
 from pathlib import Path
 import runpy
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -52,6 +54,30 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
     return view
 
 
+def require_open_network(cfg, *, local=False, host=None):
+    """Reject a known OS network failure, without DNS, packets or a timed probe.
+
+    UDP connect only checks local routing/policy. Success is not evidence of
+    internet access: unknown failures and either usable IP family leave normal
+    discovery in charge. Never persist this caller's sandbox state in the cache.
+    """
+    if host == 'local' or (host is None and (local or not getattr(cfg, 'hosts', {}))):
+        return
+    unavailable = {errno.EPERM, errno.EACCES, errno.ENETDOWN, errno.ENETUNREACH,
+                   errno.EHOSTUNREACH, errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT,
+                   errno.EPROTONOSUPPORT}
+    for family, address in ((socket.AF_INET, '192.0.2.1'), (socket.AF_INET6, '2001:db8::1')):
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as connection:
+                connection.setblocking(False)
+                connection.connect((address, 9))
+            return
+        except OSError as error:
+            if error.errno not in unavailable:
+                return
+    raise OSError('network unavailable or blocked; use t open --local for local sessions')
+
+
 def open_snapshot(cfg, choose, *, local=False, host=None, fields=None):
     """Finish pending discovery before freezing an interactive open snapshot.
 
@@ -62,6 +88,7 @@ def open_snapshot(cfg, choose, *, local=False, host=None, fields=None):
     if host is not None:
         options['host'] = host
     while True:
+        require_open_network(cfg, local=local, host=host)
         view = discover(cfg, **options)
         view = wait_for_refresh(cfg, view, **options)
         hosts = view.get('hosts', [])
