@@ -10409,7 +10409,8 @@
       "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
       "confirmation": "none",
       "tests": [
-        "tests/test_usage.py::test_usage_command_contract"
+        "tests/test_usage.py::test_usage_command_contract",
+        "tests/test_usage.py::test_usage_percent_requires_both_measurements"
       ],
       "modes": {
         "default": {
@@ -10458,7 +10459,9 @@
       "scope": "this machine; saved sessions, launch-time workflows and evals; no repository inference",
       "confirmation": "none",
       "tests": [
-        "tests/test_usage.py::test_usage_command_contract"
+        "tests/test_usage.py::test_usage_command_contract",
+        "tests/test_usage.py::test_usage_percent_requires_both_measurements",
+        "tests/test_usage_picker.py::test_usage_picker_session_preview_and_resize"
       ],
       "modes": {
         "detail": {
@@ -10476,7 +10479,7 @@
           "tests": [
             "tests/test_usage.py::test_usage_command_contract"
           ],
-          "layout": "inherit"
+          "layout": "usage"
         },
         "json": {
           "argv": [
@@ -10510,7 +10513,8 @@
           "tests": [
             "tests/test_usage.py::test_usage_command_contract"
           ],
-          "layout": "inherit"
+          "layout": "usage",
+          "notes": "Named list columns and a compact t ls session preview, resized to the fzf preview pane; missing local/cloud measurements never imply a zero split."
         }
       },
       "layout": "mixed"

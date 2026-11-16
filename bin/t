@@ -12956,7 +12956,7 @@ def build_parser():
     usage_sub = usage.add_subparsers(dest='usage_action', required=True)
     for action in ('list', 'show'):
         leaf = usage_sub.add_parser(action, help=action + ' recorded usage',
-            description='Usage recorded on this machine. Show without ID selects with fzf; list and JSON never prompt. Unknown measurements stay unavailable.')
+            description='Usage recorded on this machine. Show without ID selects with fzf; list and JSON never prompt. Session previews show status, task and models like t ls. Missing local or cloud counts leave the split unavailable.')
         if action == 'show':
             leaf.add_argument('usage_id', nargs='?', metavar='ID', help='omit for a searchable usage picker')
         leaf.add_argument('--json', action='store_true', help='machine output; show requires ID')
@@ -14507,7 +14507,7 @@ PERIODIC CHECKS
 IMPLEMENTED = {
     "remote": cmd_remote,
     "__advisories": cmd_advisories,
-    "system": lambda cfg, args: cmd_apps(cfg, args) if args.system_resource == "apps" else runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner),
+    "system": lambda cfg, args: cmd_apps(cfg, args) if args.system_resource == "apps" else runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner, lambda: _parse_rows(zsh_capture("_dev_session_rows"))),
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,
