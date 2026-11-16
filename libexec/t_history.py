@@ -62,7 +62,7 @@ def clean(value):
 
 
 @_spinner('Loading history metadata')
-def run(argv, *, cwd=None, timeout=30, optional=False):
+def run(argv, *, cwd=None, timeout=30, optional=False, launch_diagnostics=False):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     detail = ''
     try:
@@ -70,15 +70,22 @@ def run(argv, *, cwd=None, timeout=30, optional=False):
                                 timeout=timeout, stdin=subprocess.DEVNULL, start_new_session=True)
         if not result.returncode:
             return result.stdout
-        detail = clean(result.stderr)[-800:]
+        if launch_diagnostics:
+            # Only this private lifecycle launch opts in. Metadata commands and
+            # arbitrary stdout remain private; retain terminal-safe t diagnostics.
+            lines = _LIFECYCLE['diagnostic_error'](result.stderr).splitlines()
+            selected = [line for line in lines if line.startswith('t resume: ')]
+            selected = selected or [line for line in lines if line.startswith('t: ')]
+            if selected:
+                detail = selected[-1].removeprefix('t resume: ').removeprefix('t: ')
     except subprocess.TimeoutExpired:
-        detail = f'timed out after {timeout} seconds'
-    except OSError as error:
-        detail = clean(str(error))[-800:]
+        if launch_diagnostics:
+            detail = f'{argv[0]} launch timed out after {timeout}s'
+    except OSError:
+        pass
     if optional:
         return ''
-    message = f'{argv[0]} failed; history and existing workspaces were retained'
-    raise HistoryError(message + (': ' + detail if detail else ''))
+    raise HistoryError((detail or f'{argv[0]} failed') + '; history and existing workspaces were retained')
 
 
 def slug(remote):
@@ -1906,7 +1913,7 @@ class HistoryCommand:
                     if not prepare_only:
                         # Allow the final ownership guard's startup settling
                         # window plus native readiness and shell startup.
-                        run(self.shell(snippet), timeout=90)
+                        run(self.shell(snippet), timeout=90, launch_diagnostics=True)
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
                 if self.reservation:

@@ -192,19 +192,19 @@ _t_history_attach repo-1 selected /repo/1 codex
     assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t $7:'
 
 
-@pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'timeout'])
+@pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'dead-missing-agent', 'timeout'])
 def test_history_owner_waits_for_identity_without_following_replacement(history, tmp_path, outcome):
     tick = tmp_path / 'tick'
     script = f'''
 source {ROOT}/zsh/sessions.zsh
-_dev_session_claude_pid() {{ print 123; }}
+_dev_session_claude_pid() {{ [[ {outcome} == dead-missing-agent ]] && return 1; print 123; }}
 _dev_session_sid() {{
   [[ {outcome} == dead-ready ]] && {{ print selected; return 0; }}
   [[ -f {tick} && {outcome} != timeout ]] && print {'other' if outcome == 'sid' else 'selected'}
   return 0
 }}
 _dev_agent_of_session() {{
-  if [[ -f {tick} && {outcome} == agent ]]; then print claude; else print codex; fi
+  if [[ {outcome} == dead-missing-agent || ( -f {tick} && {outcome} == agent ) ]]; then print claude; else print codex; fi
 }}
 sleep() {{ print tick >> {tick}; [[ {outcome} == timeout ]] && SECONDS=15; return 0; }}
 tmux() {{
@@ -232,11 +232,10 @@ _t_history_owner repo-1 selected /repo/1 codex wait
         assert result.returncode == 1
         assert not result.stdout
         expected = ('identity is not ready' if outcome == 'timeout' else
-                    'exited' if outcome in ('exited', 'dead', 'dead-ready') else 'owner changed')
+                    'exited' if outcome == 'exited' or outcome.startswith('dead') else
+                    'owner changed (' + {'sid': 'conversation', 'cwd': 'workspace',
+                                        'agent': 'agent', 'recycled': 'session'}[outcome] + ')')
         assert expected in result.stderr
-        reasons = {'sid': 'conversation', 'cwd': 'session identity', 'agent': 'agent', 'recycled': 'session identity'}
-        if outcome in reasons:
-            assert '(' + reasons[outcome] + ')' in result.stderr
     if outcome == 'timeout':
         assert 't open repo 1' in result.stderr
     if outcome.startswith('dead'):
@@ -430,6 +429,7 @@ def test_resume_success_records_exact_agent_destination_and_revision(app, histor
             # The final lifecycle guard may need to settle a newly loaded
             # writer before waiting for native readiness.
             assert kwargs.get('timeout', 30) >= 60
+            assert kwargs.get('launch_diagnostics') is True
             return ''
         return original(argv, **kwargs)
     monkeypatch.setattr(history, 'run', launch)

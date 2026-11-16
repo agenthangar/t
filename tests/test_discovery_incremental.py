@@ -281,7 +281,7 @@ def test_shell_launch_error_preserves_bounded_cause_and_never_stdout(history, mo
         returncode=1, stdout='private conversation output',
         stderr='x' * 1000 + '\n\x1b[31mt resume: selected owner changed (conversation)\x1b[0m'))
     with pytest.raises(history.HistoryError) as caught:
-        history.run(['zsh', '-lic', 'launch'])
+        history.run(['zsh', '-lic', 'launch'], launch_diagnostics=True)
     message = str(caught.value)
     assert 'selected owner changed (conversation)' in message
     assert 'private conversation output' not in message and '\x1b' not in message and len(message) < 900

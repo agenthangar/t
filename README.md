@@ -730,6 +730,11 @@ published their worktree metadata get a bounded 30-second settling wait; normal
 launches do not wait. A writer that remains unknown or owns the target still
 blocks the launch. Cancel stops any remaining batch selections.
 
+Saved Codex resumes use native cloud retries when automatic local continuation
+cannot support resume, including workflows set to ask or continue locally.
+Startup failures retain the lifecycle reason; ownership conflicts identify the
+changed session, workspace, agent, or conversation without relaxing the guards.
+
 Missing Codex metadata can also be scoped through a verified standalone CLI: its
 process identity, sole thread lock, and working directory must remain stable across
 two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous

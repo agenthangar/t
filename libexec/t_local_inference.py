@@ -1063,9 +1063,15 @@ def lead(argv, cwd=None, chosen=None, runner=None):
             try:
                 offline['launch_options'](argv, cwd or os.getcwd())
             except ValueError:
-                if chosen['on_cloud_failure'] in ('local', 'ask'):
+                # A saved conversation must stay with its native provider. The
+                # fresh-session recovery supervisor cannot resume it, but a
+                # workflow's recovery preference must not prevent native resume.
+                if argv[1:2] == ['resume']:
+                    print('Saved resume uses native cloud retries; automatic local continuation is unavailable.', file=sys.stderr)
+                elif chosen['on_cloud_failure'] in ('local', 'ask'):
                     raise
-                print('Cloud retry limit unavailable for this invocation; using native tool retries.', file=sys.stderr)
+                else:
+                    print('Cloud retry limit unavailable for this invocation; using native tool retries.', file=sys.stderr)
             else:
                 return offline['supervise'](argv, chosen, cwd or os.getcwd())
         return subprocess.call(argv)
