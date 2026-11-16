@@ -314,6 +314,7 @@ def check(parser, command_groups, instructions):
                   ["runners", "setup", "--github-repo", "owner/control", "--create"],
                   ["runs", "start", "--target", "linux", "--", "python3", "-m", "pytest"],
                   ["runs", "list", "--json"], ["runs", "status", "ID", "--json"],
+                  ["runs", "inspect", "ID", "--target", "local", "--json"],
                   ["runs", "logs", "ID"], ["runs", "artifacts", "ID"],
                   ["runs", "cancel", "ID"], ["runs", "cleanup", "ID"]):
         valid, args = accepts(["config", "workflow", *words])

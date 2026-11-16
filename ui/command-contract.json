@@ -10982,6 +10982,107 @@
         }
       },
       "layout": "mixed"
+    },
+    "runners runs inspect": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "explicit local run UUID and optional target; retained evidence only",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_run_inspect.py::test_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "runners",
+            "runs",
+            "inspect",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_run_inspect.py::test_cli_contract"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "runners",
+            "runs",
+            "inspect",
+            "11111111-1111-4111-8111-111111111111",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_run_inspect.py::test_cli_contract"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "plain",
+      "notes": "Read-only bounded evidence, about 8000 characters for ordinary text. Never infer execution success from logs. Distinguish response omissions, scan limits and runner storage loss; retain complete-log references. Explicit run ID required; no picker, provider access, configuration write or update prompt."
+    },
+    "remote runners runs inspect": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit run UUID and optional target on selected host; read-only remote query",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_run_inspect.py::test_cli_contract"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "inspect",
+            "11111111-1111-4111-8111-111111111111"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_run_inspect.py::test_cli_contract"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "inspect",
+            "11111111-1111-4111-8111-111111111111",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_run_inspect.py::test_cli_contract"
+          ],
+          "layout": "machine"
+        }
+      },
+      "notes": "Read-only bounded evidence, about 8000 characters for ordinary text. Never infer execution success from logs. Distinguish response omissions, scan limits and runner storage loss; retain complete-log references. Explicit run ID required; no picker, provider access, configuration write or update prompt.",
+      "layout": "mixed"
     }
   },
   "display_schemas": {

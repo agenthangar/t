@@ -46,3 +46,6 @@ expected/actual coordinates, JUnit output and an outcome manifest in
 `artifacts/design/`. Update expectations only after reviewing a deliberate design
 change; never regenerate them automatically to make CI pass. This complements
 command behavior tests and the full Linux coverage gate.
+
+Use [selective visual validation](docs/validation.md) to choose captures during
+iteration while retaining every project-required rendered check at delivery.

@@ -4911,6 +4911,11 @@ def _cmd_workflow_runs(cfg, args):
                 print('Wait: ' + result['wait_status'])
             return (int(result.get('exit_code', 0 if result['status'] in ('succeeded', 'completed') else 1))
                     if result['wait_status'] == 'complete' else 2)
+        if action == "inspect":
+            inspection = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_run_inspect.py'))
+            result = inspection['inspect_run'](args.run_id, target=args.runner_target)
+            print(json.dumps(result, indent=2) if args.json else inspection['render'](result))
+            return 0 if result['available'] else 1
         if action == "logs":
             logs = helper["logs"](args.run_id, target=args.runner_target)
             for target, output in logs.items():
@@ -8140,7 +8145,7 @@ def _command_readonly(argv, *, terminal=None):
                 tail[1] in ("list", "show", "compare") or "--dry-run" in tail or "--help" in tail)
     if verb == "runners":
         return (not tail or tail == ["runs"] or tail[0] == "list" or
-                (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "logs")))
+                (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "inspect", "logs")))
     if verb == "workflow":
         if not tail:
             if terminal is None:
@@ -8153,7 +8158,7 @@ def _command_readonly(argv, *, terminal=None):
     if words[:2] == ["config", "workflow"]:
         return (len(words) == 2 or words[2] in ("list", "context") or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
-                (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "logs")))
+                (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "inspect", "logs")))
     if verb == "mcp" and tail and tail[0] == "status":
         return True
     if verb == "__advisories":
@@ -12220,7 +12225,7 @@ COMMAND_GROUPS = {
                  "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
                  },
     "runners": {**{verb: ("runners", verb) for verb in ("list", "edit", "setup")},
-                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "watch", "logs", "artifacts", "cancel", "cleanup")}},
+                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "watch", "inspect", "logs", "artifacts", "cancel", "cleanup")}},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -12580,6 +12585,7 @@ LEARN MORE
   t runners runs list [--json]
   t runners runs status ID [--json]
   t runners runs watch ID [--timeout SECONDS] [--json]
+  t runners runs inspect ID [--target NAME] [--json]
   t runners runs logs ID [--target NAME]
   t runners runs artifacts ID [--target NAME] [--output DIR]
   t runners runs cancel ID
@@ -12590,6 +12596,7 @@ COMMANDS
   list       Print local durable run receipts
   status     Inspect a local receipt without contacting providers
   watch      Wait for receipt changes or pinned GitHub checks
+  inspect    Show bounded test evidence and retained-log references
   logs       Print retained local target logs
   artifacts  Extract bounded retained artifacts into a local directory
   cancel     Request cancellation and verify terminal provider state
@@ -12609,7 +12616,7 @@ SCOPE
   cancel the underlying job; exit 2 means results are still pending.
   --os linux|macos and --capability NAME filter configured targets. Windows
   execution is not yet supported. Native desktop tests remain explicitly opt-in.
-  List, status and logs read local state without network access or update prompts.
+  List, status, inspect and logs read local state without network access or update prompts.
 
 LEARN MORE
   t help runners runs <verb>
@@ -14084,18 +14091,18 @@ EXAMPLES
     leaf.add_argument("--json", action="store_true", help="print the final durable receipt as JSON")
     leaf.add_argument("--next-step", default="", help="authorized task step waiting on these results")
     leaf.add_argument("command", nargs=argparse.REMAINDER, metavar="COMMAND", help="argv after --; never interpreted as shell code")
-    for verb in ("list", "status", "watch", "logs", "artifacts", "cancel", "cleanup"):
+    for verb in ("list", "status", "watch", "inspect", "logs", "artifacts", "cancel", "cleanup"):
         leaf = run_sub.add_parser(verb, help={"list": "list local run receipts without network access", "status": "show a local run receipt without network access",
-            "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
+            "inspect": "show bounded test evidence and complete retained-log references", "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
             "cleanup": "retry deletion of retained remote run resources"}[verb])
         if verb != "list":
             leaf.add_argument("run_id", metavar="ID", help="local run UUID; watch also accepts OWNER/REPO#PR@HEAD_SHA")
         if verb == "watch":
             leaf.add_argument("--timeout", type=int, default=60, metavar="SECONDS", help="bounded wait, 1–3600 seconds; default 60")
             leaf.add_argument("--next-step", default="", help="authorized task step waiting on this result")
-        if verb in ("list", "status", "watch"):
+        if verb in ("list", "status", "watch", "inspect"):
             leaf.add_argument("--json", action="store_true", help="print watcher results as JSON" if verb == "watch" else "print local receipts as JSON without network access")
-        if verb in ("logs", "artifacts"):
+        if verb in ("inspect", "logs", "artifacts"):
             leaf.add_argument("--target", dest="runner_target", metavar="NAME", help="one target; default: all")
         if verb == "artifacts":
             leaf.add_argument("--output", metavar="DIR", help="new output directory; omit to show retained archive paths")

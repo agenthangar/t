@@ -154,6 +154,62 @@ def test_watch_github_checks_head_and_failures(modules, monkeypatch):
         watch.github('owner/repo', 1, sha)
 
 
+@pytest.mark.parametrize('final', ['changed', 'timeout', 'unavailable'])
+def test_watch_rechecks_head_after_workflow_lookup(modules, monkeypatch, final):
+    watch = modules[2]
+    sha = 'a' * 40
+    def run(argv, **kwargs):
+        if argv[-1] == 'headRefOid':
+            if final == 'timeout':
+                raise subprocess.TimeoutExpired('gh', 1)
+            return SimpleNamespace(returncode=1 if final == 'unavailable' else 0,
+                                   stdout=json.dumps({'headRefOid':'b' * 40}))
+        payload = ({'headRefOid':sha, 'statusCheckRollup':[{'status':'COMPLETED','conclusion':'SUCCESS'}]}
+                   if argv[1] == 'pr' else {'total_count':0, 'workflow_runs':[]})
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+    monkeypatch.setattr(watch.subprocess, 'run', run)
+    # Finish one read and expire the bounded wait without model-driven polling.
+    ticks = iter([0, 0, 0, 0, 0, 2])
+    monkeypatch.setattr(watch.time, 'monotonic', lambda: next(ticks))
+    result = watch.github('owner/repo', 1, sha, timeout=1, next_step='Review current evidence')
+    assert result['next_step'] == 'Review current evidence'
+    assert result['status'] == ('error' if final == 'changed' else 'running')
+    assert result['wait_status'] == ('complete' if final == 'changed' else 'pending')
+
+
+def test_bounded_watch_retains_snapshot_and_next_step(modules, monkeypatch):
+    watch = modules[2]
+    current = dict(id='fixture', status='running', snapshot={'id':'snapshot'})
+    ticks = iter([0, 2])
+    monkeypatch.setattr(watch.time, 'monotonic', lambda: next(ticks))
+    activity = watch.Activity('fixture', next_step='Inspect then fix', identity={})
+    pending = watch.wait(lambda: current, timeout=1, activity=activity)
+    assert pending['status'] == 'running' and pending['wait_status'] == 'pending'
+    assert pending['snapshot'] == current['snapshot'] and pending['next_step'] == 'Inspect then fix'
+    assert current['status'] == 'running' and activity.data['outcome'] == 'running'
+    monkeypatch.setattr(watch.time, 'monotonic', lambda: 0)
+    current.update(status='succeeded', exit_code=0)
+    completed = watch.wait(lambda: current, activity=watch.Activity('fixture', next_step='Inspect then fix', identity={}))
+    assert completed['wait_status'] == 'complete' and completed['next_step'] == 'Inspect then fix'
+
+
+def test_watch_deadline_does_not_probe_again_or_lose_pending_evidence(modules, monkeypatch):
+    watch = modules[2]
+    ticks = iter([0, 0])
+    monkeypatch.setattr(watch.time, 'monotonic', lambda: next(ticks))
+    sleeps = []
+    monkeypatch.setattr(watch.time, 'sleep', sleeps.append)
+    reads = []
+    def read():
+        reads.append(True)
+        assert len(reads) == 1, 'no request is authorized beyond the observation deadline'
+        return dict(status='running', head='a' * 40, checks=[{'status':'IN_PROGRESS'}])
+    result = watch.wait(read, timeout=1, activity=watch.Activity('fixture', next_step='Inspect results', identity={}))
+    assert sleeps == [1] and result['wait_status'] == 'pending'
+    assert result['head'] == 'a' * 40 and result['checks'] == [{'status':'IN_PROGRESS'}]
+    assert result['next_step'] == 'Inspect results' and result['status'] == 'running'
+
+
 def test_watch_progress_only_changes_and_interruption(modules, monkeypatch):
     watch = modules[2]
     results = iter([{'status': 'running'}, {'status': 'running'}, {'status': 'succeeded'}])
@@ -315,7 +371,8 @@ def test_watch_timeout_rate_limit_and_local_receipt(modules, monkeypatch):
     sha = 'a' * 40
     responses = iter([SimpleNamespace(returncode=1, stderr='rate limit exceeded'),
                       SimpleNamespace(returncode=0, stdout=json.dumps({'headRefOid': sha,
-                          'statusCheckRollup': [{'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}))])
+                          'statusCheckRollup': [{'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]})),
+                      SimpleNamespace(returncode=0, stdout=json.dumps({'headRefOid': sha}))])
     monkeypatch.setattr(watch.subprocess, 'run', lambda argv, **k: next(responses) if argv[1] == 'pr' else SimpleNamespace(returncode=0, stdout='{"total_count": 0, "workflow_runs": []}'))
     pauses, changes = [], []
     monkeypatch.setattr(watch.time, 'sleep', pauses.append)

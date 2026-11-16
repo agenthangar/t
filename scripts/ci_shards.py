@@ -170,8 +170,9 @@ def normalized_coverage(path):
             name = 'libexec/' + name.rsplit('/libexec/', 1)[1]
         elif name.endswith('/bin/t'):
             name = 'bin/t'
-        elif name == 'scripts/offline_shell.py' or name.endswith('/scripts/offline_shell.py'):
-            name = 'scripts/offline_shell.py'
+        elif any(name == source or name.endswith('/' + source) for source in (
+                'scripts/offline_shell.py', 'scripts/audit_context.py')):
+            name = 'scripts/' + name.rsplit('/', 1)[1]
         elif name != 'bin/t' and not name.startswith('libexec/'):
             raise ValueError(f'unexpected measured source: {filename}')
         if not (ROOT / name).is_file() or name in result:

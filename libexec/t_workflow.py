@@ -42,7 +42,7 @@ PERMISSIONS = {
 # Absent keys mean no preference, not a directive to do the opposite.
 BEHAVIORS = {
     'job_watching': {'label': 'Job watching', 'choices': {
-        'automatic': ('Automatically', 'Watch submitted jobs with bounded code-driven waits, rather than repeated model-driven polling. Retain the run ID, snapshot or commit, and next authorized task step. Use `t runners runs watch ID --timeout 60 --json` for runner receipts, `wait_task` for local worker tasks, and `t runners runs watch OWNER/REPO#PR@HEAD_SHA --timeout 60 --json` for GitHub checks. Recheck the PR head before accepting CI results. A timed-out wait leaves the job pending; stopping observation does not cancel it. On success inspect evidence and continue the next authorized step; on failure diagnose, fix and rerun affected checks. Resolve cancelled or unavailable jobs explicitly. A detached watcher alone cannot wake an agent: use supported notifications or resume the bounded wait. Preserve all approval gates.'),
+        'automatic': ('Automatically', 'Watch submitted jobs with bounded code-driven waits, rather than repeated model-driven polling. Retain the run ID, snapshot or commit, and next authorized task step. Use `t runners runs watch ID --timeout 60 --json` for runner receipts, `wait_task` for local worker tasks, and `t runners runs watch OWNER/REPO#PR@HEAD_SHA --timeout 60 --json` for GitHub checks. Recheck the PR head before accepting CI results. A timed-out wait leaves the job pending; stopping observation does not cancel it. On success use `t runners runs inspect ID` for runner evidence (retrieve retained logs when needed) and continue the next authorized step; on failure diagnose, fix and rerun affected checks. Resolve cancelled or unavailable jobs explicitly. A detached watcher alone cannot wake an agent: use supported notifications or resume the bounded wait. Preserve all approval gates.'),
         'on_request': ('Only when requested', 'Watch jobs only when explicitly requested or required by the task or repository. Keep pending jobs and their next steps identifiable; never treat a pending, unavailable or timed-out wait as successful validation.'),
     }},
     'design_system': {'label': 'Design system', 'choices': {
@@ -1330,13 +1330,34 @@ def edit_instructions(document, repository=None, name=None):
         return 0, update(document, policy, repository, name)
 
 
+# Distributed only with an enabled resolved policy, never the global loader.
+CONTEXT_USE_GUIDANCE = (
+    'Context use: Aim for roughly 2,000 tokens per ordinary tool result; larger evidence is allowed when needed. '
+    'Select requested fields, relevant records, aggregates and bounded source excerpts before returning output. '
+    'When shortening logs or responses, keep the full evidence locally, identify omissions and give a usable retrieval reference. '
+    'Review large diffs through a summary followed by relevant hunks; cover the actual changes before approving. '
+    'Return a concise result for every operation in a batch, including failures. '
+    'Reuse source evidence still available in context; reread after relevant edits, branch changes, collaborator activity, '
+    'context loss or when an unread section is needed. This is guidance, not interception of external tools; no persistent read ledger is required. '
+    'After a bounded runner watch, use `t runners runs inspect ID` for status and evidence, then '
+    '`t runners runs logs ID --target NAME` for additional retained evidence as needed. Unknown or missing evidence never proves success.\n\n'
+    'Visual verification: For small component changes inspect the affected component and states; for layout or responsive changes '
+    'inspect affected breakpoints and surrounding layout; for shared components or tokens inspect the gallery and affected consumers. '
+    'At delivery complete all project-required rendered-state checks. Retain screenshots locally and attach images needed for the current decision. '
+    'Overflow, visibility and interaction checks supplement visual inspection. Update reusable design guidance, components, tokens and gallery examples when applicable.\n\n'
+    'Sharing: Use `t share` only when the user invokes it or explicitly asks an agent to share. '
+    'The ability to capture transcript text does not authorize automatic sharing. Prefer explicit `--file PATH` or `--file -` '
+    'for deliberately selected context. Repository rules and custom workflow Markdown retain precedence.'
+)
+
+
 def _stage_text(policy, tool='codex', design_source=None):
     if not policy['enabled']:
         return ('The entire workflow is disabled for this scope. Do not require '
                 'these stages or delegation solely because of t preferences. Do not apply inherited '
                 't workflow instructions, behavior preferences or custom Markdown for this scope; '
                 'follow the task and repository rules.')
-    parts = []
+    parts = [CONTEXT_USE_GUIDANCE]
     if 'inference' in policy:
         parts.append(inference()['instructions'](policy['inference']) if tool == 'codex' else 'Local routing currently requires Codex; do not claim this tool uses it.')
     if policy.get('inference', {}).get('mode') == 'local-only':
@@ -1383,7 +1404,7 @@ def _stage_text(policy, tool='codex', design_source=None):
                      'of current tracked worktree edits without committing or pushing source; include intended '
                      'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
                      '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
-                     '`t runners runs status ID` and `t runners runs logs ID`. '
+                     '`t runners runs inspect ID`; retrieve complete retained logs with `t runners runs logs ID`. '
                      'Native desktop tests remain opt-in.')
     if policy.get('instructions'):
         parts.append('Custom workflow Markdown (takes precedence over behavior preferences and model-stage guidance):\n' + policy['instructions'])
