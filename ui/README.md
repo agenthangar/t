@@ -72,6 +72,11 @@ the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
 calls never prompt. When the shell captures an owner on stdout, render recovery
 on the original terminal stderr, keeping the owner protocol clean.
 
+Saved resume failures retain bounded, sanitized lifecycle diagnostics instead of
+only reporting `zsh failed`. Readiness distinguishes session, workspace, agent,
+and conversation changes; an exited startup is reported before fallback agent
+identity is compared. These diagnostics never weaken the ownership checks.
+
 Missing Codex metadata can also be scoped through a verified standalone CLI: its
 process identity, sole thread lock, and working directory must remain stable across
 two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
@@ -1796,6 +1801,14 @@ Worktree preview: `python3 scripts/preview_model_test.py` uses simulated owners
 and no real model, runtime, session or configuration changes.
 
 ### Prompted connection recovery
+
+Saved Codex resumes keep native cloud retries even when the workflow selects
+**Ask which local model** or **Continue locally**. The fresh-session recovery
+supervisor cannot resume an existing conversation, so these launches explain
+that automatic local continuation is unavailable and retain the exact native
+resume arguments and exit status. For example, `t resume api 3` resumes the
+selected conversation without changing its provider or saved recovery settings.
+Local-only workflows still refuse unverified cloud/local resumes.
 
 The existing native Codex inference launch has an `on_cloud_failure=ask`
 conditional mode: RailUI single selection for local recovery, passthrough for
