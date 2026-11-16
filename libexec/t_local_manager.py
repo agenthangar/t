@@ -121,7 +121,7 @@ def set_inference_enabled(enabled):
     with (root() / 'inference.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         previous = inference_enabled()
-        if not enabled:
+        if not enabled and (root() / 'control.sock').exists():
             try:
                 view = rpc('status')
             except (ConnectionError, FileNotFoundError):

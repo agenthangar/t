@@ -986,6 +986,7 @@ def test_inference_switch_failure_preserves_state(manager, monkeypatch):
 
 
 def test_pause_rejects_older_manager_without_claiming_success(manager, monkeypatch):
+    (manager.root() / 'control.sock').touch()
     monkeypatch.setattr(manager, 'rpc', lambda *a, **kw: {'protocol': 3})
     with pytest.raises(ValueError, match='cannot enforce pause'):
         manager.set_inference_enabled(False)
