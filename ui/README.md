@@ -61,6 +61,11 @@ the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
 calls never prompt. When the shell captures an owner on stdout, render recovery
 on the original terminal stderr, keeping the owner protocol clean.
 
+Missing Codex metadata can also be scoped through a verified standalone CLI: its
+process identity, sole thread lock, and working directory must remain stable across
+two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
+evidence remain blocked. This fallback never deletes a lock or stops its owner.
+
 Development preview: `python3 scripts/preview_session_repair.py` exercises the
 shared repair rail with sample data. Use `open` for numbered-open recovery or
 `--blocked` for a persistent ownership refusal. No real sessions are changed.

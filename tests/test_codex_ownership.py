@@ -1116,3 +1116,41 @@ def test_writer_wait_is_interruptible_without_removing_lock(handoff, target, tmp
         with pytest.raises(KeyboardInterrupt):
             handoff.assert_released(None, SID, str(target['cwd']), probe, **options(target))
         assert handoff._lock_held(str(lock))
+
+
+@pytest.mark.parametrize('problem', ['', 'same', 'daemon', 'subcommand', 'two-locks',
+                                      'changed', 'cd', 'no-cwd', 'different-lock', 'config-cwd', 'consumed-switch'])
+def test_standalone_writer_without_metadata_is_scoped(handoff, target, tmp_path, problem):
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    cwd = target['cwd'] if problem == 'same' else tmp_path / 'other-worktree'
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == 'ps':
+            command = '/opt/bin/codex --model example -c model_reasoning_effort=high --no-daemon'
+            if problem == 'daemon': command = '/opt/bin/codex --model example'
+            if problem == 'subcommand': command = '/opt/bin/codex app-server --no-daemon'
+            if problem == 'cd': command += ' --cd /another'
+            if problem == 'config-cwd': command += ' -c cwd=/another'
+            if problem == 'consumed-switch': command = '/opt/bin/codex --model --no-daemon'
+            return subprocess.CompletedProcess(argv, 0, 'Tue Nov 10 12:10:57 2026 ' + command + '\n', '')
+        if '-t' in argv:
+            return subprocess.CompletedProcess(argv, 0, '123\n', '')
+        if argv[-1] == '-Fpn':
+            return subprocess.CompletedProcess(argv, 0, f'p123\nn{lock}\n', '')
+        assert argv[-1] == '-Fpcfn'
+        text = f'p123\nccodex\nfcwd\nn{cwd}\nf7\nn{lock}\n'
+        if problem == 'two-locks': text += f'f8\nn{target["locks"] / (SID + ".lock")}\n'
+        if problem == 'changed' and sum(a[-1] == '-Fpcfn' for a in calls) > 1:
+            text = text.replace(str(cwd), '/changed')
+        if problem == 'no-cwd': text = text.replace('fcwd', 'f9')
+        if problem == 'different-lock': text = text.replace(str(lock), str(lock) + '.other')
+        return subprocess.CompletedProcess(argv, 0, text, '')
+    with locked(lock, tmp_path):
+        if not problem:
+            handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+        else:
+            with pytest.raises(ValueError, match='in this worktree' if problem == 'same' else 'could not be matched'):
+                handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+        assert handoff._lock_held(str(lock))

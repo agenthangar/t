@@ -705,7 +705,8 @@
         "tests/test_fresh_slot_allocation.py::test_fresh_allocation_requests_reservations_and_honors_cancellation",
         "tests/test_fresh_slot_allocation.py::test_foreground_preflight_keeps_conflict_without_display_work",
         "tests/test_codex_ownership.py::test_starting_writer_waits_for_metadata_and_rechecks_ownership",
-        "tests/test_codex_ownership.py::test_resolved_ownership_does_not_sleep_or_probe_processes"
+        "tests/test_codex_ownership.py::test_resolved_ownership_does_not_sleep_or_probe_processes",
+        "tests/test_codex_ownership.py::test_standalone_writer_without_metadata_is_scoped"
       ],
       "modes": {
         "default": {
@@ -1202,7 +1203,8 @@
         "tests/test_history_picker.py::test_history_sort_actions_preserve_query_and_global_identity",
         "tests/test_history_picker.py::test_history_accepts_exact_row_after_sort_and_retains_refresh_choice",
         "tests/test_codex_ownership.py::test_starting_writer_waits_for_metadata_and_rechecks_ownership",
-        "tests/test_codex_ownership.py::test_resolved_ownership_does_not_sleep_or_probe_processes"
+        "tests/test_codex_ownership.py::test_resolved_ownership_does_not_sleep_or_probe_processes",
+        "tests/test_codex_ownership.py::test_standalone_writer_without_metadata_is_scoped"
       ],
       "modes": {
         "default": {

@@ -730,6 +730,11 @@ published their worktree metadata get a bounded 30-second settling wait; normal
 launches do not wait. A writer that remains unknown or owns the target still
 blocks the launch. Cancel stops any remaining batch selections.
 
+Missing Codex metadata can also be scoped through a verified standalone CLI: its
+process identity, sole thread lock, and working directory must remain stable across
+two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
+evidence remain blocked. This fallback never deletes a lock or stops its owner.
+
 If a CLI cannot reconnect but its tmux slot is still live, run
 `t session restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
 first. Restart saves the pane text, including any visible unsent draft, to a
