@@ -1175,6 +1175,12 @@ Menu choices stay pending until
 | Tests → When to run tests | Local during work, before preview, before PR, or On PR CI |
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
+Before publishing, emitted instructions require the repository-defined essential-flow
+smoke selection in an isolated local snapshot. Rerun after integrating main or
+resolving conflicts; failed or stale smoke evidence blocks the push. Routine PR CI
+keeps smoke, security and contract checks; full regression and coverage run nightly
+or by explicit request. For this repository, see [CI validation](docs/ci.md).
+
 **Use default** removes an override and displays the effective fallback. Defaults
 are resolved at use time and are never copied into stored overrides. Preview
 subtypes inherit shared preview timing and approval. Native model, effort and

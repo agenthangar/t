@@ -53,7 +53,6 @@ jobs:
       - id: scope
         env:
           FORCE_FULL: ${{ inputs.ref != '' || (github.event_name == 'workflow_dispatch' && (inputs.run_full || inputs.run_macos || inputs.verify_shards)) }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: python3 "$RUNNER_TEMP/t-ci-policy.py" scope
   cli-contract:
     needs: scope
@@ -106,29 +105,6 @@ jobs:
           done
           shellcheck "${files[@]}"
           for f in t.plugin.zsh zsh/*.zsh; do zsh -n "$f"; done
-  startup-smoke:
-    needs: scope
-    name: Shell startup smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.scope.outputs.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: sudo bash scripts/playground/install-deps.sh zsh
-      - run: python -m pip install -r requirements-dev.txt
-      - name: Normal startup, Ctrl-C recovery and cancelled reloads
-        run: >-
-          python -m pytest -q
-          tests/test_dev_isolation.py::test_shell_helpers_switch_before_prompt_without_changing_path
-          tests/test_dev_isolation.py::test_source_selection_interrupt_exits_quietly
-          tests/test_dev_isolation.py::test_interrupted_initial_load_keeps_retryable_shell_function
-          tests/test_dev_isolation.py::test_ctrl_c_during_startup_recovers_in_same_interactive_shell
-          tests/test_dev_isolation.py::test_interrupted_reload_does_not_dispatch_stale_source
-          tests/test_dev_isolation.py::test_selector_does_not_probe_unrelated_repositories
-          tests/test_update_prompt_shell.py::test_shell_command_reloads_after_update_then_runs_once
   pytest:
     needs: scope
     name: Linux shard ${{ matrix.shard }}
@@ -346,14 +322,9 @@ jobs:
   smoke:
     needs: scope
     if: needs.scope.outputs.full != 'true'
-    name: Fast Linux shard ${{ matrix.shard }}
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1]
+    name: Essential Linux smoke
     runs-on: ubuntu-latest
     env:
-      T_REQUIRE_AWS_CONTRACT: '1'
       CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
@@ -362,24 +333,20 @@ jobs:
       - uses: ./.github/actions/test-runtime
         with:
           fzf: '0.74.5'
-      - name: Fast regressions and core safety contracts
-        run: >-
-          python -m pytest -p scripts.ci_shards --ci-fast
-          --ci-shard=${{ matrix.shard }} --ci-shards=2
-          --ci-manifest=artifacts/manifest.json
-          --durations=30 --junitxml=artifacts/junit.xml
+      - name: Shared essential-flow selection
+        run: python3 scripts/smoke.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-${{ matrix.shard }}
+          name: smoke
           overwrite: true
-          path: artifacts/
+          path: artifacts/smoke/
           if-no-files-found: error
           retention-days: 14
   ci:
     name: CI
     if: always()
-    needs: [scope, cli-contract, design-adherence, shell, startup-smoke, pytest, smoke, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
+    needs: [scope, cli-contract, design-adherence, shell, pytest, smoke, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ needs.scope.outputs.sha }}

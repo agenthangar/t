@@ -39,7 +39,7 @@ commit a version bump back to main.
 
 The successful full CI gate produces a `release-validation` artifact. Publication
 requires its commit, workflow run ID and attempt to match the archive checkout
-and current run. A fast PR/push check, evidence from a different commit, or a
+and current run. A smoke-only PR/push check, evidence from a different commit, or a
 previous attempt cannot authorize a release. Testing precedes tag creation;
 separate cron schedules are never used to order validation and publication.
 
