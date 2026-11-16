@@ -218,11 +218,11 @@ def verify_app(path, team, version=None):
     if info.get("CFBundleIdentifier") != BUNDLE_ID or info.get("NightrTeamID") != team or (version and info.get("CFBundleShortVersionString") != version):
         raise InstallError("Application identity or version differs from release")
     requirement = f'anchor apple generic and identifier "{BUNDLE_ID}" and certificate leaf[subject.OU] = "{team}"'
-    run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--all-architectures", "-R", requirement, path])
+    run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--all-architectures", "-R=" + requirement, path])
     run(["/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=2", path])
     for binary, identifier in [("nightr-native", "ai.nightr.controller"), ("nightr-powerhelper", "ai.nightr.powerhelper"), ("NightrNetworkWorker", "ai.nightr.networkworker")]:
         requirement = f'anchor apple generic and identifier "{identifier}" and certificate leaf[subject.OU] = "{team}"'
-        run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R", requirement, path / "Contents/MacOS" / binary])
+        run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R=" + requirement, path / "Contents/MacOS" / binary])
     return info["CFBundleShortVersionString"]
 
 def verify_package(path, team):
@@ -387,7 +387,7 @@ def verified_homebrew_contract(manifest, *, required=True):
 def verify_installed_receipt(team):
     actual = verify_app(APP, team); verify_installed_root()
     requirement = f'anchor apple generic and identifier "ai.nightr.installguard" and certificate leaf[subject.OU] = "{team}"'
-    run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R", requirement, INSTALL_GUARD])
+    run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R=" + requirement, INSTALL_GUARD])
     receipt = plistlib.loads(run(["/usr/sbin/pkgutil", "--pkg-info-plist", "ai.nightr.package"]).encode())
     if receipt.get("pkg-version") != actual: raise InstallError("Installed package receipt differs from the signed app")
     return actual
@@ -496,7 +496,7 @@ def finish_install_transaction(transaction, team, *, operation="finish"):
         if info.st_uid != 0 or info.st_mode & 0o022 or stat.S_ISLNK(info.st_mode): raise InstallError("Unsafe canonical installer guard")
         current = current.parent
     requirement = f'anchor apple generic and identifier "ai.nightr.installguard" and certificate leaf[subject.OU] = "{team}"'
-    run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R", requirement, INSTALL_GUARD])
+    run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R=" + requirement, INSTALL_GUARD])
     arguments = [str(INSTALL_GUARD), operation, str(transaction)]
     if os.geteuid() != 0:
         if not sys.stdin.isatty(): raise InstallError("Administrator authorization is needed to finish the verified package transaction")
