@@ -52,6 +52,9 @@ def recovery():
     ('open_session', {'repo': 'missing', 'slot': 1}),
     ('open_session', {'repo': 'api', 'slot': 1, 'agent': 'shell'}),
     ('open_session', {'repo': 'api', 'slot': 1, 'extra': True}),
+    ('resume_session', {'repo': 'api', 'slot': 1, 'new_window': 'true'}),
+    ('resume_session', {'repo': 'api', 'slot': 1, 'new_window': 1}),
+    ('open_session', {'repo': 'api', 'slot': 1, 'new_window': True}),
     ('kill_session', {'repo': 'api', 'slot': 1, 'confirm': False}),
     ('pause_session', {'repo': 'api', 'slot': 1, 'session_id': 'prefix'}),
     ('pause_session', {'repo': 'api', 'slot': 1, 'session_id': 2}),
@@ -97,6 +100,24 @@ def test_shell_execution_is_quoted_and_has_no_terminal(controls, monkeypatch):
     for response, message in [(result(code=1, stderr='denied'), 'denied'),
                               (result('failed', 1), 'failed'), (result(code=1), 'operation failed')]:
         with pytest.raises(ValueError, match=message): controls.checked(response)
+
+
+def test_resume_window_routes_through_guarded_shell(controls, cfg, t_mod, monkeypatch):
+    calls = []
+    monkeypatch.setattr(controls.subprocess, 'run', lambda argv, **kw: calls.append((argv, kw)) or result('ready'))
+    for gateway in (False, True):
+        args = ({'command': 'resume', 'arguments': ['api', '1'], 'new_window': True}
+                if gateway else {'repo': 'api', 'slot': 1, 'new_window': True})
+        response = controls.call(cfg, 'session_command' if gateway else 'resume_session', args, vars(t_mod))
+        assert response['window_requested'] is True
+        command, options = calls[-1]
+        assert command[:2] == ['zsh', '-lic']
+        assert 'unset T_MCP_DETACHED T_MCP_NEW_WINDOW' in command[2]
+        assert 'typeset T_MCP_NEW_WINDOW=1;' in command[2]
+        assert command[2].endswith('_t_resume api 1 --cli --days all')
+        assert options['stdin'] == subprocess.DEVNULL
+    controls.call(cfg, 'resume_session', {'repo': 'api', 'slot': 1, 'new_window': False})
+    assert 'typeset T_MCP_NEW_WINDOW=1' not in calls[-1][0][2]
 
 
 @pytest.mark.parametrize('case', ['socket', 'multiple', 'dead', 'agent', 'sid', 'self_env', 'self_pid'])
@@ -182,6 +203,8 @@ def test_session_dispatch_lifecycle(controls, cfg, t_mod, monkeypatch, verb, arg
 
 @pytest.mark.parametrize('args', [{}, [], {'command': 'kill'}, {'command': 'list', 'arguments': 'bad'},
                                  {'command': 'list', 'arguments': [1]}, {'command': 'list', 'extra': True},
+                                 {'command': 'resume', 'arguments': ['api', '1'], 'new_window': 1},
+                                 {'command': 'open', 'arguments': ['api', '1'], 'new_window': True},
                                  {'command': 'list', 'arguments': ['\x00']},
                                  {'command': 'list', 'arguments': ['--bogus']},
                                  {'command': 'open'}, {'command': 'open', 'arguments': ['api', 'all']},
@@ -346,6 +369,27 @@ _dev_kill_one dev-api-1 1
     assert 'has-session' in response.stdout and 'attach-session' not in response.stdout
     assert 'kill-session' not in response.stdout
     assert 'cannot close the calling agent' in response.stderr
+
+
+@pytest.mark.parametrize('available,window_code', [(True, 0), (True, 1), (False, 0)])
+def test_mcp_window_attachment_checks_target_and_reports_failure(zsh, available, window_code):
+    response = zsh(f'''
+T_MCP_DETACHED=1
+T_MCP_NEW_WINDOW=1
+tmux() {{ [[ $1 == has-session ]] || {{ print UNEXPECTED_ATTACH; return 1; }}; return {0 if available else 1}; }}
+_dev_open_window() {{ print -r -- "WINDOW $*"; return {window_code}; }}
+_t_session_attach dev-api-99 codex fresh
+''')
+    assert response.returncode == (window_code if available else 1)
+    assert ('WINDOW ' in response.stdout) == available
+    assert 'UNEXPECTED_ATTACH' not in response.stdout
+    if available:
+        assert r'tmux attach-session -t \=dev-api-99:' in response.stdout
+        assert 'unset TMUX T_MCP_DETACHED T_MCP_NEW_WINDOW' in response.stdout
+    if available and window_code:
+        assert 'session dev-api-99 is available' in response.stderr
+        assert r'Attach with: tmux attach-session -t \=dev-api-99:' in response.stderr
+        assert 'separate window requested' not in response.stdout
 
 
 def test_mcp_control_wire_and_cli_dispatch(t_mod, cfg, monkeypatch, capsys):

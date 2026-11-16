@@ -220,7 +220,7 @@ def test_mlx_setup_registration(setup,monkeypatch):
     monkeypatch.setattr(setup.runpy,'run_path',lambda *a:{'lms':lambda:'/fake/lms','install':lambda name,**kw:calls.append((name,kw))})
     monkeypatch.setattr(setup.subprocess,'run',lambda *a,**k:None)
     setup.setup_mlx('mlx-community/Qwen3.8-27B-8bit')
-    assert calls==[('mlx-community/Qwen3.8-27B-8bit',{'download_only':True}),('mlx-community/Qwen3.8-27B-8bit',{})]
+    assert calls==[('mlx-community/Qwen3.8-27B-8bit',{'download_only':True}),('mlx-community/Qwen3.8-27B-8bit',{'provider':'lmstudio'})]
     assert w['settings']()['provider']=='lmstudio'
     w['executable']=lambda n:None
     with pytest.raises(ValueError,match='Install Codex'):setup.setup_mlx('test')

@@ -25,7 +25,7 @@ import urllib.parse
 import uuid
 
 LIB = Path(__file__).resolve().parent
-VERSION = 3
+VERSION = 4
 LIMIT = 16 * 1024**2
 TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out', 'busy'}
 DEFAULTS = {'memory_percent': 80, 'idle_seconds': 300,
@@ -105,6 +105,34 @@ def settings(value=None):
     return result
 
 
+def inference_enabled():
+    """Read at admission, including in already-loaded managers and clients."""
+    value = read_json(root() / 'inference.json', {'enabled': True})
+    if not isinstance(value, dict) or set(value) != {'enabled'} or type(value['enabled']) is not bool:
+        raise ValueError('Invalid local inference switch; no new work admitted')
+    return value['enabled']
+
+
+def set_inference_enabled(enabled):
+    if type(enabled) is not bool:
+        raise ValueError('Local inference enabled must be a boolean')
+    private_directory(root())
+    # Serialize switches without starting the manager or touching model files.
+    with (root() / 'inference.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous = inference_enabled()
+        if not enabled and (root() / 'control.sock').exists():
+            try:
+                view = rpc('status')
+            except (ConnectionError, FileNotFoundError):
+                view = None
+            if view is not None and view.get('protocol') != VERSION:
+                raise ValueError('Older local manager cannot enforce pause; let its sessions finish and refresh the runtime first')
+        if previous != enabled:
+            write_json(root() / 'inference.json', {'enabled': enabled})
+    return dict(enabled=enabled, changed=previous != enabled)
+
+
 def rpc(action, *, _timeout=5, **fields):
     path = root() / 'control.sock'
     with socket.socket(socket.AF_UNIX) as conn:
@@ -115,6 +143,8 @@ def rpc(action, *, _timeout=5, **fields):
             raw = stream.readline(LIMIT + 1)
     if len(raw) > LIMIT:
         raise ValueError('Runtime control response exceeds limit')
+    if not raw:
+        raise ConnectionError('Runtime control connection closed')
     result = json.loads(raw)
     if 'control_error' in result:
         raise ValueError(result['control_error'])
@@ -124,13 +154,13 @@ def rpc(action, *, _timeout=5, **fields):
 def status():
     """Read-only, including when the coordinator is stopped or crashed."""
     if not root().exists():
-        return {'manager': 'stopped', 'requests': [], 'models': [], 'clients': [], 'settings': settings({})}
+        return {'manager': 'stopped', 'requests': [], 'models': [], 'clients': [], 'settings': settings({}), 'inference_enabled': True}
     private_directory(root())
     try:
-        return rpc('status')
+        return dict(rpc('status'), inference_enabled=inference_enabled())
     except (OSError, ValueError):
         saved = read_json(root() / 'status.json', {})
-        return dict(saved, manager='stale' if saved else 'stopped',
+        return dict(saved, manager='stale' if saved else 'stopped', inference_enabled=inference_enabled(),
                     requests=[dict(x, state='unknown') if x.get('state') not in TERMINAL else x
                               for x in saved.get('requests', [])], models=saved.get('models', []),
                     clients=[], settings=saved.get('settings', settings()))
@@ -155,6 +185,9 @@ def legacy_busy():
 def availability(deadline=None):
     """Never start the manager, a provider, or inference for a preflight."""
     try:
+        if not inference_enabled():
+            return dict(state='disabled', reason='Local inference is disabled; run t config models runtime enable',
+                        blockers=[], protocol=VERSION, checked_at=time.time(), retry_after_seconds=None)
         if deadline is not None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -164,7 +197,7 @@ def availability(deadline=None):
         if view.get('manager') == 'running' and view.get('protocol') == VERSION:
             return rpc('availability')
         state, reason = 'unknown', 'Runtime state is stale or incompatible; refresh the MCP connection after active sessions finish'
-        if (view.get('manager') == 'running' and view.get('protocol') in (1, 2) and
+        if (view.get('manager') == 'running' and view.get('protocol') in (1, 2, 3) and
                 view.get('clients') == [] and
                 all(j.get('state') in TERMINAL for j in view.get('requests', []))):
             # ensure() upgrades only after the old manager atomically confirms it
@@ -189,7 +222,7 @@ def ensure(testing=False):
     try:
         view = rpc('status')
         if view.get('protocol') != VERSION or (testing and not view.get('test_preflight')):
-            if view.get('protocol') not in (1, 2, VERSION) or view.get('clients') != []:
+            if view.get('protocol') not in (1, 2, 3, VERSION) or view.get('clients') != []:
                 raise ValueError('Existing local manager uses a different protocol; let its sessions finish before restarting')
             # The old manager rechecks attached clients under its lock. Never
             # replace a runtime serving a live session, even if admission races.
@@ -309,7 +342,9 @@ class Engine:
                 continue
             # Private journal + exact endpoint/model/context checks, never a name prefix.
             try:
-                if self.providers.present(item):
+                if item.get('provider') == 'mlx-vlm' and item.get('owned'):
+                    self.providers.unload(item)
+                elif self.providers.present(item):
                     if not item.get('owned'):
                         raise ValueError('Borrowed instance may still be generating')
                     self.providers.unload(item)
@@ -460,7 +495,9 @@ class Engine:
                     for j in self.jobs.values() if j['client'] != client_id and j['state'] not in TERMINAL]
         leases = [c for c in self.clients.values() if c['id'] != client_id and c.get('fail_fast')]
         state, reason, retry = 'available', 'Shared runtime is available', None
-        if self.blocked or self.recovery_pending or (self.needs_recovery and read_json(root() / 'leases.json', {}).get('instances')):
+        if not inference_enabled():
+            state, reason = 'disabled', 'Local inference is disabled; run t config models runtime enable'
+        elif self.blocked or self.recovery_pending or (self.needs_recovery and read_json(root() / 'leases.json', {}).get('instances')):
             state, reason = 'unknown', self.blocked or 'Runtime ownership recovery is pending'
         elif self.test_lease:
             state, reason = 'busy', 'A model test holds the shared runtime reservation'
@@ -512,6 +549,8 @@ class Engine:
             if action == 'availability':
                 return self.availability()
             if action == 'register':
+                if not inference_enabled():
+                    raise ValueError('Local inference is disabled; run t config models runtime enable')
                 if len(self.clients) >= 64:
                     raise ValueError('Local client limit reached')
                 chosen = module('t_local_inference')['policy'](data['chosen'])
@@ -608,6 +647,8 @@ class Engine:
 
     def submit(self, client, path, payload, handler):
         with self.condition:
+            if not inference_enabled():
+                raise ValueError('Local inference is disabled; run t config models runtime enable')
             if client.get('interrupted'):
                 raise ValueError('This local worker was interrupted for a model test')
             if client.get('outcome') in ('busy', 'timed_out'):
@@ -763,7 +804,7 @@ class Engine:
             if job['path'].startswith('/api/'):
                 payload.pop('store', None)
                 payload.update(keep_alive=-1, options=dict(payload.get('options', {}), num_ctx=instance['context']))
-        if instance['provider'] == 'lmstudio' and payload.get('store') is not False and job['path'] == '/v1/responses':
+        if instance['provider'] in ('lmstudio', 'mlx-vlm') and payload.get('store') is not False and job['path'] == '/v1/responses':
             self.clients[job['client']]['pinned_alias'] = instance['alias']
         parsed = urllib.parse.urlsplit(instance['base'])
         connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=job['chosen']['timeout_seconds'])
@@ -773,7 +814,10 @@ class Engine:
             if job['cancel'].is_set():
                 return
             job['sent'] = True
-            connection.request(job['method'], job['path'], json.dumps(payload).encode() if job['method'] == 'POST' else None, {'Content-Type': 'application/json'})
+            headers = {'Content-Type': 'application/json'}
+            if instance.get('api_key'):
+                headers['Authorization'] = 'Bearer ' + instance['api_key']
+            connection.request(job['method'], job['path'], json.dumps(payload).encode() if job['method'] == 'POST' else None, headers)
             response = connection.getresponse()
             job['upstream_socket'] = getattr(getattr(getattr(response, 'fp', None), 'raw', None), '_sock', None)
             if response.status >= 400:
@@ -898,7 +942,7 @@ class ResponseTracker:
             if client is not None:
                 client['generation_events'] = client.get('generation_events', 0) + 1
         ident = response.get('id')
-        if self.store and self.instance['provider'] == 'lmstudio' and isinstance(ident, str) and len(ident) <= 256:
+        if self.store and self.instance['provider'] in ('lmstudio', 'mlx-vlm') and isinstance(ident, str) and len(ident) <= 256:
             if len(self.engine.responses) >= 8192:
                 self.engine.responses.pop(next(iter(self.engine.responses)))
             self.engine.responses[ident] = {'client': self.job['client'], 'alias': self.instance['alias']}

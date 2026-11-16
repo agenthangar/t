@@ -1090,6 +1090,13 @@ still a mutation. Goal does not imply interruption, adoption, or completion.
 MCP uses the same operation; its session command gateway returns a terminal
 handoff descriptor for modes that need interactive control. Detached MCP opens
 and resumes retain the shared lifecycle checks and never attach a terminal.
+MCP `resume_session` and the `session_command` resume gateway accept the optional
+boolean `new_window`. When true, a guarded local resume requests a separate
+Terminal/iTerm2 window through `_dev_open_window`, attaching to the exact resolved
+session. Existing viewers remain unchanged. Window failure returns an error and
+the exact tmux attach command, leaving the session available. Remote and foreground
+owners are refused before window dispatch. The default remains detached; this
+machine-only option adds no CLI flag or picker interaction.
 
 
 `session move` selects current CLI conversations through the shared multi picker
@@ -1902,6 +1909,12 @@ worktrees; `--repo` selects a registered checkout explicitly. It prints shared
 rules and one workflow. Global agent files contain a short loader; supported
 SessionStart hooks supply the resolved context at start, resume and compaction.
 An identity probe failure is an error, not permission to choose another scope.
+Enabled context includes MCP-first session discovery and the `t mcp --call`
+fallback. The native loader carries the same guidance conditional on an enabled
+resolved workflow. Disabled and excluded scopes suppress it; discovery does not
+authorize session mutations. Instructions preserve the distinction between
+current and saved sessions and require candidate verification before GitHub
+evidence is used to supplement the lookup.
 
 Installation shows the affected global and repository instruction paths and backup
 location, then asks **Back up and rebuild these global and repository instructions?
@@ -2019,3 +2032,18 @@ Unknown close times sort after recorded closes, with last turn breaking ties.
 Tied latest closures and incomplete discovery suppress the unique marker; they
 never substitute an older session. Remote peers without close metadata retain
 last-turn behavior. All existing guarded exact-conversation resume checks remain.
+
+### Local inference switch
+
+`t config models runtime enable` and `disable` are direct actions with static
+results and optional JSON. They never open a picker or start a provider. The
+switch is persistent and per-user on this machine, shared by all sessions.
+Disable rejects new requests while accepted work may finish; enable restores
+permission without changing saved routing or installing models. Repeating an
+action reports the existing state. Runtime status starts with Enabled/Disabled
+and stays read-only. Errors must preserve the previous saved state.
+
+The `mlx-vlm` provider uses the existing model picker and exact provider/model
+identity. Its runtime is private and managed, so its guide explains installation
+and lifecycle; the desktop-app action is disabled. Verification and measurement
+are separate from LM Studio even when both use the same downloaded artifact.

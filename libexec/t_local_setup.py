@@ -106,22 +106,23 @@ def setup(api, model, steps):
     print('Ollama starts only during local work. Cloud inference is disabled; findings return to the lead.')
 
 
-def setup_mlx(model):
+def setup_mlx(model, provider='lmstudio'):
     local = runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))
     w = worker()
     binary = w['executable']('codex')
     if not binary:
         raise ValueError('Install Codex with t agent install first')
-    local['lms']()
+    if provider == 'lmstudio':
+        local['lms']()
     check_codex(binary)
     command = str(ROOT / 'bin/t')
     check_registration(binary, command)
     with w['reservation']():
         local['install'](model, download_only=True)
-    local['install'](model)
+    local['install'](model, provider=provider)
     register(binary, command)
     check_registration(binary, command)
-    w['save_settings']({'enabled': True, 'model': model, 'provider': 'lmstudio'})
+    w['save_settings']({'enabled': True, 'model': model, 'provider': provider})
     print('MLX local worker enabled. Refresh MCP tools or reopen Codex; select routing in t workflow.')
 
 
@@ -141,8 +142,11 @@ def run(args, api):
                 print(f'{key}: {value}')
             return 0
         model = getattr(args, 'local_model', None)
+        selected_provider = getattr(args, 'local_provider', None)
         disabling = getattr(args, 'disable_local', False)
         yes = getattr(args, 'yes', False)
+        if selected_provider and (not model or disabling):
+            raise ValueError('--provider requires --model and cannot be combined with --disable')
         if model and disabling:
             raise ValueError('--model and --disable cannot be combined')
         if yes and not (model or disabling):
@@ -156,7 +160,7 @@ def run(args, api):
                 current = status()
                 provider = current.get('provider', 'ollama')
                 details = [('Delegation', 'Enabled' if current['enabled'] else 'Disabled'),
-                           ('Provider', 'LM Studio' if provider == 'lmstudio' else 'Ollama'),
+                           ('Provider', {'lmstudio': 'LM Studio', 'ollama': 'Ollama', 'mlx-vlm': 'MLX VLM'}.get(provider, provider)),
                            ('Model', current['model'])]
                 choices = [('setup', 'Install / configure local worker'),
                            ('disable', 'Disable local delegation'), ('back', 'Back')]
@@ -175,6 +179,7 @@ def run(args, api):
                         if not selected:
                             return 130
                         model = selected['model']
+                        selected_provider = selected['provider']
                     else:
                         model = runpy.run_path(str(ROOT / 'libexec/t_local_models.py'))['choose'](dialog)
                     if model == 'custom':
@@ -185,6 +190,8 @@ def run(args, api):
         else:
             model = worker()['model_name'](model)
             is_mlx = any(row['model'] == model for row in runpy.run_path(str(ROOT / 'libexec/t_local_inference.py'))['artifacts']())
+            if selected_provider and (selected_provider == 'ollama') == is_mlx:
+                raise ValueError('Selected provider does not match this artifact')
             steps = [] if is_mlx else installation_plan(api, model)
             lines = [label for label, _ in steps] + [
                 f'Download {model} into {Path.home() / ".ollama/models"}. Large downloads may take time.',
@@ -194,7 +201,7 @@ def run(args, api):
                 'No cloud sign-in is needed for the worker. Existing Codex model defaults stay unchanged.']
             if is_mlx:
                 lines = [f'Install and verify MLX artifact {model} in ~/.lmstudio/models.',
-                         'Requires LM Studio or llmster with the MLX runtime installed.',
+                         'Installs the isolated MLX VLM runtime.' if selected_provider == 'mlx-vlm' else 'Requires LM Studio or llmster with the MLX runtime installed.',
                          f'Register {SERVER} and enable bounded local workers. Select routing in t workflow.']
         if dialog and not dialog.review(lines):
             return 130
@@ -204,7 +211,7 @@ def run(args, api):
         if disabling:
             disable()
         elif is_mlx:
-            setup_mlx(model)
+            setup_mlx(model, selected_provider or 'lmstudio')
         else:
             setup(api, model, steps)
         return 0

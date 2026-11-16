@@ -6,6 +6,16 @@ suppress it; repository rules and custom Markdown retain precedence. The existin
 start/resume/compaction loader still resolves just one workflow. No new setting,
 source-read ledger, tool interception or automatic session reset is introduced.
 
+Enabled workflows also distribute MCP-first session discovery guidance. For
+questions about current or past session work, agents discover and use t's
+`sessions` MCP tools (`find_sessions`, `list_sessions`, then `session_detail`),
+including registered hosts when relevant. They verify candidates before using
+GitHub as supplementary evidence. When runtime MCP tools are unavailable, they
+state that limitation and use `t mcp --call TOOL JSON` before broad Git or
+transcript searches. Discovery does not authorize session-control actions.
+The installed Codex/Claude workflow loaders carry the same guidance, conditional
+on an enabled resolved workflow, so it does not rely on machine-specific prose.
+
 Aim for roughly 2,000 tokens per ordinary tool result. Select fields, records,
 aggregates and relevant excerpts before returning output; use larger results
 when necessary. Keep the full response or log locally when shortening it, label

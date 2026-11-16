@@ -630,7 +630,10 @@ Test model** checks availability even when another session uses a different mode
 Shared local inference: `t config` → **Local worker & models** shows model usage,
 requests, provider setup, CLI help and desktop-app launch actions. Use
 `t config models runtime monitor --view cli` or `--view gui` to monitor the same
-runtime. See [shared model usage](docs/local-workers.md#shared-model-usage) for
+runtime. Pause new requests with `t config models runtime disable` and restore
+them with `t config models runtime enable`; model files and routing are preserved.
+Flash-Next can use the managed `mlx-vlm` provider on a 128 GiB Apple Silicon Mac.
+See [shared model usage](docs/local-workers.md#shared-model-usage) for
 queueing, memory caching, cancellation and read-only status commands.
 
 | Command | Purpose |
@@ -672,6 +675,14 @@ objective". Instruction, pause, and goal tools require the full current
 `session_id` and refuse stale owners or the calling agent. Use
 `session_command` with `{"command":"list"}` to retrieve current IDs for both agents.
 
+To resume in a separate local Terminal or iTerm2 window, call `resume_session`
+with `{"repo":"api","slot":3,"new_window":true}`. The window attaches to the
+guarded resume result without starting another owner or changing existing viewers.
+`session_command` also accepts `new_window: true` with `command: "resume"`.
+The default remains detached. Unsupported terminals, SSH contexts, and window
+creation failures return an error with an attach command; the resumed session
+remains available. A successful window request is not confirmation of agent activity.
+
 `session_command` covers every `t session` verb, using `command` and an array of
 literal CLI `arguments`. For example:
 
@@ -698,6 +709,13 @@ custom or disabled entries, are preserved. Set `T_NO_MCP=1` to skip installation
 Search includes saved Claude transcripts and Codex active/archived rollouts under
 `CODEX_HOME` (default `~/.codex`), excluding injected context and subagent rollouts.
 After registration, refresh MCP tools or reopen the client if tools are unavailable.
+The t-managed Codex and Claude instructions also tell agents to prefer these
+tools for session discovery, verify candidates with `session_detail`, and use
+the CLI backend below when runtime MCP tools are unavailable. This guidance is
+included in enabled workflow context and the installed workflow loader; it does
+not depend on personal instructions. Existing installations receive the loader
+through the backed-up instruction migration in `t system update --relink`.
+Accept that migration and start a new agent session to load the updated instructions.
 The same lookup backend is available without runtime MCP tools:
 
 ```sh

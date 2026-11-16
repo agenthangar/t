@@ -35,10 +35,10 @@ def local_url(value):
     return value.rstrip('/')
 
 
-def request(base, path, payload=None, timeout=5):
+def request(base, path, payload=None, timeout=5, headers=None):
     local_url(base)
     body = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(base + path, data=body, headers={'Content-Type': 'application/json'})
+    req = urllib.request.Request(base + path, data=body, headers={'Content-Type': 'application/json', **(headers or {})})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as response:
         data = response.read(16 * 1024**2 + 1)
     if len(data) > 16 * 1024**2:
@@ -151,8 +151,20 @@ class Providers:
 
     def describe(self, chosen):
         provider, model, context = chosen['provider'], chosen['model'], chosen['context_tokens']
-        base = self.endpoint(provider, start=True)
         local = helper('t_local_inference')
+        if provider == 'mlx-vlm':
+            helper('t_mlx_runtime')['available']()
+            info = local['receipt'](model)
+            if not info:
+                raise ValueError('Model files are missing; download the model first')
+            row = local['report'](local['artifact'](model), self.machine, context, provider=provider)
+            if row.get('verification_allowed') is False:
+                raise ValueError(row['reason'])
+            key = str(local['model_directory'](model))
+            return dict(provider=provider, base=None, model=model, revision=info['revision'], context=context,
+                        key=key, estimate=row['memory_bytes'],
+                        identity=(provider, model, info['revision'], context))
+        base = self.endpoint(provider, start=True)
         if provider == 'lmstudio':
             info = local['receipt'](model)
             if not info:
@@ -240,6 +252,11 @@ class Providers:
             if self.present(instance):
                 instance['last_used'] = time.time()
                 return instance
+            if instance['provider'] == 'mlx-vlm':
+                # A live process with failed readiness still owns its memory.
+                # Confirm shutdown before dropping its recovery journal.
+                self.unload(instance)
+                raise ValueError('Cached provider instance disappeared; start a new conversation')
             del self.instances[identity]
             raise ValueError('Cached provider instance disappeared; start a new conversation')
         # Reuse an exact externally loaded instance without acquiring unload rights.
@@ -248,6 +265,8 @@ class Providers:
                         if row.get('key') == description['key'] for x in row.get('loaded_instances', [])
                         if x.get('config', {}).get('context_length') == description['context']]
             aliases = [x['id'] for x in borrowed]
+        elif description['provider'] == 'mlx-vlm':
+            aliases = []  # Each server is private; never borrow a discovered process.
         else:
             borrowed = [x for x in request(description['base'], '/api/ps')['models']
                         if x.get('digest') == description['revision'] and x.get('context_length') == description['context']]
@@ -268,7 +287,18 @@ class Providers:
                 self.unload(candidates.pop(0))
         provider, base = description['provider'], description['base']
         instance = dict(description, alias=None, owned=(description['provider'] == 'lmstudio' or self.ollama_private), last_used=time.time())
-        if provider == 'lmstudio':
+        if provider == 'mlx-vlm':
+            instance.update(alias=description['key'], owned=True)
+            self.instances[identity] = instance
+            try:
+                helper('t_mlx_runtime')['start'](instance, self.persist)
+            except BaseException:
+                # Keep a failed-stop instance journaled so recovery cannot lose ownership.
+                if not helper('t_mlx_runtime')['alive'](instance):
+                    self.instances.pop(identity, None)
+                    self.persist()
+                raise
+        elif provider == 'lmstudio':
             before = {x['id'] for row in request(base, '/api/v1/models')['models'] for x in row.get('loaded_instances', [])}
             result = request(base, '/api/v1/models/load', {'model': description['key'],
                              'context_length': description['context'], 'echo_load_config': True}, timeout=300)
@@ -292,6 +322,8 @@ class Providers:
         return instance
 
     def present(self, instance):
+        if instance['provider'] == 'mlx-vlm':
+            return helper('t_mlx_runtime')['ready'](instance)
         if instance['provider'] == 'lmstudio':
             return any(row.get('key') == instance['key'] and any(
                 x.get('id') == instance['alias'] and x.get('config', {}).get('context_length') == instance['context']
@@ -302,7 +334,9 @@ class Providers:
     def unload(self, instance):
         if not instance.get('owned'):
             raise ValueError('Unload this model in its provider app; t did not load it')
-        if instance['provider'] == 'lmstudio':
+        if instance['provider'] == 'mlx-vlm':
+            helper('t_mlx_runtime')['stop'](instance)
+        elif instance['provider'] == 'lmstudio':
             request(instance['base'], '/api/v1/models/unload', {'instance_id': instance['alias']}, timeout=30)
         else:
             request(instance['base'], '/api/generate', {'model': instance['alias'], 'keep_alive': 0, 'stream': False}, timeout=30)

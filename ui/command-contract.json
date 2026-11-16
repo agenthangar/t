@@ -10685,7 +10685,9 @@
       "scope": "current checkout or explicit --repo",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow_update.py::test_command_contract"
+        "tests/test_workflow_update.py::test_command_contract",
+        "tests/test_workflow_update.py::test_installed_loaders_ship_session_discovery_policy",
+        "tests/test_workflow_update.py::test_resolved_discovery_policy_respects_disabled_and_excluded_scopes"
       ],
       "modes": {
         "default": {
@@ -10718,7 +10720,8 @@
           "layout": "machine"
         }
       },
-      "layout": "plain"
+      "layout": "plain",
+      "notes": "Enabled context distributes MCP-first session discovery, candidate verification and the t mcp --call fallback. Native workflow loaders carry the same guidance conditional on enabled scope; disabled/excluded policies suppress it. Discovery does not authorize session controls."
     },
     "remote workflow context": {
       "patterns": [
@@ -11177,6 +11180,210 @@
         }
       },
       "notes": "Read-only bounded evidence, about 8000 characters for ordinary text. Never infer execution success from logs. Distinguish response omissions, scan limits and runner storage loss; retain complete-log references. Explicit run ID required; no picker, provider access, configuration write or update prompt.",
+      "layout": "mixed"
+    },
+    "config models runtime enable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "config models runtime disable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models runtime enable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models runtime disable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
       "layout": "mixed"
     }
   },
@@ -11651,6 +11858,36 @@
         "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible"
       ],
       "notes": "Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption."
+    },
+    "mcp_session_resume": {
+      "renderer": "machine",
+      "patterns": [
+        "machine",
+        "action"
+      ],
+      "modes": {
+        "detached": {
+          "condition": "resume_session or session_command resume, new_window omitted or false",
+          "patterns": [
+            "machine",
+            "action"
+          ],
+          "behavior": "Guarded newest-saved local resume without attaching the MCP transport"
+        },
+        "new_window": {
+          "condition": "new_window=true",
+          "patterns": [
+            "machine",
+            "action"
+          ],
+          "behavior": "After guarded resume, reuse the CLI window helper to view the exact resolved local tmux session; window failure retains the session and reports an attach command. No new CLI flags or picker."
+        }
+      },
+      "tests": [
+        "tests/test_mcp_controls.py::test_resume_window_routes_through_guarded_shell",
+        "tests/test_mcp_controls.py::test_mcp_window_attachment_checks_target_and_reports_failure",
+        "tests/test_resume_history.py::test_mcp_resume_window_uses_resolved_history_slot"
+      ]
     }
   },
   "entrypoints": {

@@ -46,7 +46,7 @@ def policy(value=None):
     if not isinstance(value, dict) or set(value) - set(DEFAULT):
         raise ValueError('unsupported inference policy fields')
     result = dict(DEFAULT, **value)
-    if result['mode'] not in MODES or result['provider'] not in ('ollama', 'lmstudio'):
+    if result['mode'] not in MODES or result['provider'] not in ('ollama', 'lmstudio', 'mlx-vlm'):
         raise ValueError('unsupported inference mode or provider')
     if result['on_cloud_failure'] not in ('pause', 'local', 'ask'):
         raise ValueError('on_cloud_failure must be pause, local or ask')
@@ -193,19 +193,24 @@ def request(url, data=None, timeout=15):
         return json.load(response)
 
 
-def report(row, machine, context=32768):
-    result = dict(row, provider='lmstudio')
+def report(row, machine, context=32768, provider='lmstudio'):
+    result = dict(row, provider=provider)
     ram = machine.get('ram_bytes')
-    memory = int(row.get('resident_bytes', row['bytes']) * 1.2 + 4 * 1024**3 * context / 32768)
+    # MLX VLM maps PLE tables instead of materializing them. Reserve 10% over
+    # publisher resident weights plus explicit KV overhead; admission also keeps
+    # 10% of system RAM free. Other providers retain their 20% estimate.
+    overhead = 1.1 if provider == 'mlx-vlm' and row.get('special_runtime') else 1.2
+    memory = int(row.get('resident_bytes', row['bytes']) * overhead + 4 * 1024**3 * context / 32768)
     capacity = ram * .8 if ram and 'Apple' in machine.get('accelerator', '') else None
     fit = memory <= capacity if capacity else None
     installed = receipt(row['model'])
+    evidence = installed if provider == 'lmstudio' else installed.get('verifications', {}).get(provider, {})
     memory_fit = fit
     if row.get('minimum_ram_bytes') and ram and ram < row['minimum_ram_bytes']:
         memory_fit = False
-    verified = installed.get('verified_context', 0) >= context
-    if installed.get('verified_hardware') is not None or row.get('special_runtime'):
-        verified = verified and installed.get('verified_hardware') == {
+    verified = evidence.get('verified_context', 0) >= context
+    if evidence.get('verified_hardware') is not None or row.get('special_runtime'):
+        verified = verified and evidence.get('verified_hardware') == {
             k: machine.get(k) for k in ('ram_bytes', 'accelerator')}
     fit = memory_fit
     if row.get('special_runtime') and fit is True and not verified:
@@ -213,11 +218,11 @@ def report(row, machine, context=32768):
     result.update(context_tokens=context, memory_bytes=memory, fit=fit, installed=bool(installed),
                   ready=bool(verified and fit is True), verification_allowed=memory_fit is True,
                   revision=installed.get('revision'),
-                  verification_error=installed.get('verification_error'),
+                  verification_error=evidence.get('verification_error'),
                   reason='Runtime verification required for memory-mapped weights' if row.get('special_runtime') and fit is None else
                          'estimated fit' if fit else 'memory estimate exceeds budget' if fit is False else 'Apple unified memory required')
     result['disk_fit'] = bool(installed) or machine['free_disk_bytes'] >= row['bytes'] + 2 * 1024**3
-    measure = installed.get('measurement')
+    measure = evidence.get('measurement')
     if measure:
         result['measurement'] = dict(measure, stale=(measure.get('revision') != installed.get('revision') or
             measure.get('context_tokens') != context or any(measure.get('hardware', {}).get(k) != machine.get(k) for k in ('ram_bytes', 'accelerator'))))
@@ -298,7 +303,7 @@ def download_command(command, cancel=None, **kwargs):
                 process.wait()
 
 
-def install(name, download_only=False, context=32768, cancel=None):
+def install(name, download_only=False, context=32768, cancel=None, provider='lmstudio'):
     artifact(name)
     directory = model_directory(name)
     directory.mkdir(parents=True, exist_ok=True)
@@ -307,18 +312,20 @@ def install(name, download_only=False, context=32768, cancel=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError('Another install or test of this artifact is in progress') from None
-        return install_locked(name, download_only, context, cancel)
+        return install_locked(name, download_only, context, cancel, provider)
 
 
-def install_locked(name, download_only=False, context=32768, cancel=None):
+def install_locked(name, download_only=False, context=32768, cancel=None, provider='lmstudio'):
     policy({'context_tokens': context})
     row = artifact(name)
     destination = model_directory(name)
     machine = helper('t_local_models')['hardware']()
-    suitability = report(row, machine, context)
+    suitability = report(row, machine, context, provider)
     if not suitability['disk_fit'] or (not download_only and not suitability.get('verification_allowed', suitability['fit'] is True)):
         raise ValueError(suitability['reason'] if suitability['disk_fit'] else 'insufficient disk space')
-    if not download_only and not receipt(name):
+    if provider == 'mlx-vlm' and not download_only:
+        helper('t_mlx_runtime')['install']()
+    if provider == 'lmstudio' and not download_only and not receipt(name):
         lms()  # Report a missing runtime before starting a large download.
     existing = receipt(name)
     if not existing:
@@ -364,11 +371,13 @@ def install_locked(name, download_only=False, context=32768, cancel=None):
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
     if not download_only:
         # Contention and runtime outages do not erase prior valid inference evidence.
-        existing.pop('verification_error', None)
+        evidence = existing if provider == 'lmstudio' else existing.setdefault('verifications', {}).setdefault(provider, {})
+        evidence.pop('verification_error', None)
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
         try:
-            lms()
-            with managed_runtime(name, 'lmstudio', context, 'verification', cancel=cancel) as (base, alias, _):
+            if provider == 'lmstudio':
+                lms()
+            with managed_runtime(name, provider, context, 'verification', cancel=cancel) as (base, alias, _):
                 answer = request(base + '/v1/responses', {'model': alias, 'input': 'Reply with OK.', 'max_output_tokens': 128}, timeout=2100)
                 output = answer.get('output') if isinstance(answer, dict) else None
                 if not isinstance(output, list) or not any(isinstance(item, dict) and item.get('type') == 'message' and
@@ -378,22 +387,22 @@ def install_locked(name, download_only=False, context=32768, cancel=None):
                                for part in item['content']) for item in output):
                     raise ValueError('local runtime returned no output text; readiness not verified')
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            existing['verification_error'] = re.sub(r'[\x00-\x1f\x7f]', ' ', str(exc))[-600:]
+            evidence['verification_error'] = re.sub(r'[\x00-\x1f\x7f]', ' ', str(exc))[-600:]
             (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
             raise
-        existing['verified_context'] = context
-        existing['verified_hardware'] = {k: machine.get(k) for k in ('ram_bytes', 'accelerator')}
+        evidence['verified_context'] = context
+        evidence['verified_hardware'] = {k: machine.get(k) for k in ('ram_bytes', 'accelerator')}
         (destination / '.t-artifact.json').write_text(json.dumps(existing, indent=2))
-    return dict(model=name, downloaded=True, ready=report(row, machine, context)['ready'], revision=existing['revision'])
+    return dict(model=name, downloaded=True, ready=report(row, machine, context, provider)['ready'], provider=provider, revision=existing['revision'])
 
 
-def measure(name, context=32768, cancel=None):
+def measure(name, context=32768, cancel=None, provider='lmstudio'):
     policy({'context_tokens': context})
-    suitability = report(artifact(name), helper('t_local_models')['hardware'](), context)
+    suitability = report(artifact(name), helper('t_local_models')['hardware'](), context, provider)
     if suitability['fit'] is not True:
         raise ValueError(suitability['reason'])
     readings = []
-    with managed_runtime(name, 'lmstudio', context, 'measurement', cancel=cancel) as (base, alias, info):
+    with managed_runtime(name, provider, context, 'measurement', cancel=cancel) as (base, alias, info):
         for iteration in range(4):
             start = time.monotonic()
             result = request(base + '/v1/chat/completions', {'model': alias, 'messages': [{'role': 'user', 'content':
@@ -408,8 +417,9 @@ def measure(name, context=32768, cancel=None):
         measurement = {'metric': 'output tokens / request wall seconds (includes prefill)', 'median': statistics.median(readings),
                        'min': min(readings), 'max': max(readings), 'context_tokens': context, 'workload_version': 1,
                        'hardware': helper('t_local_models')['hardware'](), 'platform': platform.platform(),
-                       'cli_version': run_lms('--version').strip(), 'runtime_inventory': run_lms('runtime', 'ls').strip(), 'measured_at': time.time(), 'revision': info['revision']}
-    info['measurement'] = measurement
+                       'cli_version': run_lms('--version').strip() if provider == 'lmstudio' else helper('t_mlx_runtime')['VERSION'], 'runtime_inventory': run_lms('runtime', 'ls').strip() if provider == 'lmstudio' else 'mlx-vlm', 'measured_at': time.time(), 'revision': info['revision']}
+    evidence = info if provider == 'lmstudio' else info.setdefault('verifications', {}).setdefault(provider, {})
+    evidence['measurement'] = measurement
     (model_directory(name) / '.t-artifact.json').write_text(json.dumps(info, indent=2))
     return measurement
 
@@ -436,7 +446,7 @@ def catalogue(suite='swe-bench-pro', context=32768):
         raise ValueError('unknown benchmark suite')
     models = helper('t_local_models')
     machine = models['hardware']()
-    rows = [report(row, machine, context) for row in artifacts()]
+    rows = [report(row, machine, context, provider) for row in artifacts() for provider in ('lmstudio', 'mlx-vlm')]
     legacy = models['report']()
     for row in legacy['models']:
         row = dict(row, provider='ollama', installed=models['missing_bytes'](row['model'], row['bytes']) == 0)
@@ -536,6 +546,8 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
     focus = 'use' if row.get('ready') else 'install'
     while True:
         disabled = {}
+        if row['provider'] == 'mlx-vlm':
+            disabled['app'] = 'MLX VLM runs privately in the command line.'
         if not row.get('ready'):
             disabled['use'] = disabled['measure'] = 'Verify readiness first.'
         if not row.get('verification_allowed', row['fit'] is True):
@@ -551,7 +563,8 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
         actions += [('unload', 'Unload model'), ('guide', 'CLI guide'), ('app', 'Open desktop app'),
                     ('benchmarks', 'Benchmarks ›'), ('artifact', 'Artifact & runtime ›'), ('back', 'Back')]
         view = helper('t_local_manager')['status']()
-        instances = [x for x in view.get('models', []) if x['model'] == row['model'] and x.get('owned')]
+        instances = [x for x in view.get('models', []) if x['model'] == row['model'] and
+                     x['provider'] == row['provider'] and x.get('owned')]
         if not instances:
             disabled['unload'] = 'This model has no instance loaded by t.'
         elif any(x.get('active') or x.get('pinned') for x in instances):
@@ -619,7 +632,7 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
         if action != 'measure':
             review = ([f"Reuse downloaded files · {row['bytes']/1e9:.1f} GB"] if row['installed'] else
                       [f"Download up to {row['bytes']/1e9:.1f} GB",
-                       str(model_directory(row['model']) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models')])
+                       str(model_directory(row['model']) if row['provider'] in ('lmstudio', 'mlx-vlm') else Path.home()/'.ollama/models')])
             if action == 'install':
                 review = [row['model'].split('/')[-1], row['provider'], '',
                           'Check       Load model and generate a short reply',
@@ -630,11 +643,11 @@ def model_menu(ui, row, context, use_label='Use in workflow'):
                 continue
         name = row['model']
         def operation(cancel):
-            return ((measure(name, context, cancel=cancel) if action == 'measure' else
-                     install(name, action == 'download', context, cancel=cancel)) if row['provider'] == 'lmstudio' else
+            return ((measure(name, context, cancel=cancel, provider=row['provider']) if action == 'measure' else
+                     install(name, action == 'download', context, cancel=cancel, provider=row['provider'])) if row['provider'] in ('lmstudio', 'mlx-vlm') else
                     ollama_action(name, action, action == 'download', context, cancel=cancel))
         helper('t_local_runtime_ui')['run_model_action'](ui, operation, name, preflight=action != 'download')
-        row = next(r for r in catalogue(context=context)['models'] if r['model'] == row['model'])
+        row = next(r for r in catalogue(context=context)['models'] if selection(r) == selection(row))
 
 
 BENCHMARK_LABELS = {'swe-bench-pro': 'SWE Pro', 'deepswe': 'DeepSWE',
@@ -673,7 +686,7 @@ def prepare_model(ui, row, context):
                    ('Files', f"{row['bytes']/1e9:.1f} GB · " + ('On disk · Reuse files' if row['installed'] else 'To download')),
                    ('Context', f'{context:,} tokens')]
         if not row['installed']:
-            summary.append(('Location', str(model_directory(row['model']) if row['provider'] == 'lmstudio' else Path.home()/'.ollama/models')))
+            summary.append(('Location', str(model_directory(row['model']) if row['provider'] in ('lmstudio', 'mlx-vlm') else Path.home()/'.ollama/models')))
         if error:
             summary.append(('Last check', error))
         action = 'Verify & use' if row['installed'] else 'Download, verify & use'
@@ -681,8 +694,8 @@ def prepare_model(ui, row, context):
                    context=summary, accents={'prepare': 'g'}) != 'prepare':
             return None
         def operation(cancel):
-            if row['provider'] == 'lmstudio':
-                return install(row['model'], False, context, cancel=cancel)
+            if row['provider'] in ('lmstudio', 'mlx-vlm'):
+                return install(row['model'], False, context, cancel=cancel, provider=row['provider'])
             return ollama_action(row['model'], 'install', context=context, cancel=cancel)
         try:
             result = helper('t_local_runtime_ui')['run_model_action'](ui, operation, row['model'], preflight=True)
@@ -980,7 +993,7 @@ def command(args):
                     return 130
             finally:
                 dialog.close()
-        result = (measure(name, context) if action == 'measure' else install(name, getattr(args, 'download_only', False), context)) if provider == 'lmstudio' else ollama_action(name, action, getattr(args, 'download_only', False), context)
+        result = (measure(name, context, provider=provider) if action == 'measure' else install(name, getattr(args, 'download_only', False), context, provider=provider)) if provider in ('lmstudio', 'mlx-vlm') else ollama_action(name, action, getattr(args, 'download_only', False), context)
     if action == 'show' and not getattr(args, 'json', False):
         print('\n'.join(detail_lines(result)))
     else:
@@ -994,7 +1007,7 @@ def managed_runtime(model, provider, context=32768, kind='session', activity=Non
         raise ValueError('Model action cancelled')
     selected = policy(chosen or {'model': model, 'provider': provider, 'context_tokens': context})
     with helper('t_local_manager')['Client'](selected, kind, activity, cancel) as client:
-        info = dict(receipt(model)) if provider == 'lmstudio' else {}
+        info = dict(receipt(model)) if provider in ('lmstudio', 'mlx-vlm') else {}
         yield client.base, model, info
         if client.error:
             raise ValueError(client.error)
@@ -1007,6 +1020,8 @@ def reserved_provider_runtime(chosen):
     Entering the queued manager under its legacy lock would wait on ourselves.
     The caller must retain reservation() for this context's entire lifetime.
     """
+    if chosen['provider'] == 'mlx-vlm':
+        raise ValueError('MLX VLM requires the managed runtime; eval reservations are not supported')
     if chosen['provider'] == 'lmstudio':
         with runtime(chosen['model'], chosen['context_tokens'], None) as value:
             yield value
@@ -1076,8 +1091,8 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     leased = leased_runtime(chosen)
     if leased:
         fit = {'fit': True}
-    elif chosen['provider'] == 'lmstudio':
-        fit = report(artifact(chosen['model']), helper('t_local_models')['hardware'](), chosen['context_tokens'])
+    elif chosen['provider'] in ('lmstudio', 'mlx-vlm'):
+        fit = report(artifact(chosen['model']), helper('t_local_models')['hardware'](), chosen['context_tokens'], chosen['provider'])
     else:
         fit = next((r for r in catalogue(context=chosen['context_tokens'])['models'] if r['model'] == chosen['model'] and r['provider'] == 'ollama'), None)
         if fit is None:
@@ -1121,7 +1136,7 @@ def lead(argv, cwd=None, chosen=None, runner=None):
                 continue
             else:
                 filtered.append(arg)
-        forced = ['--oss', '--local-provider', chosen['provider'], '--model', alias, '-c', 'features.multi_agent=false',
+        forced = ['--oss', '--local-provider', 'lmstudio' if chosen['provider'] == 'mlx-vlm' else chosen['provider'], '--model', alias, '-c', 'features.multi_agent=false',
                   '-c', 'features.fast_mode=false', '-c', 'approvals_reviewer="user"', '-c', 'mcp_servers={}', '-c', 'web_search="disabled"',
                   '-c', f'model_context_window={chosen["context_tokens"]}',
                   '-c', f'model_auto_compact_token_limit={int(chosen["context_tokens"]*.75)}']

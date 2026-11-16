@@ -384,3 +384,17 @@ def test_hub_invalid_worker_settings_exposes_error_without_implying_provider(ui_
     assert ui.pages[0][2]['values']['models']=='Unavailable'
     assert 'settings unavailable' in str(ui.pages[0][2]['context'])
     assert 'invalid local worker configuration' in ui.pages[1][1]
+
+
+def test_inference_switch_commands(ui_module, monkeypatch, capsys, t_mod):
+    calls = []
+    monkeypatch.setattr(ui_module, 'manager', lambda: {'set_inference_enabled': lambda enabled:
+        calls.append(enabled) or {'enabled': enabled, 'changed': True}})
+    for verb, enabled in [('disable', False), ('enable', True)]:
+        args = t_mod.build_parser().parse_args(['config', 'models', 'runtime', verb, '--json'])
+        assert ui_module.command(args, {}) == 0
+        assert json.loads(capsys.readouterr().out)['enabled'] is enabled
+        args.json = False
+        assert ui_module.command(args, {}) == 0
+        assert ('enabled' if enabled else 'disabled') in capsys.readouterr().out
+    assert calls == [False, False, True, True]
