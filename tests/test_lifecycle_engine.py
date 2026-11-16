@@ -106,6 +106,10 @@ def test_resume_never_records_readiness_before_exact_owner(engine, monkeypatch, 
             engine.execute('resume', args, adapter, token=TOKEN)
     else:
         engine.execute('resume', args, adapter, token=TOKEN)
+    receipt = json.loads((engine.state_home() / 'operations' / (TOKEN + '.json')).read_text())
+    assert receipt['timings'] and all(value['seconds'] >= 0 for value in receipt['timings'].values())
+    if failed:
+        assert receipt['phase'] == 'failed' and receipt['pending'] in receipt['timings']
     actions = [e[0] for e in adapter.events]
     if failed in ('preflight', 'resume', 'ready'):
         assert 'record' not in actions

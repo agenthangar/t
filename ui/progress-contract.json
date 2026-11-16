@@ -1,6 +1,10 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_pane_identity.py:command:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Read-only tmux and process probes each have a three-second timeout and return identity evidence to the shell scanner. The enclosing _dev_session_rows/_dev_rows_all seams own progress; this private protocol must not emit a competing spinner or contaminate identity output."
+    },
     "libexec/t_offline.py:startup_attachment.command:subprocess.run": {
       "kind": "protocol",
       "reason": "Local tmux ownership queries and pane marker updates each have a two-second timeout. They run while recovery owns the terminal and must not repaint a competing spinner over the model picker."

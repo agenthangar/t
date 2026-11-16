@@ -6,6 +6,44 @@ RAM snapshots, refresh scheduling, incremental indexes and SQLite persistence.
 Command reads never scan transcripts, contact peers, or open the cache database.
 Live ownership checks before session actions remain uncached.
 
+## Saved-resume ownership checks
+
+After selection, saved resume uses a private ownership-only scan at each existing
+safety checkpoint. It retains exact conversation, workspace, agent and host
+identity, but does not collect titles, models, welcome-screen state or PR metadata.
+Foreground owner handles remain usable. Updated peers advertise the private
+scanner within the existing `ssh … zsh -lic` invocation; older peers retain their
+full live scan. Host failure, cancellation and timeout policies are unchanged.
+
+Codex pane validation batches process-start observations and reads its index once
+per scan. Current title/footer evidence is collected afresh; pane replacement and
+process-birth changes reject the batch and retain individual resolution. The
+existing artifact API can reuse index metadata and parsed rollout headers only
+while their device/inode/size/mtime/ctime stamps match, including the SQLite WAL.
+Parser-version changes invalidate these artifacts. Changes during reads reject
+reuse. The total cache-access budget is 100 ms per validator; cache unavailability
+falls back to direct reads without starting a service or waiting for discovery.
+Prompt bodies and pane text are not stored in these artifacts.
+
+Neither cached rows nor a cached negative lookup establish that a writer is
+absent. Native writer locks, source reconciliation, worktree reservations and
+pre-launch rechecks remain live. No checkpoint is removed or authorized by a TTL.
+
+Lifecycle operation receipts now include each phase's latest-attempt start time
+and monotonic elapsed seconds, including failed phases. Existing receipts remain
+readable; timings never change retry or launch decisions. These distinguish
+preflight, launch and readiness costs without exposing new public options.
+
+Reproduce the isolated scanner benchmark with
+`python3 scripts/benchmark_resume.py --baseline-ref COMMIT --samples 10`.
+It uses disposable Git/configuration/agent stores, a private tmux socket and
+synthetic native processes, verifies exact identities and reports cold/warm
+measurements for 0, 1 and 30 sessions. The subprocess counters cover tmux, ps and
+Python probe invocations. Run
+`python3 -m pytest -q -s tests/test_resume_performance.py` for complete saved-resume
+preparation and lifecycle-stage timings. Synthetic-agent readiness does not
+measure native Codex conversation loading. Native desktop windows are never opened.
+
 ## Immediate browsing and recovery
 
 Open and resume show retained results immediately, including while activity is

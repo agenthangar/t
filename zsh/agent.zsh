@@ -394,50 +394,7 @@ _codex_pane_sid() {
   pane_title=$(tmux display-message -p -t "=$session:" '#{pane_title}' 2>/dev/null)
   [[ -n $pane_title ]] || return 0
   pane_text=$(tmux capture-pane -p -t "=$session:" 2>/dev/null)
-  python3 - "$db" "$dir" "$start" "$pane_title" "$pane_text" "$T_HOME" <<'PY' 2>/dev/null
-import datetime, json, os, re, runpy, sqlite3, sys
-try:
-    db, cwd, started, pane_title, pane = sys.argv[1:6]
-    start = datetime.datetime.strptime(started.strip(), '%a %b %d %H:%M:%S %Y').timestamp()
-    name, sep, folder = pane_title.rpartition(' | ')
-    if not sep or not name or folder != os.path.basename(cwd):
-        sys.exit(0)
-    # Codex decorates the title while working or requesting input. These are
-    # transient UI prefixes, absent from both the thread name and status footer.
-    name = re.sub(r'^(?:[\u2800-\u28ff] |\[ [.!] \] Action Required \| )', '', name)
-    # The optional profile field may be absent. Identify status lines by their
-    # workspace field so the three-part shortcut help below them is not mistaken
-    # for a footer. Only the last status line counts, even if it is incomplete or
-    # points elsewhere: a title in earlier output is not current evidence.
-    footers = [parts for line in pane.splitlines()
-               if len(parts := line.strip().split(' · ')) >= 2
-               and parts[1].startswith(('/', '~/'))]
-    if not footers:
-        sys.exit(0)
-    footer = footers[-1]
-    if len(footer) < 3 or os.path.expanduser(footer[1]) != cwd or footer[2] != name:
-        sys.exit(0)
-    read = runpy.run_path(sys.argv[-1] + '/libexec/t_codex_store.py')['rows']
-    rows = read(db, "select id,rollout_path,updated_at,archived,first_user_message from threads "
-                     "where cwd=? and name=? and instr(source, '\"subagent\"')=0 limit 2",
-                     (cwd, name), initialize_sidecars=False)
-    # Check uniqueness BEFORE recency: an older namesake is still ambiguous.
-    if len(rows) != 1:
-        sys.exit(0)
-    sid, rollout, updated, archived, prompt = rows[0]
-    if (updated < start or archived or not prompt.strip() or
-            not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', sid)):
-        sys.exit(0)
-    with open(rollout) as f:
-        meta = json.loads(f.readline())
-    payload = meta.get('payload', {})
-    if (meta.get('type') == 'session_meta' and payload.get('id') == sid and
-            payload.get('cwd') == cwd and payload.get('source') in ('cli', 'vscode') and
-            payload.get('thread_source') != 'subagent'):
-        print(sid)
-except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
-    pass
-PY
+  python3 "$T_HOME/libexec/t_pane_identity.py" single "$db" "$dir" "$start" "$pane_title" "$pane_text" 2>/dev/null || true
 }
 
 # _dev_transcript_agent <path> — which agent wrote this transcript, from its name
