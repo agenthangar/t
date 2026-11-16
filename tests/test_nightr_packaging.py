@@ -603,8 +603,8 @@ def test_app_verifies_nested_identities_and_propagates_signature_rejection(sandb
     assert installer.verify_app(sandbox.app, "ABCDE12345", "0.1.0") == "0.1.0"
     assert len(calls) == 5
     for identifier, arguments in zip(["ai.nightr.app", "ai.nightr.controller", "ai.nightr.powerhelper", "ai.nightr.networkworker"], [calls[0], *calls[2:]]):
-        assert f'identifier "{identifier}"' in arguments[arguments.index("-R") + 1]
-        assert '"ABCDE12345"' in arguments[arguments.index("-R") + 1]
+        assert arguments[-2] == f'-R=anchor apple generic and identifier "{identifier}" and certificate leaf[subject.OU] = "ABCDE12345"'
+        assert "-R" not in arguments
     assert calls[1][:4] == ["/usr/sbin/spctl", "--assess", "--type", "execute"]
     with pytest.raises(installer.InstallError, match="identity or version"):
         installer.verify_app(sandbox.app, "OTHER12345", "0.1.0")
@@ -727,7 +727,7 @@ def test_receipt_verification_includes_root_guard_and_matching_app_version(sandb
     monkeypatch.setattr(installer, "run", query)
     assert installer.verify_installed_receipt("ABCDE12345") == "0.1.0"
     assert calls[0] == "root" and calls[1][-1] == installer.INSTALL_GUARD
-    assert 'identifier "ai.nightr.installguard"' in calls[1][calls[1].index("-R") + 1]
+    assert calls[1][-2] == '-R=anchor apple generic and identifier "ai.nightr.installguard" and certificate leaf[subject.OU] = "ABCDE12345"'
     monkeypatch.setattr(installer, "run", lambda *args: plistlib.dumps({"pkg-version": "0.1.1"}).decode())
     with pytest.raises(installer.InstallError, match="receipt differs"): installer.verify_installed_receipt("ABCDE12345")
 
