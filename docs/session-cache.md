@@ -10,6 +10,14 @@ The service starts on demand, without launchd or shell configuration. It owns
 expiry, refresh workers, invalidation, memory, and persistence. Commands do not
 query SQLite or retain independent process-local discovery caches. Live
 ownership checks before session actions remain uncached.
+
+Interactive `t session resume` (including plain slot history) observes pending
+refreshes automatically, with no overall timeout. Return skips to available
+cached results; Esc/Ctrl-C cancels observation only. Settled empty or failed scans
+finish the wait, and skipping preserves a visible incomplete-results warning.
+Nonterminal/JSON callers and private collectors keep immediate snapshot reads.
+Waiting never resets failed-host cooldowns or cancels shared workers.
+
 Fresh allocation does not rebuild display discovery: it asks current peers only
 for retained worktree reservation markers, falling back to the existing live
 inventory on older hosts with desktop integrations. Local foreground preflight
