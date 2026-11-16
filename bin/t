@@ -574,10 +574,10 @@ def _open_discovery_choice(message, available):
         ui.raw()
         choices = [('retry', 'Retry refresh')]
         if available:
-            choices.append(('cached', 'Browse older results'))
+            choices.append(('cached', 'Browse retained results'))
         choices.append(('cancel', 'Cancel'))
         return ui.pick(message, choices, context=(
-            'Failed remote hosts wait an hour; t hosts reset HOST allows an early retry.',))
+            'Retry checks failed targets again; retained sessions are preserved.',))
     finally:
         ui.restore()
 
@@ -11286,6 +11286,7 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     if rec.get('_cached_row') is not None:
         row = dict(rec['_cached_row'])
         row['this_session'] = bool(this_sid and rec.get('sid') == this_sid)
+        row['ago'] = _ago(row.get('activity_epoch', 0), now)
         return row
     sid = rec.get("sid") or ""
     cwd = rec.get("cwd") or ""
@@ -12141,7 +12142,7 @@ def cmd_history(cfg, args):
         if getattr(args, 'refresh', False):
             cache['event'](['local', *cfg.hosts.values()])
         if not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
-            view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'])
+            view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'], choose=_open_discovery_choice)
         else:
             view, notice = cache['discover'](cfg, fields=['catalog']), ''
         if not getattr(args, 'json', False):
@@ -13268,6 +13269,8 @@ SELECTION
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
   LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
+  Retained sessions appear immediately; cold discovery offers wait, retry and cancel.
+  Inventory is retained with a 24-hour reconciliation interval; activity refreshes separately.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
@@ -14720,11 +14723,20 @@ def _main(argv):
         finally:
             history.store.close()
         return 0
+    if argv and argv[0] == '__cache-export':
+        print(json.dumps(_session_discovery()['export_local'](Config(), json.load(sys.stdin))))
+        return 0
     if argv and argv[0] in ('__cache-collect', '__cache-collect-local'):
         os.environ['T_DISCOVERY_COLLECTOR'] = '1'
         spec = json.load(sys.stdin) if argv[0] == '__cache-collect' else {'target': 'local', 'export': True}
-        print(json.dumps(_session_discovery()['collect'](spec, globals())))
-        return 0
+        try:
+            print(json.dumps(_session_discovery()['collect'](spec, globals())))
+            return 0
+        except Exception as error:
+            import traceback
+            print(json.dumps(dict(kind=getattr(error, 'kind', 'collector'), message=str(error),
+                                  detail=getattr(error, 'detail', '') or traceback.format_exc())), file=sys.stderr)
+            return 1
     if len(argv) == 6 and argv[0] == '__cache-record':
         event, sid, agent, cwd, label = argv[1:]
         row = '\t'.join([sid or '-', cwd, label, 'detached', 'none', '-', agent])
@@ -14732,8 +14744,11 @@ def _main(argv):
         return 0
     if argv and argv[0] == '__cache-event':
         cfg = Config()
-        targets = [cfg.hosts.get(host, host) for host in argv[1:]] or ['local']
-        _session_discovery()['invalidate'](targets)
+        targets = [cfg.hosts.get(host, host) for host in argv[1:] if host != '--activity'] or ['local']
+        if '--activity' in argv:
+            _session_discovery()['request']('activity', {'targets': targets})
+        else:
+            _session_discovery()['invalidate'](targets)
         return 0
     if argv and argv[0] == '__cache-rows':
         cache = _session_discovery()
@@ -14749,7 +14764,7 @@ def _main(argv):
             # stay on the terminal, never in the inventory stream.
             try:
                 with redirect_stdout(sys.stderr):
-                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, **options)
+                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, wait=_resume_discovery_wait, **options)
             except (OSError, ValueError) as error:
                 print(f't open: {error}', file=sys.stderr)
                 return 1
@@ -14776,7 +14791,7 @@ def _main(argv):
         cache = _session_discovery()
         if os.environ.get('T_RESUME_WAIT') == '1' and sys.stdin.isatty() and sys.stderr.isatty():
             with redirect_stdout(sys.stderr):
-                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait)
+                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait, choose=_open_discovery_choice)
             if os.environ.get('T_RESUME_NOTICE_FILE'):
                 Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
         else:

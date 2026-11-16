@@ -999,7 +999,7 @@ _dev_attach_fg() {
   tsess=${sel%%$'\t'*}
   label=$(print -r -- "$sel" | awk -F'\t' '{print $5}')
   _dev_workflow_attach "${sel##*$'\t'}"
-  _t_discovery_event local
+  _t_discovery_event local --activity
   echo "Attaching $label in place (tmux session $tsess)"
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
@@ -2416,10 +2416,15 @@ _t_history_owner() {
     current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
       print -u2 't resume: selected owner exited; rerun t resume'; return 1
     }
-    [[ $current == $identity && ${actual_dir:A} == $dir && $actual_agent == $agent &&
-       ( -z $sid || -z $actual_sid || $actual_sid == $sid ) ]] || {
-      print -u2 't resume: selected owner changed; rerun t resume'; return 1
-    }
+    local mismatch=
+    if [[ $current != $identity ]]; then mismatch='session identity'
+    elif [[ ${actual_dir:A} != $dir ]]; then mismatch=workspace
+    elif [[ $actual_agent != $agent ]]; then mismatch=agent
+    elif [[ -n $sid && -n $actual_sid && $actual_sid != $sid ]]; then mismatch=conversation
+    fi
+    if [[ -n $mismatch ]]; then
+      print -u2 -r -- "t resume: selected owner changed ($mismatch); rerun t resume"; return 1
+    fi
     if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
       print -u2 -- "t resume: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
       return 1
@@ -2440,7 +2445,7 @@ _t_history_owner() {
 _t_history_attach() {
   local immutable agent=$4
   immutable=$(_t_history_owner "$@") || return $?
-  _t_discovery_event local
+  _t_discovery_event local --activity
   _dev_workflow_attach "$agent"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi
@@ -2953,7 +2958,7 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
-  _t_discovery_event local
+  _t_discovery_event local --activity
   _dev_workflow_attach "${2:-}"
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
     tmux has-session -t "=$1:" || return 1

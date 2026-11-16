@@ -64,16 +64,21 @@ def clean(value):
 @_spinner('Loading history metadata')
 def run(argv, *, cwd=None, timeout=30, optional=False):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    detail = ''
     try:
         result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                                 timeout=timeout, stdin=subprocess.DEVNULL, start_new_session=True)
         if not result.returncode:
             return result.stdout
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+        detail = clean(result.stderr)[-800:]
+    except subprocess.TimeoutExpired:
+        detail = f'timed out after {timeout} seconds'
+    except OSError as error:
+        detail = clean(str(error))[-800:]
     if optional:
         return ''
-    raise HistoryError(f'{argv[0]} failed; history and existing workspaces were retained')
+    message = f'{argv[0]} failed; history and existing workspaces were retained'
+    raise HistoryError(message + (': ' + detail if detail else ''))
 
 
 def slug(remote):
@@ -827,6 +832,9 @@ class HistoryCommand:
                     and 0 <= now - value['verified'] < REPOSITORY_PROOF_TTL)
         if self.strict_identity or not valid(proof):
             proof = None
+            if getattr(self, 'cache_discovery', False) and not self.strict_identity:
+                self.repository_proofs[identity] = None
+                return None  # Display collection must never wait for GitHub.
             if self.strict_identity:
                 self.fresh_repository_proofs.add(identity)
             try:
@@ -865,6 +873,8 @@ class HistoryCommand:
 
     def local_catalog(self):
         """Export host-local metadata, never evidence imported from another host."""
+        if getattr(self, 'cache_discovery', False):
+            return self.incremental_catalog()
         self.check_auth()
         repositories = {}
         for alias, path in self.cfg.repos.items():
@@ -913,6 +923,137 @@ class HistoryCommand:
         if self.diagnostics_enabled:
             payload['diagnostics'] = self.diagnostic_rows()
         return payload
+
+    def incremental_catalog(self):
+        """One manifest walk per host, one parse/merge per changed transcript.
+
+        Repository filtering happens after identification, never by rescanning
+        the same source tree for each configured repository. The cache service
+        owns the manifest; durable history remains independently recoverable.
+        """
+        codex = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
+        claude = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+        key = 'catalog-manifest-v2:' + json.dumps([PARSER_VERSION, str(self.store.directory), self.cfg.repos,
+                                                 self.cfg.worktree_root, str(codex), str(claude)], sort_keys=True)
+        old = _CACHE_REQUEST('artifact', {'key': key}).get('value') or {}
+        # Codex names and relocated workspaces can change without appending a
+        # rollout. Read its index once, independently of transcript file stamps.
+        native = []
+        for database in sorted(codex.glob('state_*.sqlite'), reverse=True):
+            try:
+                native = [dict(row) for row in _codex_rows(database, 'select * from threads',
+                          initialize_sidecars=False, timeout=.2, row_factory=sqlite3.Row)]
+                break
+            except sqlite3.Error:
+                continue
+        paths = {}
+        for root, pattern, agent, archived in (
+                (claude / 'projects', '*/*.jsonl', 'claude', False),
+                (codex / 'sessions', '**/rollout-*.jsonl', 'codex', False),
+                (codex / 'archived_sessions', '**/rollout-*.jsonl', 'codex', True)):
+            for path in root.glob(pattern):
+                try:
+                    info = path.stat()
+                except FileNotFoundError:
+                    continue
+                paths[str(path)] = [info.st_ino, info.st_size, info.st_mtime_ns, agent, archived]
+        for row in native:
+            if '"subagent"' in str(row.get('source', '')) or not row.get('rollout_path'):
+                continue
+            path = Path(row['rollout_path'])
+            if str(path) in paths:
+                continue
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            paths[str(path)] = [info.st_ino, info.st_size, info.st_mtime_ns, 'codex', bool(row.get('archived'))]
+        repositories = {}
+        for alias, path in self.cfg.repos.items():
+            identity = self.canonical_identity(self.identity(alias))
+            self.discovery_identities[alias] = identity
+            repositories.setdefault(identity, dict(repo=identity, alias=alias, path=path))
+        self.catalog_changed_paths = {name for name in set(paths) | set(old.get('files', {}))
+                                      if paths.get(name) != old.get('files', {}).get(name)}
+        self.catalog_paths = set(paths)
+        for name, stamp in paths.items():
+            if old.get('files', {}).get(name) == stamp:
+                continue
+            path, agent, archived = Path(name), stamp[3], stamp[4]
+            identity = None
+            if agent == 'codex':
+                try:
+                    with path.open() as stream:
+                        payload = json.loads(stream.readline()).get('payload', {})
+                except (OSError, ValueError, TypeError, AttributeError):
+                    # Half-written new headers are reconsidered next time.
+                    continue
+                if payload.get('thread_source') == 'subagent' or isinstance(payload.get('source'), dict) and 'subagent' in payload['source']:
+                    continue
+                identity = slug((payload.get('git') or {}).get('repository_url', ''))
+                if identity:
+                    identity = self.canonical_identity(identity)
+                else:
+                    identity = next((repo for alias, repo in self.discovery_identities.items()
+                                     if association_matches(dict(workspace=payload.get('cwd', '')), self.cfg, alias) is not None), None)
+            try:
+                value = self.store.scan(path, agent, metadata_only=True)
+            except (HistoryError, OSError):
+                continue
+            if not value.get('sid'):
+                continue
+            if not identity:
+                identity = next((repo for alias, repo in self.discovery_identities.items()
+                                 if any(association_matches(a, self.cfg, alias) is not None for a in value.get('associations', []))), None)
+            if not identity:
+                continue
+            value.pop('_scan', None)
+            value.update(repo=identity, archived=archived)
+            value['associations'] = [{**a, 'host': 'local', 'slot': recorded_slot(a['workspace'])}
+                                     for a in value.get('associations', [])]
+            value['sources'] = [dict(host='local', path=name, updated=stamp[2] / 1e9, size=stamp[1])]
+            value['updated'] = max(value.get('updated', 0), stamp[2] / 1e9)
+            if not identity.startswith('local:'):
+                value['prs'] = value.get('prs', []) + [dict(repo=p.get('repo') or identity, number=p['number'],
+                    url=f'https://github.com/{p.get("repo") or identity}/pull/{p["number"]}') for p in value.pop('pr_numbers', [])]
+            self.store.merge(value)
+        indexed = {}
+        by_source = {s['path']: record for record in self.store.records() for s in record.get('sources', [])
+                     if s.get('host') == 'local' and s.get('path') in paths}
+        for row in native:
+            name = row.get('rollout_path')
+            original = by_source.get(name)
+            if (not original or original['agent'] != 'codex' or original['sid'] != row.get('id')
+                    or '"subagent"' in str(row.get('source', ''))):
+                continue
+            title = clean(row.get('name') or row.get('title') or row.get('first_user_message'))
+            value = dict(repo=original['repo'], agent='codex', sid=row['id'], title=title, summary=title,
+                         summary_source='index', model=clean(row.get('model')) or '-',
+                         model_source='index' if row.get('model') else 'unknown',
+                         updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')),
+                         associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')),
+                                            commit=row.get('git_sha') or '', evidence='index',
+                                            host='local', slot=recorded_slot(row.get('cwd', '')),
+                                            observed=timestamp(row.get('updated_at')))])
+            indexed[name] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+            if indexed[name] != old.get('index', {}).get(name) or name in self.catalog_changed_paths:
+                self.store.merge(value)
+                self.catalog_changed_paths.add(name)
+        rows = []
+        for original in self.store.records():
+            row = dict(original)
+            row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
+            row['sources'] = [source for source in row.get('sources', [])
+                              if source.get('host') == 'local' and source.get('path') in paths]
+            row.pop('owners', None)
+            row.pop('display', None)
+            if not row['sources'] or not row['associations']:
+                continue
+            repositories.setdefault(row['repo'], dict(repo=row['repo'], alias=row['repo'], path=''))
+            rows.append(row)
+        if self.catalog_changed_paths or not old:
+            _CACHE_REQUEST('artifact', {'key': key, 'value': {'files': paths, 'index': indexed}})
+        return dict(version=1, repositories=list(repositories.values()), conversations=rows)
 
     def import_catalog(self, payload, host):
         if not isinstance(payload, dict) or payload.get('version') != 1:

@@ -234,6 +234,9 @@ _t_history_owner repo-1 selected /repo/1 codex wait
         expected = ('identity is not ready' if outcome == 'timeout' else
                     'exited' if outcome in ('exited', 'dead', 'dead-ready') else 'owner changed')
         assert expected in result.stderr
+        reasons = {'sid': 'conversation', 'cwd': 'session identity', 'agent': 'agent', 'recycled': 'session identity'}
+        if outcome in reasons:
+            assert '(' + reasons[outcome] + ')' in result.stderr
     if outcome == 'timeout':
         assert 't open repo 1' in result.stderr
     if outcome.startswith('dead'):

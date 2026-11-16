@@ -64,7 +64,7 @@ def test_announcements_distinguish_warming_empty_offline(adapter, capsys):
     data['hosts'][0].update(checked=0, error='SSH failure', refreshing=True)
     adapter.announce(data)
     text = capsys.readouterr().err
-    assert 'not yet checked' in text and 'unavailable' in text and 'retaining' in text
+    assert 'not yet checked' in text and 'refresh failed' in text and 'retaining' in text
     data['hosts'][0].update(checked=10000, error='', refreshing=False)
     adapter.announce(data)
     assert 'checked' in capsys.readouterr().err
@@ -188,7 +188,7 @@ def test_failed_cold_host_reports_cooldown(adapter, capsys):
     data['hosts'][0].update(value=None, checked=0, error='offline')
     adapter.announce(data)
     text = capsys.readouterr().err
-    assert 'unavailable' in text and 'refreshing' not in text
+    assert 'refresh failed' in text and 'refreshing' not in text
 
 
 def test_catalog_projection_filters_and_preserves_repository_identity(adapter, monkeypatch):
