@@ -1,7 +1,8 @@
-# Test current work on remote runners
+# Test current work in isolated snapshots
 
 `t runners runs start` sends one immutable snapshot of current files to
-configured GitHub-hosted Linux/macOS runners and registered SSH hosts. It waits
+the local snapshot runner, configured GitHub-hosted Linux/macOS runners or
+registered SSH hosts. With no configured targets, local is the default. It waits
 for every selected target and retains a local receipt, combined logs and declared
 artifacts. Source edits do not need a commit or push. This is test execution;
 agent sessions and their one-live-owner rules are independent.
@@ -13,6 +14,11 @@ Linux and macOS support `x64` and `arm64` where the selected backend provides
 them. Windows execution is not supported in this version: the process-group,
 file-mode and SSH shell protocol is POSIX. Native desktop tests remain separately
 opt-in; choosing macOS does not authorize or prove an interactive GUI session.
+
+For this repository, use `python3 scripts/local_smoke.py` before publishing. It
+selects local execution explicitly and records the shared essential-flow smoke
+receipt checked by the pre-push hook. Rerun after integrating main or resolving
+conflicts. See [CI validation](ci.md); broad local regression runs are not required.
 
 ## Configure
 

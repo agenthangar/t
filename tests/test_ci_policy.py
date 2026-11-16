@@ -1,69 +1,39 @@
-"""Fast selection cannot accidentally omit new tests or accept skipped gates."""
+"""Routine smoke and exact-commit full validation have separate gates."""
 import json
+import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from scripts import ci_policy as policy, ci_shards as shards
+from scripts import ci_policy as policy
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('path,full', [
-    ('README.md', False), ('docs/releases.md', False),
-    ('libexec/t_usage.py', False), ('libexec/t_lifecycle.py', True),
-    ('libexec/t_codex_ownership.py', True), ('bin/t', True),
-    ('ui/fzf.sh', True), ('tests/new_helper.py', True),
-    ('tests/test_usage.py', False), ('tests/test_future.py', False),
-    ('tests/conftest.py', True), ('tests/test_onboarding_pty.py', True),
-    ('tests/test_history_picker.py', True), ('tests/test_ci_shards.py', True),
-    ('.github/workflows/ci.yml', True), ('scripts/release.py', True),
-])
-def test_risky_changes_expand_validation(path, full):
-    assert policy.requires_full([path]) is full
-
-
-def test_fast_selection_keeps_unknown_tests_and_real_safety_cases():
-    assert policy.fast_node('tests/test_future.py::test_future')
-    assert policy.fast_node('tests/test_session_lifecycle.py::test_concurrent_alias_opens_keep_one_worktree_owner')
-    assert policy.fast_node('tests/test_session_lifecycle.py::test_public_remote_open_uses_login_shell_and_reattaches[codex]')
-    assert not policy.fast_node('tests/test_lifecycle_transfer_e2e.py::test_move')
-    assert not policy.fast_node('tests/test_session_lifecycle.py::test_public_resume_revives_saved_thread_once[codex]')
-
-
-def test_fast_collection_records_omissions_and_is_exclusive():
-    options = {'--ci-shard': None, '--ci-shards': 4, '--ci-legacy': False, '--ci-fast': True}
-    omitted = []
-    config = SimpleNamespace(_ci_audit={}, getoption=options.__getitem__,
-                             hook=SimpleNamespace(pytest_deselected=lambda **kw: omitted.extend(kw['items'])))
-    nodes = ['tests/test_future.py::test_it', 'tests/test_lifecycle_transfer_e2e.py::test_move']
-    items = [SimpleNamespace(nodeid=node, get_closest_marker=lambda name: None) for node in nodes]
-    shards.pytest_collection_modifyitems(config, items)
-    assert [item.nodeid for item in items] == nodes[:1]
-    assert [item.nodeid for item in omitted] == nodes[1:]
-    assert config._ci_audit['full'] == sorted(nodes)
-    options['--ci-legacy'] = True
-    with pytest.raises(ValueError, match='exclusive'):
-        shards.pytest_collection_modifyitems(config, items)
-
-
-def test_fast_shards_partition_all_eligible_cases_once(monkeypatch):
-    monkeypatch.setattr(shards, 'read_json', lambda path: {'tests/test_new.py': 2, 'tests/test_other.py': 1})
-    nodes = ['tests/test_new.py::test_one', 'tests/test_other.py::test_two',
-             'tests/test_lifecycle_transfer_e2e.py::test_deferred', 'tests/test_picker_ui.py::test_real']
-    selections = []
-    for index in range(2):
-        options = {'--ci-shard': index, '--ci-shards': 2, '--ci-legacy': False, '--ci-fast': True}
-        config = SimpleNamespace(_ci_audit={}, getoption=options.__getitem__,
-                                 hook=SimpleNamespace(pytest_deselected=lambda **kw: None))
-        items = [SimpleNamespace(nodeid=node, get_closest_marker=lambda name, n=node: n.endswith('test_real')) for node in nodes]
-        shards.pytest_collection_modifyitems(config, items)
-        selections.extend(item.nodeid for item in items)
-    assert sorted(selections) == sorted(nodes[:2])
+def test_routine_scope_ignores_changed_paths(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr('sys.argv', ['ci_policy.py', 'scope'])
+    output = tmp_path / 'output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv('FORCE_FULL', 'false')
+    monkeypatch.setenv('PR_BASE', 'base')
+    # A changed-path query would fail: only HEAD identity is needed now.
+    def git(argv, **kwargs):
+        assert argv == ['git', 'rev-parse', 'HEAD']
+        return 'a' * 40 + '\n'
+    monkeypatch.setattr(policy.subprocess, 'check_output', git)
+    for path in ('bin/t', 'libexec/t_history.py', '.github/workflows/ci.yml', 'tests/conftest.py'):
+        monkeypatch.setenv('CHANGED_PATH', path)
+        policy.main()
+        assert output.read_text().endswith('full=false\n')
+    assert 'Essential smoke checks' in capsys.readouterr().out
+    monkeypatch.setenv('FORCE_FULL', 'true')
+    policy.main()
+    assert output.read_text().endswith('full=true\n')
 
 
 def results(full=True, macos=False, reference=False):
     data = {key: {'result': 'success'} for key in (
-        'scope', 'cli-contract', 'design-adherence', 'shell', 'startup-smoke', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
+        'scope', 'cli-contract', 'design-adherence', 'shell', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
         'reference', 'verify-shards', 'macos', 'playground', 'gitleaks', 'pip-audit', 'codeql')}
     skipped = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage'}
     if not macos:
@@ -75,38 +45,45 @@ def results(full=True, macos=False, reference=False):
     return data
 
 
-@pytest.mark.parametrize('full,macos,reference', [(False, False, False), (True, False, False), (True, True, True)])
-@pytest.mark.parametrize('job', ['playground', 'startup-smoke', 'design-adherence'])
-def test_required_gate_rejects_failures_cancellation_missing_and_unexpected_skips(full, macos, reference, job):
-    data = results(full, macos, reference)
-    policy.check_results(data, full=full, macos=macos, reference=reference)
-    for outcome in ('failure', 'cancelled', 'skipped'):
-        data[job]['result'] = outcome
-        with pytest.raises(ValueError):
-            policy.check_results(data, full=full, macos=macos, reference=reference)
-    del data[job]
-    with pytest.raises(ValueError, match='missing'):
+def test_required_gate_rejects_failures_and_skips():
+    for full, macos, reference in ((False, False, False), (True, False, False), (True, True, True)):
+        data = results(full, macos, reference)
         policy.check_results(data, full=full, macos=macos, reference=reference)
+        for job in data:
+            if data[job]['result'] == 'skipped':
+                continue
+            for outcome in ('failure', 'cancelled', 'skipped'):
+                changed = {**data, job: {'result': outcome}}
+                with pytest.raises(ValueError):
+                    policy.check_results(changed, full=full, macos=macos, reference=reference)
+            with pytest.raises(ValueError, match='missing'):
+                policy.check_results({k: v for k, v in data.items() if k != job}, full=full,
+                                     macos=macos, reference=reference)
 
 
-def test_startup_smoke_is_unconditional_and_pinned_to_validated_commit():
-    workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
-    smoke = workflow.split('  startup-smoke:\n', 1)[1].split('  pytest:\n', 1)[0]
-    assert not any(line.lstrip().startswith('if:') for line in smoke.splitlines())
+def test_workflow_modes_preserve_nightly_release_and_security_boundaries():
+    workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+    smoke = workflow.split('  smoke:\n', 1)[1].split('  ci:\n', 1)[0]
+    assert 'run: python3 scripts/smoke.py' in smoke
+    assert "if: needs.scope.outputs.full != 'true'" in smoke
     assert 'ref: ${{ needs.scope.outputs.sha }}' in smoke
-    for name in (
-        'test_shell_helpers_switch_before_prompt_without_changing_path',
-        'test_source_selection_interrupt_exits_quietly',
-        'test_interrupted_initial_load_keeps_retryable_shell_function',
-        'test_ctrl_c_during_startup_recovers_in_same_interactive_shell',
-        'test_interrupted_reload_does_not_dispatch_stale_source',
-        'test_selector_does_not_probe_unrelated_repositories',
-    ):
-        assert f'tests/test_dev_isolation.py::{name}' in smoke
-        assert policy.fast_node(f'tests/test_dev_isolation.py::{name}')
-    assert 'tests/test_update_prompt_shell.py::test_shell_command_reloads_after_update_then_runs_once' in smoke
-    gate = workflow.split('  ci:\n', 1)[1]
-    assert 'shell, startup-smoke, pytest' in gate
+    assert '--ci-fast' not in workflow and 'PR_BASE:' not in workflow
+    assert "FORCE_FULL: ${{ inputs.ref != '' || (github.event_name == 'workflow_dispatch'" in workflow
+    for job in ('pytest', 'coverage', 'fzf-legacy'):
+        body = re.split(r'\n  [a-z-]+:\n', workflow.split(f'  {job}:\n', 1)[1])[0]
+        assert "if: needs.scope.outputs.full == 'true'" in body
+    assert 'scripts/ci_shards.py combine shards' in workflow
+    assert 'if percentage < 97:' in (ROOT / 'scripts/ci_shards.py').read_text()
+    assert "if: github.event_name == 'workflow_dispatch' && inputs.run_macos" in workflow
+    release = (ROOT / '.github/workflows/release.yml').read_text()
+    validate = release.split('  validate:\n')[1].split('  archive:\n')[0]
+    assert 'if:' not in validate  # Includes nights with no release tag.
+    assert 'ref: ${{ needs.plan.outputs.sha }}' in validate
+    assert 'needs.validate.outputs.sha == needs.plan.outputs.sha' in release
+    assert 'name: release-validation' in release
+    health = (ROOT / '.github/workflows/scheduled-health.yml').read_text()
+    assert 'workflows: [Releases, Scorecard]' in health
+    assert 'scripts/scheduled_health.py' in health
 
 
 def test_only_successful_full_gate_writes_same_attempt_evidence(tmp_path, monkeypatch):
@@ -120,6 +97,12 @@ def test_only_successful_full_gate_writes_same_attempt_evidence(tmp_path, monkey
     path = Path('validation/validation.json')
     assert not path.exists()
     monkeypatch.setenv('EXPECT_FULL', 'true')
+    failed = results(True)
+    failed['coverage']['result'] = 'failure'
+    monkeypatch.setenv('NEEDS_JSON', json.dumps(failed))
+    with pytest.raises(ValueError):
+        policy.main()
+    assert not path.exists()
     monkeypatch.setenv('NEEDS_JSON', json.dumps(results(True)))
     policy.main()
     assert json.loads(path.read_text()) == dict(sha='a'*40, full=True, run_id='123', run_attempt='2')
