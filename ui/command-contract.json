@@ -11176,6 +11176,210 @@
       },
       "notes": "Read-only bounded evidence, about 8000 characters for ordinary text. Never infer execution success from logs. Distinguish response omissions, scan limits and runner storage loss; retain complete-log references. Explicit run ID required; no picker, provider access, configuration write or update prompt.",
       "layout": "mixed"
+    },
+    "config models runtime enable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "config models runtime disable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models runtime enable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models runtime disable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_inference_switch_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
     }
   },
   "display_schemas": {

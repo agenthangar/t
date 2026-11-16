@@ -65,7 +65,7 @@ def settings():
         raise ValueError('invalid local worker configuration')
     result = {'enabled': data['enabled'], 'model': model_name(data.get('model'))}
     if 'provider' in data:
-        if data['provider'] not in ('ollama', 'lmstudio'):
+        if data['provider'] not in ('ollama', 'lmstudio', 'mlx-vlm'):
             raise ValueError('invalid local worker provider')
         result['provider'] = data['provider']
     return result
@@ -265,7 +265,7 @@ def run_worker(job, base, model, timeout, cancel, provider='ollama', context=327
     output = job / 'answer.txt'
     (job / 'prompt.txt').write_text(prompt)
     command = codex_command(workspace, output, model)
-    command[command.index('ollama')] = provider
+    command[command.index('ollama')] = 'lmstudio' if provider == 'mlx-vlm' else provider
     command[command.index('model_context_window=32768')] = f'model_context_window={context}'
     command[command.index('model_auto_compact_token_limit=24576')] = f'model_auto_compact_token_limit={int(context*.75)}'
     if assignment['mode'] == 'investigate':

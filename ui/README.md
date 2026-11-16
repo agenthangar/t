@@ -2013,3 +2013,18 @@ Unknown close times sort after recorded closes, with last turn breaking ties.
 Tied latest closures and incomplete discovery suppress the unique marker; they
 never substitute an older session. Remote peers without close metadata retain
 last-turn behavior. All existing guarded exact-conversation resume checks remain.
+
+### Local inference switch
+
+`t config models runtime enable` and `disable` are direct actions with static
+results and optional JSON. They never open a picker or start a provider. The
+switch is persistent and per-user on this machine, shared by all sessions.
+Disable rejects new requests while accepted work may finish; enable restores
+permission without changing saved routing or installing models. Repeating an
+action reports the existing state. Runtime status starts with Enabled/Disabled
+and stays read-only. Errors must preserve the previous saved state.
+
+The `mlx-vlm` provider uses the existing model picker and exact provider/model
+identity. Its runtime is private and managed, so its guide explains installation
+and lifecycle; the desktop-app action is disabled. Verification and measurement
+are separate from LM Studio even when both use the same downloaded artifact.

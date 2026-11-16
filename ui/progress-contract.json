@@ -648,6 +648,26 @@
     "libexec/t_session_discovery.py:collect.remote:subprocess.run": {
       "kind": "background",
       "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
+    },
+    "libexec/t_mlx_runtime.py:available:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded package metadata probe runs inside the manager admission protocol; never emit terminal output."
+    },
+    "libexec/t_mlx_runtime.py:install:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Explicit dependency installation streams venv/pip output in the model installation flow."
+    },
+    "libexec/t_mlx_runtime.py:stop:time.sleep": {
+      "kind": "background",
+      "reason": "Owned provider shutdown polls exact process identity for at most ten seconds inside the quiet manager."
+    },
+    "libexec/t_mlx_runtime.py:start:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Manager starts its private authenticated MLX server; user-visible request state reports loading."
+    },
+    "libexec/t_mlx_runtime.py:start:time.sleep": {
+      "kind": "background",
+      "reason": "Manager polls provider identity with a bounded loading deadline; the shared request monitor owns progress."
     }
   },
   "shell": [

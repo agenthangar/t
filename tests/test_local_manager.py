@@ -950,3 +950,44 @@ def test_idle_old_manager_upgrades_without_interrupting_clients(manager,monkeypa
     assert calls==['status','shutdown','status','status']
     monkeypatch.setattr(manager,'rpc',lambda *a,**kw:{'protocol':1,'clients':[{'id':'active'}]})
     with pytest.raises(ValueError,match='sessions finish'):manager.ensure()
+
+
+def test_inference_switch_persists_and_gates_existing_clients(manager, monkeypatch):
+    m = manager
+    engine = m.Engine(provider_factory=Providers)
+    registered = register(engine, kind='session')
+    client = engine.clients[registered['id']]
+    job = engine.submit(client, '/v1/responses', {'input': 'accepted'}, handler())
+    assert m.set_inference_enabled(False) == {'enabled': False, 'changed': True}
+    assert m.set_inference_enabled(False)['changed'] is False
+    assert engine.availability()['state'] == 'disabled'
+    assert not job['cancel'].is_set()
+    assert job['state'] == 'queued'
+    with pytest.raises(ValueError, match='disabled'):
+        register(engine)
+    with pytest.raises(ValueError, match='disabled'):
+        engine.submit(client, '/v1/responses', {'input': 'blocked'}, handler())
+    monkeypatch.setattr(m, 'rpc', lambda *a, **kw: (_ for _ in ()).throw(OSError()))
+    assert m.status()['inference_enabled'] is False
+    assert m.set_inference_enabled(True)['changed'] is True
+    assert engine.submit(client, '/v1/responses', {'input': 'resumed'}, handler())['state'] == 'queued'
+
+
+def test_inference_switch_failure_preserves_state(manager, monkeypatch):
+    m = manager
+    m.set_inference_enabled(False)
+    monkeypatch.setattr(m, 'write_json', lambda *a: (_ for _ in ()).throw(OSError('disk full')))
+    with pytest.raises(OSError, match='disk full'):
+        m.set_inference_enabled(True)
+    assert not m.inference_enabled()
+    (m.root() / 'inference.json').write_text('{"enabled": "yes"}')
+    with pytest.raises(ValueError, match='Invalid'):
+        m.inference_enabled()
+
+
+def test_pause_rejects_older_manager_without_claiming_success(manager, monkeypatch):
+    (manager.root() / 'control.sock').touch()
+    monkeypatch.setattr(manager, 'rpc', lambda *a, **kw: {'protocol': 3})
+    with pytest.raises(ValueError, match='cannot enforce pause'):
+        manager.set_inference_enabled(False)
+    assert manager.inference_enabled()

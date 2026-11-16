@@ -214,3 +214,45 @@ def test_provider_metadata_transport_is_bounded_and_never_proxied(runtime,monkey
     assert calls==[16*1024**2+1]
     reply.data=b'x'*(16*1024**2+1)
     with pytest.raises(ValueError,match='exceeds'):m.request('http://127.0.0.1:1234','/api/show',{'model':'exact'})
+
+
+def test_mlx_private_lifecycle_and_failed_stop_journal(runtime, provider, monkeypatch, tmp_path):
+    m = runtime
+    p, _, _, _, _ = provider
+    living = set()
+    calls = []
+    def start(item, persist):
+        calls.append('start')
+        item.update(base='http://127.0.0.1:9', pid=123, process_identity='owned', api_key='secret')
+        living.add(item['alias'])
+        persist()
+    def stop(item):
+        calls.append('stop')
+        living.discard(item['alias'])
+    mlx = {'available': lambda: None, 'start': start, 'ready': lambda item: item['alias'] in living,
+           'alive': lambda item: item['alias'] in living, 'stop': stop}
+    local = {'receipt': lambda name: {'revision': 'revision'}, 'artifact': lambda name: {},
+             'model_directory': lambda name: tmp_path / name,
+             'report': lambda *a, **kw: {'memory_bytes': 10*m.GIB}}
+    monkeypatch.setattr(m, 'helper', lambda name: mlx if name == 't_mlx_runtime' else local)
+    selected = choice('mlx-vlm')
+    item = p.get(selected)
+    assert item['owned'] and item['revision'] == 'revision'
+    assert item['alias'] == str(tmp_path / 'artifact')
+    assert p.get(selected) is item and calls == ['start']
+    p.unload(item)
+    assert not p.instances and calls == ['start', 'stop']
+    def failed_start(item, persist):
+        living.add(item['alias'])
+        raise ValueError('failed stop')
+    mlx['start'] = failed_start
+    with pytest.raises(ValueError, match='failed stop'):
+        p.get(selected)
+    assert p.instances  # Recovery must retain uncertain ownership.
+    living.clear()
+    with pytest.raises(ValueError, match='disappeared'):
+        p.get(selected)
+    assert not p.instances
+    local['receipt'] = lambda name: {}
+    with pytest.raises(ValueError, match='files are missing'):
+        p.describe(selected)
