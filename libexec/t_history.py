@@ -1387,7 +1387,7 @@ class HistoryCommand:
                 metadata = {}
                 if owner.get('model') not in (None, '', '-'):
                     metadata.update(model=clean(owner['model']), model_source='exact owner', model_updated=time.time())
-                if owner.get('summary'):
+                if owner.get('summary') not in (None, '', '-'):
                     metadata.update(summary=clean(owner['summary']), summary_source='exact owner', summary_updated=time.time())
                 metadata['interface_updated'] = time.time()
                 metadata['interface'] = 'desktop' if owner.get('state') == 'app' else 'foreground' if ':' in owner.get('slot', '') else 'cli'

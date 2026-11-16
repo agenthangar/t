@@ -68,6 +68,10 @@ def test_exact_owner_metadata_matches_id_agent_and_repository_not_reused_slot(ap
     assert live['display']['context'] == 'active' and live['display']['interface'] == 'cli'
     assert live['summary_source'] == 'exact owner'
     assert store.records()[0]['model'] == 'gpt-6.1-sol'
+    lean = {**selected, 'summary': '-', 'model': '-', 'context': 'unknown'}
+    retained = app.records('repo', '5', [lean])[0]
+    assert retained['display']['summary'] == selected['summary']
+    assert store.records()[0]['summary'] == selected['summary']
 
 
 def test_remote_display_matches_exact_retained_host_workspace(app, store):
@@ -111,8 +115,8 @@ def test_rich_browse_does_not_change_authoritative_raw_ownership_scan(app, histo
     monkeypatch.setattr(history, 'run', lambda argv, **k: (calls.append(argv[-1]), '')[1])
     app.owners()
     app.owners(True)
-    assert '_dev_session_rows --details' in calls[0]
-    assert '_dev_rows_all' in calls[1] and '--details' not in calls[1]
+    assert '_dev_session_rows --ownership' in calls[0]
+    assert '_dev_rows_all --best-effort --ownership' in calls[1]
 
 
 def test_index_backfill_retains_exact_transcript_model_when_index_has_no_model(app, history, tmp_path):
