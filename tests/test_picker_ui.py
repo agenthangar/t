@@ -565,6 +565,8 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
     keys('C-y', 'C-y', 'C-y', 'C-y')
+    wait('Sort: last closed', absent=loading, focused='Newest web')
+    keys('C-y')
     if height > 12:
         wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
     else:
