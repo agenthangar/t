@@ -656,10 +656,14 @@ _dev_session_sid() {
   setopt local_options null_glob bare_glob_qual
   local session="$1" dir="${2:-}" sid cpid reg line rcwd agent tx
   [[ -n $dir ]] || dir=$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)
-  cpid=$(_dev_session_claude_pid "$session")
-  agent=$(_dev_agent_of_session "$session")
+  if (( $# >= 5 )); then cpid=$3; [[ $cpid != - ]] || cpid=; agent=$4
+  else
+    cpid=$(_dev_session_claude_pid "$session")
+    agent=$(_dev_agent_of_session "$session")
+  fi
   if [[ $agent == codex ]]; then
-    sid=$(_codex_pane_sid "$session" "$dir" "$cpid")
+    if (( $# >= 5 )); then sid=$5; [[ $sid != - ]] || sid=
+    else sid=$(_codex_pane_sid "$session" "$dir" "$cpid"); fi
     [[ -n $sid ]] && { print -r -- "$sid"; return 0; }
   fi
   reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/$cpid"
@@ -770,6 +774,11 @@ _dev_fg_rows() {
     fi
     repo=$(_dev_repo_of_dir "$cwd" 2>/dev/null); repo=${repo%%$'\t'*}   # worktree-aware
     [[ -n $repo ]] || repo=${cwd:t}                                     # fall back to basename
+    if [[ $1 == --ownership-handles ]]; then
+      _dev_fg_label "$repo" "${sid:--}" "$pid"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${sid:--}" "$cwd" "$REPLY" attached unknown - "$agent"
+      continue
+    fi
     # Label is "<repo>:<short-sid>" — the short Claude session id makes each
     # foreground row UNIQUE (two `dot` foreground claudes were both "dot:fg" before)
     # and is the handle `t open <id>` reattaches by. The colon marks an fg row (tmux
@@ -789,6 +798,7 @@ _dev_fg_rows() {
     fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$sid" "$cwd" "$label" attached "$context" "$summary" "$agent"
   done
+  [[ $1 != --ownership-handles ]] || return 0
   # prune registry entries whose pid is no longer a live claude (sessions that ended)
   local f bpid
   for f in "$reg"/*(N.); do bpid=${f:t}; [[ -z ${live[$bpid]} ]] && rm -f "$f"; done
@@ -1318,7 +1328,49 @@ _dev_repo_rows_command() {
   print -r -- "$worker"
 }
 
+# Capability marker for older peers: never pass them an unrecognized scan mode.
+_dev_ownership_rows() { _dev_session_rows --ownership; }
+
+_dev_ownership_rows_impl() {
+  setopt local_options null_glob
+  local s state dir pid agent sid batch_output db key
+  local -a slots frames fields
+  local -A pane_sids
+  # A fresh observation at EACH safety checkpoint; no discovery TTL authorizes launch.
+  _DEV_PS_AT=0; _DEV_PS_COMM=()
+  _dev_ps_snapshot
+  while IFS='|' read -r s state dir; do
+    [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
+    pid=$(_dev_session_claude_pid "$s")
+    _DEV_SESS_PID[$s]=${pid:--}
+    agent=$(_dev_agent_of_session "$s")
+    slots+=("$s"$'\t'"$state"$'\t'"$agent"$'\t'"${pid:--}"$'\t'"$dir")
+    [[ $agent == codex && $pid == <-> ]] && frames+=("$s"$'\t'"$pid"$'\t'"$dir")
+  done < <(tmux list-sessions -F '#{session_name}|#{?session_attached,attached,detached}|#{session_path}' 2>/dev/null | sort)
+  if (( $#frames )); then
+    db=$(_codex_db)
+    if [[ -r $db ]] && batch_output=$(print -rl -- "${frames[@]}" | python3 "$T_HOME/libexec/t_pane_identity.py" batch "$db"); then
+      while IFS=$'\t' read -r key sid; do
+        [[ -n $key && -n $sid ]] && pane_sids[$key]=$sid
+      done <<< "$batch_output"
+    fi
+  fi
+  for key in "${slots[@]}"; do
+    fields=("${(@ps:\t:)key}")
+    s=$fields[1]; state=$fields[2]; agent=$fields[3]; pid=$fields[4]; dir=$fields[5]
+    if [[ $agent != codex || -n ${pane_sids[$s]:-} || $pid == - ]]; then
+      sid=$(_dev_session_sid "$s" "$dir" "$pid" "$agent" "${pane_sids[$s]:--}")
+    else
+      # No partial/broken batch may replace the individual authoritative resolver.
+      sid=$(_dev_session_sid "$s" "$dir")
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${sid:--}" "$dir" "${s#dev-}" "$state" unknown - "$agent"
+  done
+  _dev_fg_rows --ownership-handles
+}
+
 _dev_session_rows_impl() {
+  if [[ ${1:-} == --ownership ]]; then _dev_ownership_rows_impl; return $?; fi
   # Rich display rows opt into a trailing model field. Ownership consumers keep
   # the established seven-field contract and its authoritative targeting ids.
   if [[ ${1:-} == --details ]]; then
@@ -1511,6 +1563,7 @@ _dev_rows_all_impl() {
   scan_pids+=($!)
   local scan=_dev_session_rows remote_scan
   [[ ${1:-} == --details ]] && scan+=' --details'
+  [[ ${1:-} == --ownership ]] && scan='if (( ${+functions[_dev_ownership_rows]} )); then _dev_ownership_rows; else _dev_session_rows; fi'
   [[ ${1:-} == --repo ]] && scan=$(_dev_repo_rows_command "$2" "$3")
   if [[ ${1:-} == --reservations ]]; then
     # Old peers with the active integration must still report their live app
@@ -2250,7 +2303,7 @@ _dev_launch_preflight() {
   # transfer ownership checks, and other callers retain strict discovery.
   [[ ${_T_RESUME_ALLOW_UNAVAILABLE:-} == 1 ]] && scan_args+=(--best-effort)
   rc=0
-  rows=$(_dev_rows_all "${scan_args[@]}") || rc=$?
+  rows=$(_dev_rows_all "${scan_args[@]}" --ownership) || rc=$?
   (( rc == 130 )) && return 130
   if (( rc )); then
     _t_warn 't: saved conversation ownership is unknown because a local or configured host scan failed'

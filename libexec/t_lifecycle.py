@@ -454,7 +454,14 @@ class Operation:
         if not repeat and name in self.value['receipts']:
             return self.value['receipts'][name]
         self.save(name, pending=name)
-        result = function()
+        started, clock = time.time(), time.monotonic()
+        try:
+            result = function()
+        finally:
+            # Additive private receipt metadata; a retry measures its latest
+            # attempt without replaying an already-recorded side effect.
+            self.value.setdefault('timings', {})[name] = dict(
+                started=started, seconds=time.monotonic() - clock)
         self.value['receipts'][name] = result
         self.save(name, pending=None)
         return result

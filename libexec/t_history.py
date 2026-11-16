@@ -1368,7 +1368,7 @@ class HistoryCommand:
                 print(f't resume: {host} unavailable; retained cached history', file=sys.stderr)
 
     def owners(self, all_hosts=False):
-        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all --best-effort' if all_hosts else "_dev_session_rows --details | awk 'NF {print \"local\\t\" $0}'")
+        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all --best-effort --ownership' if all_hosts else "_dev_session_rows --ownership | awk 'NF {print \"local\\t\" $0}'")
         text = run(self.shell(snippet))
         return self.api['_parse_rows'](text, host_prefixed=True)
 
