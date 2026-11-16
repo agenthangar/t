@@ -582,6 +582,21 @@ def _open_discovery_choice(message, available):
         ui.restore()
 
 
+def _resume_discovery_wait(refresh):
+    """Shared rail with automatic progress; Return skips, Esc/Ctrl-C cancels."""
+    ui = _RailUI()
+    try:
+        ui.raw()
+        result = ui.pick('Refreshing saved conversations', [('skip', 'Skip waiting')],
+                         context=('Waiting for fresh results…',), back_label='cancel',
+                         refresh=refresh, refresh_interval=.25)
+        if result is None:
+            raise KeyboardInterrupt
+        return result
+    finally:
+        ui.restore()
+
+
 def cmd_ls(cfg, args):
     try:
         scope, wt_scope = _ls_scope(cfg, args.repo, args.all, os.getcwd())
@@ -12120,12 +12135,16 @@ def cmd_history(cfg, args):
         cache = _session_discovery()
         if getattr(args, 'refresh', False):
             cache['event'](['local', *cfg.hosts.values()])
-        view = cache['discover'](cfg, fields=['catalog'])
+        if not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
+            view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'])
+        else:
+            view, notice = cache['discover'](cfg, fields=['catalog']), ''
         if not getattr(args, 'json', False):
             cache['announce'](view)
         snapshot = cache['SnapshotStore'](view)
     history = helper["HistoryCommand"](cfg, globals(), store=snapshot)
     history.discovery_view = view
+    history.discovery_notice = notice if view is not None else ''
     try:
         return history.execute(args)
     except (ValueError, OSError) as error:
@@ -13504,7 +13523,7 @@ REMOTE SESSIONS
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
             'Infer the current repository, or browse local and remote repositories outside a checkout. '
-            'Discovery expires hourly and refreshes in the background; run again for updated results. '
+            'Pending discovery waits in terminals; Return skips, Esc cancels. '
             'Repositories are cloned only after selection. Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
@@ -13516,6 +13535,11 @@ REMOTE SESSIONS
 
   Choose saved work associated with a repository or slot. A live selection
   attaches to its existing owner; an inactive selection resumes saved history.
+
+  Pending saved discovery keeps waiting automatically in a terminal. Return
+  skips the wait and uses available cached results; Esc/Ctrl-C cancels without
+  stopping the shared refresh. Empty or failed completed scans stop waiting.
+  Redirected commands and JSON return immediately without a wait or prompt.
 
   Codex checks the selected conversation's writer lock and the destination
   workspace. Another conversation in a reused original slot can keep running
@@ -14742,7 +14766,13 @@ def _main(argv):
                 return 2
             slot, aliases = aliases[-1], aliases[:at]
         cache = _session_discovery()
-        view = cache['discover'](Config())
+        if os.environ.get('T_RESUME_WAIT') == '1' and sys.stdin.isatty() and sys.stderr.isatty():
+            with redirect_stdout(sys.stderr):
+                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait)
+            if os.environ.get('T_RESUME_NOTICE_FILE'):
+                Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
+        else:
+            view = cache['discover'](Config())
         cache['announce'](view)
         for row in cache['candidates'](view, aliases, slot):
             print(row)

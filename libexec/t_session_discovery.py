@@ -100,6 +100,40 @@ def reset_host(cfg, alias):
     return result
 
 
+def resume_snapshot(cfg, wait, *, fields=None):
+    """Observe pending saved discovery until settled or explicitly skipped.
+
+    Each service read is bounded, but observation has no overall timeout. Never
+    reset a failed host or cancel the shared collector when the caller leaves.
+    """
+    options = {'fields': fields or ['rows', 'resume']}
+    view = discover(cfg, **options)
+
+    def pending():
+        return not (view.get('unavailable') or view.get('wait_unavailable')) and (
+            view.get('loading') or any(h.get('refreshing') for h in view.get('hosts', [])))
+
+    first = True
+
+    def refresh():
+        nonlocal view, first
+        # Paint the skip/cancel controls before the first bounded service read.
+        if first:
+            first = False
+            return False
+        latest = discover(cfg, deadline=time.monotonic() + 1, **options)
+        view = dict(view, wait_unavailable=True) if latest.get('unavailable') else latest
+        return not pending()
+
+    if pending():
+        if wait(refresh) == 'skip':
+            view = dict(view, wait_skipped=True)
+    partial = (view.get('unavailable') or view.get('wait_unavailable') or view.get('loading') or
+               any(h.get('refreshing') or h.get('error') or h.get('value') is None
+                   for h in view.get('hosts', [])))
+    return view, 'Older or incomplete results · new sessions may be missing' if partial else ''
+
+
 def freshness(view):
     return {key: value for key, value in view.items() if key != 'hosts'} | {
         'hosts': [{k: v for k, v in host.items() if k != 'value'} for host in view.get('hosts', [])]}
