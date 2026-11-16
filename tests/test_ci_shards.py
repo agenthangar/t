@@ -80,18 +80,19 @@ def test_missing_and_corrupt_coverage(tmp_path):
         ci.combine(directory, 2, tmp_path / 'output')
 
 
-@pytest.mark.parametrize('filename', [
-    '/checkout/scripts/offline_shell.py',
-    r'C:\checkout\scripts\offline_shell.py',
-    'scripts/offline_shell.py',
+@pytest.mark.parametrize('source', ['offline_shell.py', 'audit_context.py'])
+@pytest.mark.parametrize('prefix', [
+    '/checkout/scripts/',
+    'C:\\checkout\\scripts\\',
+    'scripts/',
 ])
-def test_normalized_coverage_accepts_offline_script(tmp_path, filename):
+def test_normalized_coverage_accepts_approved_scripts(tmp_path, source, prefix):
     from coverage import CoverageData
     path = tmp_path / '.coverage'
     data = CoverageData(basename=str(path))
-    data.add_lines({filename: {2, 1}})
+    data.add_lines({prefix + source: {2, 1}})
     data.write()
-    assert ci.normalized_coverage(path) == {'scripts/offline_shell.py': [1, 2]}
+    assert ci.normalized_coverage(path) == {'scripts/' + source: [1, 2]}
 
 
 def test_normalized_coverage_rejects_unapproved_script(tmp_path):
