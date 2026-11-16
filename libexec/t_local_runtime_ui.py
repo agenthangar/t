@@ -37,7 +37,8 @@ def label(state):
 
 
 def status_lines(view):
-    lines = ['Manager     ' + view['manager'], 'Policy      Fair turns · one active generation']
+    lines = ['Inference   ' + ('Enabled' if view.get('inference_enabled', True) else 'Disabled'),
+             'Manager     ' + view['manager'], 'Policy      Fair turns · one active generation']
     if view.get('error'):
         lines.append(clean(view['error']))
     for name, base in view.get('endpoints', {}).items():
@@ -184,6 +185,13 @@ def machine_menu(ui, provider=None):
 
 
 def provider_menu(ui, provider):
+    if provider == 'mlx-vlm':
+        page(ui, 'MLX VLM', ['Private Apple Silicon runtime managed by t.',
+             'Install with t config models install MODEL --provider mlx-vlm --yes.',
+             't starts it on loopback for accepted requests and stops it after the idle timeout.',
+             'Pause new requests with t config models runtime disable.',
+             'Resume with t config models runtime enable.'])
+        return
     apps = helper('t_local_apps')
     info = apps['provider_info'](provider)
     while True:
@@ -460,7 +468,13 @@ def command(args, api):
     resource, action = args.models_action, args.runtime_action
     ui = None
     try:
-        if resource == 'runtime' and action == 'status':
+        if resource == 'runtime' and action in ('enable', 'disable'):
+            value = m['set_inference_enabled'](action == 'enable')
+            lines = ['Local inference ' + ('' if value['changed'] else 'is already ') +
+                     ('enabled.' if value['enabled'] else 'disabled.'), '',
+                     'New local requests follow your saved workflow routing.' if value['enabled'] else
+                     'New local requests are blocked. Already accepted work may finish.']
+        elif resource == 'runtime' and action == 'status':
             value = m['status']()
             lines = status_lines(value)
         elif resource == 'requests' and action in ('list', 'show'):

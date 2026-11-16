@@ -12395,7 +12395,7 @@ COMMAND_GROUPS = {
                "edit": ("config", "--edit"), "setup": ("setup",),
                "onboard": ("config", "--onboard"), "local": ("config", "--local"),
                "models": {**{verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")},
-                          "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("status", "edit", "monitor")},
+                          "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("status", "enable", "disable", "edit", "monitor")},
                           "requests": {verb: ("config", "models", "requests", verb) for verb in ("list", "show", "cancel")}}},
     "workflow": {"context": ("config", "workflow", "context"), "list": ("config", "workflow", "list"),
                  "edit": ("config", "workflow", "edit"),
@@ -12702,7 +12702,7 @@ def _group_help(group):
                 '\n'.join(rows) + "\n\nHost identifies the source machine. Lists query all registered hosts when omitted.\n" +
                 f"Run t help {group} <verb> for details.\n")
     if group in ("config models runtime", "config models requests"):
-        verbs = ("status", "edit", "monitor") if group.endswith("runtime") else ("list", "show", "cancel")
+        verbs = ("status", "enable", "disable", "edit", "monitor") if group.endswith("runtime") else ("list", "show", "cancel")
         return _wrap_help("USAGE\n  t " + group + " <verb> [flags]\n\nCOMMANDS\n" +
                           "\n".join("  " + verb for verb in verbs) +
                           "\n\nSCOPE\n  User-wide machine scope; no repository argument, inference or selection.\n" +
@@ -14159,6 +14159,7 @@ EXAMPLES
     cg.add_argument("--edit", action="store_true", help="open T_LOCAL_RC in VISUAL/EDITOR directly")
     sp.add_argument("--local", action="store_true", help="set up local models and Codex worker MCP")
     sp.add_argument("--model", dest="local_model", help="exact Ollama or MLX artifact for t config local")
+    sp.add_argument("--provider", dest="local_provider", choices=("ollama", "lmstudio", "mlx-vlm"), help="runtime for t config local --model")
     sp.add_argument("--disable", dest="disable_local", action="store_true", help="disable local delegation, keeping models")
     sp.add_argument("-y", "--yes", action="store_true", help="apply explicit local model setup without prompting")
     sp.add_argument("--workflows-ui", action="store_true", help=argparse.SUPPRESS)
@@ -14180,7 +14181,7 @@ EXAMPLES
                         "Memory fit is estimated. Publisher benchmarks are not local measurements." +
                         (" Install reuses downloaded files and verifies a response at the requested context." if verb == "install" else ""),
             epilog=f"EXAMPLES\n  t config models {verb}" + (" mlx-community/Qwen3.8-27B-8bit" if verb not in ("list", "refresh") else ""))
-        leaf.add_argument("--provider", choices=("ollama", "lmstudio"), help="filter or select the local runtime")
+        leaf.add_argument("--provider", choices=("ollama", "lmstudio", "mlx-vlm"), help="filter or select the local runtime")
         leaf.add_argument("--context", type=int, default=32768, metavar="TOKENS", help="context capacity for fit and inference; default: 32768")
         leaf.add_argument("--json", action="store_true", help="print structured artifact metadata")
         if verb in ("list", "refresh"):
@@ -14191,16 +14192,19 @@ EXAMPLES
         if verb == "install":
             leaf.add_argument("--download-only", action="store_true", help="download weights without claiming inference readiness")
             leaf.add_argument("-y", "--yes", action="store_true", help="install the explicit model without confirmation")
-    for resource, verbs in (("runtime", ("status", "edit", "monitor")), ("requests", ("list", "show", "cancel"))):
+    for resource, verbs in (("runtime", ("status", "enable", "disable", "edit", "monitor")), ("requests", ("list", "show", "cancel"))):
         resource_parser = models_sub.add_parser(resource, help="shared local inference " + resource,
             description="User-wide machine scope. No repository inference or selection.")
         resource_sub = resource_parser.add_subparsers(dest="runtime_action", required=True)
         for verb in verbs:
+            description = {"enable": "Allow new local requests across this user's sessions; preserve models and routing. No model is loaded.",
+                           "disable": "Pause new local requests across this user's sessions; accepted work may finish. Preserve models and routing."}.get(
+                               verb, "User-wide local inference; no repository argument or picker.")
             leaf = resource_sub.add_parser(verb, help=verb + " local " + resource,
-                description="User-wide local inference; no repository argument or picker.",
+                description=description,
                 epilog="EXAMPLES\n  t config models " + resource + " " + verb + (" REQUEST_ID" if resource == "requests" and verb != "list" else ""))
-            if verb in ("status", "list", "show"):
-                leaf.add_argument("--json", action="store_true", help="print structured read-only status")
+            if verb in ("status", "list", "show", "enable", "disable"):
+                leaf.add_argument("--json", action="store_true", help="print structured result")
             if resource == "requests" and verb in ("show", "cancel"):
                 leaf.add_argument("request_id", metavar="REQUEST_ID", help="exact ID from requests list")
             if verb == "monitor":

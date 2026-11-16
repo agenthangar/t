@@ -87,7 +87,7 @@ def test_effective_and_catalogue(local,monkeypatch):
         if result: assert result['cloud_retry_seconds'] == 300
     legacy={'hardware':hardware,'report':lambda:{'models':[{'model':'qwen:8b','bytes':4,'fit':True,'score':50}], 'benchmark':{'source':'fixture','release':'2026-01-01'}},'missing_bytes':lambda *a:0}
     monkeypatch.setattr(m,'helper',lambda name:legacy)
-    assert len(m.catalogue()['models'])==5
+    assert len(m.catalogue()['models'])==9
     assert m.catalogue('livebench-coding')['models'][-1]['benchmark']['score']==50
     with pytest.raises(ValueError):m.catalogue('fake')
 
@@ -155,8 +155,8 @@ def test_commands(local,t_mod,monkeypatch,capsys):
     monkeypatch.setattr(m,'catalogue',lambda *a,**k:{'models':[row], 'hardware':hardware(), 'context_tokens':32768})
     original_helper=m.helper
     monkeypatch.setattr(m,'helper',lambda n:original_helper(n) if n=='t_model_display' else {'reservation':nullcontext,'refresh':lambda:None})
-    monkeypatch.setattr(m,'install',lambda *a:{'downloaded':True})
-    monkeypatch.setattr(m,'measure',lambda *a:{'median':10})
+    monkeypatch.setattr(m,'install',lambda *a,**kw:{'downloaded':True})
+    monkeypatch.setattr(m,'measure',lambda *a,**kw:{'median':10})
     for action in ('list','refresh','show','install','measure'):
         argv=['config','models',action]+([] if action in ('list','refresh') else [m.DEFAULT_MODEL])+(['--yes'] if action=='install' else [])
         args=t_mod.build_parser().parse_args(argv)
@@ -329,7 +329,7 @@ def test_install_review_and_download_only(local,t_mod,monkeypatch):
         def close(self):pass
     monkeypatch.setattr(m,'helper',lambda n:{'Dialog':Dialog,'reservation':nullcontext})
     monkeypatch.setattr(m.runpy,'run_path',lambda *a:{})
-    calls=[];monkeypatch.setattr(m,'install',lambda *a:calls.append(a) or {'ready':False})
+    calls=[];monkeypatch.setattr(m,'install',lambda *a,**kw:calls.append(a) or {'ready':False})
     assert m.command(args)==130 and not calls
     Dialog.accepted=True;args.download_only=True;args.context=8192
     assert m.command(args)==0 and calls==[(m.DEFAULT_MODEL,True,8192)]
@@ -636,7 +636,7 @@ def test_model_actions_use_exact_instance_and_report_launch_failures(local,monke
     def open_app(provider):
         if failure[0]:raise ValueError('missing app')
         calls.append(('app',provider))
-    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[{'model':row['model'],'alias':'exact-instance','owned':True}]},'rpc':rpc} if n=='t_local_manager' else {'open_desktop':open_app} if n=='t_local_apps' else {'provider_menu':lambda ui,provider:calls.append(('guide',provider))})
+    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[{'model':row['model'],'alias':'exact-instance','owned':True,'provider':'lmstudio'}]},'rpc':rpc} if n=='t_local_manager' else {'open_desktop':open_app} if n=='t_local_apps' else {'provider_menu':lambda ui,provider:calls.append(('guide',provider))})
     class UI:
         def __init__(self,choices):self.choices=iter(choices);self.pages=[]
         def pick(self,*a,**kw):return next(self.choices)
@@ -868,3 +868,17 @@ def test_time_limits_defaults_validation_and_scoped_reset(local):
     result=m.workflow_menu(ui,{'timeout_seconds':60,'max_timeout_seconds':300})
     assert result['timeout_seconds']==60 and '' in ui.views[1][2]['disabled']
     assert m.duration(10)=='10 sec'
+
+
+def test_mlx_readiness_is_provider_specific(local, monkeypatch):
+    m = local
+    name = 'nace-ai/Qwen3.8-Flash-Next-MLX-4bit'
+    evidence = {'revision': 'revision', 'verified_context': 32768,
+                'verified_hardware': {k: hardware()[k] for k in ('ram_bytes', 'accelerator')}}
+    monkeypatch.setattr(m, 'receipt', lambda name: evidence)
+    assert m.report(m.artifact(name), hardware())['ready']
+    assert not m.report(m.artifact(name), hardware(), provider='mlx-vlm')['ready']
+    evidence['verifications'] = {'mlx-vlm': dict(evidence)}
+    assert m.report(m.artifact(name), hardware(), provider='mlx-vlm')['ready']
+    assert not m.report(m.artifact(name), hardware(), 65536, provider='mlx-vlm')['ready']
+    assert m.policy({'provider': 'mlx-vlm'})['provider'] == 'mlx-vlm'

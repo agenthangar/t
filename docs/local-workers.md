@@ -466,3 +466,48 @@ provenance; they are not evaluations of the local quantization or this worker.
 Native/cloud selectors show reported capabilities and unavailable benchmark data
 explicitly. The main conversation setting is called Lead model, with Lead
 reasoning effort; local runtime selection remains Local model.
+
+### Pause and resume local inference
+
+```sh
+t config models runtime disable
+t config models runtime status
+t config models runtime enable
+```
+
+This persistent switch applies to this user's managed local inference across all
+repositories and sessions. Disable rejects new requests, including requests from
+already connected clients. Accepted requests may finish; loaded models retain the
+normal idle timeout. It preserves model files, provider settings, workflows and
+MCP registration. Enable restores permission to submit requests; it does not load
+models, install dependencies or change routing. Both actions are idempotent,
+noninteractive and support `--json`. Status is read-only. A failed write preserves
+the previous setting; an invalid switch file fails closed.
+
+`config local --disable --yes` remains the older worker-only control. If that was
+used, configure the worker again before enabling delegation. The runtime switch
+also applies to local-only sessions and model verification.
+
+### Flash-Next on Apple Silicon
+
+The `mlx-vlm` provider runs a private, authenticated loopback server with one
+active generation, the selected context limit, ownership recovery and idle
+unloading. Explicit installation creates an isolated Python environment pinned
+to MLX VLM 0.7.8; Python 3.12–3.14 is required. Inference uses downloaded files
+without network access to model repositories or remote model code.
+
+```sh
+t config models install nace-ai/Qwen3.8-Flash-Next-MLX-4bit --provider mlx-vlm --yes
+t config local --model nace-ai/Qwen3.8-Flash-Next-MLX-4bit --provider mlx-vlm --yes
+```
+
+Select `mlx-vlm` and the exact artifact in the workflow's inference settings.
+The existing files in `~/.lmstudio/models` are reused. Readiness and measurements
+are provider-specific: success with MLX VLM does not imply LM Studio compatibility.
+The publisher's memory-mapped Flash-Next artifact requires a 128 GiB Apple Silicon
+Mac and substantial free memory. Admission estimates resident weights with 10%
+overhead plus context memory, while reserving an additional 10% of system RAM.
+Memory contention queues the request; it never overrides a provider guardrail.
+
+See the [artifact's runtime requirements](https://huggingface.co/nace-ai/Qwen3.8-Flash-Next-MLX-4bit)
+and [MLX VLM](https://github.com/Neywa-Labs/mlx-vlm).
