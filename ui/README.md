@@ -1090,6 +1090,13 @@ still a mutation. Goal does not imply interruption, adoption, or completion.
 MCP uses the same operation; its session command gateway returns a terminal
 handoff descriptor for modes that need interactive control. Detached MCP opens
 and resumes retain the shared lifecycle checks and never attach a terminal.
+MCP `resume_session` and the `session_command` resume gateway accept the optional
+boolean `new_window`. When true, a guarded local resume requests a separate
+Terminal/iTerm2 window through `_dev_open_window`, attaching to the exact resolved
+session. Existing viewers remain unchanged. Window failure returns an error and
+the exact tmux attach command, leaving the session available. Remote and foreground
+owners are refused before window dispatch. The default remains detached; this
+machine-only option adds no CLI flag or picker interaction.
 
 
 `session move` selects current CLI conversations through the shared multi picker

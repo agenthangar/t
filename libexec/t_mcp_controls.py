@@ -16,7 +16,7 @@ SESSION_VERBS = ('open', 'list', 'close', 'restart', 'push', 'pop', 'resume', 'h
                  'cd', 'move', 'read', 'view-plan', 'paste', 'search', 'goal')
 DESCRIPTIONS = {
     'open_session': 'Open or create an explicit local CLI slot, detached. Reuses t session open ownership and worktree checks. Does not open a terminal window.',
-    'resume_session': 'Resume the newest saved conversation in a stopped local slot, detached. For a live or paused agent, use send_instructions to ask it to continue.',
+    'resume_session': 'Resume the newest saved conversation in a stopped local slot. Set new_window=true to view it in a separate Terminal/iTerm window; otherwise leave it detached. Window failure leaves the session available and reports its attach command. For a live or paused agent, use send_instructions to ask it to continue.',
     'kill_session': 'Close an explicit local slot using t session close safety checks; preserves history and worktree. Requires confirm=true. Refuses the calling agent.',
     'restart_session': 'Restart a stuck local CLI in the same conversation using t session restart recovery checks. Refuses the calling agent.',
     'send_instructions': 'Submit instructions to a verified local Claude or Codex tmux agent. Requires its full session_id. Reports terminal delivery, not agent acknowledgement; inspect the session afterwards. Uses the current composer, so inspect unsent drafts/dialogs first.',
@@ -40,6 +40,9 @@ def tool_specs():
             required.append(key)
         if name == 'open_session':
             props['agent'] = {'type': 'string', 'enum': ['claude', 'codex']}
+        if name == 'resume_session':
+            props['new_window'] = {'type': 'boolean', 'default': False,
+                                   'description': 'Open the resumed session in a separate local Terminal/iTerm window using the CLI window helper'}
         if name == 'kill_session':
             props['confirm'] = {'type': 'boolean', 'description': 'Explicit authorization to close this slot, including a live agent'}
             required.append('confirm')
@@ -49,9 +52,10 @@ def tool_specs():
                       'annotations': {'readOnlyHint': False, 'destructiveHint': name in ('kill_session', 'restart_session'),
                                       'idempotentHint': False, 'openWorldHint': True}})
     specs.append({'name': 'session_command',
-                  'description': 'Run any public t session command with its normal CLI arguments. Read/list/history modes return output; open/resume stay detached. Interactive-only modes return terminal_required and an exact command, without starting work. Use command=goal to change the current objective. Never interprets arguments as shell code.',
+                  'description': 'Run any public t session command with its normal CLI arguments. Read/list/history modes return output; open/resume stay detached unless resume requests new_window=true. Interactive-only modes return terminal_required and an exact command, without starting work. Use command=goal to change the current objective. Never interprets arguments as shell code.',
                   'inputSchema': {'type': 'object', 'properties': {
                       'command': {'type': 'string', 'enum': list(SESSION_VERBS)},
+                      'new_window': {'type': 'boolean', 'default': False, 'description': 'Resume only: open a separate local Terminal/iTerm window'},
                       'arguments': {'type': 'array', 'items': {'type': 'string'}, 'default': []}},
                       'required': ['command'], 'additionalProperties': False},
                   'annotations': {'readOnlyHint': False, 'destructiveHint': True,
@@ -72,6 +76,8 @@ def validate(cfg, name, args):
         raise ValueError('slot must be a positive integer')
     if 'agent' in args and args['agent'] not in ('claude', 'codex'):
         raise ValueError('agent must be claude or codex')
+    if 'new_window' in args and type(args['new_window']) is not bool:
+        raise ValueError('new_window must be a boolean')
     if name == 'kill_session' and args['confirm'] is not True:
         raise ValueError('closing a session requires confirm=true')
     if 'session_id' in args and (not isinstance(args['session_id'], str) or not re.fullmatch(
@@ -131,9 +137,10 @@ def deliver(name, args, session, recovery):
     return {'status': 'submitted', 'session_id': target['sid'], 'acknowledged': False}
 
 
-def shell_run(words, *, report_cwd=False):
+def shell_run(words, *, report_cwd=False, new_window=False):
     snippet = ('setopt no_monitor no_notify; source ' + shlex.quote(str(ROOT / 't.plugin.zsh'))
-               + ' || exit $?; unset T_MCP_DETACHED; typeset T_MCP_DETACHED=1; ' + shlex.join(words))
+               + ' || exit $?; unset T_MCP_DETACHED T_MCP_NEW_WINDOW; typeset T_MCP_DETACHED=1; '
+               + ('typeset T_MCP_NEW_WINDOW=1; ' if new_window else '') + shlex.join(words))
     if report_cwd:
         snippet += ' && pwd -P'
     return checked(subprocess.run(['zsh', '-lic', snippet], stdin=subprocess.DEVNULL,
@@ -141,11 +148,13 @@ def shell_run(words, *, report_cwd=False):
 
 
 def session_command(cfg, args, api):
-    if (not isinstance(args, dict) or set(args) - {'command', 'arguments'}
+    if (not isinstance(args, dict) or set(args) - {'command', 'arguments', 'new_window'}
             or args.get('command') not in SESSION_VERBS
             or not isinstance(args.get('arguments', []), list)
             or any(not isinstance(s, str) or '\x00' in s for s in args.get('arguments', []))):
         raise ValueError('provide a session command and an array of literal CLI arguments')
+    if 'new_window' in args and (type(args['new_window']) is not bool or args['command'] != 'resume'):
+        raise ValueError('new_window must be a boolean and is only supported for resume')
     verb, arguments = args['command'], args.get('arguments', [])
     argv = ['session', verb, *arguments]
     command = shlex.join(['t', *argv])
@@ -169,6 +178,8 @@ def session_command(cfg, args, api):
         if not str(parsed.slot).isdigit():
             raise ValueError('MCP session actions require one numeric slot')
         params = {'repo': parsed.repo, 'slot': int(parsed.slot)}
+        if verb == 'resume' and 'new_window' in args:
+            params['new_window'] = args['new_window']
         name = {'open': 'open_session', 'resume': 'resume_session', 'close': 'kill_session', 'restart': 'restart_session'}[verb]
         if verb == 'close':
             params['confirm'] = parsed.yes
@@ -230,7 +241,9 @@ def call(cfg, name, args, api=None):
         # Login shell contract + explicit standalone integration, no TTY, no
         # picker, no inherited stdout on the JSON-RPC wire. Keep caller identity
         # for existing self-kill/restart guards.
-        output = shell_run(words)
+        output = shell_run(words, new_window=True) if args.get('new_window') else shell_run(words)
         result = {'status': 'completed', 'output': output.strip(),
                   'open_command': f't session open {shlex.quote(repo)} {slot}'}
+        if args.get('new_window'):
+            result['window_requested'] = True
     return dict(result, repo=repo, slot=int(slot), host='local')

@@ -1004,6 +1004,10 @@ _t_resume() {
 
   # A LIVE row was picked: attach in place (local or on its host) — resuming it
   # here would mint a second owner of the session id (see the scan note above).
+  if [[ ${T_MCP_NEW_WINDOW:-0} == 1 && -n $loc && $loc != - && $loc != here ]]; then
+    print -u2 -- 't mcp: separate windows require a local tmux session; no action was started'
+    return 1
+  fi
   if [[ $loc == fg:* ]]; then
     echo "That conversation is live as foreground $lalias — attaching."
     if [[ $loc == fg:here ]]; then _dev_open_fg "$lalias"
@@ -1027,7 +1031,9 @@ _t_resume() {
     history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}") || return $?
     slot=${history_session##*-}; repo=${${history_session#dev-}%-*}
     _t_resume_history_registered "$repo" || return 1
-    if [[ -z $TMUX && -t 0 && -t 1 ]]; then
+    if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+      _t_session_attach "$history_session" "$agent" fresh
+    elif [[ -z $TMUX && -t 0 && -t 1 ]]; then
       tmux attach-session -t "=$history_session:"
     else
       echo "Attach with: t session open $repo $slot"
@@ -1081,7 +1087,9 @@ _t_resume() {
     _t_warn "$repo $slot: launch failed; this conversation was not resumed"
     return $resume_rc
   }
-  if [[ -z $TMUX && -t 0 && -t 1 ]]; then
+  if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+    _t_session_attach "$session" "$agent" fresh
+  elif [[ -z $TMUX && -t 0 && -t 1 ]]; then
     tmux attach-session -t "=$session:"
   else
     echo "Attach with: t session open $repo $slot"

@@ -11649,6 +11649,36 @@
         "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible"
       ],
       "notes": "Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption."
+    },
+    "mcp_session_resume": {
+      "renderer": "machine",
+      "patterns": [
+        "machine",
+        "action"
+      ],
+      "modes": {
+        "detached": {
+          "condition": "resume_session or session_command resume, new_window omitted or false",
+          "patterns": [
+            "machine",
+            "action"
+          ],
+          "behavior": "Guarded newest-saved local resume without attaching the MCP transport"
+        },
+        "new_window": {
+          "condition": "new_window=true",
+          "patterns": [
+            "machine",
+            "action"
+          ],
+          "behavior": "After guarded resume, reuse the CLI window helper to view the exact resolved local tmux session; window failure retains the session and reports an attach command. No new CLI flags or picker."
+        }
+      },
+      "tests": [
+        "tests/test_mcp_controls.py::test_resume_window_routes_through_guarded_shell",
+        "tests/test_mcp_controls.py::test_mcp_window_attachment_checks_target_and_reports_failure",
+        "tests/test_resume_history.py::test_mcp_resume_window_uses_resolved_history_slot"
+      ]
     }
   },
   "entrypoints": {
