@@ -10683,7 +10683,9 @@
       "scope": "current checkout or explicit --repo",
       "confirmation": "none",
       "tests": [
-        "tests/test_workflow_update.py::test_command_contract"
+        "tests/test_workflow_update.py::test_command_contract",
+        "tests/test_workflow_update.py::test_installed_loaders_ship_session_discovery_policy",
+        "tests/test_workflow_update.py::test_resolved_discovery_policy_respects_disabled_and_excluded_scopes"
       ],
       "modes": {
         "default": {
@@ -10716,7 +10718,8 @@
           "layout": "machine"
         }
       },
-      "layout": "plain"
+      "layout": "plain",
+      "notes": "Enabled context distributes MCP-first session discovery, candidate verification and the t mcp --call fallback. Native workflow loaders carry the same guidance conditional on enabled scope; disabled/excluded policies suppress it. Discovery does not authorize session controls."
     },
     "remote workflow context": {
       "patterns": [

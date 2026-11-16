@@ -1896,6 +1896,12 @@ worktrees; `--repo` selects a registered checkout explicitly. It prints shared
 rules and one workflow. Global agent files contain a short loader; supported
 SessionStart hooks supply the resolved context at start, resume and compaction.
 An identity probe failure is an error, not permission to choose another scope.
+Enabled context includes MCP-first session discovery and the `t mcp --call`
+fallback. The native loader carries the same guidance conditional on an enabled
+resolved workflow. Disabled and excluded scopes suppress it; discovery does not
+authorize session mutations. Instructions preserve the distinction between
+current and saved sessions and require candidate verification before GitHub
+evidence is used to supplement the lookup.
 
 Installation shows the affected global and repository instruction paths and backup
 location, then asks **Back up and rebuild these global and repository instructions?
