@@ -30,7 +30,7 @@ m=runpy.run_path(%r)
 u=runpy.run_path(%r)
 row=dict(id='session:codex:sample',kind='session',sid='sample',agent='codex',cwd='/sample',label='t-13 · Parser fix',lead_model='cloud',models=[dict(model='cloud')],tokens=dict(local=None,cloud=180,unknown=None),local_cloud_percent=None,requests=[],launches=[],measured_records=0,coverage='Observed only',observed_tokens_per_second=dict(local=None,cloud=None),estimated_cloud_cost_usd=None,known_cloud_cost_subtotal_usd=None,session_display=dict(slot='t-13',summary='Parser fix',state='attached',context='active'))
 rows,header=m['picker_rows']([row],%r)
-result=u['choose'](rows,'Usage · this machine\\n\\n'+header,'show',prompt='usage',preview_script=%r,preview_window='down:50%%:wrap')
+result=u['choose'](rows,'Usage · this machine\\n'+header,'show',prompt='usage',preview_script=%r,preview_window='down:50%%:wrap')
 pathlib.Path(os.environ['HOME'],'result').write_text(str(result))
 ''' % (str(ROOT/'libexec/t_usage.py'),str(ROOT/'libexec/t_eval_cli.py'),width-8,str(ROOT/'libexec/t_usage.py')))
         def tmux(*args):
@@ -46,8 +46,10 @@ pathlib.Path(os.environ['HOME'],'result').write_text(str(result))
             tmux('-f','/dev/null','new-session','-d','-x',str(width),'-y',str(height),
                  shlex.join([sys.executable,str(script)])+'; sleep 30')
             frame=wait('SESSION · t-13')
-            assert '▸' in frame and ('Esc' in frame or '⎋' in frame) and ('Return' in frame or 'Enter' in frame or '↩' in frame)
+            assert '▸' in frame and ('Esc' in frame or '⎋' in frame) and ('Return' in frame or 'Enter' in frame or '↩' in frame),frame
             assert '0/100' not in frame
+            evidence=Path('artifacts/design');evidence.mkdir(parents=True,exist_ok=True)
+            (evidence/f'usage-{width}x{height}.txt').write_text(frame)
             tmux('send-keys','-l','Parser');wait('1/1')
             tmux('resize-window','-x','110','-y','28')
             assert 'unrecorded' in wait('unrecorded')

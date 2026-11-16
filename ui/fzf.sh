@@ -47,6 +47,13 @@ _t_fzf() {
   if [ -n "$_t_air_size" ] && { [ "${_t_air_size%% *}" -le 14 ] || [ "${_t_air_size#* }" -le 60 ]; }; then
     set -- "$@" --height=100% --margin=0 --border=none
   fi
+  # Legacy fzf does not reserve a selectable row when a preview and header
+  # consume a short 60%-height frame. Use the available terminal height there.
+  if [ -n "$_t_air_size" ] && [ "${_t_air_size%% *}" -le 28 ]; then
+    for _t_air_option do
+      case $_t_air_option in --preview=*) set -- "$@" --height=100%; break ;; esac
+    done
+  fi
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
     --pointer='▸ ' --marker='✓ ' \
     --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:green,header:cyan,prompt:cyan,border:bright-black' \

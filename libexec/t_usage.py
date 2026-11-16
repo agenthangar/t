@@ -562,7 +562,7 @@ def command(args, spinner=None, live_rows=None):
                 if machine:
                     raise ValueError('specify ID with --json')
                 choices, header = picker_rows(rows, max(20, width - 8))
-                ident = ui['choose'](choices, 'Usage · this machine\n\n' + header, 'show', prompt='usage',
+                ident = ui['choose'](choices, 'Usage · this machine\n' + header, 'show', prompt='usage',
                                      preview_script=str(Path(__file__).resolve()), preview_window='down:50%:wrap')
                 if ident is None:
                     return 130

@@ -1874,6 +1874,8 @@ preview repeats STATUS, SESSION and WORKING ON first, then token split, icon-onl
 tool, models with ★ on the lead, and last turn. Narrow preview panes stack the
 optional fields; full models, task and workspace remain in details. The private
 preview renderer uses the current fzf pane width, including after a resize.
+Shared pickers with a preview use full available height at 28 rows or fewer,
+so legacy fzf retains a selectable row alongside its header and preview.
 Current marks require an exact tool/session/workspace match with the shared local
 session scan; missing or ambiguous owners retain unknown status. Native index and
 saved history names never establish live ownership. No lookup uses a new occupant
