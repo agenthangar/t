@@ -51,7 +51,7 @@ def install(session):
                         socket, identity, pane, pane_pid])
     # Ordinary client formats can be gone by the time run-shell executes. The
     # hook's saved client name is the terminal path; pin the owner at install.
-    worker += ' #{q:hook_client}'
+    worker += ' #{q:hook_client} >/dev/null 2>&1 || :'
     # A private array element preserves the user's other session hooks. Hook
     # expansion quotes event data, not executable shell fragments.
     result = tmux(socket, 'set-hook', '-t', identity + ':', HOOK,
@@ -59,7 +59,10 @@ def install(session):
     if result.returncode:
         return result.returncode
     attached = shlex.join([sys.executable, str(Path(__file__).resolve()), 'attached', socket])
-    attached += ' #{q:client_tty} #{q:client_pid}'
+    # Older tmux hooks retain hook_client but not ordinary client formats.
+    # Resolve the PID from that saved terminal name while it is still attached.
+    # Hook failures must never put the agent pane into run-shell copy mode.
+    attached += ' #{q:hook_client} >/dev/null 2>&1 || :'
     for hook in ('client-attached[50100]', 'client-session-changed[50100]'):
         result = tmux(socket, 'set-hook', '-t', identity + ':', hook,
                       shlex.join(['run-shell', attached]))
@@ -76,9 +79,18 @@ def event_path(socket, tty):
     return root / hashlib.sha256((socket + tty).encode()).hexdigest()
 
 
-def attached(socket, tty, pid):
+def attached(socket, tty, pid=None):
     """Hold the original PTY open, so a recycled /dev/tty name is never evidence."""
-    if not pid.isdigit() or not re.fullmatch(r'/dev/(?:pts/\d+|tty[\w.-]+)', tty):
+    if not re.fullmatch(r'/dev/(?:pts/\d+|tty[\w.-]+)', tty):
+        return 1
+    if pid is None:
+        result = tmux(socket, 'list-clients', '-F', '#{client_tty}|#{client_pid}')
+        matches = [line.split('|')[1] for line in result.stdout.splitlines()
+                   if line.startswith(tty + '|') and line.count('|') == 1]
+        if result.returncode or len(matches) != 1:
+            return 1
+        pid = matches[0]
+    if not pid.isdigit():
         return 1
     base = event_path(socket, tty)
     lock = os.open(str(base) + '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -418,7 +430,7 @@ def main(args):
         return install(args[1])
     if len(args) == 6 and args[0] == 'detached':
         return notify_detached(*args[1:])
-    if len(args) == 4 and args[0] == 'attached':
+    if len(args) in (3, 4) and args[0] == 'attached':
         return attached(*args[1:])
     if len(args) == 6 and args[0] == 'watch':
         return watch(*args[1:])

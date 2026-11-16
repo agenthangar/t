@@ -166,6 +166,38 @@ def test_public_terminal_closure(lifecycle, case):
             background.wait(timeout=5)
 
 
+def test_failed_observer_never_covers_the_agent(lifecycle, close, monkeypatch):
+    base, env = lifecycle
+    env = {**env, 'T_TEST_AGENT_SCREEN': '\x1b[2J\x1b[HAgent remains visible\r\n'}
+    assert _shell(base, env, 't session open repo 1 --codex').returncode == 0
+    marker = base / 'observer-ran'
+    broken = base / 'broken-observer'
+    broken.write_text('#!/bin/sh\ntouch ' + shlex.quote(str(marker)) + '\necho unavailable\nexit 7\n')
+    broken.chmod(0o755)
+    monkeypatch.setattr(close.sys, 'executable', str(broken))
+    monkeypatch.setattr(close, 'run', lambda args, **kwargs: _run(args, env=env, cwd=base))
+    assert close.install('dev-repo-1') == 0
+    socket = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', 'dev-repo-1', '#{socket_path}'], env=env, cwd=base).stdout.strip()
+    master, slave = pty.openpty()
+    process = subprocess.Popen([shutil.which('tmux'), '-S', socket, 'attach-session', '-t', 'dev-repo-1'],
+                               stdin=slave, stdout=slave, stderr=slave,
+                               env={**env, 'TERM': 'xterm-256color'}, start_new_session=True)
+    os.close(slave)
+    try:
+        _until(marker.exists)
+        # A foreground run-shell failure enters copy mode after displaying its
+        # result. Wait for the result rather than checking before the hook ran.
+        time.sleep(.2)
+        mode = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', 'dev-repo-1', '#{pane_in_mode}'], env=env, cwd=base)
+        assert mode.stdout.strip() == '0'
+        screen = _run([str(base / 'bin/tmux'), 'capture-pane', '-p', '-t', 'dev-repo-1'], env=env, cwd=base)
+        assert 'Agent remains visible' in screen.stdout
+        assert 'unavailable' not in screen.stdout
+    finally:
+        os.close(master)
+        process.wait(timeout=5)
+
+
 @pytest.mark.parametrize('change', ['none', 'reattach', 'replacement', 'new-draft', 'new-revision'])
 def test_eligibility_rechecks_after_pr_lookup(close, monkeypatch, change):
     current = dict(workspace='/workspace', cursor='0')
@@ -215,6 +247,8 @@ def test_installer_pins_owner_and_preserves_other_hooks(close, monkeypatch, fail
         assert len(calls) == 4
         assert all('-g' not in args and '-u' not in args for args in calls)
         assert "'$1' %1 123" in shlex.split(calls[1][-1])[-1]
+        assert all('>/dev/null 2>&1 || :' in shlex.split(args[-1])[-1] for args in calls[1:])
+        assert '#{q:hook_client}' in calls[2][-1] and '#{q:client_pid}' not in calls[2][-1]
 
 
 @pytest.mark.parametrize('closed', [False, True])
@@ -246,6 +280,25 @@ def test_attachment_passes_original_fd_and_cleans_up(close, monkeypatch, tmp_pat
     finally:
         if master is not None:
             os.close(master)
+        os.close(slave)
+
+
+@pytest.mark.parametrize('listing', ['correct', 'missing', 'ambiguous', 'invalid'])
+def test_attachment_resolves_saved_hook_client(close, monkeypatch, tmp_path, listing):
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    master, slave = pty.openpty()
+    tty = os.ttyname(slave)
+    text = tty + '|' + ('bad' if listing == 'invalid' else '123') + '\n'
+    if listing == 'missing':
+        text = '/dev/other|456\n'
+    if listing == 'ambiguous':
+        text *= 2
+    monkeypatch.setattr(close, 'tmux', lambda *args: subprocess.CompletedProcess(args, 0, text, ''))
+    monkeypatch.setattr(close.subprocess, 'Popen', lambda *args, **kwargs: None)
+    try:
+        assert close.attached('/socket', tty) == (0 if listing == 'correct' else 1)
+    finally:
+        os.close(master)
         os.close(slave)
 
 
