@@ -84,6 +84,52 @@ def test_confirmed_migration_preserves_and_backs_up(modules, tmp_path):
     migration.install(vars(w), roots=[root], confirm=lambda: pytest.fail('unchanged migration prompted'))
 
 
+@pytest.mark.parametrize('upgrade', [False, True])
+def test_installed_loaders_ship_session_discovery_policy(modules, upgrade):
+    w, migration, _, _ = modules
+    if upgrade:
+        # Simulate an older installation, including the Codex override that can
+        # mask its base AGENTS.md. Personal prose must survive the migration.
+        override = w.native_paths()[0].with_name('AGENTS.override.md')
+        override.write_text('Personal override\n')
+        for path in w.native_paths():
+            path.write_text('Personal instructions\n' + w.BEGIN + '\nOld loader\n' + w.END + '\n')
+    assert migration.install(vars(w), roots=[], confirm=lambda: True) == 0
+    for path in w.native_paths():
+        text = path.read_text()
+        assert text.count('Session discovery:') == 1
+        assert 'For an enabled resolved workflow' in text
+        for instruction in ('`sessions` MCP tools supplied by t first', '`find_sessions`',
+                            '`list_sessions`', '`session_detail`', 'current and saved sessions',
+                            'registered remote hosts', '`t mcp --call TOOL JSON`',
+                            'do not begin with broad Git or transcript searches',
+                            'Discovery is read-only'):
+            assert instruction in text
+        assert 'Old loader' not in text
+        if upgrade:
+            assert text.startswith('Personal instructions\n')
+    migration.install(vars(w), roots=[], confirm=lambda: pytest.fail('unchanged migration prompted'))
+
+
+@pytest.mark.parametrize('tool', ['codex', 'claude'])
+def test_resolved_discovery_policy_respects_disabled_and_excluded_scopes(modules, tmp_path, tool):
+    w = modules[0]
+    doc = w.defaults()
+    root = tmp_path / 'repo'
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    assert w.SESSION_DISCOVERY_GUIDANCE in w.resolve_context(doc, root, tool)['text']
+    scoped = w.tool_document(doc, tool)
+    scoped['repositories'][str(root.resolve())] = {'excluded': True}
+    result = w.resolve_context(scoped, root, tool)
+    assert not result['enabled']
+    assert 'Session discovery:' not in result['text']
+    scoped['repositories'].clear()
+    scoped['workflows']['standard']['enabled'] = False
+    result = w.resolve_context(scoped, root, tool)
+    assert not result['enabled']
+    assert 'Session discovery:' not in result['text']
+
+
 def test_migration_rejects_symlinks_and_retains_custom_settings(modules, tmp_path):
     w, migration, _, _ = modules
     target = tmp_path / 'target'

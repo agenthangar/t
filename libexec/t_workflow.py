@@ -1341,6 +1341,19 @@ def edit_instructions(document, repository=None, name=None):
         return 0, update(document, policy, repository, name)
 
 
+# Shared by enabled context and the native loader's enabled-scope guidance.
+SESSION_DISCOVERY_GUIDANCE = (
+    'Session discovery: When asked where work is happening, which session handled a topic, or what a slot is doing, '
+    'discover and use the `sessions` MCP tools supplied by t first: `find_sessions`, `list_sessions`, '
+    'then `session_detail` to verify candidates. Search both current and saved sessions, including registered '
+    'remote hosts when relevant. Do not infer a current session from an old PR branch alone. '
+    'If the MCP tools are unavailable in this runtime, state that limitation and use the same backend through '
+    '`t mcp --call TOOL JSON`; do not begin with broad Git or transcript searches. '
+    'Use GitHub to supplement verified session results. Discovery is read-only; use session controls only '
+    'for user-requested actions with explicit targets.'
+)
+
+
 # Distributed only with an enabled resolved policy, never the global loader.
 CONTEXT_USE_GUIDANCE = (
     'Context use: Aim for roughly 2,000 tokens per ordinary tool result; larger evidence is allowed when needed. '
@@ -1368,7 +1381,7 @@ def _stage_text(policy, tool='codex', design_source=None):
                 'these stages or delegation solely because of t preferences. Do not apply inherited '
                 't workflow instructions, behavior preferences or custom Markdown for this scope; '
                 'follow the task and repository rules.')
-    parts = [CONTEXT_USE_GUIDANCE]
+    parts = [SESSION_DISCOVERY_GUIDANCE, CONTEXT_USE_GUIDANCE]
     if 'inference' in policy:
         parts.append(inference()['instructions'](policy['inference']) if tool == 'codex' else 'Local routing currently requires Codex; do not claim this tool uses it.')
     if policy.get('inference', {}).get('mode') == 'local-only':
@@ -1525,7 +1538,9 @@ def fallback(tool='codex'):
         'At session start, resume, or after compaction, if no resolved t workflow context was supplied, '
         f'run `t workflow context --tool {tool}` from the current working directory. '
         'Load only that resolved workflow; do not enumerate other repository policies. '
-        'If resolution fails, report it and follow the task and repository rules without guessing a scope.') + '\n' + END
+        'If resolution fails, report it and follow the task and repository rules without guessing a scope.') + (
+        '\n\nFor an enabled resolved workflow, follow this session-discovery guidance:\n'
+        + SESSION_DISCOVERY_GUIDANCE) + '\n' + END
 
 
 def resolve_context(document, cwd=None, tool='codex', common_dir=None):
