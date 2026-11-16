@@ -677,6 +677,61 @@ def ui_helpers():
     return runpy.run_path(str(ROOT/'bin/t'))
 
 
+def recovery_ready(raw, pane_pid, cwd):
+    """An interactive controller is attachable, not evidence of a model writer."""
+    try:
+        if len(raw) > 4096:
+            return False
+        value = json.loads(raw)
+        pid, pane_pid = value['pid'], int(pane_pid)
+        if (type(pid) is not int or pid <= 1 or value['pane_pid'] != pane_pid
+                or Path(value['cwd']).resolve() != Path(cwd).resolve()):
+            return False
+        table = process_table()
+        for owner, stamp in ((pid, value['start']), (pane_pid, value['pane_start'])):
+            row = table.get(owner)
+            if not row or row[2].startswith('Z') or json.dumps(row[3]) != json.dumps(stamp):
+                return False
+        seen = set()
+        while pid > 1 and pid not in seen:
+            if pid == pane_pid:
+                return True
+            seen.add(pid)
+            pid = table.get(pid, (0,))[0]
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        pass
+    return False
+
+
+@contextmanager
+def startup_attachment(cwd):
+    """Publish only this live recovery UI; remove it before retry or model launch."""
+    pane = os.environ.get('TMUX_PANE')
+    if not pane or not os.environ.get('TMUX'):
+        yield
+        return
+    def command(*args):
+        return subprocess.run(['tmux', *args], capture_output=True, text=True,
+                              check=True, timeout=2).stdout.strip()
+    tty, pane_pid = command('display-message', '-p', '-t', pane, '#{pane_tty}\t#{pane_pid}').split('\t')
+    if tty != os.ttyname(0):
+        raise ValueError('The recovery pane does not own this terminal.')
+    table, pid, pane_pid = process_table(), os.getpid(), int(pane_pid)
+    try:
+        marker = json.dumps(dict(pid=pid, start=table[pid][3], pane_pid=pane_pid,
+                                 pane_start=table[pane_pid][3], cwd=str(Path(cwd).resolve())))
+    except KeyError as exc:
+        raise ValueError('Cannot verify the recovery terminal owner.') from exc
+    if not recovery_ready(marker, pane_pid, cwd):
+        raise ValueError('Cannot verify the recovery terminal owner.')
+    command('set-option', '-p', '-t', pane, '@t_recovery_ui', marker)
+    try:
+        yield
+    finally:
+        if command('show-options', '-pqv', '-t', pane, '@t_recovery_ui') == marker:
+            command('set-option', '-p', '-u', '-t', pane, '@t_recovery_ui')
+
+
 def terminal_snapshot():
     """Capture only this terminal's tmux pane; never switch or clear native buffers."""
     pane = os.environ.get('TMUX_PANE')
@@ -928,7 +983,7 @@ def recover(argv, chosen, cwd):
                 except ValueError as exc:
                     initial, blocked = None, str(exc)
                 private_write(directory/'status.json', {'state': 'startup_failed', 'reason': 'Cloud startup unavailable'})
-                with recovery_ui() as ui:
+                with recovery_ui() as ui, startup_attachment(cwd):
                     choice = choose_local(ui, local, selected, 'Cloud startup unavailable. No conversation was started.',
                                           startup=True, blocked=blocked)
                 if choice == 'retry':
@@ -1011,3 +1066,9 @@ def recover(argv, chosen, cwd):
             print('Task paused. Checkpoint retained: '+str(root), file=sys.stderr)
             return 1
         selected = selection
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 5 and sys.argv[1] == '--recovery-ready':
+        raise SystemExit(0 if recovery_ready(sys.argv[2], sys.argv[3], sys.argv[4]) else 1)
+    raise SystemExit('Use the t local-inference launcher.')

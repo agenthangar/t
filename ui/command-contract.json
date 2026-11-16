@@ -877,6 +877,26 @@
           ],
           "notes": "Shared RailUI: Retry refresh, Browse older results when rows exist, Cancel. Ordinary retries honor remote failure cooldown; local explicit retry may reset its failed scan. Cancel preserves shared refresh. Incomplete empty discovery never launches a session.",
           "layout": "inherit"
+        },
+        "startup_recovery": {
+          "argv": [
+            "session",
+            "open",
+            "api",
+            "--new"
+          ],
+          "when": "fresh Codex cloud bootstrap fails and prompted local recovery is configured",
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_offline_attachment.py::test_fresh_readiness_reaches_offline_model_picker",
+            "tests/test_offline_attachment.py::test_recovery_attachment_requires_live_exact_owner",
+            "tests/test_offline_startup.py::test_startup_picker_selects_model_directly_and_exposes_retry"
+          ],
+          "notes": "Attach to the existing shared Start locally rail only for the live recovery controller in the exact pane and workspace. Ready models select directly; retry and cancel retain their existing behavior. Clear attachable state before launch or cancellation. This does not establish a model writer or relax saved-conversation ownership.",
+          "layout": "rail"
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
