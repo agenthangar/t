@@ -47,7 +47,7 @@ def main():
         if result == 'retry':
             retry = True
         return result
-    print('SAMPLE ONLY · t open · refresh wait shortened to one second')
+    print('SAMPLE ONLY · t open · retained sessions appear immediately')
     print('Ctrl-F shows the attached sample after refresh. Esc exits without opening anything.\n')
     try:
         view, notice = adapter.open_snapshot(SimpleNamespace(hosts={}), choose)

@@ -453,13 +453,13 @@
       "kind": "background",
       "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
     },
-    "libexec/t_session_cache.py:request:subprocess.Popen": {
+    "libexec/t_session_cache.py:_start_candidate:subprocess.Popen": {
       "kind": "protocol",
-      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+      "reason": "Private socket service startup is bounded to four seconds; callers preserve JSON or row protocols and report cache freshness after the response."
     },
     "libexec/t_session_cache.py:request:time.sleep": {
       "kind": "protocol",
-      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+      "reason": "Private socket service startup is bounded to four seconds; callers preserve JSON or row protocols and report cache freshness after the response."
     },
     "libexec/t_session_cache.py:_collect:subprocess.run": {
       "kind": "background",
@@ -616,6 +616,10 @@
     "libexec/nightr_install.py:finish_install_transaction:subprocess.run": {
       "kind": "passthrough",
       "reason": "The installer announces the phase, then streams Homebrew, system installer or fixed signed guard output and administrator prompts to the terminal."
+    },
+    "libexec/t_session_discovery.py:collect.remote:subprocess.run": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
     }
   },
   "shell": [

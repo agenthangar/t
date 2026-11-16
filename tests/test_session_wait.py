@@ -205,7 +205,7 @@ def test_partial_empty_list_does_not_claim_verified_empty(t_mod, adapter, monkey
     assert 'No dev sessions running' not in result.out
 
 
-def test_deadline_request_never_restarts_service(cache, monkeypatch):
+def test_expired_deadline_request_never_restarts_service(cache, monkeypatch):
     calls = []
     def wire(*args):
         calls.append(args)
@@ -285,16 +285,16 @@ def test_open_timeout_requires_explicit_cached_choice(adapter, monkeypatch, avai
     monkeypatch.setattr(adapter, 'wait_for_refresh', lambda *a, **k: dict(data, wait_timed_out=True))
     choices = []
     choose = lambda message, rows: choices.append((message, rows)) or action
-    if action == 'cached' and available:
+    if available:
         result, notice = adapter.open_snapshot(None, choose)
         assert 'api-1' in adapter.rows(result) and 'incomplete' in notice
     else:
         with pytest.raises(KeyboardInterrupt):
             adapter.open_snapshot(None, choose)
-    assert choices == [('Session discovery is still refreshing', available)]
+    assert choices == ([] if available else [('Could not refresh sessions', False)])
 
 
-def test_open_retry_does_not_reset_remote_failure_cooldown(adapter, monkeypatch):
+def test_warm_open_does_not_reset_remote_failure_cooldown(adapter, monkeypatch):
     initial = pending()
     initial['hosts'].append(dict(host='mini', target='u@mini', error='offline', value=None, retry_at=100))
     done = view()
@@ -305,7 +305,7 @@ def test_open_retry_does_not_reset_remote_failure_cooldown(adapter, monkeypatch)
     monkeypatch.setattr(adapter, 'request', lambda *a, **k: pytest.fail('remote cooldown reset'))
     choices = []
     result, notice = adapter.open_snapshot(None, lambda *args: choices.append(args) or 'retry')
-    assert len(choices) == 1 and 'api-1' in adapter.rows(result) and notice
+    assert not choices and 'api-1' in adapter.rows(result) and notice
 
 
 def test_open_local_retry_and_verified_empty(adapter, monkeypatch):
@@ -326,8 +326,9 @@ def test_open_local_retry_service_unavailable(adapter, monkeypatch):
     data['hosts'][0].update(error='failed', value=None)
     monkeypatch.setattr(adapter, 'discover', lambda *a, **k: data)
     monkeypatch.setattr(adapter, 'request', lambda *a: {'unavailable': True})
-    with pytest.raises(OSError, match='discovery unavailable'):
-        adapter.open_snapshot(None, lambda *a: 'retry')
+    actions = iter(['retry', 'cancel'])
+    with pytest.raises(KeyboardInterrupt):
+        adapter.open_snapshot(None, lambda *a: next(actions))
 
 
 def test_private_open_rows_waits_and_keeps_notice_out_of_rows(t_mod, adapter, monkeypatch, tmp_path, capsys):
@@ -342,7 +343,7 @@ def test_private_open_rows_waits_and_keeps_notice_out_of_rows(t_mod, adapter, mo
     notice = tmp_path / 'notice'
     assert t_mod.main(['__cache-rows', '--open', '--host', 'mini', '--repo', 'api', '--notice-file', str(notice)]) == 0
     assert notice.read_text() == 'Older results'
-    assert calls == [dict(local=False, host='mini', fields=['rows', 'scopes', 'catalog'])]
+    assert calls == [dict(local=False, host='mini', fields=['rows', 'scopes', 'catalog'], wait=t_mod._resume_discovery_wait)]
     assert 'Older results' not in capsys.readouterr().out
 
 
@@ -375,4 +376,4 @@ def test_open_recovery_uses_shared_rail_and_restores_terminal(t_mod, monkeypatch
     monkeypatch.setattr(t_mod, '_RailUI', UI)
     assert t_mod._open_discovery_choice('Still refreshing', available) == 'cancel'
     assert calls[0] == 'raw' and calls[-1] == 'restore'
-    assert ('cached', 'Browse older results') in calls[1] if available else ('cached', 'Browse older results') not in calls[1]
+    assert ('cached', 'Browse retained results') in calls[1] if available else ('cached', 'Browse retained results') not in calls[1]

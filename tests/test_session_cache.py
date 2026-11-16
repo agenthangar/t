@@ -30,7 +30,8 @@ def cache(tmp_path, monkeypatch):
 def engine(cache):
     jobs, saves = [], []
     now = [10000]
-    memory = cache._Memory(collect=lambda spec: {'rows': 'sid\t/work\tapi-1\tdetached\tactive\ttask\tcodex\n', 'resume': []},
+    memory = cache._Memory(collect=lambda spec: {'rows': 'sid\t/work\tapi-1\tdetached\tactive\ttask\tcodex\n', 'resume': [],
+                                               'catalog': {'version': 1, 'repositories': [], 'conversations': []}},
                            clock=lambda: now[0], persist=lambda: saves.append(True),
                            submit=lambda *job: jobs.append(job))
     memory.restore({})
@@ -137,11 +138,11 @@ def test_serves_only_ram_and_one_refresh_per_host(engine):
     assert discover(memory)['hosts'][0]['value']['rows'].startswith('sid')
 
 
-def test_exact_hour_and_failed_host_retry(engine):
+def test_daily_inventory_and_hourly_failed_host_retry(engine):
     memory, now, jobs, saves = engine
     discover(memory, spec('ssh-host', 'mini')); drain(jobs)
     original = discover(memory, spec('ssh-host', 'mini'))['hosts'][0]['value']
-    now[0] += 3599
+    now[0] += 86399
     assert not discover(memory, spec('ssh-host', 'other-alias'))['hosts'][0]['stale']
     assert not jobs
     now[0] += 1
@@ -174,7 +175,7 @@ def test_invalidation_only_affected_host_and_rejects_old_refresh(engine):
     memory.handle('event', {'targets': ['remote']})
     drain(jobs)
     remote = discover(memory, spec('remote'))['hosts'][0]
-    assert remote['checked'] == 0 and len(jobs) == 1
+    assert remote['checked'] == 10000 and remote['stale'] and len(jobs) == 1
     assert before['entries'] != memory.snapshot()['entries']
 
 
@@ -226,7 +227,7 @@ def test_artifacts_and_invalid_operations(engine):
     assert memory.handle('artifact', {'key': 'file'}) == {'value': None}
     memory.handle('artifact', {'key': 'file', 'value': {'offset': 10}})
     assert memory.handle('artifact', {'key': 'file'})['value'] == {'offset': 10}
-    assert memory.handle('status', {})['protocol'] == 1
+    assert memory.handle('status', {})['protocol'] == 2
     with pytest.raises(ValueError): memory.handle('arbitrary', {})
     with pytest.raises(ValueError): discover(memory, {'target': []})
 
@@ -326,7 +327,7 @@ def test_socket_clients_share_memory(cache, engine):
         server.memory = memory
         thread = threading.Thread(target=server.serve_forever); thread.start()
         try:
-            assert cache.request('status')['protocol'] == 1
+            assert cache.request('status')['protocol'] == 2
             view = cache.request('discover', {'hosts': [spec()]})
             assert view['hosts'][0]['value'] is None
             drain(jobs)
@@ -699,11 +700,11 @@ def test_real_client_replaces_unlinked_daemon_and_retains_snapshot(tmp_path, mon
             assert time.monotonic() < deadline
             time.sleep(.02)
     try:
-        assert module.request('status')['protocol'] == 1
+        assert module.request('status')['protocol'] == 2
         restored()
         module._wire('artifact', {'key': 'retained', 'value': {'saved': True}})
         (module._runtime() / 'service.sock').unlink()
-        assert module.request('status')['protocol'] == 1
+        assert module.request('status')['protocol'] == 2
         restored()
         assert len(children) == 2
         assert children[0].wait(timeout=4) == 0
