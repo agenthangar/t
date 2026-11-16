@@ -480,6 +480,7 @@ for a host's login shell.
 | `t hosts add <alias> <target> [--default]` | Register an SSH config name, address, or user@host |
 | `t hosts edit <alias> <target> [--default]` | Change a registered host's target |
 | `t hosts remove <alias>` | Unregister a host and clear its defaults; `delete` and `rm` also work |
+| `t hosts reset <alias>` | Clear a failed host's one-hour discovery cooldown; the next browse may retry |
 | `t hosts default [alias] [--clear]` | Show, set, or clear the legacy `t beam` default destination |
 
 `hosts` manages remote machines. Run `t hosts` to see its commands,
@@ -733,6 +734,27 @@ these are the common migrations:
 | `t instructions --init/--edit/--show`; `t instructions <repo> --apply` | `t profile init/edit/show`; `t profile apply <repo>` |
 | `t permissions`, `t permissions --show/--apply` | `t policy check`, `t policy show/apply` |
 | `t install`, `t trust`, `t integrate`, `t update`, `t doctor` | `t agent install`, `t agent trust`, `t system integrate`, `t system update`, `t system diagnose` |
+
+When `t open api 3` fails, choose **Repair** to refresh and retry the selected
+session, retaining an explicit `--codex` or `--claude` choice. If repair fails,
+the existing **Force open** option resets only that session's t records. It still
+requires verified ownership and preserves worktree files and native transcripts.
+
+Saved `t resume api 3` selections also offer **Repair / Cancel** after failure.
+Repair retries that exact conversation once. Native writers that have not yet
+published their worktree metadata get a bounded 30-second settling wait; normal
+launches do not wait. A writer that remains unknown or owns the target still
+blocks the launch. Cancel stops any remaining batch selections.
+
+Saved Codex resumes use native cloud retries when automatic local continuation
+cannot support resume, including workflows set to ask or continue locally.
+Startup failures retain the lifecycle reason; ownership conflicts identify the
+changed session, workspace, agent, or conversation without relaxing the guards.
+
+Missing Codex metadata can also be scoped through a verified standalone CLI: its
+process identity, sole thread lock, and working directory must remain stable across
+two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
+evidence remain blocked. This fallback never deletes a lock or stops its owner.
 
 If a CLI cannot reconnect but its tmux slot is still live, run
 `t session restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
@@ -1567,6 +1589,17 @@ t system update --local   # switch to the registered/local t checkout and update
 t system update --local ~/code/t  # select a checkout explicitly, including from Homebrew
 ```
 
+If shell startup was interrupted and `t open` reports that it reached `bin/t`,
+reload the installed shell integration in your current zsh:
+
+```zsh
+source "${${:-$HOME/bin/t}:A:h:h}/t.plugin.zsh"
+```
+
+If startup wiring is missing, run `t doctor --repair` and the source command it
+prints. Cancelling source selection exits quietly; the next `t` invocation retries
+an interrupted initial load.
+
 `t --version` identifies the code being used separately from your current Git
 worktree. For example, inside a development worktree:
 
@@ -1831,4 +1864,22 @@ macOS discovery permission setup, and hotspot passwords. Its live dashboard show
 the selected network's availability even when fallback is disabled.
 
 Session discovery is served from a shared in-memory cache with hourly expiry
-and asynchronous disk persistence. See [session cache behavior and storage](docs/session-cache.md).
+and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
+refresh before building its picker; fresh cached results open immediately. Failed
+hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
+early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
+
+### Nightr
+
+Install the optional macOS keep-awake app with `t system apps install nightr`
+(or `t install nightr`). Use `--dry-run` to review the acquisition path.
+After installation, `nightr setup` configures the helper and login behavior;
+`nightr config` edits preferences. `t config` includes a Nightr entry.
+
+`t system apps status nightr --json` is read-only. `t system update` includes
+Nightr only after opting in, preserves its package owner, and never installs a
+missing app. Installation requires a published, verified Nightr release.
+
+Usage inspection: `t system usage show` selects a record with named columns and a compact
+session summary like `t ls`. Missing local/cloud token counts leave the percentage
+unavailable; `t system usage list --json` retains null measurements.

@@ -379,3 +379,27 @@ def test_failed_open_prompts_for_repair_before_force(recovery, monkeypatch, outc
     assert calls == (['Repair'] if outcome == 'cancel' else
                      ['Repair', 'repair', 'force'] if outcome == 'force' else
                      ['Repair', 'repair'])
+
+
+@pytest.mark.parametrize('agent', ['codex', 'claude'])
+def test_repair_retains_explicit_agent(recovery, monkeypatch, agent):
+    """Repair must not silently fall back to the repository's default agent."""
+    monkeypatch.setenv('T_OPEN_RECOVERY_AGENT', agent)
+    monkeypatch.setattr(recovery, 'CACHE', lambda *a: None)
+    r = object.__new__(recovery.Recovery)
+    r.repo, r.slot = 'repo', '3'
+    r.owner = lambda: None
+    calls = []
+    r.shell = lambda *args: calls.append(args)
+    r.repair()
+    assert calls == [('_t_dev', 'repo', '3', '--' + agent)]
+
+
+def test_repair_rejects_invalid_agent_without_launch(recovery, monkeypatch):
+    monkeypatch.setenv('T_OPEN_RECOVERY_AGENT', 'invalid-agent')
+    monkeypatch.setattr(recovery, 'CACHE', lambda *a: None)
+    r = object.__new__(recovery.Recovery)
+    r.owner = lambda: None
+    r.shell = lambda *a: pytest.fail('invalid agent must not launch')
+    with pytest.raises(ValueError, match='unsupported recovery agent'):
+        r.repair()

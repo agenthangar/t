@@ -189,5 +189,6 @@ def test_tool_runner_guidance_keeps_selected_catalogue(workflow):
     text = workflow._stage_text(policy, 'claude')
     assert '`t runners list --tool claude`' in text
     assert '`t runners runs start --tool claude -- COMMAND ...`' in text
-    assert '`t runners runs status ID`' in text
+    assert '`t runners runs inspect ID`' in text
+    assert '`t runners runs logs ID`' in text
     assert 'Read/edit prose: t workflow instructions show --tool claude / edit --tool claude' in workflow.summary_lines(policy, 'claude')

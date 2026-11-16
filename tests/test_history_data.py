@@ -317,13 +317,52 @@ def test_run_strips_coverage_environment_and_errors_without_exposing_output(hist
     monkeypatch.setattr(history.subprocess, 'run', run)
     assert history.run(['metadata']) == 'metadata'
     assert observed[0]['stdin'] == subprocess.DEVNULL
-    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1, stdout='sensitive'))
+    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1, stdout='sensitive', stderr=''))
     assert history.run(['metadata'], optional=True) == ''
     with pytest.raises(history.HistoryError, match='retained') as exc:
         history.run(['metadata'])
     assert 'sensitive' not in str(exc.value)
     monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired('metadata', 1)))
     assert history.run(['metadata'], optional=True) == ''
+
+
+@pytest.mark.parametrize('diagnostic,expected', [
+    ('t resume: selected owner changed (conversation); rerun t resume', 'selected owner changed (conversation)'),
+    ('t: ownership failed; work and recovery details retained', 'ownership failed'),
+    ('private unstructured error', 'zsh failed'),
+    ('', 'zsh failed'),
+])
+def test_launch_error_retains_only_sanitized_t_diagnostics(history, monkeypatch, diagnostic, expected):
+    stderr = 'private stderr\n\x1b[31m' + diagnostic + '\x1b[0m\n'
+    if diagnostic.startswith('t resume:'):
+        stderr += 't: ready failed; work and recovery details retained: ' + diagnostic + '\n'
+    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k:
+                        SimpleNamespace(returncode=1, stdout='private stdout', stderr=stderr))
+    with pytest.raises(history.HistoryError) as error:
+        history.run(['zsh'], launch_diagnostics=True)
+    message = str(error.value)
+    assert expected in message and 'workspaces were retained' in message
+    assert 'private' not in message and '\x1b' not in message
+    assert message.count('selected owner changed') <= 1
+    with pytest.raises(history.HistoryError, match='^zsh failed;'):
+        history.run(['zsh'])
+
+
+def test_launch_diagnostics_are_bounded_redacted_and_timeout_specific(history, monkeypatch):
+    stderr = 't: failed token=secret-value\u202e\x00 ' + 'x' * 12000 + '\nt resume: failed password=private-value\n'
+    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k:
+                        SimpleNamespace(returncode=1, stdout='', stderr=stderr))
+    with pytest.raises(history.HistoryError) as error:
+        history.run(['zsh'], launch_diagnostics=True)
+    message = str(error.value)
+    assert '[redacted]' in message
+    assert not any(value in message for value in ('secret-value', 'private-value', '\u202e', '\x00'))
+    assert len(message) < 4200
+    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k:
+                        (_ for _ in ()).throw(subprocess.TimeoutExpired('zsh', 90)))
+    with pytest.raises(history.HistoryError, match='launch timed out after 90s'):
+        history.run(['zsh'], timeout=90, launch_diagnostics=True)
+    assert history.run(['zsh'], timeout=90, launch_diagnostics=True, optional=True) == ''
 
 
 def test_private_atomic_json_and_sanitized_details(history, tmp_path):
@@ -959,7 +998,7 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
 
@@ -1014,7 +1053,7 @@ def test_resume_candidate_pr_state_is_cache_only(app, store, history, monkeypatc
         store.db.commit()
         expected = 'OPEN'  # The status cache overrides older transcript evidence.
     fields = list(app.resume_candidates(['repo']))[0].split('\t')
-    assert fields[10:] == ['org/repo', expected]
+    assert fields[10:] == ['org/repo', expected, '-']
 
 
 @pytest.mark.parametrize('state', ['MERGED', 'OPEN', 'CLOSED', 'garbage'])

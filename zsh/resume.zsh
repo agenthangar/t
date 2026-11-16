@@ -125,6 +125,9 @@ _t_resume() {
   # peer warns instead of vetoing independent local/reachable work. Dynamic
   # scope keeps this policy out of unrelated launches and transfer preflight.
   local _T_RESUME_ALLOW_UNAVAILABLE=1
+  local -x T_RESUME_REPAIR=0
+  [[ -t 0 && -t 1 && -t 2 ]] && T_RESUME_REPAIR=1
+  local -x T_RESUME_WAIT=$T_RESUME_REPAIR
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual
@@ -500,9 +503,19 @@ _t_resume() {
   [[ -n $all_mode ]] && history_scope=(--all)
   [[ -n $identity_scope ]] && history_scope=("$identity_scope")
   [[ -n $slot ]] && history_scope+=(--slot "$slot")
-  local auth_file auth_hosts auth_host
+  local auth_file auth_hosts auth_host discovery_notice=
+  local -x T_RESUME_NOTICE_FILE=
   auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
-  history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  if [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    T_RESUME_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || { rm -f -- "$auth_file"; return 1; }
+    # The shared rail owns stderr and terminal input during this wait. A shell
+    # spinner would capture its controls and hide the skip/cancel action.
+    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+    discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
+    rm -f -- "$T_RESUME_NOTICE_FILE"
+  else
+    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  fi
   auth_hosts=$(<"$auth_file")
   rm -f -- "$auth_file"
   for auth_host in "${(@f)auth_hosts}"; do
@@ -513,7 +526,7 @@ _t_resume() {
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 12 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 13 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
@@ -534,7 +547,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}")
   done
   # One linear pass removes every local layout/alias copy handled by history.
   for _p in "${(@)pending}"; do
@@ -635,7 +648,13 @@ _t_resume() {
 
   if (( ! $#cands )); then
     if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-      print -u2 -- 'No matching cached conversations. Discovery status is shown above; run again after a pending refresh.'
+      if [[ $T_RESUME_WAIT != 1 ]]; then
+        print -u2 -- 'No matching cached conversations. Discovery status is shown above; run again after a pending refresh.'
+      elif [[ -z $discovery_notice ]]; then
+        print -u2 -- 'No matching saved conversations.'
+      else
+        print -u2 -- 'No matching cached conversations. Discovery is incomplete; run t resume again later.'
+      fi
       return 0
     fi
     if [[ -n $slot ]]; then
@@ -661,8 +680,8 @@ _t_resume() {
   # dead pick spawns, and what a live slot is running (from the live scan, else
   # the session's own stamp). EVERY row carries all ten, sentinelled, so the
   # positional reads below never slide. Last-turn timestamp is field 11,
-  # repository identity is 12, and explicit cached PR state is 13.
-  # One ALIGNED display column (14) is
+  # repository identity is 12, explicit cached PR state is 13, and close time is 14.
+  # One ALIGNED display column (15) is
   # appended here — fzf renders raw \t fields at literal tab stops (nothing
   # lines up), so both fzf and the no-fzf listing show the same pre-padded
   # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
@@ -712,6 +731,8 @@ _t_resume() {
     fi
     (( i++ ))
   done
+  # Add a fixed-width recency cell without changing selection identity.
+  cands=("${(@f)$(print -rl -- "${(@)cands}" | T_PICKER_NOTICE="${discovery_notice}${auth_hosts}" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-mark)}")
   # Keep the inactive set separate from the initial view so Ctrl-F can always
   # restore it, even when --live (or an explicit slot) starts with all rows.
   # The full row, including every aligned display detail, is identical in both
@@ -735,12 +756,12 @@ _t_resume() {
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if [[ ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
+  if [[ -z $discovery_notice && ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?

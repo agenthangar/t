@@ -80,8 +80,8 @@ Homebrew or a release. If the installed command predates this syntax, bootstrap
 with `./bin/t system update --local .`. Verify the installed `t --version` matches
 canonical main. Do not leave a ready PR for manual merge.
 
-Run `python3 -m pytest --cov --cov-fail-under=97`, Bash shellcheck, and `zsh -n`
-for changed shell files. Compile bin/t to `/tmp`, not the checkout. Preserve coverage.
+Run Bash shellcheck and `zsh -n` for changed shell files. Compile bin/t to `/tmp`,
+not the checkout. Preserve coverage.
 Use sandbox HOME/XDG directories and isolated tmux sockets in tests; never let an
 installer test mutate the developer's agent configuration or tmux server. Strip
 COV_CORE_* when launching copies of measured binaries.

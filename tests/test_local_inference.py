@@ -774,13 +774,57 @@ def test_pause_launch_compatibility(local, monkeypatch, capsys):
     monkeypatch.setattr(local, 'helper', lambda name: {'launch_options': reject})
     calls=[]
     monkeypatch.setattr(local.subprocess, 'call', lambda args: calls.append(args) or 0)
-    assert local.lead(['codex','resume','saved'], chosen={'on_cloud_failure':'pause'}) == 0
-    assert calls == [['codex','resume','saved']]
+    assert local.lead(['codex','--profile','saved'], chosen={'on_cloud_failure':'pause'}) == 0
+    assert calls == [['codex','--profile','saved']]
     assert 'using native tool retries' in capsys.readouterr().err
     with pytest.raises(ValueError, match='unsupported launch'):
-        local.lead(['codex','resume','saved'], chosen={'on_cloud_failure':'local'})
+        local.lead(['codex','--profile','saved'], chosen={'on_cloud_failure':'local'})
     monkeypatch.setattr(local, 'helper', lambda name: {'launch_options':lambda *args:None, 'supervise':lambda *args:9})
     assert local.lead(['codex'], chosen={'on_cloud_failure':'pause'}) == 9
+
+
+@pytest.mark.parametrize('recovery', ['pause', 'ask', 'local'])
+@pytest.mark.parametrize('exit_code', [0, 7])
+def test_saved_resume_preserves_native_launch_under_recovery_policy(local, monkeypatch, tmp_path, capsys, recovery, exit_code):
+    # Exercise the real launch_options rejection, not a mocked supervisor. A
+    # recovery preference must never prevent resume or turn it into a fresh run.
+    argv = ['/native/codex', 'resume', 'selected', '--cd', str(tmp_path),
+            '--model', 'sample-model', '-c', 'approval_policy="never"', '--no-daemon']
+    calls = []
+    monkeypatch.setattr(local.subprocess, 'call', lambda args: calls.append(args) or exit_code)
+    assert local.lead(argv, cwd=str(tmp_path), chosen={'on_cloud_failure': recovery}) == exit_code
+    assert calls == [argv]
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert 'Saved resume uses native cloud retries' in captured.err
+    assert 'automatic local continuation is unavailable' in captured.err
+    assert not (tmp_path / 'XDG_STATE_HOME').exists()
+
+
+@pytest.mark.parametrize('recovery', ['ask', 'local'])
+def test_saved_resume_launcher_executes_native_command(local, tmp_path, recovery):
+    workflow = local.helper('t_workflow')
+    doc = workflow['defaults']()
+    doc['workflows'][doc['default']]['inference'] = local.policy({'on_cloud_failure': recovery})
+    config = workflow['config_path']()
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(workflow['encode'](doc))
+    receipt = tmp_path / 'native-arguments.json'
+    executable = tmp_path / 'fake-codex'
+    executable.write_text('#!' + local.sys.executable + '\nimport json,sys\n'
+                          'from pathlib import Path\n'
+                          f'Path({str(receipt)!r}).write_text(json.dumps(sys.argv[1:]))\n'
+                          'sys.exit(7)\n')
+    executable.chmod(0o700)
+    arguments = ['resume', 'selected', '--cd', str(tmp_path), '--no-daemon']
+    env = {key: value for key, value in local.os.environ.items() if not key.startswith('COV_CORE_')}
+    result = local.subprocess.run([local.sys.executable, str(local.ROOT / 'libexec/t_local_inference.py'),
+                                   '--lead', str(executable), *arguments], cwd=tmp_path, env=env,
+                                  text=True, capture_output=True, timeout=10)
+    assert result.returncode == 7, result.stderr
+    assert json.loads(receipt.read_text()) == arguments
+    assert not result.stdout
+    assert 'Saved resume uses native cloud retries' in result.stderr
 
 
 def test_default_retry_launch_prefix_and_disabled_workflow(local, tmp_path):

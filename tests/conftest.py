@@ -152,3 +152,15 @@ def isolate_discovery_artifacts(monkeypatch):
         return result
     monkeypatch.setattr(runpy, 'run_path', run)
     return artifacts
+
+
+@pytest.fixture(autouse=True)
+def isolate_nightr_package(monkeypatch, tmp_path):
+    """Never route legacy runtime tests into an installed desktop app."""
+    monkeypatch.setenv("NIGHTR_TEST_NO_NATIVE", "1")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("T_HOME", str(REPO_ROOT))
+    # Shell reloads select the executable on PATH; never reload a separately
+    # installed Homebrew release in the middle of a snapshot test.
+    import os
+    monkeypatch.setenv("PATH", str(REPO_ROOT / "bin") + os.pathsep + os.environ.get("PATH", ""))

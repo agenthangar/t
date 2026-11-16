@@ -31,7 +31,7 @@ QUERIES = frozenset({
     'workflow instructions show', 'config show', 'config models list',
     'config models show', 'config models runtime status', 'config models requests list',
     'config models requests show', 'agent status', 'runners list', 'runners runs list',
-    'runners runs status', 'profile show', 'policy show', 'policy check', 'mcp list', 'mcp status',
+    'runners runs status', 'runners runs inspect', 'profile show', 'policy show', 'policy check', 'mcp list', 'mcp status',
 })
 ORCHESTRATED = frozenset({'session open', 'session resume', 'session move', 'session close'})
 # Commands whose *existing* omitted-repository behavior uses the caller's cwd.

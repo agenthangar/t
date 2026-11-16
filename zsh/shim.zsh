@@ -16,7 +16,7 @@
 # Keep the title lifecycle in the calling shell: dispatch may change its cwd.
 t() {
   emulate -L zsh
-  _t_reload_if_moved
+  _t_reload_if_moved || return $?
   # Dynamic scope ends when this command returns; child helpers may change cwd
   # while retaining this invocation's source. The selector rejects tmux leaks.
   local -x T_DEV_CONTEXT="$T_HOME" T_DEV_CONTEXT_OWNER=$$
@@ -45,7 +45,7 @@ t() {
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
-      case ${3:-} in start|list|ls|status|watch|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+      case ${3:-} in start|list|ls|status|watch|inspect|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
     fi
     _term_title "$label"
     title_active=1
@@ -480,6 +480,22 @@ _t_open_impl() {
 # Complete current-session picker. Return 2 when there are no candidates, or 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
+  local _T_OPEN_NOTICE_FILE picker_result
+  _T_OPEN_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-open-discovery.XXXXXX") || return 1
+  {
+    _t_open_picker_impl "$@"; picker_result=$?
+    # An empty scoped subset of incomplete discovery is not a fresh-slot request.
+    if (( picker_result == 2 )) && [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+      print -u2 -- 't open: discovery is incomplete; no session was started'
+      picker_result=1
+    fi
+    return $picker_result
+  } always {
+    rm -f -- "$_T_OPEN_NOTICE_FILE"
+  }
+}
+
+_t_open_picker_impl() {
   local repo="$1" remote="$2" app="$3" cli="$4" rows row selected scope
   local _repo_selector _repo_selector_rc
   if [[ -z $6 ]]; then
@@ -499,10 +515,10 @@ _t_open_picker() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_t_discovery_rows --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --local --unprefixed --details) || return $?
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
@@ -555,7 +571,7 @@ _t_open_picker() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" \
+    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
@@ -786,14 +802,14 @@ _t() {
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
-    hosts) actions=(list ls show add edit remove default run) ;;
+    hosts) actions=(list ls show add edit remove default reset run) ;;
     workflow) actions=(context list ls open delete add use exclude inherit edit instructions) ;;
     runners) actions=(list ls edit setup runs) ;;
     config) actions=(open show edit setup onboard local models) ;;
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose advisories usage) ;;
+    system) actions=(integrate update diagnose advisories usage apps) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -819,7 +835,7 @@ _t() {
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == runs ]] && (( CURRENT == first )); then
-      _values 'run verb' start list ls status watch logs artifacts cancel cleanup
+      _values 'run verb' start list ls status watch inspect logs artifacts cancel cleanup
     elif [[ $action == runs ]]; then
       _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --next-step --json --output -h --help
     elif [[ $action == setup ]]; then
@@ -987,7 +1003,7 @@ _t() {
       else _values 'slot' 1 2 3 4; fi ;;
     hosts/run)
       (( CURRENT == first )) && _values 'host' ${(k)REMOTE_HOSTS} || _normal ;;
-    hosts/show|hosts/remove|hosts/default|hosts/edit)
+    hosts/show|hosts/remove|hosts/default|hosts/edit|hosts/reset)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then
         _values 'host' ${(k)REMOTE_HOSTS}
       elif [[ $group/$action == hosts/edit && $CURRENT == $(( first + 1 )) && ${words[CURRENT]} != -* ]]; then
@@ -1057,6 +1073,11 @@ _t() {
       if [[ ${words[CURRENT-1]} == --interval-hours ]]; then _message 'refresh interval in hours (1–720)'
       elif (( CURRENT == first )); then _values 'action' enable disable status
       else _values 'flag' --interval-hours -h --help; fi ;;
+    system/apps)
+      if (( CURRENT == first )); then _values 'action' install status
+      elif (( CURRENT == first + 1 )); then _values 'app' nightr
+      elif [[ ${words[first]} == status ]]; then _values 'flag' --json -h --help
+      else _values 'flag' --yes --dry-run -h --help; fi ;;
     system/diagnose)
       _values 'flag' --repair -h --help ;;
     policy/show|agent/status|system/integrate)

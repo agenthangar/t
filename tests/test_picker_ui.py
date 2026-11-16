@@ -57,7 +57,7 @@ def test_terminal_state_keeps_unknown_serializations_exact():
 
 
 @pytest.fixture
-def picker():
+def picker(t_mod):
     if not shutil.which('fzf') or not shutil.which('tmux'):
         pytest.skip('real terminal picker requires fzf and tmux')
     with tempfile.TemporaryDirectory(prefix='t-picker-ui-', dir='/tmp') as directory:
@@ -72,7 +72,7 @@ def picker():
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False):
             env['T_HOME'] = str(ROOT)
             if slow_update:
                 library = root / 'slow/libexec'
@@ -107,11 +107,13 @@ def picker():
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
-            if profile in ('resume-rich', 'resume-merged'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
                 if profile == 'resume-merged':
                     rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
+                if profile == 'resume-closed':
+                    rows = rows.replace('\tNewest web', '\torg/web\tOPEN\t2026-10-23T10:00:00Z\t  Newest web').replace('\tOlder api', '\torg/api\tOPEN\t2026-10-24T10:00:00Z\t↶ Older api')
                 default = rows
                 env['T_HOME'] = str(ROOT)
             if profile == 'list-rich':
@@ -125,7 +127,7 @@ def picker():
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile in ('resume-rich', 'resume-merged'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if profile == 'list-rich':
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/source")" T_PICKER_COLUMNS="SESSION TASK" '
@@ -165,6 +167,11 @@ def picker():
                           '_t_dev() { print -r -- "$*" >> "$HOME/selected"; }\n'
                           ': > "$HOME/selected"\n')
                 picker_cmd = 't open --cli' if profile == 'public-open-all' else 't open api --cli'
+                if discovery_notice:
+                    prefix += ('_t_discovery_rows() {\n'
+                               '  print -n "Older results" > "$3"\n'
+                               '  _dev_session_rows --details | awk \'NF {print "local\\t" $0}\'\n'
+                               '}\n')
                 if profile == 'public-open-kill':
                     prefix += ('functions[_rows_before_kill]=$functions[_dev_session_rows]\n'
                                '_dev_session_rows() {\n'
@@ -187,10 +194,11 @@ def picker():
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
-        def wait(text, absent=(), ordered=(), focused=None):
+        def wait(text, absent=(), ordered=(), focused=None, columns=None):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
+                fits = columns is None or all(t_mod._display_width(line) <= columns for line in screen.splitlines())
                 # Compare semantic controls across native OS labels. Exact label
                 # spellings and width budgets have separate renderer coverage.
                 screen = screen.replace('↩ Return', 'Enter').replace('↩', 'Enter')
@@ -202,7 +210,8 @@ def picker():
                 in_order = all(p >= 0 for p in positions) and positions == sorted(positions)
                 has_focus = focused is None or any(
                     '▸' in line and focused in line for line in screen.splitlines())
-                if text in screen and not any(value in screen for value in absent) and in_order and has_focus:
+                if (text in screen and not any(value in screen for value in absent) and in_order and has_focus
+                        and fits):
                     return screen
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
@@ -220,7 +229,10 @@ def picker():
             assert not list(root.glob('t-picker.*'))
             return (root / 'selected').read_text().splitlines()
 
-        yield start, wait, lambda *keys: tmux('send-keys', *keys), finish
+        def keys(*values):
+            return tmux('send-keys', *values)
+        keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
+        yield start, wait, keys, finish
         tmux('kill-server', check=False)
 
 
@@ -553,6 +565,8 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
     keys('C-y', 'C-y', 'C-y', 'C-y')
+    wait('Sort: last closed', absent=loading, focused='Newest web')
+    keys('C-y')
     if height > 12:
         wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
     else:
@@ -772,3 +786,15 @@ def test_long_phrase_search_matches_full_metadata_beyond_narrow_display(picker):
     keys('-l', 'still in progress')
     wait('still in progress', focused='First')
     assert finish() == ['api 2 --local']
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (32, 12)])
+@pytest.mark.fzf_compat
+def test_open_discovery_notice_keeps_focused_row_visible(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='public-open-all', width=width, height=height, discovery_notice=True)
+    wait('Older results', focused='4')
+    keys('C-f')
+    screen = wait('4/4 (0)')
+    assert 'Older results' in screen and 'Filters OFF' in screen and '▸' in screen
+    assert finish('Escape', status=130) == []

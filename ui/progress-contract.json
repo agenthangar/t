@@ -1,6 +1,10 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_offline.py:startup_attachment.command:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Local tmux ownership queries and pane marker updates each have a two-second timeout. They run while recovery owns the terminal and must not repaint a competing spinner over the model picker."
+    },
     "libexec/t_offline.py:terminal_snapshot:subprocess.run": {
       "kind": "protocol",
       "reason": "Two bounded read-only tmux queries capture the exact owning pane while the native frontend is suspended. They must not repaint a spinner over the screen being preserved."
@@ -80,10 +84,6 @@
     "bin/t:cmd_integrate:subprocess.run": {
       "kind": "passthrough",
       "reason": "Installer output is streamed to the terminal."
-    },
-    "bin/t:cmd_update:subprocess.run": {
-      "kind": "passthrough",
-      "reason": "Homebrew and installers retain live prompts and diagnostics; quiet Git work uses the shared spinner."
     },
     "bin/t:_t_update_remote:subprocess.Popen": {
       "kind": "passthrough",
@@ -457,13 +457,13 @@
       "kind": "background",
       "reason": "Interactive downloads run beneath the cancellable Model test progress page; output is suppressed to preserve its rendering."
     },
-    "libexec/t_session_cache.py:request:subprocess.Popen": {
+    "libexec/t_session_cache.py:_start_candidate:subprocess.Popen": {
       "kind": "protocol",
-      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+      "reason": "Private socket service startup is bounded to four seconds; callers preserve JSON or row protocols and report cache freshness after the response."
     },
     "libexec/t_session_cache.py:request:time.sleep": {
       "kind": "protocol",
-      "reason": "Private socket service startup is bounded to one second; callers preserve JSON or row protocols and report cache freshness after the response."
+      "reason": "Private socket service startup is bounded to four seconds; callers preserve JSON or row protocols and report cache freshness after the response."
     },
     "libexec/t_session_cache.py:_collect:subprocess.run": {
       "kind": "background",
@@ -612,6 +612,38 @@
     "libexec/t_fresh.py:watch:time.sleep": {
       "kind": "background",
       "reason": "The detached per-repository ref worker polls quiet refresh requests and its five-minute deadline without owning a terminal."
+    },
+    "bin/t:_cmd_update_t:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Homebrew and installers retain live prompts and diagnostics; quiet Git work uses the shared spinner."
+    },
+    "libexec/t_nightr.py:assert_migration_safe:subprocess.run": {
+      "kind": "phase",
+      "reason": "Installation announces its protection check before bounded, read-only power and native-owner probes."
+    },
+    "libexec/t_nightr.py:brew_owned:subprocess.run": {
+      "kind": "phase",
+      "reason": "The announced installation check resolves existing package ownership with a bounded read-only Homebrew query."
+    },
+    "libexec/nightr_install.py:run:subprocess.run": {
+      "kind": "phase",
+      "reason": "Announced package phases use bounded metadata, signature and receipt probes; interactive installers use the separate streamed path."
+    },
+    "libexec/nightr_install.py:run_passthrough:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The installer announces the phase, then streams Homebrew, system installer or fixed signed guard output and administrator prompts to the terminal."
+    },
+    "libexec/nightr_install.py:install_pkg:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The installer announces the phase, then streams Homebrew, system installer or fixed signed guard output and administrator prompts to the terminal."
+    },
+    "libexec/nightr_install.py:finish_install_transaction:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The installer announces the phase, then streams Homebrew, system installer or fixed signed guard output and administrator prompts to the terminal."
+    },
+    "libexec/t_session_discovery.py:collect.remote:subprocess.run": {
+      "kind": "background",
+      "reason": "Detached discovery service workers have no terminal. Cached callers return immediately with freshness while bounded scans and startup arbitration run in the background."
     }
   },
   "shell": [

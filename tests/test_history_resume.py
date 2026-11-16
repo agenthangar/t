@@ -192,19 +192,19 @@ _t_history_attach repo-1 selected /repo/1 codex
     assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t $7:'
 
 
-@pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'timeout'])
+@pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'dead-missing-agent', 'timeout'])
 def test_history_owner_waits_for_identity_without_following_replacement(history, tmp_path, outcome):
     tick = tmp_path / 'tick'
     script = f'''
 source {ROOT}/zsh/sessions.zsh
-_dev_session_claude_pid() {{ print 123; }}
+_dev_session_claude_pid() {{ [[ {outcome} == dead-missing-agent ]] && return 1; print 123; }}
 _dev_session_sid() {{
   [[ {outcome} == dead-ready ]] && {{ print selected; return 0; }}
   [[ -f {tick} && {outcome} != timeout ]] && print {'other' if outcome == 'sid' else 'selected'}
   return 0
 }}
 _dev_agent_of_session() {{
-  if [[ -f {tick} && {outcome} == agent ]]; then print claude; else print codex; fi
+  if [[ {outcome} == dead-missing-agent || ( -f {tick} && {outcome} == agent ) ]]; then print claude; else print codex; fi
 }}
 sleep() {{ print tick >> {tick}; [[ {outcome} == timeout ]] && SECONDS=15; return 0; }}
 tmux() {{
@@ -232,7 +232,9 @@ _t_history_owner repo-1 selected /repo/1 codex wait
         assert result.returncode == 1
         assert not result.stdout
         expected = ('identity is not ready' if outcome == 'timeout' else
-                    'exited' if outcome in ('exited', 'dead', 'dead-ready') else 'owner changed')
+                    'exited' if outcome == 'exited' or outcome.startswith('dead') else
+                    'owner changed (' + {'sid': 'conversation', 'cwd': 'workspace',
+                                        'agent': 'agent', 'recycled': 'session'}[outcome] + ')')
         assert expected in result.stderr
     if outcome == 'timeout':
         assert 't open repo 1' in result.stderr
@@ -424,6 +426,10 @@ def test_resume_success_records_exact_agent_destination_and_revision(app, histor
     def launch(argv, **kwargs):
         if argv[0] == 'zsh':
             launches.append(argv)
+            # The final lifecycle guard may need to settle a newly loaded
+            # writer before waiting for native readiness.
+            assert kwargs.get('timeout', 30) >= 60
+            assert kwargs.get('launch_diagnostics') is True
             return ''
         return original(argv, **kwargs)
     monkeypatch.setattr(history, 'run', launch)
@@ -664,9 +670,16 @@ def test_remote_archive_release_check_uses_exact_identity_without_wrong_archive_
         assert 'Retry: t session resume' in str(error.value)
 
 
-def test_resume_unindexed_writer_guidance_uses_public_resume(app, history, tmp_path):
+def test_resume_unindexed_writer_guidance_uses_public_resume(app, history, tmp_path, monkeypatch):
     """#375: preserve the unknown-writer guard without exposing internal history."""
     import fcntl
+    original_loader = history.runpy.run_path
+    def load(path, *args, **kwargs):
+        result = original_loader(path, *args, **kwargs)
+        if str(path).endswith('t_codex_ownership.py'):
+            result['_other_cwd_owner'].__globals__['_WRITER_SETTLE_SECONDS'] = 0
+        return result
+    monkeypatch.setattr(history.runpy, 'run_path', load)
 
     sid = '01234567-89ab-cdef-0123-456789abcdef'
     other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -1320,3 +1333,119 @@ def test_relocated_resume_checks_destination_and_selected_writer(
     assert sibling.read_bytes() == sibling_bytes
     assert app.reservation is None
     assert not list(destination.parent.glob('.*.history-reservation'))
+
+
+@pytest.mark.parametrize('decision', ['repair', 'cancel', 'nonterminal', 'still-blocked', 'unmarked-pipe'])
+@pytest.mark.parametrize('mode', ['launch', 'prepare'])
+def test_saved_resume_offers_repair_for_exact_selection(
+        app, history, t_mod, monkeypatch, capsys, decision, mode):
+    """The public resume bridge must recover without replacing the chosen SID."""
+    row = conversation(sid='selected')
+    monkeypatch.setattr(app, 'records', lambda alias: [row])
+    calls = []
+    def resume(alias, selected, **kwargs):
+        calls.append((alias, selected['sid'], kwargs))
+        if len(calls) == 1 or decision == 'still-blocked':
+            raise history.HistoryError('writer metadata is not available yet')
+        return 'dev-repo-7'
+    monkeypatch.setattr(app, 'resume', resume)
+    prompts = []
+    def ask(*args):
+        prompts.append(args)
+        return decision in ('repair', 'still-blocked')
+    real_helpers = history.runpy.run_path
+    def helpers(path, *args, **kwargs):
+        if str(path).endswith('t_open_recovery.py'):
+            return {'ask': ask}
+        if str(path).endswith('t_history.py'):
+            return {'HistoryCommand': lambda *a: app, 'HistoryError': history.HistoryError,
+                    'HistoryCancelled': history.HistoryCancelled}
+        return real_helpers(path, *args, **kwargs)
+    monkeypatch.setattr(history.runpy, 'run_path', helpers)
+    monkeypatch.setattr(t_mod, 'Config', lambda: app.cfg)
+    monkeypatch.setenv('T_RESUME_REPAIR', '0' if decision == 'unmarked-pipe' else '1')
+    monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: decision != 'nonterminal')
+    monkeypatch.setattr(history.sys.stderr, 'isatty', lambda: decision != 'nonterminal')
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *a, **k: {})
+    result = t_mod.main(['__resume-saved', 'repo', 'selected', 'codex', mode])
+    assert result == {'repair': 0, 'cancel': 130, 'nonterminal': 1,
+                      'still-blocked': 1, 'unmarked-pipe': 1}[decision]
+    assert len(prompts) == (0 if decision in ('nonterminal', 'unmarked-pipe') else 1)
+    assert len(calls) == (2 if decision in ('repair', 'still-blocked') else 1)
+    assert all(call == ('repo', 'selected', {'detached': True, 'prepare_only': mode == 'prepare'}) for call in calls)
+    if decision == 'repair':
+        assert capsys.readouterr().out == 'dev-repo-7\n'
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_saved_resume_real_repair_rail_keeps_owner_stdout_clean(app, tmp_path, cancel):
+    """Exercise the real rail while the shell-style owner result is captured."""
+    import pty
+    import select
+    import sys
+    import time
+    source = r'''
+import runpy,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+api=runpy.run_path(str(root/'bin/t'),run_name='repair_test')
+h=runpy.run_path(str(root/'libexec/t_history.py'))
+app=object.__new__(h['HistoryCommand'])
+app.root=str(root); app.api=api
+calls=[]
+def resume(*a,**k):
+    calls.append(1)
+    if len(calls)==1: raise h['HistoryError']('Waiting writer')
+    return 'dev-sample-3'
+app.resume=resume
+app.resume_with_repair.__globals__['_CACHE_REQUEST']=lambda *a,**k: {}
+try: print(app.resume_with_repair('sample',{'sid':'selected'},detached=True))
+except h['HistoryCancelled']: sys.exit(130)
+'''
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    env.update(T_RESUME_REPAIR='1', TERM='xterm-256color')
+    master, slave = pty.openpty()
+    process = subprocess.Popen([sys.executable, '-c', source, str(ROOT)],
+        stdin=slave, stdout=subprocess.PIPE, stderr=slave, env=env, cwd=tmp_path)
+    os.close(slave)
+    screen = b''
+    try:
+        deadline = time.monotonic() + 10
+        while b'Repair' not in screen and time.monotonic() < deadline:
+            if select.select([master], [], [], .1)[0]:
+                screen += os.read(master, 65536)
+            if process.poll() is not None:
+                break
+        assert b'Repair' in screen and b'Cancel' in screen, screen.decode(errors='replace')
+        os.write(master, b'\x1b' if cancel else b'\r')
+        deadline = time.monotonic() + 10
+        while process.poll() is None and time.monotonic() < deadline:
+            if select.select([master], [], [], .1)[0]:
+                try:
+                    screen += os.read(master, 65536)
+                except OSError:
+                    break
+        # The PTY can close just before waitpid observes the process exit.
+        try:
+            stdout, _ = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            pytest.fail(screen.decode(errors='replace'))
+        assert process.returncode == (130 if cancel else 0)
+        assert stdout == (b'' if cancel else b'dev-sample-3\n')
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        os.close(master)
+
+
+def test_unavailable_history_is_not_reported_as_empty(app, history, monkeypatch, capsys):
+    app.discovery_view = {'unavailable': True, 'hosts': []}
+    monkeypatch.setattr(app, 'records', lambda *a: [])
+    monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: False)
+    monkeypatch.setattr(history.sys.stdout, 'isatty', lambda: False)
+    args = SimpleNamespace(target=['repo', '23'], json=False, refresh=False, limit=50, page=1)
+    assert app.execute(args) == 1
+    output = capsys.readouterr()
+    assert 'unavailable' in output.err
+    assert 'No matching' not in output.out

@@ -1328,6 +1328,7 @@ def test_config_nosleep_opens_shared_editor_only_with_clean_hub(t_mod, config_cl
     ui = Menu(['trust', '1' if cfg.auto_trust != '1' else '0', 'nosleep', 'cancel', 'discard'] if dirty else ['nosleep', 'cancel'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     calls = []
+    monkeypatch.setattr(t_mod, '_nightr_module', lambda: {'installed': lambda: '0.1.0', 'CLI': '/Applications/Nightr.app/Contents/MacOS/nightr-native'})
     def launch(argv):
         assert ui.restored
         calls.append(argv)
@@ -1336,8 +1337,7 @@ def test_config_nosleep_opens_shared_editor_only_with_clean_hub(t_mod, config_cl
     assert t_mod._config_wizard(cfg) is None
     assert len(calls) == (0 if dirty else 1)
     if calls:
-        assert calls[0][0] == t_mod.sys.executable
-        assert calls[0][1].endswith('/libexec/nosleep_config.py')
+        assert calls[0] == ['/Applications/Nightr.app/Contents/MacOS/nightr-native', 'config']
 
 
 class ContinuationMenu(InterruptMenu):

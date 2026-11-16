@@ -30,7 +30,8 @@ def cache(tmp_path, monkeypatch):
 def engine(cache):
     jobs, saves = [], []
     now = [10000]
-    memory = cache._Memory(collect=lambda spec: {'rows': 'sid\t/work\tapi-1\tdetached\tactive\ttask\tcodex\n', 'resume': []},
+    memory = cache._Memory(collect=lambda spec: {'rows': 'sid\t/work\tapi-1\tdetached\tactive\ttask\tcodex\n', 'resume': [],
+                                               'catalog': {'version': 1, 'repositories': [], 'conversations': []}},
                            clock=lambda: now[0], persist=lambda: saves.append(True),
                            submit=lambda *job: jobs.append(job))
     memory.restore({})
@@ -137,11 +138,11 @@ def test_serves_only_ram_and_one_refresh_per_host(engine):
     assert discover(memory)['hosts'][0]['value']['rows'].startswith('sid')
 
 
-def test_exact_hour_and_failed_host_retry(engine):
+def test_daily_inventory_and_hourly_failed_host_retry(engine):
     memory, now, jobs, saves = engine
     discover(memory, spec('ssh-host', 'mini')); drain(jobs)
     original = discover(memory, spec('ssh-host', 'mini'))['hosts'][0]['value']
-    now[0] += 3599
+    now[0] += 86399
     assert not discover(memory, spec('ssh-host', 'other-alias'))['hosts'][0]['stale']
     assert not jobs
     now[0] += 1
@@ -174,7 +175,7 @@ def test_invalidation_only_affected_host_and_rejects_old_refresh(engine):
     memory.handle('event', {'targets': ['remote']})
     drain(jobs)
     remote = discover(memory, spec('remote'))['hosts'][0]
-    assert remote['checked'] == 0 and len(jobs) == 1
+    assert remote['checked'] == 10000 and remote['stale'] and len(jobs) == 1
     assert before['entries'] != memory.snapshot()['entries']
 
 
@@ -226,7 +227,7 @@ def test_artifacts_and_invalid_operations(engine):
     assert memory.handle('artifact', {'key': 'file'}) == {'value': None}
     memory.handle('artifact', {'key': 'file', 'value': {'offset': 10}})
     assert memory.handle('artifact', {'key': 'file'})['value'] == {'offset': 10}
-    assert memory.handle('status', {})['protocol'] == 1
+    assert memory.handle('status', {})['protocol'] == 2
     with pytest.raises(ValueError): memory.handle('arbitrary', {})
     with pytest.raises(ValueError): discover(memory, {'target': []})
 
@@ -326,7 +327,7 @@ def test_socket_clients_share_memory(cache, engine):
         server.memory = memory
         thread = threading.Thread(target=server.serve_forever); thread.start()
         try:
-            assert cache.request('status')['protocol'] == 1
+            assert cache.request('status')['protocol'] == 2
             view = cache.request('discover', {'hosts': [spec()]})
             assert view['hosts'][0]['value'] is None
             drain(jobs)
@@ -340,7 +341,7 @@ def test_client_unavailable_is_bounded_no_scanner_fallback(cache, monkeypatch):
     monkeypatch.setattr(cache, '_wire', lambda *a: (_ for _ in ()).throw(OSError()))
     launches = []
     monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: launches.append((a, k)))
-    ticks = iter([0, .1, 2])
+    ticks = iter([0, .1, 5])
     monkeypatch.setattr(cache.time, 'monotonic', lambda: next(ticks))
     monkeypatch.setattr(cache.time, 'sleep', lambda _: None)
     monkeypatch.setenv('COV_CORE_SOURCE', 'must-not-leak')
@@ -477,7 +478,7 @@ def test_service_upgrade_releases_socket_and_flushes(cache, monkeypatch):
             time.sleep(.01)
         # A competing startup never replaces the owner's socket.
         contender = threading.Thread(target=cache._serve)
-        contender.start(); contender.join(2)
+        contender.start(); contender.join(4)
         assert not contender.is_alive()
         cache._wire('artifact', {'key': 'restart', 'value': {'saved': True}})
         monkeypatch.setattr(cache, '_revision', lambda: ['new-source'])
@@ -501,6 +502,120 @@ def test_standalone_artifact_miss_never_spawns_service(cache, monkeypatch):
     assert cache.request('artifact', {'key': 'missing'}) == {'value': None}
 
 
+@pytest.mark.parametrize('operation', ['event', 'forget'])
+def test_failed_target_cooldown_survives_invalidation_and_context_changes(engine, operation):
+    memory, now, jobs, _ = engine
+    remote = spec('u@mini', 'mini')
+    discover(memory, remote); drain(jobs)
+    original = discover(memory, remote)['hosts'][0]['value']
+    memory.handle('event', {'targets': ['u@mini']})
+    memory.collect = lambda _: (_ for _ in ()).throw(OSError('offline'))
+    discover(memory, remote); drain(jobs)
+    if operation == 'event':
+        memory.handle(operation, {'targets': ['u@mini']})
+    else:
+        memory.handle(operation, {'target': 'u@mini', 'workspace': '/unrelated'})
+    alternate = spec('u@mini', 'alias', context={'repos': {'new': '/new'}})
+    for _ in range(3):
+        hosts = discover(memory, remote, alternate)['hosts']
+        assert all(h['error'] == 'offline' and h['retry_at'] == now[0] + 3600 for h in hosts)
+        assert not any(h['refreshing'] for h in hosts) and not jobs
+        assert hosts[0]['value'] == original
+    now[0] += 3599
+    discover(memory, alternate); assert not jobs
+    now[0] += 1
+    discover(memory, alternate, remote); assert len(jobs) == 1
+    memory.collect = lambda _: {'rows': '', 'resume': []}
+    drain(jobs)
+    assert not memory.failures
+    assert all(not e.get('error') for e in memory.entries.values())
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('invalidate_while_loading', [False, True])
+def test_failed_target_cooldown_survives_restore(cache, engine, legacy, invalidate_while_loading):
+    memory, now, jobs, _ = engine
+    memory.collect = lambda _: (_ for _ in ()).throw(OSError('offline'))
+    discover(memory, spec('remote')); drain(jobs)
+    saved = memory.snapshot()
+    if legacy:
+        saved.pop('failures')
+        saved['entries']['malformed'] = None
+    restored_jobs = []
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *job: restored_jobs.append(job))
+    if invalidate_while_loading:
+        restored.handle('event', {'targets': ['remote']})
+    restored.restore(saved)
+    host = discover(restored, spec('remote', 'renamed', context={'repos': {'a': '/a'}}))['hosts'][0]
+    assert host['error'] == 'offline' and host['retry_at'] == now[0] + 3600
+    assert not restored_jobs
+
+
+def test_reset_host_only_clears_target_preserves_rows_and_does_not_collect(engine):
+    memory, now, jobs, saves = engine
+    discover(memory, spec('remote'), spec('other')); drain(jobs); drain(jobs)
+    memory.handle('event', {'targets': ['remote', 'other']})
+    memory.collect = lambda _: (_ for _ in ()).throw(OSError('offline'))
+    discover(memory, spec('remote'), spec('other')); drain(jobs); drain(jobs)
+    alternate = spec('remote', 'alias', context={'repos': {'a': '/a'}})
+    discover(memory, alternate)
+    before = memory.snapshot()
+    assert memory.handle('reset-host', {'target': 'remote'}) == {'reset': 'remote'}
+    assert set(memory.failures) == {'other'} and not jobs and saves
+    for key, entry in memory.entries.items():
+        if entry['spec']['target'] == 'remote':
+            assert entry['checked'] == entry['retry'] == 0 and not entry['error']
+            assert entry.get('value') == before['entries'][key].get('value')
+        else:
+            assert entry == before['entries'][key]
+    hosts = discover(memory, spec('remote'), alternate, spec('other'))['hosts']
+    assert len(jobs) == 1 and hosts[0]['refreshing'] and hosts[1]['refreshing']
+    assert not hosts[2]['refreshing'] and hosts[2]['error'] == 'offline'
+
+
+@pytest.mark.parametrize('operation', ['event', 'forget', 'reset-host'])
+@pytest.mark.parametrize('failure', [False, True])
+def test_inflight_failure_cooldown_respects_only_explicit_reset(engine, operation, failure):
+    memory, now, jobs, _ = engine
+    def collect(_):
+        if failure:
+            raise OSError('offline')
+        return {'rows': 'stale', 'resume': []}
+    memory.collect = collect
+    discover(memory, spec('remote'))
+    payload = {'targets': ['remote']} if operation == 'event' else {'target': 'remote', 'workspace': '/work'}
+    memory.handle(operation, payload)
+    discover(memory, spec('remote'))
+    assert len(jobs) == 1  # Reset does not start a concurrent collector.
+    drain(jobs)
+    host = discover(memory, spec('remote'))['hosts'][0]
+    assert host['value'] is None
+    cooling = failure and operation != 'reset-host'
+    assert bool(host['error']) == cooling
+    assert len(jobs) == (0 if cooling else 1)
+
+
+def test_reset_host_validation_and_restoration_gate(engine):
+    memory, _, jobs, _ = engine
+    for payload in ({}, {'target': ''}, {'target': []}):
+        with pytest.raises(ValueError, match='invalid'):
+            memory.handle('reset-host', payload)
+    memory.loading = True
+    with pytest.raises(ValueError, match='loading'):
+        memory.handle('reset-host', {'target': 'remote'})
+    assert not jobs and not memory.reset_epochs
+
+
+def test_restore_ignores_invalid_failure_metadata(cache):
+    memory = cache._Memory(clock=lambda: 10000, submit=lambda *a: None)
+    memory.restore({'failures': {'wrong': [], 'empty': {'retry_at': 10100, 'error': ''},
+        'infinite': {'retry_at': float('inf'), 'error': 'bad'},
+        'future': {'retry_at': 13601, 'error': 'bad'}, 'text': {'retry_at': 'soon', 'error': 'bad'}}})
+    assert not memory.failures
+    with pytest.raises(ValueError, match='invalid'):
+        memory.restore({'failures': []})
+
+
 def test_invalid_disk_snapshot_is_rebuilt_from_ram(cache):
     memory = cache._Memory(submit=lambda *a: None)
     disk = cache._Persistence(memory)
@@ -520,3 +635,82 @@ def test_invalid_disk_snapshot_is_rebuilt_from_ram(cache):
         db.close()
     with pytest.raises(ValueError, match='invalid discovery snapshot'):
         memory.restore({'entries': []})
+
+
+@pytest.mark.parametrize('replacement', [False, True])
+def test_lost_socket_owner_exits_without_removing_replacement(cache, monkeypatch, replacement):
+    signals = {}
+    monkeypatch.setattr(cache.signal, 'signal', lambda number, handler: signals.setdefault(number, handler))
+    monkeypatch.setattr(cache.os, 'umask', lambda value: None)
+    thread = threading.Thread(target=cache._serve)
+    thread.start()
+    address = cache._runtime() / 'service.sock'
+    try:
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                if not cache._wire('status', {})['loading']: break
+            except (OSError, ValueError): pass
+            assert time.monotonic() < deadline
+            time.sleep(.01)
+        cache._wire('artifact', {'key': 'retained', 'value': {'saved': True}})
+        address.unlink()
+        if replacement: address.write_text('replacement must survive old cleanup')
+        thread.join(3)
+        assert not thread.is_alive(), 'orphaned listener must release its lifetime lock'
+        if replacement: assert address.read_text() == 'replacement must survive old cleanup'
+        with sqlite3.connect(cache._database()) as db:
+            saved = json.loads(db.execute('select payload from snapshots').fetchone()[0])
+        assert saved['artifacts']['retained'] == {'saved': True}
+    finally:
+        if thread.is_alive():
+            signals[cache.signal.SIGTERM]()
+            thread.join(3)
+
+
+def test_client_waits_for_owner_handoff_without_fork_storm(cache, monkeypatch):
+    from types import SimpleNamespace
+    elapsed, launches = [0.0], []
+    def wire(*args):
+        if elapsed[0] < 1.5: raise FileNotFoundError('old owner is flushing')
+        return {'protocol': 1}
+    monkeypatch.setattr(cache, '_wire', wire)
+    monkeypatch.setattr(cache, 'time', SimpleNamespace(monotonic=lambda: elapsed[0],
+        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)))
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: launches.append(a))
+    assert cache.request('status') == {'protocol': 1}
+    assert len(launches) == 1 and elapsed[0] < 4
+
+
+def test_real_client_replaces_unlinked_daemon_and_retains_snapshot(tmp_path, monkeypatch):
+    import shutil
+    for key in ('HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'CODEX_HOME'):
+        monkeypatch.setenv(key, str(tmp_path / key))
+    module = load_script(REPO_ROOT / 'libexec/t_session_cache.py', 'cache_recovery_process_test')
+    children = []
+    original = subprocess.Popen
+    def spawn(*args, **kwargs):
+        child = original(*args, **kwargs)
+        children.append(child)
+        return child
+    monkeypatch.setattr(module.subprocess, 'Popen', spawn)
+    def restored():
+        deadline = time.monotonic() + 4
+        while module._wire('status', {})['loading']:
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+    try:
+        assert module.request('status')['protocol'] == 2
+        restored()
+        module._wire('artifact', {'key': 'retained', 'value': {'saved': True}})
+        (module._runtime() / 'service.sock').unlink()
+        assert module.request('status')['protocol'] == 2
+        restored()
+        assert len(children) == 2
+        assert children[0].wait(timeout=4) == 0
+        assert module._wire('artifact', {'key': 'retained'})['value'] == {'saved': True}
+    finally:
+        for child in children:
+            if child.poll() is None: child.terminate()
+            child.wait(timeout=5)
+        shutil.rmtree(module._runtime(), ignore_errors=True)

@@ -74,22 +74,35 @@ _t_lifecycle_effect() {
       tmux respawn-pane -t "$5" -c "$2" "zsh -lic ${(q)6}" || return 1
       tmux set-option -p -t "$5" remain-on-exit "$7" ;;
     ready)
-      local session=$1 dir=$2 agent=$3 sid=$4 pid identity current
+      local session=$1 dir=$2 agent=$3 sid=$4 pid identity current recovery
       if [[ -z $sid ]]; then
         # Fresh CLIs can wait for their first prompt before minting a thread ID.
-        # Verify the requested agent in the immutable pane, never just its shell.
-        identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}') || return 1
+        # Verify the requested agent or its owned recovery UI, never just a shell.
+        identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}|#{pane_id}|#{pane_pid}') || return 1
+        local -a owner_parts=("${(@s:|:)identity}")
+        # Read pane fields from the right; workspace names may contain pipes.
+        (( ${#owner_parts} >= 4 )) || return 1
+        local owner_dir="${(j:|:)owner_parts[2,-3]}" pane=${owner_parts[-2]} pane_pid=${owner_parts[-1]}
         local -F SECONDS=0
         while (( SECONDS < 15 )); do
           _DEV_PS_AT=0
           _dev_ps_snapshot
           pid=$(_dev_session_claude_pid "$session")
-          current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}') || {
+          current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}|#{pane_id}|#{pane_pid}') || {
             print -u2 "t: $session exited during startup; inspect $HOME/.tmux-logs/$session.log"; return 1
           }
-          [[ $current == "$identity" && ${${current#*|}:A} == ${dir:A} ]] || return 1
+          [[ $current == "$identity" && ${owner_dir:A} == ${dir:A} ]] || return 1
           if [[ -n $pid && $(_dev_agent_of_session "$session") == "$agent" ]]; then
-            print -r -- "$identity"; return 0
+            print -r -- "${owner_parts[1]}|$owner_dir"; return 0
+          fi
+          if [[ $agent == codex ]]; then
+            recovery=$(tmux show-options -pqv -t "$pane" @t_recovery_ui 2>/dev/null)
+            if [[ -n $recovery ]] && python3 "$T_HOME/libexec/t_offline.py" --recovery-ready "$recovery" "$pane_pid" "$dir"; then
+              # Recheck after inspecting processes; never follow a replaced pane.
+              [[ $(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}|#{pane_id}|#{pane_pid}') == "$identity" &&
+                 $(tmux show-options -pqv -t "$pane" @t_recovery_ui 2>/dev/null) == "$recovery" ]] || return 1
+              print -r -- "${owner_parts[1]}|$owner_dir"; return 0
+            fi
           fi
           [[ $(tmux display-message -p -t "=$session:" '#{pane_dead}') == 0 ]] || {
             print -u2 "t: $session exited during startup; inspect $HOME/.tmux-logs/$session.log"; return 1

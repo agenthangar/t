@@ -27,6 +27,7 @@ def engine(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location('lifecycle_test', ROOT / 'libexec/t_lifecycle.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    monkeypatch.setitem(module.OWNERSHIP['_other_cwd_owner'].__globals__, '_WRITER_SETTLE_SECONDS', 0)
     return module
 
 

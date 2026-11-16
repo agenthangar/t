@@ -136,7 +136,7 @@ missing or invalid artifact is reported separately from the test command's
 actual result. Keep result paths specific so they do not select dependency
 caches or test-created credentials.
 
-List, status and logs read local receipts only: they never contact providers,
+List, status, inspect and logs read local receipts only: they never contact providers,
 clean resources, prompt or trigger automatic updates. Receipts are private under
 `${XDG_STATE_HOME:-~/.local/state}/t/runners`. Start returns the command's failure
 status; provisioning/transport failures are separate from a test failure. A
@@ -196,3 +196,13 @@ retrieval. The validation credential lacked workflow-installation permission,
 so the control workflows were bootstrapped through an existing authorized Git
 connection before setup verified and bound the broker; normal setup requires
 the permission described above.
+
+## Concise evidence
+
+After a bounded watch, use `t runners runs inspect ID [--target NAME] [--json]`.
+This read-only command requires an explicit run UUID and returns execution status,
+snapshot identity, test summaries and bounded diagnostic excerpts with retained-log
+line references. It distinguishes omitted response content from runner storage
+loss. Unrecognized output, pending, cancelled and unavailable evidence never imply
+success. `t runners runs logs ID --target NAME` still returns complete retained
+logs. See [context use](context-use.md) for limits and the repeatable audit.

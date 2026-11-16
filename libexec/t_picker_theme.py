@@ -48,10 +48,10 @@ def control_rows(parts, width, selected=(), compact=False, color=False):
                       for part in line.split(' · ')) for line in lines]
 
 
-def sort_rows(mode, width, enabled=True, compact=False, color=False, include_turn=True):
+def sort_rows(mode, width, enabled=True, compact=False, color=False, include_turn=True, include_closed=False):
     """The open/resume sort block: current choice, then cycling and choices."""
     choices = {name: ('turn' if compact and name == 'turn' else label)
-               for name, (_, label) in _SORT['RESUME_SORTS'].items()
+               for name, (_, label) in (_SORT['SAVED_SORTS'] if include_closed else _SORT['RESUME_SORTS']).items()
                if (include_turn or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = 'Sort: ' + (_SORT['sort_label'](mode, compact) if enabled else 'OFF')
     return (control_rows([label, 'Ctrl-S toggle'], width, [label] if enabled else [], compact, color)
@@ -76,7 +76,7 @@ def chrome(text, title='', compact=False):
             active_sort = label.removeprefix('Sort: ').removesuffix(' ↓').removesuffix(' ↑')
             result += control_rows(line.split(' · '), width, [label] if active_sort != 'OFF' else [], compact, True)
             continue
-        if active_sort and any(part in ('last turn', 'turn', 'repo', 'agent', 'host', 'session') for part in line.split(' · ')):
+        if active_sort and any(part in ('last closed', 'last turn', 'turn', 'repo', 'agent', 'host', 'session') for part in line.split(' · ')):
             result += control_rows(line.split(' · '), width, [active_sort], compact, True)
             continue
         role = 'action' if re.match(r'(Enter|↩)', line) else 'heading' if line.startswith(('View:', 'FILTERS')) else 'hint'

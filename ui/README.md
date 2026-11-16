@@ -41,10 +41,58 @@ this document defines how to make the previews faithful and safe.
 
 ## Session-open recovery
 
+Remote-inclusive browsing fails before discovery when the OS denies outbound
+networking or neither IP family has a usable route. Report the error on stderr
+and point to `t open --local`; do not show a refresh spinner, open a recovery
+picker or turn the failure into empty inventory. Local-only browsing retains its
+normal discovery and ownership checks.
+
+Fresh Codex startup can attach to the existing **Start locally** rail before a
+model writer exists. Verify the recovery controller's process identity, pane
+ancestry and workspace; clear its attachable state on selection, retry or cancel.
+Keep the one-step ready-model selection and existing retry/cancel actions.
+This is terminal readiness only; saved-conversation writer checks remain strict.
+
 Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
 refreshes discovery and retries, or revives a verified exited pane. If it fails,
 offer **Force open / Cancel**. Keep the reason brief and identify any live client
 that force open will stop. Cancel returns 130 and stops remaining batch actions.
+Repair preserves an explicitly selected Codex or Claude agent.
+
+The discovery daemon monitors its bound socket and releases its lifetime lock if
+the endpoint disappears or is replaced. Clients allow a bounded four-second
+startup handoff to a single replacement daemon. Cache restoration preserves saved
+conversations; unavailable discovery is an error, not an empty history result.
+
+An unresolved native writer receives a bounded 30-second metadata-settling wait
+before an open or saved resume refuses. Only unresolved writers wait; healthy
+checks, known conflicts and allocator-proven fresh workspaces retain their fast
+paths. Every retry reads live ownership, and saved resume rechecks its selected
+writer after the wait. Expiry never authorizes a conflicting launch.
+
+Failed interactive saved resumes also offer **Repair / Cancel** through the same
+rail. Repair refreshes local discovery and retries the exact selected conversation
+once, including source and owner validation. Failures preserve a bounded shell
+cause and identify which readiness field changed (session, workspace, agent or
+conversation). They never relax ownership checks. It never switches to the latest
+conversation in that slot or force-opens a fresh context. A second failure retains
+the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
+calls never prompt. When the shell captures an owner on stdout, render recovery
+on the original terminal stderr, keeping the owner protocol clean.
+
+Saved resume failures retain bounded, sanitized lifecycle diagnostics instead of
+only reporting `zsh failed`. Readiness distinguishes session, workspace, agent,
+and conversation changes; an exited startup is reported before fallback agent
+identity is compared. These diagnostics never weaken the ownership checks.
+
+Missing Codex metadata can also be scoped through a verified standalone CLI: its
+process identity, sole thread lock, and working directory must remain stable across
+two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
+evidence remain blocked. This fallback never deletes a lock or stops its owner.
+
+Development preview: `python3 scripts/preview_session_repair.py` exercises the
+shared repair rail with sample data. Use `open` for numbered-open recovery or
+`--blocked` for a persistent ownership refusal. No real sessions are changed.
 
 `t session open api 3 --force` enters the force confirmation directly. `--yes`
 confirms only an explicit numeric force target; redirected commands never prompt.
@@ -165,6 +213,11 @@ prompts, shell startup, MCP registrations, workflow preferences, or settings.
 Normal installs and canonical updates retain their existing integration behavior.
 The installed source selector must be upgraded once for older installations;
 development setup itself never replaces that shared installation.
+Source selection never probes an unrelated working repository with Git. Cancelling
+selection returns 130 without a traceback or command dispatch. Interrupted initial
+shell loading retains a retryable `t` function; the next invocation finishes loading
+the selected helpers before running the command. Reload failures retain the existing
+dispatcher and never run a command against a stale source.
 
 `t --version` is a read-only detail display. Preserve the release/revision on the
 first line, then show labeled `Source` and `Worktree` paths with their branches.
@@ -852,6 +905,22 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
+The open picker shows retained sessions immediately and freezes that snapshot.
+Background refresh never reorders an active selection. With no usable results,
+open and resume use the shared wait rail: Return skips; Esc/Ctrl-C cancels only
+observation. Completed discovery opens selection. A settled failure offers
+**Retry / Browse retained results / Cancel**; omit Browse when unavailable.
+Skipping without results says **No sessions available yet**. Incomplete empty
+results never start a fresh session. Cancel returns 130.
+
+Inventory reconciliation has a 24-hour TTL and never discards retained results.
+Recently used namespaces receive lightweight local activity checks every five
+seconds and updated-peer generation checks every thirty seconds; idle polling
+stops after one hour. Transport/authentication failures retain an hour cooldown;
+collector/protocol failures retry after 5, 15, 60, then 300 seconds. Explicit Retry
+can reset failed targets once. `t hosts reset HOST` remains a direct scoped action.
+Failure messages distinguish refresh errors from unreachable hosts and preserve
+available rows. Old peers retain the hourly full-collector fallback.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
@@ -872,7 +941,7 @@ bindings before proposing changes; history keeps its distinct pagination keys.
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to last closed when verified close evidence exists, otherwise last turn. Both retain repository, agent, host and session sorting. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
@@ -900,6 +969,15 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
+Interactive resume, including plain slot history, displays retained results
+immediately. Cold discovery and service recovery use the same wait/recovery rail
+as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
+no overall timeout for an advancing cold refresh; repeated service connection
+failures return to Retry / Cancel. Incomplete results retain a warning through
+filtering, sorting and history paging, and require explicit selection. For example,
+run `t session resume`; retained conversations appear while refresh continues.
+Nonterminal, JSON and private collector output never enter this rail.
+
 After a saved selection, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
 branch, generation and released ownership, checkpoints eligible outstanding code
@@ -912,9 +990,9 @@ recycled local workspaces retain historical fallback without copying replacement
 files. Local transfers do not require a bundle or inherit the remote size limit.
 Lists, discovery and canceled selections never create checkpoints.
 
-Resume never invents a historical UI. Resume uses actual user-turn timestamps,
-newest first by default, with unknown times last; live rows have no artificial priority.
-Ctrl-Y cycles last turn, repository, agent, host/origin, and session
+Resume never invents a historical UI. Resume defaults to verified close timestamps when available, otherwise actual user-turn timestamps,
+newest first with unknown times last; live rows have no artificial priority.
+Ctrl-Y cycles last closed, last turn, repository, agent, host/origin, and session
 (natural numeric order). Ctrl-S toggles the selected sort. Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
 and preserve query and identities. Filters, reset and on/off preserve sorting.
@@ -988,13 +1066,12 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
-Session discovery uses one RAM-serving cache service for CLI and MCP. Local and
-remote snapshots and host status expire hourly. Missing/expired entries refresh
-asynchronously; cached rows remain visible with their age, and an open picker
-stays stable until the next invocation. Cold discovery reports refreshing,
-never a false empty result. Failed hosts retry on use after one hour. Session
-lifecycle events invalidate affected hosts; live ownership checks always bypass
-the cache. SQLite is asynchronous persistence for startup recovery only.
+Session discovery uses one RAM-serving cache API for CLI and MCP. Inventory has
+a 24-hour reconciliation interval; expiry never clears successful snapshots.
+Activity and membership changes update incrementally. The daemon observes recently
+used hosts in the background and retains records across failures. Cold discovery
+reports refreshing or offers recovery, never a false empty result. Live ownership
+checks bypass the cache. SQLite is asynchronous restart persistence only.
 See [session cache storage and lifecycle](../docs/session-cache.md).
 
 Quiet blocking work (provider calls, repository/setup probes, updates, AgentCore,
@@ -1112,7 +1189,7 @@ Repositories without a GitHub origin retain their exact local registration
 identity through selection and launch; an unregistered or changed path is refused.
 Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
-Slot history uses the same five sort choices as open/resume: last turn, repository,
+Slot history uses the same six sort choices as resume: last closed, last turn, repository,
 agent, host, and session. Ctrl-S toggles sorting; Ctrl-Y cycles choices.
 The highlighted `Sort: last turn ↓` label means newest actual user turn first,
 unknown times last. Text modes show ↑ and use natural ascending order.
@@ -1766,6 +1843,14 @@ and no real model, runtime, session or configuration changes.
 
 ### Prompted connection recovery
 
+Saved Codex resumes keep native cloud retries even when the workflow selects
+**Ask which local model** or **Continue locally**. The fresh-session recovery
+supervisor cannot resume an existing conversation, so these launches explain
+that automatic local continuation is unavailable and retain the exact native
+resume arguments and exit status. For example, `t resume api 3` resumes the
+selected conversation without changing its provider or saved recovery settings.
+Local-only workflows still refuse unverified cloud/local resumes.
+
 The existing native Codex inference launch has an `on_cloud_failure=ask`
 conditional mode: RailUI single selection for local recovery, passthrough for
 native work, and single selection/review for explicit cloud return. Selecting a
@@ -1854,6 +1939,22 @@ and all tool icons. UI remains metadata; estimated costs live in usage details.
 `t system usage list [--json]` prints recorded usage on this machine without
 selection. `t system usage show [ID] [--json]` opens the shared fzf picker when
 ID is omitted in a terminal; Enter prints full details. JSON requires a show ID.
+The usage picker has KIND, SESSION / NAME and LOC/CLD% column labels. Its session
+preview repeats STATUS, SESSION and WORKING ON first, then token split, icon-only
+tool, models with ★ on the lead, and last turn. Narrow preview panes stack the
+optional fields; full models, task and workspace remain in details. The private
+preview renderer uses the current fzf pane width, including after a resize.
+Shared pickers with a preview use full available height so legacy fzf retains
+a selectable row alongside its header and preview, including tall-to-short resizes.
+Current marks require an exact tool/session/workspace match with the shared local
+session scan; missing or ambiguous owners retain unknown status. Native index and
+saved history names never establish live ownership. No lookup uses a new occupant
+of the same worktree as the historical session's status.
+Both local and cloud counts must be measured to show a percentage. Unmeasured
+requests, unknown providers and zero totals also leave the split unavailable;
+explicit measured zero remains zero. The preview says which count is unrecorded.
+List, full detail, t ls and JSON share this calculation. Reports still collect
+usage on demand; this change does not add a background usage cache.
 Workflow rows aggregate their attributed session requests and are not extra usage
 that can be added to session totals. Launch snapshots freeze workflow revisions;
 unrecorded history stays unattributed. Copies of a session are deduplicated.
@@ -1862,3 +1963,46 @@ Percentages describe observed tokens, not task counts or completeness. Throughpu
 uses matched request time including prefill, never entire task duration. Costs
 are dated API estimates; savings need a compatible frontier-only baseline.
 Reports read existing local evidence only: no model start, downloads or network.
+
+## Optional desktop apps
+
+`t system apps install nightr` reviews installation or adopts an existing Nightr
+installation for updates. `t install nightr` is its compatibility convenience.
+`--yes` explicitly runs installation without review; `--dry-run` is read-only.
+`t system apps status nightr [--json]` never starts an app, prompts or downloads.
+These commands target this Mac and do not infer a repository. Nightr is optional
+in the installer and has its own `t config` entry, separate from coding agents.
+
+`t system update` includes opted-in Nightr installations, preserving Homebrew or
+direct ownership. It never installs an absent app. App setup and helper approval
+remain explicit in `nightr setup`; uninstalling t leaves Nightr installed.
+
+### Concise runner inspection
+
+`t runners runs inspect ID [--target NAME] [--json]` is a read-only detail display
+with an explicit run ID, no picker and no update prompt. Preserve execution
+status, identity and omission notices before bounded evidence. Use retained-log
+line references and complete-log retrieval commands. Distinguish response
+omissions from storage loss; unknown evidence never means success. JSON exposes
+the same facts. See [context use](../docs/context-use.md) and
+[selective visual validation](../docs/validation.md). Workflow settings and the
+sharing editor are unchanged.
+
+### Last closed session
+
+`t session resume` and plain slot history mark the latest verified closure with
+**↶**, in its own fixed-width cell beside the existing row. A compact legend
+explains the icon and close time. Sorting and filtering never reassign that mark
+to another conversation; hiding the marked conversation leaves no marked row.
+Use `t resume`, then Return to resume the initially focused last-closed conversation;
+Ctrl-Y switches to last turn and the existing sort choices.
+
+Closure evidence comes from successful `t close` lifecycle records after writer
+release, including the open picker's close action. It is distinct from last user
+turn, transcript mtime, and last-opened stamps. Native/app exits without a recorded
+closure remain unknown. A later launch/resume/handoff, newer user turn, or live
+owner invalidates that conversation's prior close as a current saved closure.
+Unknown close times sort after recorded closes, with last turn breaking ties.
+Tied latest closures and incomplete discovery suppress the unique marker; they
+never substitute an older session. Remote peers without close metadata retain
+last-turn behavior. All existing guarded exact-conversation resume checks remain.

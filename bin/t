@@ -61,7 +61,10 @@ if __name__ == "__main__":
     # this command and its login-shell children. Never change user-wide links.
     _dev_source = Path(__file__).resolve().parent.parent
     _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
-    _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    try:
+        _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+    except KeyboardInterrupt:
+        sys.exit(130)
     os.environ['T_DEV_CONTEXT'] = str(_dev_selected)
     os.environ['T_DEV_CONTEXT_OWNER'] = str(os.getpid())
     if _dev_selected != _dev_source:
@@ -563,6 +566,35 @@ def _ls_scope(cfg, repo, all_repos, cwd):
 
 def _session_discovery():
     return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_session_discovery.py'))
+
+
+def _open_discovery_choice(message, available):
+    ui = _RailUI()
+    try:
+        ui.raw()
+        choices = [('retry', 'Retry refresh')]
+        if available:
+            choices.append(('cached', 'Browse retained results'))
+        choices.append(('cancel', 'Cancel'))
+        return ui.pick(message, choices, context=(
+            'Retry checks failed targets again; retained sessions are preserved.',))
+    finally:
+        ui.restore()
+
+
+def _resume_discovery_wait(refresh):
+    """Shared rail with automatic progress; Return skips, Esc/Ctrl-C cancels."""
+    ui = _RailUI()
+    try:
+        ui.raw()
+        result = ui.pick('Refreshing saved conversations', [('skip', 'Skip waiting')],
+                         context=('Waiting for fresh results…',), back_label='cancel',
+                         refresh=refresh, refresh_interval=.25)
+        if result is None:
+            raise KeyboardInterrupt
+        return result
+    finally:
+        ui.restore()
 
 
 def cmd_ls(cfg, args):
@@ -1871,6 +1903,10 @@ def cmd_hosts(cfg, args):
                 print("\n".join(_table_lines(("ALIAS", "SSH TARGET"), rows)))
             return 0
         alias = getattr(args, "alias", None)
+        if action == "reset":
+            _session_discovery()['reset_host'](cfg, alias)
+            print(f"Reset discovery cooldown for {alias}. The next session browse may retry this host.")
+            return 0
         if action == "show":
             if alias not in cfg.hosts:
                 raise ValueError(f"unknown host {alias!r}; run `t hosts list` to list registered hosts")
@@ -4228,7 +4264,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "MCP servers ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nosleep ›"), ("edit", "Open config in editor"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
                 edited._workflow_shell_pending = bool(_config_diff(initial, _config_state(edited)))
@@ -4273,11 +4309,15 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     continue
                 if choice == "nosleep":
                     if pending:
-                        ui.done("pending", "Save or discard pending settings before opening Nosleep.")
+                        ui.done("pending", "Save or discard pending settings before opening Nightr.")
                         continue
                     ui.restore()
                     try:
-                        subprocess.call([sys.executable, os.path.join(_t_source_root(), "libexec", "nosleep_config.py")])
+                        app = _nightr_module()
+                        if app["installed"]():
+                            subprocess.call([str(app["CLI"]), "config"])
+                        else:
+                            cmd_apps(edited, argparse.Namespace(action="install", app="nightr", yes=False, dry_run=False))
                     finally:
                         ui.raw()
                     continue
@@ -5010,6 +5050,11 @@ def _cmd_workflow_runs(cfg, args):
                 print('Wait: ' + result['wait_status'])
             return (int(result.get('exit_code', 0 if result['status'] in ('succeeded', 'completed') else 1))
                     if result['wait_status'] == 'complete' else 2)
+        if action == "inspect":
+            inspection = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_run_inspect.py'))
+            result = inspection['inspect_run'](args.run_id, target=args.runner_target)
+            print(json.dumps(result, indent=2) if args.json else inspection['render'](result))
+            return 0 if result['available'] else 1
         if action == "logs":
             logs = helper["logs"](args.run_id, target=args.runner_target)
             for target, output in logs.items():
@@ -5209,7 +5254,7 @@ def cmd_config(cfg, args):
             print(f"{agent} effort: {cfg.efforts.get(agent) or 'tool default'}")
             print(f"{agent} speed: {_config_speed_label(cfg.fast.get(agent))}")
         print(f"Local worker: t config local --show (setup: t config local)")
-        print("Nosleep: nosleep config --show (setup: t config → Nosleep)")
+        print("Nightr: t system apps status nightr (setup: t config → Nightr)")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
@@ -7809,6 +7854,8 @@ def _install_result(items):
             sel["hosts"].append(it["alias"])
         elif it["kind"] == "shell":
             sel["shell"] = True
+        elif it["kind"] == "app":
+            sel["nightr"] = True
     return sel
 
 
@@ -7891,6 +7938,9 @@ def _install_plan(sel, probed, os_name, has_brew, headless, hosts):
             else:
                 rec(f"login:{a}", "error",
                     f"{a} login: not installed and not selected for install")
+    if sel.get("nightr"):
+        rec("app:nightr", "run", "install Nightr and include its updates in t system update",
+            [sys.executable, str(Path(__file__).resolve()), "system", "apps", "install", "nightr", "--yes"], interactive=True)
     if any(s["do"] == "run" for s in steps):
         rec("sync", "run", "refresh t links, hooks, and selected agent integrations")
     if sel.get("shell"):
@@ -8225,6 +8275,10 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if words[:2] == ["system", "apps"]:
+        return len(words) > 2 and (words[2] == "status" or "--dry-run" in words[3:])
+    if words[:2] == ["install", "nightr"]:
+        return "--dry-run" in words[2:]
     if words[:2] == ["system", "usage"]:
         return True
     if verb == "eval":
@@ -8234,7 +8288,7 @@ def _command_readonly(argv, *, terminal=None):
                 tail[1] in ("list", "show", "compare") or "--dry-run" in tail or "--help" in tail)
     if verb == "runners":
         return (not tail or tail == ["runs"] or tail[0] == "list" or
-                (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "logs")))
+                (len(tail) > 1 and tail[0] == "runs" and tail[1] in ("list", "status", "inspect", "logs")))
     if verb == "workflow":
         if not tail:
             if terminal is None:
@@ -8247,7 +8301,7 @@ def _command_readonly(argv, *, terminal=None):
     if words[:2] == ["config", "workflow"]:
         return (len(words) == 2 or words[2] in ("list", "context") or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
-                (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "logs")))
+                (len(words) > 3 and words[2] == "runs" and words[3] in ("list", "status", "inspect", "logs")))
     if verb == "mcp" and tail and tail[0] in ('list', 'status'):
         return True
     if verb == "__advisories":
@@ -8508,7 +8562,29 @@ def _t_update_all(cfg, args):
     return 1 if failed else 0
 
 
+def _nightr_module():
+    return _NIGHTR
+
+
+def cmd_apps(cfg, args):
+    return _nightr_module()["command"](args, _RailUI)
+
+
 def cmd_update(cfg, args):
+    if getattr(args, "all", False):
+        return _t_update_all(cfg, args)
+    result = _cmd_update_t(cfg, args)
+    if getattr(args, "dev", False) or getattr(args, "relink", False):
+        return result
+    try:
+        app_result = _nightr_module()["update_managed"](check=getattr(args, "check", False))
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print(f"Nightr update: {error}", file=sys.stderr)
+        app_result = 1
+    return result or app_result
+
+
+def _cmd_update_t(cfg, args):
     if getattr(args, "all", False):
         return _t_update_all(cfg, args)
     if getattr(args, "check", False):
@@ -8898,6 +8974,11 @@ def cmd_install(cfg, args):
                   {"t": "header", "sec": "shell", "label": "SHELL SETUP"},
                   {"t": "toggle", "sec": "shell", "kind": "shell", "alias": "zsh integration",
                    "value": f"{shell_rc} · preserve existing settings", "checked": True}]
+    if sys.platform == "darwin" and not args.agents:
+        items += [{"t": "spacer", "sec": "apps"},
+                  {"t": "header", "sec": "apps", "label": "DESKTOP APPS"},
+                  {"t": "toggle", "sec": "apps", "kind": "app", "alias": "Nightr",
+                   "value": "Keep your Mac awake · optional", "checked": False}]
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 
@@ -11361,6 +11442,7 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     if rec.get('_cached_row') is not None:
         row = dict(rec['_cached_row'])
         row['this_session'] = bool(this_sid and rec.get('sid') == this_sid)
+        row['ago'] = _ago(row.get('activity_epoch', 0), now)
         return row
     sid = rec.get("sid") or ""
     cwd = rec.get("cwd") or ""
@@ -12236,12 +12318,16 @@ def cmd_history(cfg, args):
         cache = _session_discovery()
         if getattr(args, 'refresh', False):
             cache['event'](['local', *cfg.hosts.values()])
-        view = cache['discover'](cfg, fields=['catalog'])
+        if not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
+            view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'], choose=_open_discovery_choice)
+        else:
+            view, notice = cache['discover'](cfg, fields=['catalog']), ''
         if not getattr(args, 'json', False):
             cache['announce'](view)
         snapshot = cache['SnapshotStore'](view)
     history = helper["HistoryCommand"](cfg, globals(), store=snapshot)
     history.discovery_view = view
+    history.discovery_notice = notice if view is not None else ''
     try:
         return history.execute(args)
     except (ValueError, OSError) as error:
@@ -12301,6 +12387,7 @@ COMMAND_GROUPS = {
                "send": ("cursor", "send")},
     "hosts": {"list": ("hosts", "list"), "show": ("hosts", "show"),
              "add": ("hosts", "add"), "edit": ("hosts", "edit"),
+             "reset": ("hosts", "reset"),
              "remove": ("hosts", "remove"), "default": ("hosts", "default"),
              "run": ("on",)},
     "agentcore": {"invoke": ("agentcore", "invoke"), "stop": ("agentcore", "stop")},
@@ -12316,7 +12403,7 @@ COMMAND_GROUPS = {
                  "instructions": {verb: ("config", "workflow", "instructions", verb) for verb in ("show", "edit")},
                  },
     "runners": {**{verb: ("runners", verb) for verb in ("list", "edit", "setup")},
-                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "watch", "logs", "artifacts", "cancel", "cleanup")}},
+                "runs": {verb: ("runners", "runs", verb) for verb in ("start", "list", "status", "watch", "inspect", "logs", "artifacts", "cancel", "cleanup")}},
     "profile": {"init": ("instructions", "--init"),
                 "edit": ("instructions", "--edit"),
                 "show": ("instructions", "--show"),
@@ -12326,10 +12413,12 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
+               "apps": {v: ("system", "apps", v) for v in ("install", "status")},
                "diagnose": ("doctor",), "advisories": ("__advisories",),
                "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
 }
 
+_NIGHTR = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_nightr.py'))
 _REMOTE = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_remote.py'))
 _REMOTE['extend_registry'](COMMAND_GROUPS)
 
@@ -12444,6 +12533,8 @@ def _command_path(argv):
 def _canonical_argv(argv):
     """Translate a complete public command; preserve its payload arguments."""
     argv = _hosts_argv(_runners_argv(argv))
+    if argv[:2] == ["install", "nightr"]:
+        return ["system", "apps", "install", "nightr", *argv[2:]]
     if argv == ["workflow", "sync", "--receive"]:
         return ["config", *argv]  # Private transport used by existing registered hosts.
     if argv and argv[0] == "move":
@@ -12672,6 +12763,7 @@ LEARN MORE
   t runners runs list [--json]
   t runners runs status ID [--json]
   t runners runs watch ID [--timeout SECONDS] [--json]
+  t runners runs inspect ID [--target NAME] [--json]
   t runners runs logs ID [--target NAME]
   t runners runs artifacts ID [--target NAME] [--output DIR]
   t runners runs cancel ID
@@ -12682,6 +12774,7 @@ COMMANDS
   list       Print local durable run receipts
   status     Inspect a local receipt without contacting providers
   watch      Wait for receipt changes or pinned GitHub checks
+  inspect    Show bounded test evidence and retained-log references
   logs       Print retained local target logs
   artifacts  Extract bounded retained artifacts into a local directory
   cancel     Request cancellation and verify terminal provider state
@@ -12701,7 +12794,7 @@ SCOPE
   cancel the underlying job; exit 2 means results are still pending.
   --os linux|macos and --capability NAME filter configured targets. Windows
   execution is not yet supported. Native desktop tests remain explicitly opt-in.
-  List, status and logs read local state without network access or update prompts.
+  List, status, inspect and logs read local state without network access or update prompts.
 
 LEARN MORE
   t help runners runs <verb>
@@ -12780,6 +12873,24 @@ SCOPE
 LEARN MORE
   t help workflow <verb>
 """)
+    if group == "system apps":
+        return _wrap_help("""USAGE
+  t system apps install nightr [--yes|--dry-run]
+  t system apps status nightr [--json]
+
+COMMANDS
+  install  Install Nightr or include an existing copy in managed updates
+  status   Show local installation and update ownership without changes
+
+SCOPE
+  This Mac only; no repository argument or repository inference.
+  Installation is optional and requires macOS and a published signed release.
+  Homebrew owns its installations. Direct installs use verified Nightr releases.
+  t system update includes opted-in apps; it never installs absent apps.
+  Run nightr setup for explicit helper authorization and login preferences.
+  t install nightr is a compatibility convenience.
+  Run t help system apps <verb> for details.
+""")
     if group == "issue":
         return _wrap_help("""USAGE
   t issue <verb> [repo] [arguments] [flags]
@@ -12809,6 +12920,7 @@ Run `t help issue <verb>` for flags and arguments.
              "Run `t hosts list` to list registered machines.\n"
              "`delete` and `rm` are aliases for `remove`.\n\nEXAMPLES\n"
              "  t hosts add mini chris@mini.local\n"
+             "  t hosts reset mini   Clear the one-hour discovery failure cooldown\n"
              "  t hosts run mini t session list\n" if group == "hosts" else "")
     if group == "mcp":
         extra = ("\nSCOPE\n  List inspects configured MCP servers on this machine, including project settings from the current checkout.\n"
@@ -12871,6 +12983,7 @@ def _command_description(group, action):
                  "clone": "Clone and register a repository", "add": "Register an existing checkout"},
         "cursor": {"list": "List chats", "resume": "Resume a chat", "send": "Move a chat"},
         "hosts": {"list": "List registered SSH hosts", "show": "Show a host's target and defaults",
+                  "reset": "Reset a host's session-discovery failure cooldown",
                  "add": "Register a remote SSH host", "edit": "Change a host's SSH target",
                  "remove": "Unregister a host (delete / rm also work)",
                  "default": "Show, set, or clear the legacy beam default",
@@ -12886,7 +12999,8 @@ def _command_description(group, action):
                    "apply": "Apply permission rules"},
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
-        "system": {"integrate": "Link t and its hooks", "update": "Update t",
+        "system": {"integrate": "Link t and its hooks", "update": "Update t and managed apps",
+                   "apps": "Install and inspect optional desktop apps",
                    "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks", "usage": "Inspect workflow, session and evaluation usage"},
     }
     if group == 'remote' and action not in descriptions['remote']:
@@ -13023,11 +13137,12 @@ def build_parser():
     p._group_parsers = {}
     system = sub.add_parser('system', help='inspect system usage')
     system_sub = system.add_subparsers(dest='system_resource', required=True)
+    _nightr_module()["add_parser"](system_sub)
     usage = system_sub.add_parser('usage', help='inspect recorded workflow, session and evaluation usage')
     usage_sub = usage.add_subparsers(dest='usage_action', required=True)
     for action in ('list', 'show'):
         leaf = usage_sub.add_parser(action, help=action + ' recorded usage',
-            description='Usage recorded on this machine. Show without ID selects with fzf; list and JSON never prompt. Unknown measurements stay unavailable.')
+            description='Usage recorded on this machine. Show without ID selects with fzf; list and JSON never prompt. Session previews show status, task and models like t ls. Missing local or cloud counts leave the split unavailable.')
         if action == 'show':
             leaf.add_argument('usage_id', nargs='?', metavar='ID', help='omit for a searchable usage picker')
         leaf.add_argument('--json', action='store_true', help='machine output; show requires ID')
@@ -13305,9 +13420,9 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Open sessions. Bare: browse all repos; attached sessions are hidden. "
-            "Discovery uses a persisted RAM cache with hourly expiry. Refreshes run in the background; "
-            "run again for updated results. Ownership is checked live before opening.",
+        description="Browse sessions; attached sessions start hidden. Pending discovery waits up to 30 seconds; "
+            "fresh caches open immediately. Failed hosts pause retries for an hour (t hosts reset HOST). "
+            "Ownership is checked live.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
@@ -13332,6 +13447,8 @@ SELECTION
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
   LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
+  Retained sessions appear immediately; cold discovery offers wait, retry and cancel.
+  Inventory is retained with a 24-hour reconciliation interval; activity refreshes separately.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
   Status: ● attached/loaded; ○ unattached/unloaded; ✓ loaded context.
@@ -13352,6 +13469,7 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  If startup offers local recovery, the model picker opens in your terminal.
   Fresh local allocation uses a durable next-slot counter and local refs.
   It skips existing paths and branches without reclaiming or contacting hosts.
   A background worker refreshes origin refs every five minutes; a cached origin
@@ -13372,6 +13490,9 @@ OPENING DEFAULTS
 
 RECOVERY
   When a numbered open fails in a terminal, choose Repair or Cancel.
+  Repair retains an explicit --codex or --claude choice. Unresolved native
+  writers get a bounded 30-second wait to publish their worktree metadata;
+  healthy ownership checks do not wait. Expiry never bypasses ownership.
   If repair fails, choose Force open to reset only that session's t records,
   reopen its existing worktree, and resume saved context when available.
   Force open preserves source files and native transcripts. If context is
@@ -13392,6 +13513,8 @@ REMOTE SESSIONS
   workspaces retain live ownership checks before a new owner starts.
   --local (also --here) skips that lookup; combine with --fg to run here.
   Browsing includes local and registered remote hosts by default.
+  If the OS blocks networking or has no usable IP route, browsing returns an
+  immediate error. Use t open --local to browse local sessions offline.
   --remote also attaches to a live remote slot; add --new to start one on the
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
@@ -13567,13 +13690,16 @@ REMOTE SESSIONS
   scrolls.
 
   Search and sorting cover all pages. Ctrl-S toggles sorting; Ctrl-Y cycles
-  last turn, repository, agent, host, and session. Last turn ↓ defaults to newest
-  user turn first; unknown times sort last. Text sorts ascend. Sorting off
+  last closed, last turn, repository, agent, host, and session. Verified last close
+  defaults to newest first when known; otherwise last turn. ↶ marks the last closed
+  conversation in scope. Unknown times sort last. Text sorts ascend. Sorting off
   restores snapshot order. Sort changes clear marks and return to page 1.
   Search, paging, and refresh retain sort choices and clear marks.
   Extra selections open in new tabs before the first attaches here.
   Resume errors exit nonzero without reopening the picker; batches stop and
   report already-resumed conversations.
+  Saved Codex resumes keep native cloud retries; automatic local continuation
+  is unavailable. Startup failures retain the specific lifecycle diagnostic.
 
   Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
@@ -13592,7 +13718,7 @@ REMOTE SESSIONS
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
             'Infer the current repository, or browse local and remote repositories outside a checkout. '
-            'Discovery expires hourly and refreshes in the background; run again for updated results. '
+            'Pending discovery waits in terminals; Return skips, Esc cancels. '
             'Repositories are cloned only after selection. Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
@@ -13605,6 +13731,11 @@ REMOTE SESSIONS
   Choose saved work associated with a repository or slot. A live selection
   attaches to its existing owner; an inactive selection resumes saved history.
 
+  Pending saved discovery keeps waiting automatically in a terminal. Return
+  skips the wait and uses available cached results; Esc/Ctrl-C cancels without
+  stopping the shared refresh. Empty or failed completed scans stop waiting.
+  Redirected commands and JSON return immediately without a wait or prompt.
+
   Codex checks the selected conversation's writer lock and the destination
   workspace. Another conversation in a reused original slot can keep running
   when the saved conversation resumes into a different workspace.
@@ -13612,8 +13743,8 @@ REMOTE SESSIONS
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global
-  newest-first list by last user turn — never grouped by repo; unknown turn times
-  last; conversationless stubs skipped), rebuilding a reaped worktree from its
+  newest-first list by recorded close, or last user turn when close times are unknown;
+  unknown times last; conversationless stubs skipped), rebuilding a reaped worktree from its
   branch first, then resumes the pick in a fresh dev slot and attaches.
 
   Claude and Codex use guarded t transfers. Legacy native-handoff settings
@@ -13631,8 +13762,8 @@ REMOTE SESSIONS
 
   A plain slot target browses saved conversations: select exact
   conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
-  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last turn,
-  repository, agent, host, and session. Last turn ↓ means newest first, unknown last.
+  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last closed, last turn,
+  repository, agent, host, and session. Unknown timestamps sort last.
   Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
@@ -13647,8 +13778,13 @@ PICKER CONTROLS
   Leading PR badges show cached state. Ctrl-D hides/shows merged PR sessions;
   unknown, no-PR and mixed-state histories stay visible. Merged is not completion.
 
-  Ctrl-Y cycles last turn (newest first, the default), repository, agent,
+  Ctrl-Y cycles last closed, last turn, repository, agent,
   host/origin, and session. Arrow keys still move through rows.
+
+  ↶ identifies the latest recorded close in this scope, independently of sort.
+  Verified t close events sort newest first by default; without close evidence,
+  last user turn is the default. An app exit or transcript mtime is not a close.
+  Incomplete discovery or tied close times never claim a unique last session.
 
   Ctrl-S toggles sorting, retaining the chosen sort while off.
   Text sorts ascend, with newest turn breaking ties. Filters, reset and
@@ -13671,6 +13807,14 @@ LIVE OWNERS
   A conversation is live by its ID too: one resumed into ANOTHER slot (or run as a
   foreground session) is shown as a row pointing at that owner — never resumed a
   second time.
+
+REPAIR
+  If a selected saved conversation fails to resume, choose Repair or Cancel.
+  Repair refreshes local discovery and retries that exact conversation once,
+  with fresh source and ownership checks. It never substitutes a fresh chat.
+  Cancel stops the remaining batch. Nonterminal calls never prompt.
+  Unresolved native writers get a bounded 30-second metadata-settling wait;
+  known conflicts still block and healthy ownership checks do not wait.
 
 REMOTE HISTORY
   Registered hosts refresh by repository identity on every scan; only a selected
@@ -13916,6 +14060,10 @@ EXAMPLES
     host_show = host_sub.add_parser("show", description="Show a registered host's SSH target and whether "
         "it is the default destination for legacy `t beam`.")
     host_show.add_argument("alias", help="registered host alias")
+    host_reset = host_sub.add_parser("reset", description="Clear a registered host's one-hour session-discovery "
+        "failure cooldown. The next session browse can retry it. This does not connect to the host, "
+        "change registration, or stop sessions.")
+    host_reset.add_argument("alias", help="registered host alias whose discovery cooldown to reset")
     for action in ("add", "edit"):
         hp = host_sub.add_parser(action, description=(
             "Register a remote machine under a short alias." if action == "add" else
@@ -13968,7 +14116,8 @@ EXAMPLES
   offers Refresh or manual entry); register or unregister repos and set their tool,
   branch and worktree overrides; choose the default beam host and worktree defaults.
 
-  Nosleep opens its own reviewed editor for sleep settings, nearby Wi-Fi discovery,
+  Nightr opens its own reviewed editor when installed, or offers optional app installation.
+  Configure sleep settings, nearby Wi-Fi discovery,
   macOS Location permission and hotspot credentials. Save or discard hub edits first.
 
   Save changes reviews then writes a managed block in T_LOCAL_RC.
@@ -14134,18 +14283,18 @@ EXAMPLES
     leaf.add_argument("--json", action="store_true", help="print the final durable receipt as JSON")
     leaf.add_argument("--next-step", default="", help="authorized task step waiting on these results")
     leaf.add_argument("command", nargs=argparse.REMAINDER, metavar="COMMAND", help="argv after --; never interpreted as shell code")
-    for verb in ("list", "status", "watch", "logs", "artifacts", "cancel", "cleanup"):
+    for verb in ("list", "status", "watch", "inspect", "logs", "artifacts", "cancel", "cleanup"):
         leaf = run_sub.add_parser(verb, help={"list": "list local run receipts without network access", "status": "show a local run receipt without network access",
-            "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
+            "inspect": "show bounded test evidence and complete retained-log references", "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
             "cleanup": "retry deletion of retained remote run resources"}[verb])
         if verb != "list":
             leaf.add_argument("run_id", metavar="ID", help="local run UUID; watch also accepts OWNER/REPO#PR@HEAD_SHA")
         if verb == "watch":
             leaf.add_argument("--timeout", type=int, default=60, metavar="SECONDS", help="bounded wait, 1–3600 seconds; default 60")
             leaf.add_argument("--next-step", default="", help="authorized task step waiting on this result")
-        if verb in ("list", "status", "watch"):
+        if verb in ("list", "status", "watch", "inspect"):
             leaf.add_argument("--json", action="store_true", help="print watcher results as JSON" if verb == "watch" else "print local receipts as JSON without network access")
-        if verb in ("logs", "artifacts"):
+        if verb in ("inspect", "logs", "artifacts"):
             leaf.add_argument("--target", dest="runner_target", metavar="NAME", help="one target; default: all")
         if verb == "artifacts":
             leaf.add_argument("--output", metavar="DIR", help="new output directory; omit to show retained archive paths")
@@ -14559,7 +14708,7 @@ PERIODIC CHECKS
 IMPLEMENTED = {
     "remote": cmd_remote,
     "__advisories": cmd_advisories,
-    "system": lambda cfg, args: runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner),
+    "system": lambda cfg, args: cmd_apps(cfg, args) if args.system_resource == "apps" else runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner, lambda: _parse_rows(zsh_capture("_dev_session_rows"))),
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,
@@ -14765,11 +14914,20 @@ def _main(argv):
         finally:
             history.store.close()
         return 0
+    if argv and argv[0] == '__cache-export':
+        print(json.dumps(_session_discovery()['export_local'](Config(), json.load(sys.stdin))))
+        return 0
     if argv and argv[0] in ('__cache-collect', '__cache-collect-local'):
         os.environ['T_DISCOVERY_COLLECTOR'] = '1'
         spec = json.load(sys.stdin) if argv[0] == '__cache-collect' else {'target': 'local', 'export': True}
-        print(json.dumps(_session_discovery()['collect'](spec, globals())))
-        return 0
+        try:
+            print(json.dumps(_session_discovery()['collect'](spec, globals())))
+            return 0
+        except Exception as error:
+            import traceback
+            print(json.dumps(dict(kind=getattr(error, 'kind', 'collector'), message=str(error),
+                                  detail=getattr(error, 'detail', '') or traceback.format_exc())), file=sys.stderr)
+            return 1
     if len(argv) == 6 and argv[0] == '__cache-record':
         event, sid, agent, cwd, label = argv[1:]
         row = '\t'.join([sid or '-', cwd, label, 'detached', 'none', '-', agent])
@@ -14777,14 +14935,34 @@ def _main(argv):
         return 0
     if argv and argv[0] == '__cache-event':
         cfg = Config()
-        targets = [cfg.hosts.get(host, host) for host in argv[1:]] or ['local']
-        _session_discovery()['invalidate'](targets)
+        targets = [cfg.hosts.get(host, host) for host in argv[1:] if host != '--activity'] or ['local']
+        if '--activity' in argv:
+            _session_discovery()['request']('activity', {'targets': targets})
+        else:
+            _session_discovery()['invalidate'](targets)
         return 0
     if argv and argv[0] == '__cache-rows':
         cache = _session_discovery()
         selected_host = argv[argv.index('--host') + 1] if '--host' in argv else None
         repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
-        view = cache['discover'](Config(), local='--local' in argv, host=selected_host, fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        options = dict(local='--local' in argv, host=selected_host,
+                       fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
+        if '--open' in argv:
+            if not sys.stdin.isatty() or not sys.stderr.isatty():
+                print('t open: interactive discovery requires a terminal', file=sys.stderr)
+                return 1
+            # The shell captures rows from stdout. Shared progress and RailUI
+            # stay on the terminal, never in the inventory stream.
+            try:
+                with redirect_stdout(sys.stderr):
+                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, wait=_resume_discovery_wait, **options)
+            except (OSError, ValueError) as error:
+                print(f't open: {error}', file=sys.stderr)
+                return 1
+            if '--notice-file' in argv:
+                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
+        else:
+            view = cache['discover'](Config(), **options)
         cache['announce'](view)
         text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
         if '--basic' in argv:
@@ -14802,7 +14980,13 @@ def _main(argv):
                 return 2
             slot, aliases = aliases[-1], aliases[:at]
         cache = _session_discovery()
-        view = cache['discover'](Config())
+        if os.environ.get('T_RESUME_WAIT') == '1' and sys.stdin.isatty() and sys.stderr.isatty():
+            with redirect_stdout(sys.stderr):
+                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait, choose=_open_discovery_choice)
+            if os.environ.get('T_RESUME_NOTICE_FILE'):
+                Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
+        else:
+            view = cache['discover'](Config())
         cache['announce'](view)
         for row in cache['candidates'](view, aliases, slot):
             print(row)
@@ -14845,7 +15029,7 @@ def _main(argv):
                 rows = [row for row in history.records(identity) if row['sid'] == sid and row['agent'] == agent]
                 if len(rows) != 1:
                     raise helper['HistoryError']('saved conversation changed; select it again')
-                print(history.resume(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
+                print(history.resume_with_repair(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
             return 0
         except helper['HistoryCancelled']:
             return 130

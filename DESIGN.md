@@ -26,3 +26,26 @@ sections, and two-space table gutters when space permits. Compact layouts may
 remove those gaps to keep the focused result visible.
 Do not interpret requests to improve picker filtering or sorting as requests for
 new CLI flags unless the user explicitly asks for flags or noninteractive control.
+
+## Required design adherence CI
+
+Every PR runs **Design adherence** on Linux with fzf 0.44.1 and 0.74.5, including
+fast validation. `ui/layout-contract.json` lists the required rendered fixtures
+for shared screen families and custom nested screens. Every command and
+conditional mode in the command inventory declares a layout profile; `inherit`
+means the mode uses its command's renderer guarantees. Machine-only modes and
+external passthrough have explicit exclusions. New custom layouts must register
+fixtures instead of claiming an unrelated shared renderer.
+
+Run `python3 scripts/design_check.py check` to validate references and
+`python3 scripts/design_check.py run` to exercise them. The gate rejects missing,
+deselected, skipped, or failed required cases. Geometry fixtures assert column
+coordinates, gutters, responsive stacking and frame budgets; real isolated tmux
+captures exercise search/filter/sort/paging and resize. Failures retain frames,
+expected/actual coordinates, JUnit output and an outcome manifest in
+`artifacts/design/`. Update expectations only after reviewing a deliberate design
+change; never regenerate them automatically to make CI pass. This complements
+command behavior tests and the full Linux coverage gate.
+
+Use [selective visual validation](docs/validation.md) to choose captures during
+iteration while retaining every project-required rendered check at delivery.

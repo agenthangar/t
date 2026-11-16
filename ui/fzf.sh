@@ -19,7 +19,7 @@ _t_fzf_worker() {
     emulate -L zsh
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
-      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK \
+      T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK T_PICKER_NOTICE \
       T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
@@ -47,6 +47,11 @@ _t_fzf() {
   if [ -n "$_t_air_size" ] && { [ "${_t_air_size%% *}" -le 14 ] || [ "${_t_air_size#* }" -le 60 ]; }; then
     set -- "$@" --height=100% --margin=0 --border=none
   fi
+  # Preview pickers need a selectable row even after resizing a tall terminal
+  # to a short one. Legacy fzf cannot rebudget a 60%-height frame on resize.
+  for _t_air_option do
+    case $_t_air_option in --preview=*) set -- "$@" --height=100%; break ;; esac
+  done
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
     --pointer='▸ ' --marker='✓ ' \
     --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:green,header:cyan,prompt:cyan,border:bright-black' \
@@ -274,6 +279,7 @@ Tab mark ✓"
     printf '%s\n' "$_t_picker_columns" >> "$T_PICKER_HEADER_ALL"
   fi
   export T_PICKER_VIEWS="$_t_picker_dir" T_PICKER_SESSION_MASK=
+  printf '%s' "${T_PICKER_NOTICE:-}" > "$_t_picker_dir/discovery-notice"
   case ${T_PICKER_SESSION_FILTERS:-} in
     open|resume|list) T_PICKER_SESSION_MASK=1 ;;
     kill) T_PICKER_SESSION_MASK=3 ;;

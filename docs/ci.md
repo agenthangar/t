@@ -6,6 +6,12 @@ deferring expensive integration matrices listed in
 [`scripts/ci_policy.py`](../scripts/ci_policy.py). It is broader than an
 installation-only smoke test. New test files join the fast tier by default.
 
+The separate **Shell startup smoke** job is mandatory on every PR, main push,
+full nightly run and release validation. It tests normal shell dispatch, real
+Ctrl-C during both login startup and explicit sourcing, retrying the next command,
+quiet cancellation and failed reloads. The CI gate rejects failed, cancelled or
+skipped startup smoke even when the fast regression tier is replaced by full CI.
+
 Critical runtime, installer, shell, test-harness and CI changes automatically
 select full Linux validation on PRs. Nightly/release runs always select it for
 the exact pinned commit; a fast PR result cannot authorize publication.
@@ -59,3 +65,13 @@ setup and aggregation, rather than only pytest execution time.
 macOS remains default-off. Dispatch with `run_macos=true` to run the full suite
 against both fzf versions with native desktop tests enabled. No local validation
 suite is needed for the CI workflow; required pre-merge jobs provide validation.
+
+### Required design adherence
+
+The `design-adherence` matrix runs on every PR, against pinned fzf 0.44.1 and
+0.74.5. It validates `ui/layout-contract.json` references and every command/mode's
+layout declaration, then runs those rendered fixtures with a no-skips outcome
+audit. The aggregate `CI` gate requires both matrix jobs even on the fast path.
+Artifacts named `design-<version>` include JUnit, exact collected/outcome records,
+and failure output with rendered frames and coordinate comparisons. Tests use
+private tmux sockets and sandbox homes; no native desktop windows are opened.

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import runpy
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,7 @@ def tty():
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def choose(rows, title, action='select', multi=False, prompt='eval'):
+def choose(rows, title, action='select', multi=False, prompt='eval', preview_script=None, preview_window='down:40%:wrap'):
     """Opaque numeric row identities; shell previews never interpolate user text."""
     if not rows:
         print('  No eligible ' + title.lower() + '.')
@@ -43,12 +44,13 @@ def choose(rows, title, action='select', multi=False, prompt='eval'):
         lines = []
         for index, row in enumerate(rows):
             preview = Path(directory) / (str(index) + '.txt')
-            preview.write_text('\n'.join(clean(s) for s in row.get('preview', '').splitlines()) + '\n')
+            preview.write_text(json.dumps(row['preview_data']) if preview_script else '\n'.join(clean(s) for s in row.get('preview', '').splitlines()) + '\n')
             lines.append('\t'.join((str(index), clean(row['label']), str(preview))))
+        preview_command = (shlex.join([sys.executable, preview_script, 'preview']) + ' {-1}' if preview_script else 'cat -- {-1}')
         command = ['sh', '-c', '. "$1"; shift; ' + ('_t_fzf_multi' if multi else '_t_fzf_single') + ' "$@"',
                    't-eval-picker', str(ROOT / 'ui/fzf.sh'), action, title,
                    '--prompt=' + prompt + '> ', '--delimiter=\t', '--with-nth=2', '--no-hscroll',
-                   '--preview=cat -- {-1}', '--preview-window=down:40%:wrap']
+                   '--preview=' + preview_command, '--preview-window=' + preview_window]
         env = {k: v for k, v in os.environ.items() if k not in ('FZF_DEFAULT_OPTS', 'FZF_DEFAULT_COMMAND')}
         result = subprocess.run(command, input='\n'.join(lines), text=True, stdout=subprocess.PIPE, env=env)
         if result.returncode:

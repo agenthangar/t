@@ -1,5 +1,5 @@
 """Private, durable conversation history and guarded exact-conversation resume."""
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext, redirect_stdout
 import ast
 import datetime
 import fcntl
@@ -37,7 +37,7 @@ clip_columns = _DISPLAY['clip_columns']
 wrap_columns = _DISPLAY['wrap_columns']
 recorded_model = _DISPLAY['recorded_model']
 _SORT = runpy.run_path(str(Path(__file__).with_name('t_session_sort.py')))
-SORT_MODES = tuple(_SORT['RESUME_SORTS'])
+SORT_MODES = tuple(_SORT['SAVED_SORTS'])
 _THEME = runpy.run_path(str(Path(__file__).with_name('t_picker_theme.py')))
 
 AGENT_GLYPHS = {'codex': '⬡', 'claude': '✱', 'slot': '·', 'revision': '·'}
@@ -62,18 +62,30 @@ def clean(value):
 
 
 @_spinner('Loading history metadata')
-def run(argv, *, cwd=None, timeout=30, optional=False):
+def run(argv, *, cwd=None, timeout=30, optional=False, launch_diagnostics=False):
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    detail = ''
     try:
         result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                                 timeout=timeout, stdin=subprocess.DEVNULL, start_new_session=True)
         if not result.returncode:
             return result.stdout
-    except (OSError, subprocess.TimeoutExpired):
+        if launch_diagnostics:
+            # Only this private lifecycle launch opts in. Metadata commands and
+            # arbitrary stdout remain private; retain terminal-safe t diagnostics.
+            lines = _LIFECYCLE['diagnostic_error'](result.stderr).splitlines()
+            selected = [line for line in lines if line.startswith('t resume: ')]
+            selected = selected or [line for line in lines if line.startswith('t: ')]
+            if selected:
+                detail = selected[-1].removeprefix('t resume: ').removeprefix('t: ')
+    except subprocess.TimeoutExpired:
+        if launch_diagnostics:
+            detail = f'{argv[0]} launch timed out after {timeout}s'
+    except OSError:
         pass
     if optional:
         return ''
-    raise HistoryError(f'{argv[0]} failed; history and existing workspaces were retained')
+    raise HistoryError((detail or f'{argv[0]} failed') + '; history and existing workspaces were retained')
 
 
 def slug(remote):
@@ -562,7 +574,7 @@ def page_rows(rows, query='', limit=50, page=1, sort='turn', sort_enabled=True):
                 return -row.get('updated', 0), identity
             display = row.get('display') or history_display(row)
             value = display['slot'] if sort == 'session' else row['repo'] if sort == 'repo' else display.get(sort, 'unknown')
-            primary = () if sort == 'turn' else _SORT['natural'](value)
+            primary = (-_SORT['closed_epoch'](row),) if sort == 'closed' else () if sort == 'turn' else _SORT['natural'](value)
             return primary, -_SORT['turn_epoch'](row.get('last_turn', '-')), identity
         matches.sort(key=key)
     return matches[(page - 1) * limit:page * limit], len(matches)
@@ -675,21 +687,31 @@ def format_row(row, width=80):
     return prefix + gap + summary
 
 
-def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, height=None):
+def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, height=None, notice=''):
     _, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     pages = max(1, (total + limit - 1) // limit)
     page_label = f'Page {page} · {total} conversations · {limit} per page' if width >= 60 else f'Page {page}/{pages} · {total} conversations'
-    columns = picker_columns(width, sort != 'updated')
-    gap = '  ' if width >= 60 else ' '
+    closure = closure_records(rows) if sort != 'updated' else {}
+    has_close = any(value['closed'] != '-' for value in closure.values())
+    layout_width = width - 2 if has_close else width
+    columns = picker_columns(layout_width, sort != 'updated')
+    gap = '  ' if layout_width >= 60 else ' '
     heading = gap.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + gap + 'WORKING ON'
     compact = width <= 40 or int(height or os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     lines = [clip_columns(page_label, width)]
+    if notice:
+        lines.insert(0, clip_columns(notice, width))
     if sort != 'updated':
         if not compact:
             lines.append('')
-        lines += _THEME['sort_rows'](sort, width, sort_enabled, compact)
+        lines += _THEME['sort_rows'](sort, width, sort_enabled, compact, include_closed=True)
     if not compact:
         lines.append('')
+    if has_close:
+        heading = '  ' + heading
+        latest = None if notice else _SORT['latest_closed'](closure)
+        legend = '↶ last closed · ' + _DISPLAY['format_last_turn'](closure[latest]['closed']) if latest else 'Last closed unknown'
+        lines.append(clip_columns(legend, width))
     lines.append(clip_columns(heading, width))
     return '\n'.join(lines) + '\n'
 
@@ -825,6 +847,9 @@ class HistoryCommand:
                     and 0 <= now - value['verified'] < REPOSITORY_PROOF_TTL)
         if self.strict_identity or not valid(proof):
             proof = None
+            if getattr(self, 'cache_discovery', False) and not self.strict_identity:
+                self.repository_proofs[identity] = None
+                return None  # Display collection must never wait for GitHub.
             if self.strict_identity:
                 self.fresh_repository_proofs.add(identity)
             try:
@@ -863,6 +888,8 @@ class HistoryCommand:
 
     def local_catalog(self):
         """Export host-local metadata, never evidence imported from another host."""
+        if getattr(self, 'cache_discovery', False):
+            return self.incremental_catalog()
         self.check_auth()
         repositories = {}
         for alias, path in self.cfg.repos.items():
@@ -911,6 +938,137 @@ class HistoryCommand:
         if self.diagnostics_enabled:
             payload['diagnostics'] = self.diagnostic_rows()
         return payload
+
+    def incremental_catalog(self):
+        """One manifest walk per host, one parse/merge per changed transcript.
+
+        Repository filtering happens after identification, never by rescanning
+        the same source tree for each configured repository. The cache service
+        owns the manifest; durable history remains independently recoverable.
+        """
+        codex = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
+        claude = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+        key = 'catalog-manifest-v2:' + json.dumps([PARSER_VERSION, str(self.store.directory), self.cfg.repos,
+                                                 self.cfg.worktree_root, str(codex), str(claude)], sort_keys=True)
+        old = _CACHE_REQUEST('artifact', {'key': key}).get('value') or {}
+        # Codex names and relocated workspaces can change without appending a
+        # rollout. Read its index once, independently of transcript file stamps.
+        native = []
+        for database in sorted(codex.glob('state_*.sqlite'), reverse=True):
+            try:
+                native = [dict(row) for row in _codex_rows(database, 'select * from threads',
+                          initialize_sidecars=False, timeout=.2, row_factory=sqlite3.Row)]
+                break
+            except sqlite3.Error:
+                continue
+        paths = {}
+        for root, pattern, agent, archived in (
+                (claude / 'projects', '*/*.jsonl', 'claude', False),
+                (codex / 'sessions', '**/rollout-*.jsonl', 'codex', False),
+                (codex / 'archived_sessions', '**/rollout-*.jsonl', 'codex', True)):
+            for path in root.glob(pattern):
+                try:
+                    info = path.stat()
+                except FileNotFoundError:
+                    continue
+                paths[str(path)] = [info.st_ino, info.st_size, info.st_mtime_ns, agent, archived]
+        for row in native:
+            if '"subagent"' in str(row.get('source', '')) or not row.get('rollout_path'):
+                continue
+            path = Path(row['rollout_path'])
+            if str(path) in paths:
+                continue
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            paths[str(path)] = [info.st_ino, info.st_size, info.st_mtime_ns, 'codex', bool(row.get('archived'))]
+        repositories = {}
+        for alias, path in self.cfg.repos.items():
+            identity = self.canonical_identity(self.identity(alias))
+            self.discovery_identities[alias] = identity
+            repositories.setdefault(identity, dict(repo=identity, alias=alias, path=path))
+        self.catalog_changed_paths = {name for name in set(paths) | set(old.get('files', {}))
+                                      if paths.get(name) != old.get('files', {}).get(name)}
+        self.catalog_paths = set(paths)
+        for name, stamp in paths.items():
+            if old.get('files', {}).get(name) == stamp:
+                continue
+            path, agent, archived = Path(name), stamp[3], stamp[4]
+            identity = None
+            if agent == 'codex':
+                try:
+                    with path.open() as stream:
+                        payload = json.loads(stream.readline()).get('payload', {})
+                except (OSError, ValueError, TypeError, AttributeError):
+                    # Half-written new headers are reconsidered next time.
+                    continue
+                if payload.get('thread_source') == 'subagent' or isinstance(payload.get('source'), dict) and 'subagent' in payload['source']:
+                    continue
+                identity = slug((payload.get('git') or {}).get('repository_url', ''))
+                if identity:
+                    identity = self.canonical_identity(identity)
+                else:
+                    identity = next((repo for alias, repo in self.discovery_identities.items()
+                                     if association_matches(dict(workspace=payload.get('cwd', '')), self.cfg, alias) is not None), None)
+            try:
+                value = self.store.scan(path, agent, metadata_only=True)
+            except (HistoryError, OSError):
+                continue
+            if not value.get('sid'):
+                continue
+            if not identity:
+                identity = next((repo for alias, repo in self.discovery_identities.items()
+                                 if any(association_matches(a, self.cfg, alias) is not None for a in value.get('associations', []))), None)
+            if not identity:
+                continue
+            value.pop('_scan', None)
+            value.update(repo=identity, archived=archived)
+            value['associations'] = [{**a, 'host': 'local', 'slot': recorded_slot(a['workspace'])}
+                                     for a in value.get('associations', [])]
+            value['sources'] = [dict(host='local', path=name, updated=stamp[2] / 1e9, size=stamp[1])]
+            value['updated'] = max(value.get('updated', 0), stamp[2] / 1e9)
+            if not identity.startswith('local:'):
+                value['prs'] = value.get('prs', []) + [dict(repo=p.get('repo') or identity, number=p['number'],
+                    url=f'https://github.com/{p.get("repo") or identity}/pull/{p["number"]}') for p in value.pop('pr_numbers', [])]
+            self.store.merge(value)
+        indexed = {}
+        by_source = {s['path']: record for record in self.store.records() for s in record.get('sources', [])
+                     if s.get('host') == 'local' and s.get('path') in paths}
+        for row in native:
+            name = row.get('rollout_path')
+            original = by_source.get(name)
+            if (not original or original['agent'] != 'codex' or original['sid'] != row.get('id')
+                    or '"subagent"' in str(row.get('source', ''))):
+                continue
+            title = clean(row.get('name') or row.get('title') or row.get('first_user_message'))
+            value = dict(repo=original['repo'], agent='codex', sid=row['id'], title=title, summary=title,
+                         summary_source='index', model=clean(row.get('model')) or '-',
+                         model_source='index' if row.get('model') else 'unknown',
+                         updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')),
+                         associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')),
+                                            commit=row.get('git_sha') or '', evidence='index',
+                                            host='local', slot=recorded_slot(row.get('cwd', '')),
+                                            observed=timestamp(row.get('updated_at')))])
+            indexed[name] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+            if indexed[name] != old.get('index', {}).get(name) or name in self.catalog_changed_paths:
+                self.store.merge(value)
+                self.catalog_changed_paths.add(name)
+        rows = []
+        for original in self.store.records():
+            row = dict(original)
+            row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
+            row['sources'] = [source for source in row.get('sources', [])
+                              if source.get('host') == 'local' and source.get('path') in paths]
+            row.pop('owners', None)
+            row.pop('display', None)
+            if not row['sources'] or not row['associations']:
+                continue
+            repositories.setdefault(row['repo'], dict(repo=row['repo'], alias=row['repo'], path=''))
+            rows.append(row)
+        if self.catalog_changed_paths or not old:
+            _CACHE_REQUEST('artifact', {'key': key, 'value': {'files': paths, 'index': indexed}})
+        return dict(version=1, repositories=list(repositories.values()), conversations=rows)
 
     def import_catalog(self, payload, host):
         if not isinstance(payload, dict) or payload.get('version') != 1:
@@ -1319,13 +1477,15 @@ class HistoryCommand:
             terminal = shutil.get_terminal_size((80, 24))
             width = max(12, terminal.columns - (16 if terminal.columns > 60 else 12))
             sortable = all(row['agent'] in ('codex', 'claude') for row in rows)
-            sort, sort_enabled = getattr(self, 'picker_sort', ('turn', True)) if sortable else ('updated', True)
-            private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled))
+            default_sort = 'closed' if any(_SORT['closed_epoch'](r) != float('-inf') for r in rows) else 'turn'
+            sort, sort_enabled = getattr(self, 'picker_sort', (default_sort, True)) if sortable else ('updated', True)
+            notice = getattr(self, 'discovery_notice', '')
+            private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled, notice=notice))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')
-            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines))
+            header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines, notice=notice))
             rows_file = state.with_suffix('.rows')
-            rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled))
+            rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled, notice=notice))
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
@@ -1357,7 +1517,7 @@ class HistoryCommand:
                 if not 0 <= index < len(rows):
                     raise HistoryError('invalid selection')
                 row = rows[index]
-                expected = f'{index}\t{format_row(row, settings.get("width", 80))}\t{clean(json.dumps(row, ensure_ascii=False))}'
+                expected = f'{index}\t{picker_row(row, rows, settings.get("width", 80), settings.get("notice", ""))}\t{clean(json.dumps(row, ensure_ascii=False))}'
                 if row not in matching or line != expected:
                     return None, 'retry', query
                 identity = (row['repo'], row['agent'], row['sid'])
@@ -1444,7 +1604,7 @@ class HistoryCommand:
         owners = []
         for index, row in enumerate(rows):
             try:
-                owner = self.resume(alias, row, return_owner=True)
+                owner = self.resume_with_repair(alias, row, return_owner=True)
                 self.attach_command(owner)  # Reject unsupported owners before tab handling.
                 owners.append(owner)
             except HistoryCancelled:
@@ -1564,11 +1724,16 @@ class HistoryCommand:
         value = transcript(source, 'codex')
         helper = runpy.run_path(str(Path(self.root) / 'libexec/t_codex_ownership.py'))
         try:
-            helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
-                ownership_cwd=workspace,
-                codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
-                rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                retry='Retry: t session resume, then select the conversation again.')
+            terminal = (os.environ.get('T_RESUME_REPAIR') == '1' and
+                        sys.stdin.isatty() and sys.stderr.isatty())
+            # This probe returns no stdout data. Let its shared wait spinner
+            # use the terminal while the shell captures the eventual owner.
+            with redirect_stdout(sys.stderr) if terminal else nullcontext():
+                helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                    ownership_cwd=workspace,
+                    codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
+                    rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
+                    retry='Retry: t session resume, then select the conversation again.')
         except ValueError as error:
             raise HistoryError(str(error)) from error
 
@@ -1679,6 +1844,31 @@ class HistoryCommand:
     def reconcile_source(self, alias, row):
         return _RESUME_SOURCE['reconcile'](self, alias, row)
 
+    def resume_with_repair(self, alias, row, **options):
+        """Repair retries the selected conversation, never a slot's latest one."""
+        try:
+            return self.resume(alias, row, **options)
+        except HistoryCancelled:
+            raise
+        except (HistoryError, OSError, ValueError) as error:
+            # The shell captures the resulting owner on stdout. Its explicit
+            # terminal marker lets the shared rail use stderr without putting
+            # escape sequences in that owner or prompting redirected callers.
+            interactive = (sys.stdin.isatty() and sys.stderr.isatty() and
+                           (sys.stdout.isatty() or os.environ.get('T_RESUME_REPAIR') == '1'))
+            if not interactive:
+                raise
+            print('t resume: ' + str(error), file=sys.stderr)
+            ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
+            with redirect_stdout(sys.stderr):
+                if not ask(self.api, 'Could not resume ' + alias,
+                           'Retry the selected conversation after checking ownership.', 'Repair'):
+                    raise HistoryCancelled('resume repair cancelled') from error
+        _CACHE_REQUEST('event', {'targets': ['local']})
+        # The failed resume has released its reservations and claims. Repeat
+        # every live ownership/source check once; do not loop or force a launch.
+        return self.resume(alias, row, **options)
+
     def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
@@ -1730,7 +1920,9 @@ class HistoryCommand:
                     # use the claimed helper, never recursively acquire those locks.
                     snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
                     if not prepare_only:
-                        run(self.shell(snippet))
+                        # Allow the final ownership guard's startup settling
+                        # window plus native readiness and shell startup.
+                        run(self.shell(snippet), timeout=90, launch_diagnostics=True)
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
                 if self.reservation:
@@ -1789,11 +1981,14 @@ class HistoryCommand:
                 if row['prs']:
                     title += ' · ' + pr_summary(row['prs'])
                 yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state]))
+                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state, _SORT['closed_time'](row)]))
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
         cached = getattr(self, 'discovery_view', None) is not None
+        if cached and self.discovery_view.get('unavailable') and not args.json:
+            print('t resume: Session discovery is unavailable; saved conversations have not been checked.', file=sys.stderr)
+            return 1
         owners = []
         if not cached:
             with self.api.get("_spinner", lambda *a, **kw: nullcontext())("Loading conversation history", machine=args.json):
@@ -1857,20 +2052,35 @@ class HistoryCommand:
                     return self.resume_many(alias, row)
                 row = row[0]
             try:
-                return self.resume(alias, row)
+                return self.resume_with_repair(alias, row)
             except HistoryCancelled:
                 return 130
             except (HistoryError, OSError, ValueError) as error:
                 print(f't resume: {error}', file=sys.stderr)
                 return 1
-        print('No matching cached conversations; discovery may still be refreshing.' if cached else 'No retained conversations for this slot.')
+        print('No matching cached conversations; discovery is incomplete. Run t resume again later.'
+              if getattr(self, 'discovery_notice', '') else 'No retained conversations for this slot.')
         return 0
 
 
-def picker_rows(rows, query, limit, page, width=80, sort='turn', sort_enabled=True):
+def closure_records(rows):
+    return {(r['repo'], r['agent'], r['sid']): {'closed': _SORT['closed_time'](r)} for r in rows}
+
+
+def picker_row(row, rows, width, notice='', records=None, color=False):
+    records = closure_records(rows) if records is None else records
+    if not any(value['closed'] != '-' for value in records.values()):
+        return format_row(row, width)
+    latest = None if notice else _SORT['latest_closed'](records)
+    marker = (_THEME['paint']('↶', 'heading') if color else '↶') if (row['repo'], row['agent'], row['sid']) == latest else ' '
+    return marker + ' ' + format_row(row, width - 2)
+
+
+def picker_rows(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, notice=''):
     selected, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     indices = {json.dumps([row['repo'], row['agent'], row['sid']]): i for i, row in enumerate(rows)}
-    return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{format_row(row, width)}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
+    records = closure_records(rows)
+    return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{picker_row(row, rows, width, notice, records, color=sys.stderr.isatty())}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
 
 
 def picker(argv):
@@ -1900,8 +2110,8 @@ def picker(argv):
     elif action == 'previous':
         settings['page'] = max(1, settings['page'] - 1)
     private_write(state, settings)
-    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled))
-    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled)
+    Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled, notice=settings.get('notice', '')))
+    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled, notice=settings.get('notice', ''))
     Path(state).with_suffix('.rows').write_text(output)
     print(output, end='')
 

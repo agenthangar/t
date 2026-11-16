@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "description": "Shared renderer guarantees inherited by terminal modes; custom nested layouts name additional fixtures. Command behavior tests remain in the command inventory.",
+  "profiles": {
+    "rail": {
+      "tests": [
+        "tests/test_tui.py::test_air_unicode_check_gutter_and_physical_frame_budget",
+        "tests/test_tui.py::test_shared_picker_keeps_focus_and_primary_action_visible",
+        "tests/test_tui.py::test_unset_gap_checklist_keeps_viewport_focus_and_action_visible",
+        "tests/test_design_geometry.py::test_rail_columns_keep_coordinates",
+        "tests/test_resume_wait.py::test_resume_wait_rail_layout"
+      ],
+      "renderers": [
+        "rail"
+      ]
+    },
+    "picker": {
+      "tests": [
+        "tests/test_picker_ui.py::test_primary_action_and_focused_row_visible_in_small_viewports",
+        "tests/test_picker_ui.py::test_inline_filters_keep_the_list_visible_and_repeat_clears",
+        "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order",
+        "tests/test_picker_ui.py::test_filter_toggle_preserves_query_and_removes_hidden_marks",
+        "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
+        "tests/test_picker_ui.py::test_open_discovery_notice_keeps_focused_row_visible",
+        "tests/test_design_geometry.py::test_real_picker_columns_do_not_shift_on_search",
+        "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state"
+      ],
+      "renderers": [
+        "fzf"
+      ]
+    },
+    "plain": {
+      "tests": [
+        "tests/test_design_geometry.py::test_table_coordinates_and_narrow_stacking"
+      ],
+      "renderers": [
+        "plain"
+      ]
+    },
+    "history": {
+      "tests": [
+        "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel",
+        "tests/test_history_picker.py::test_history_sort_block_matches_open_and_preserves_section_spacing",
+        "tests/test_history_details.py::test_picker_rows_budget_unicode_metadata_before_summary",
+        "tests/test_history_details.py::test_real_details_picker_retains_focus_and_scrollable_metadata_at_each_size",
+        "tests/test_recent_close.py::test_history_marker_columns_align",
+        "tests/test_recent_close.py::test_real_recent_close_marker_keeps_focus"
+      ],
+      "renderers": [
+        "fzf"
+      ]
+    },
+    "review": {
+      "tests": [
+        "tests/test_share_ui.py::test_review_is_readable_at_terminal_sizes",
+        "tests/test_share_ui.py::test_agent_choice_renders_with_shared_rail_at_terminal_sizes"
+      ],
+      "renderers": []
+    },
+    "local-runtime": {
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_hub_and_model_test_fit_terminal"
+      ],
+      "renderers": []
+    },
+    "external": {
+      "exclusion": "External application owns terminal geometry; t does not render its contents.",
+      "renderers": [
+        "external"
+      ]
+    },
+    "machine": {
+      "exclusion": "Machine-only output has schema contracts, not terminal geometry.",
+      "renderers": []
+    },
+    "mixed": {
+      "tests": [
+        "tests/test_design_geometry.py::test_rail_columns_keep_coordinates",
+        "tests/test_design_geometry.py::test_real_picker_columns_do_not_shift_on_search",
+        "tests/test_design_geometry.py::test_table_coordinates_and_narrow_stacking",
+        "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state",
+        "tests/test_picker_ui.py::test_filter_toggle_preserves_query_and_removes_hidden_marks",
+        "tests/test_picker_ui.py::test_inline_filters_keep_the_list_visible_and_repeat_clears",
+        "tests/test_picker_ui.py::test_open_discovery_notice_keeps_focused_row_visible",
+        "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
+        "tests/test_picker_ui.py::test_primary_action_and_focused_row_visible_in_small_viewports",
+        "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order",
+        "tests/test_tui.py::test_air_unicode_check_gutter_and_physical_frame_budget",
+        "tests/test_tui.py::test_shared_picker_keeps_focus_and_primary_action_visible",
+        "tests/test_tui.py::test_unset_gap_checklist_keeps_viewport_focus_and_action_visible"
+      ],
+      "renderers": [
+        "mixed"
+      ]
+    },
+    "workflow": {
+      "tests": [
+        "tests/test_workflow_resets.py::test_grouped_workflow_viewport_and_reset_focus",
+        "tests/test_workflow_tui.py::test_workflow_tui_narrow",
+        "tests/test_workflow_assignments.py::test_assignment_picker_keyboard_and_narrow_viewport"
+      ],
+      "renderers": []
+    },
+    "models": {
+      "tests": [
+        "tests/test_model_selection.py::test_comparison_picker_layout_navigation_and_source_keys",
+        "tests/test_model_selection.py::test_context_and_actions_align"
+      ],
+      "renderers": []
+    },
+    "session-table": {
+      "tests": [
+        "tests/test_usage.py::test_approved_session_layout"
+      ],
+      "renderers": []
+    },
+    "nosleep": {
+      "tests": [
+        "tests/test_nosleep_config.py::test_frame_inserts_nonselectable_breaks_between_sections"
+      ],
+      "renderers": []
+    },
+    "usage": {
+      "tests": [
+        "tests/test_usage.py::test_usage_preview_geometry_and_labels",
+        "tests/test_usage_picker.py::test_usage_picker_session_preview_and_resize"
+      ],
+      "renderers": []
+    }
+  },
+  "nested_screens": {
+    "rail.menu": "rail",
+    "rail.checklist": "rail",
+    "share.review": "review",
+    "history.pagination": "history",
+    "history.details": "history",
+    "local.runtime": "local-runtime",
+    "fzf.single": "picker",
+    "fzf.multi": "picker",
+    "fzf.filtered": "picker",
+    "plain.table": "plain",
+    "workflow": "workflow",
+    "models": "models",
+    "session-table": "session-table",
+    "nosleep": "nosleep"
+  }
+}

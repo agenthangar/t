@@ -462,3 +462,45 @@ def test_last_turn_column_stays_visible_and_searchable(t_mod, monkeypatch, width
     assert output[1].split('\t')[4].rstrip().endswith('-')
     available = width - (6 if width <= 60 else 12)
     assert all(t_mod._display_width(line.split('\t')[-1].rstrip()) <= available for line in [heading, *output])
+
+
+@pytest.mark.parametrize('args', ['', '--local'])
+def test_open_requests_waited_snapshot_and_keeps_notice_after_toggle(zsh, tmp_path, args):
+    env = picker_stub(tmp_path, 'api-2')
+    result = zsh(ROWS + r'''
+      _t_discovery_rows() {
+        [[ $1 == --open && $2 == --notice-file ]] || return 99
+        print -n 'Older results' > "$3"
+        local rows=$(_dev_session_rows --details)
+        if [[ " $* " == *' --unprefixed '* ]]; then print -r -- "$rows"
+        else print -r -- "$rows" | awk 'NF {print "local\t" $0}'; fi
+      }
+      _t_dev() { print -r -- "CLI $*"; }
+      _t_open ''' + args, _tty=True, PICK_ACTIONS='toggle-filters', **env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'CLI api 2 --local' in result.stdout
+    header = (tmp_path / 'picker.log.header').read_text()
+    assert 'Filters OFF' in header and 'Older results' in header
+
+
+@pytest.mark.parametrize('rc', [1, 130])
+@pytest.mark.parametrize('args', ['', '--local'])
+def test_open_discovery_cancel_and_error_never_start_fresh(zsh, rc, args):
+    result = zsh(r'''
+      _t_discovery_rows() { return ''' + str(rc) + r'''; }
+      _t_dev() { print UNEXPECTED_FRESH; }
+      _t_open ''' + args + '; print rc=$?', _tty=True)
+    assert f'rc={rc}' in result.stdout and 'UNEXPECTED' not in result.stdout
+
+
+def test_open_incomplete_empty_scope_never_starts_fresh(zsh):
+    result = zsh(r'''
+      _t_discovery_rows() {
+        print -n 'Incomplete discovery' > "$3"
+        printf 'local\tsid\t%s\tweb-9\tattached\tactive\tTask\tcodex\n' "$HOME/code/web"
+      }
+      _t_dev() { print UNEXPECTED_FRESH; }
+      _t_open api; print rc=$?
+    ''', _tty=True)
+    assert 'rc=1' in result.stdout and 'UNEXPECTED' not in result.stdout
+    assert 'discovery is incomplete' in result.stdout + result.stderr

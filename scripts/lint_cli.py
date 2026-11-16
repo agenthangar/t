@@ -34,13 +34,13 @@ LEGACY_GROUP_VERBS = {
                 "move", "read", "view-plan", "paste", "search", "goal"},
     "repo": {"list", "cd", "locate", "create", "clone", "add"},
     "cursor": {"list", "resume", "send"},
-    "hosts": {"list", "show", "add", "edit", "remove", "default", "run"},
+    "hosts": {"list", "show", "add", "edit", "remove", "default", "reset", "run"},
     "agentcore": {"invoke", "stop"},
     "config": {"open", "show", "edit", "setup", "onboard", "local", "models"},
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
     "agent": {"login", "install", "status", "trust"},
-    "system": {"integrate", "update", "diagnose", "advisories", "usage"},
+    "system": {"integrate", "update", "diagnose", "advisories", "usage", "apps"},
 }
 
 
@@ -314,6 +314,7 @@ def check(parser, command_groups, instructions):
                   ["runners", "setup", "--github-repo", "owner/control", "--create"],
                   ["runs", "start", "--target", "linux", "--", "python3", "-m", "pytest"],
                   ["runs", "list", "--json"], ["runs", "status", "ID", "--json"],
+                  ["runs", "inspect", "ID", "--target", "local", "--json"],
                   ["runs", "logs", "ID"], ["runs", "artifacts", "ID"],
                   ["runs", "cancel", "ID"], ["runs", "cleanup", "ID"]):
         valid, args = accepts(["config", "workflow", *words])

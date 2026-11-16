@@ -8,7 +8,7 @@ import sys
 
 from t_session_details import clip_columns, display_width, enrich, format_last_turn
 from t_picker_theme import key_labels, paint, control_rows, sort_rows
-from t_session_sort import RESUME_SORTS, natural, turn_epoch
+from t_session_sort import RESUME_SORTS, SAVED_SORTS, natural, turn_epoch, latest_closed
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -34,7 +34,8 @@ def metadata(source, profile):
             result[tuple(fields[:3])] = dict(agent=agent or 'unknown',
                 host='local' if host == 'here' else host, repo=repo, session=slot,
                 turn=fields[10] if len(fields) > 11 else '-',
-                pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN')
+                pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN',
+                closed=fields[13] if len(fields) > 14 and location == '-' else '-')
         else:
             if len(fields) < 7:
                 continue
@@ -57,7 +58,7 @@ def sort_resume(rows, records, mode='turn'):
     def key(row):
         identity = tuple(row.split('\t')[:3])
         record = records.get(identity, {})
-        primary = () if mode == 'turn' else natural(record.get(mode, 'unknown'))
+        primary = (-turn_epoch(record.get('closed', '-')),) if mode == 'closed' else () if mode == 'turn' else natural(record.get(mode, 'unknown'))
         return primary, -turn_epoch(record.get('turn', '-')), identity
     return sorted(rows, key=key)
 
@@ -91,9 +92,9 @@ def resume_turns(source, home, codex_home, owners=''):
         when = format_last_turn(turn)
         row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
         pr = row[13] if len(row) > 13 and row[13] in PR_STATES else 'UNKNOWN'
-        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-']) + [pr]))
+        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-']) + [pr, row[14] if len(row) > 14 and row[6] == '-' else '-']))
     records = metadata('\n'.join(row + '\t' for row in result), 'resume')
-    return sort_resume(result, records)
+    return sort_resume(result, records, 'closed' if any(r['closed'] != '-' for r in records.values()) else 'turn')
 
 
 def choose(rows, records, filters):
@@ -157,7 +158,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
         lines += [style('Match highlighted row; repeat key to clear'), '']
-    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'))
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'), include_closed=profile == 'resume')
     if not compact:
         lines += ['']
     if columns:
@@ -280,8 +281,9 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     filters = json.loads(state_file.read_text()) if state_file.exists() else dict.fromkeys(names)
     mask_file = directory / 'show-all'
     mask = int(mask_file.read_text().strip() or 0) if mask_file.exists() else 0
+    default_sort = 'closed' if profile == 'resume' and any(r.get('closed', '-') != '-' for r in records.values()) else 'turn'
     sort_file = directory / 'sort'
-    sort = sort_file.read_text().strip() if sort_file.exists() else ('turn' if profile in ('resume', 'list', 'open') else 'session')
+    sort = sort_file.read_text().strip() if sort_file.exists() else (default_sort if profile in ('resume', 'list', 'open') else 'session')
     sort_enabled_file = directory / 'sort-enabled'
     sort_enabled = sort_enabled_file.read_text() == '1' if sort_enabled_file.exists() else profile in ('resume', 'list', 'open')
     enabled_file = directory / 'filters-enabled'
@@ -294,7 +296,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     elif action == 'toggle-sort':
         sort_enabled = not sort_enabled
     elif action == 'next-sort':
-        modes = [name for name in RESUME_SORTS if profile in ('resume', 'list', 'open') or name != 'turn']
+        modes = [name for name in (SAVED_SORTS if profile == 'resume' else RESUME_SORTS) if profile in ('resume', 'list', 'open') or name != 'turn']
         sort = modes[(modes.index(sort) + 1) % len(modes)]
         sort_enabled = True
     elif action == 'state':
@@ -363,7 +365,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         if profile == 'resume' and enabled and hide_merged:
             selected = [row for row in selected if records.get(tuple(row.split('\t')[:3]), {}).get('pr') != 'MERGED']
         if action == 'default':
-            sort = 'turn'
+            sort = default_sort
         if sort_enabled:
             selected = sort_resume(selected, records, sort)
         merged_file.write_text('1' if hide_merged else '0')
@@ -374,22 +376,55 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     total = len((directory / 'all').read_text().splitlines())
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
     warning = ''
+    notice = directory / 'discovery-notice'
+    if notice.exists() and notice.read_text().strip():
+        warning = clip_columns(notice.read_text().strip(), width) + '\n'
     if profile == 'resume':
         # The invocation snapshot persists through every filter/sort/reset reload.
         hosts = (directory / 'auth-hosts').read_text().splitlines() if (directory / 'auth-hosts').exists() else []
         hosts = [host for host in hosts if host]
         if hosts:
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
-            warning = clip_columns(summary, width) + '\n'
+            warning = clip_columns(summary, width) + '\n' + warning
     controls = header(profile, mask, filters, total - len(selected), columns, width,
                       sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled)
+    if profile == 'resume':
+        legend = closure_legend(records, bool(warning))
+        if legend:
+            controls += clip_columns(legend, width) + '\n'
     (directory / 'current-header').write_text(warning + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))
 
 
+def closure_legend(records, incomplete=False):
+    if not any(r.get('closed', '-') != '-' for r in records.values()):
+        return ''
+    latest = None if incomplete else latest_closed(records)
+    return '↶ last closed · ' + format_last_turn(records[latest]['closed']) if latest else 'Last closed unknown'
+
+
+def mark_resume(source, incomplete=False):
+    records = metadata(source, 'resume')
+    if not any(r.get('closed', '-') != '-' for r in records.values()):
+        return source.rstrip('\n')
+    latest = None if incomplete else latest_closed(records)
+    result = []
+    for line in source.splitlines():
+        fields = line.split('\t')
+        marker = '↶' if tuple(fields[:3]) == latest else ' '
+        if marker == '↶' and sys.stderr.isatty():
+            marker = paint(marker, 'heading')
+        fields[-1] = marker + ' ' + fields[-1]
+        result.append('\t'.join(fields))
+    return '\n'.join(result)
+
+
 if __name__ == '__main__':
+    if sys.argv[1] == '--resume-mark':
+        print(mark_resume(sys.stdin.read(), bool(os.environ.get('T_PICKER_NOTICE'))))
+        sys.exit(0)
     if sys.argv[1] == '--resume-turns':
         print('\n'.join(resume_turns(sys.stdin.read(), os.environ['HOME'],
             os.environ.get('CODEX_HOME', str(Path.home() / '.codex')),

@@ -515,7 +515,7 @@ def test_runners_completion_exposes_nested_runs_and_scopes(tmp_path):
     ''')
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
-    assert lines[0] == 'values:start,list,ls,status,watch,logs,artifacts,cancel,cleanup'
+    assert lines[0] == 'values:start,list,ls,status,watch,inspect,logs,artifacts,cancel,cleanup'
     assert lines[1] == 'values:--github-repo,--create,-h,--help'
     assert lines[2].startswith('values:')
 
@@ -542,7 +542,7 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
         "actions:context,list,ls,open,delete,add,use,exclude,inherit,edit,instructions",
         "values:--tool,-h,--help", "values:--tool,--replacement,-h,--help",
         "values:--tool,--repo,--all,--json,-h,--help", "values:api",
-        "values:show,edit", "values:start,list,ls,status,watch,logs,artifacts,cancel,cleanup",
+        "values:show,edit", "values:start,list,ls,status,watch,inspect,logs,artifacts,cancel,cleanup",
         "values:--github-repo,--create,-h,--help",
         "bin:<workflow><list><--repo><api><--json>",
     ]

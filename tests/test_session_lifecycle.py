@@ -148,7 +148,8 @@ int main(int argc, char **argv) {
 
 
 def _shell(base, env, script, *, cwd=None):
-    return _run(["zsh", "-lic", script], env=env, cwd=cwd or base, timeout=25)
+    # Unknown native writers receive a real bounded 30-second startup grace.
+    return _run(["zsh", "-lic", script], env=env, cwd=cwd or base, timeout=60)
 
 
 def _shell_tty(base, env, script):
