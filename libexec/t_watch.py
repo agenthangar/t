@@ -228,6 +228,22 @@ def github(repository, number, sha, timeout=60, progress=None, next_step=''):
             workflows = [{key: run[key] for key in ('id', 'status', 'conclusion')} for run in latest.values()]
             pending = any(run['status'] != 'completed' for run in latest.values())
             failed = failed or any(run['status'] == 'completed' and run['conclusion'] not in ('success', 'neutral', 'skipped') for run in latest.values())
+        if not pending:
+            # Workflow lookup can race a push; verify the head again at acceptance.
+            try:
+                current = subprocess.run(['gh', 'pr', 'view', str(number), '--repo', repository,
+                                          '--json', 'headRefOid'], capture_output=True, text=True,
+                                         timeout=max(.1, min(20, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                return {'id': f'{repository}#{number}@{sha}', 'status': 'running',
+                        'unavailable': 'Final PR head verification timed out'}
+            if current.returncode:
+                return {'id': f'{repository}#{number}@{sha}', 'status': 'running',
+                        'unavailable': 'Final PR head verification unavailable'}
+            current_head = json.loads(current.stdout).get('headRefOid')
+            if current_head != sha:
+                return {'id': f'{repository}#{number}@{sha}', 'status': 'error', 'exit_code': 1,
+                        'error': 'PR head changed; restart validation', 'head': current_head}
         return {'id': f'{repository}#{number}@{sha}', 'status': 'running' if pending else 'failed' if failed else 'succeeded',
-                'exit_code': 1 if failed else 0, 'head': sha, 'checks': checks, 'workflows': workflows}
+                'exit_code': None if pending else 1 if failed else 0, 'head': sha, 'checks': checks, 'workflows': workflows}
     return wait(read, timeout, progress, Activity(f'{repository}#{number}@{sha}', 'remote checks', next_step), interval=10)

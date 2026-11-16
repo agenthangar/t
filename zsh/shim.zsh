@@ -45,7 +45,7 @@ t() {
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
-      case ${3:-} in start|list|ls|status|watch|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+      case ${3:-} in start|list|ls|status|watch|inspect|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
     fi
     _term_title "$label"
     title_active=1
@@ -835,7 +835,7 @@ _t() {
     elif [[ ${words[CURRENT-1]} == --repo ]]; then
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == runs ]] && (( CURRENT == first )); then
-      _values 'run verb' start list ls status watch logs artifacts cancel cleanup
+      _values 'run verb' start list ls status watch inspect logs artifacts cancel cleanup
     elif [[ $action == runs ]]; then
       _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --next-step --json --output -h --help
     elif [[ $action == setup ]]; then

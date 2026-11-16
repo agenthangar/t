@@ -1890,3 +1890,14 @@ in the installer and has its own `t config` entry, separate from coding agents.
 `t system update` includes opted-in Nightr installations, preserving Homebrew or
 direct ownership. It never installs an absent app. App setup and helper approval
 remain explicit in `nightr setup`; uninstalling t leaves Nightr installed.
+
+### Concise runner inspection
+
+`t runners runs inspect ID [--target NAME] [--json]` is a read-only detail display
+with an explicit run ID, no picker and no update prompt. Preserve execution
+status, identity and omission notices before bounded evidence. Use retained-log
+line references and complete-log retrieval commands. Distinguish response
+omissions from storage loss; unknown evidence never means success. JSON exposes
+the same facts. See [context use](../docs/context-use.md) and
+[selective visual validation](../docs/validation.md). Workflow settings and the
+sharing editor are unchanged.
