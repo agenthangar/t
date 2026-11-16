@@ -1,6 +1,18 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_terminal_close.py:run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Private tmux attachment and terminal-loss callbacks use bounded probes and lifecycle effects. Their output is retained privately; they must not paint over an agent or emit progress after its terminal has closed."
+    },
+    "libexec/t_terminal_close.py:attached:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Starts an independent observer holding the original PTY handle without reading input or waiting for terminal closure."
+    },
+    "libexec/t_terminal_close.py:watch:time.sleep": {
+      "kind": "background",
+      "reason": "The detached observer waits for its exact client event and exits after detach or loss. It has no user-facing terminal and never waits for active work to become completed."
+    },
     "libexec/t_pane_identity.py:command:subprocess.run": {
       "kind": "protocol",
       "reason": "Read-only tmux and process probes each have a three-second timeout and return identity evidence to the shell scanner. The enclosing _dev_session_rows/_dev_rows_all seams own progress; this private protocol must not emit a competing spinner or contaminate identity output."
