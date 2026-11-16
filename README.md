@@ -709,6 +709,13 @@ custom or disabled entries, are preserved. Set `T_NO_MCP=1` to skip installation
 Search includes saved Claude transcripts and Codex active/archived rollouts under
 `CODEX_HOME` (default `~/.codex`), excluding injected context and subagent rollouts.
 After registration, refresh MCP tools or reopen the client if tools are unavailable.
+The t-managed Codex and Claude instructions also tell agents to prefer these
+tools for session discovery, verify candidates with `session_detail`, and use
+the CLI backend below when runtime MCP tools are unavailable. This guidance is
+included in enabled workflow context and the installed workflow loader; it does
+not depend on personal instructions. Existing installations receive the loader
+through the backed-up instruction migration in `t system update --relink`.
+Accept that migration and start a new agent session to load the updated instructions.
 The same lookup backend is available without runtime MCP tools:
 
 ```sh
