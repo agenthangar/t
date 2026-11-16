@@ -28,6 +28,10 @@ waits retain that next step too. The watcher already checked the PR head before
 reading checks; review found an acceptance race during the subsequent workflow
 lookup. It now rechecks the head before returning completion. A changed head
 fails verification; unavailable final verification remains pending.
+Live CI observation also exposed a deadline probe that could discard the last
+useful pending result when its network request timed out. The wait now stops at
+the budget boundary without that extra request, retaining observed checks and
+identity. A controlled regression verifies one read and preserved pending facts.
 
 A synthetic repeated-read exercise includes an unchanged consecutive read and a
 read after an edit. Both are candidates; manual review classifies the former as

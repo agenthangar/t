@@ -193,6 +193,23 @@ def test_bounded_watch_retains_snapshot_and_next_step(modules, monkeypatch):
     assert completed['wait_status'] == 'complete' and completed['next_step'] == 'Inspect then fix'
 
 
+def test_watch_deadline_does_not_probe_again_or_lose_pending_evidence(modules, monkeypatch):
+    watch = modules[2]
+    ticks = iter([0, 0])
+    monkeypatch.setattr(watch.time, 'monotonic', lambda: next(ticks))
+    sleeps = []
+    monkeypatch.setattr(watch.time, 'sleep', sleeps.append)
+    reads = []
+    def read():
+        reads.append(True)
+        assert len(reads) == 1, 'no request is authorized beyond the observation deadline'
+        return dict(status='running', head='a' * 40, checks=[{'status':'IN_PROGRESS'}])
+    result = watch.wait(read, timeout=1, activity=watch.Activity('fixture', next_step='Inspect results', identity={}))
+    assert sleeps == [1] and result['wait_status'] == 'pending'
+    assert result['head'] == 'a' * 40 and result['checks'] == [{'status':'IN_PROGRESS'}]
+    assert result['next_step'] == 'Inspect results' and result['status'] == 'running'
+
+
 def test_watch_progress_only_changes_and_interruption(modules, monkeypatch):
     watch = modules[2]
     results = iter([{'status': 'running'}, {'status': 'running'}, {'status': 'succeeded'}])

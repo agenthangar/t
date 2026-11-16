@@ -165,7 +165,13 @@ def wait(read, timeout=60, progress=None, activity=None, interval=1):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return dict(result, wait_status='pending', watcher_id=activity.data['id'] if activity else None, next_step=activity.data['next_step'] if activity else '')
-            time.sleep(min(max(interval, result.get('retry_after', 0)), remaining))
+            delay = min(max(interval, result.get('retry_after', 0)), remaining)
+            time.sleep(delay)
+            if delay == remaining:
+                # The observation budget is exhausted. A final network probe
+                # would have no time left and could erase useful pending facts.
+                return dict(result, wait_status='pending', watcher_id=activity.data['id'] if activity else None,
+                            next_step=activity.data['next_step'] if activity else '')
     finally:
         if activity:
             activity.finish(result)
