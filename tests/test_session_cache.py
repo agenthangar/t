@@ -340,7 +340,7 @@ def test_client_unavailable_is_bounded_no_scanner_fallback(cache, monkeypatch):
     monkeypatch.setattr(cache, '_wire', lambda *a: (_ for _ in ()).throw(OSError()))
     launches = []
     monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: launches.append((a, k)))
-    ticks = iter([0, .1, 2])
+    ticks = iter([0, .1, 5])
     monkeypatch.setattr(cache.time, 'monotonic', lambda: next(ticks))
     monkeypatch.setattr(cache.time, 'sleep', lambda _: None)
     monkeypatch.setenv('COV_CORE_SOURCE', 'must-not-leak')
@@ -477,7 +477,7 @@ def test_service_upgrade_releases_socket_and_flushes(cache, monkeypatch):
             time.sleep(.01)
         # A competing startup never replaces the owner's socket.
         contender = threading.Thread(target=cache._serve)
-        contender.start(); contender.join(2)
+        contender.start(); contender.join(4)
         assert not contender.is_alive()
         cache._wire('artifact', {'key': 'restart', 'value': {'saved': True}})
         monkeypatch.setattr(cache, '_revision', lambda: ['new-source'])
@@ -634,3 +634,82 @@ def test_invalid_disk_snapshot_is_rebuilt_from_ram(cache):
         db.close()
     with pytest.raises(ValueError, match='invalid discovery snapshot'):
         memory.restore({'entries': []})
+
+
+@pytest.mark.parametrize('replacement', [False, True])
+def test_lost_socket_owner_exits_without_removing_replacement(cache, monkeypatch, replacement):
+    signals = {}
+    monkeypatch.setattr(cache.signal, 'signal', lambda number, handler: signals.setdefault(number, handler))
+    monkeypatch.setattr(cache.os, 'umask', lambda value: None)
+    thread = threading.Thread(target=cache._serve)
+    thread.start()
+    address = cache._runtime() / 'service.sock'
+    try:
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                if not cache._wire('status', {})['loading']: break
+            except (OSError, ValueError): pass
+            assert time.monotonic() < deadline
+            time.sleep(.01)
+        cache._wire('artifact', {'key': 'retained', 'value': {'saved': True}})
+        address.unlink()
+        if replacement: address.write_text('replacement must survive old cleanup')
+        thread.join(3)
+        assert not thread.is_alive(), 'orphaned listener must release its lifetime lock'
+        if replacement: assert address.read_text() == 'replacement must survive old cleanup'
+        with sqlite3.connect(cache._database()) as db:
+            saved = json.loads(db.execute('select payload from snapshots').fetchone()[0])
+        assert saved['artifacts']['retained'] == {'saved': True}
+    finally:
+        if thread.is_alive():
+            signals[cache.signal.SIGTERM]()
+            thread.join(3)
+
+
+def test_client_waits_for_owner_handoff_without_fork_storm(cache, monkeypatch):
+    from types import SimpleNamespace
+    elapsed, launches = [0.0], []
+    def wire(*args):
+        if elapsed[0] < 1.5: raise FileNotFoundError('old owner is flushing')
+        return {'protocol': 1}
+    monkeypatch.setattr(cache, '_wire', wire)
+    monkeypatch.setattr(cache, 'time', SimpleNamespace(monotonic=lambda: elapsed[0],
+        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)))
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: launches.append(a))
+    assert cache.request('status') == {'protocol': 1}
+    assert len(launches) == 1 and elapsed[0] < 4
+
+
+def test_real_client_replaces_unlinked_daemon_and_retains_snapshot(tmp_path, monkeypatch):
+    import shutil
+    for key in ('HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'CODEX_HOME'):
+        monkeypatch.setenv(key, str(tmp_path / key))
+    module = load_script(REPO_ROOT / 'libexec/t_session_cache.py', 'cache_recovery_process_test')
+    children = []
+    original = subprocess.Popen
+    def spawn(*args, **kwargs):
+        child = original(*args, **kwargs)
+        children.append(child)
+        return child
+    monkeypatch.setattr(module.subprocess, 'Popen', spawn)
+    def restored():
+        deadline = time.monotonic() + 4
+        while module._wire('status', {})['loading']:
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+    try:
+        assert module.request('status')['protocol'] == 1
+        restored()
+        module._wire('artifact', {'key': 'retained', 'value': {'saved': True}})
+        (module._runtime() / 'service.sock').unlink()
+        assert module.request('status')['protocol'] == 1
+        restored()
+        assert len(children) == 2
+        assert children[0].wait(timeout=4) == 0
+        assert module._wire('artifact', {'key': 'retained'})['value'] == {'saved': True}
+    finally:
+        for child in children:
+            if child.poll() is None: child.terminate()
+            child.wait(timeout=5)
+        shutil.rmtree(module._runtime(), ignore_errors=True)
