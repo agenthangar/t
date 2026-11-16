@@ -145,7 +145,7 @@ BEHAVIORS = {
         'during_work': ('Local: during work', 'Run relevant local checks as implementation progresses and report results. Keep required checks and repository validation rules intact.'),
         'before_preview': ('Local: before preview', 'Run relevant local checks before exposing the local preview and report results. Keep required checks and repository validation rules intact.'),
         'before_pr': ('Local: before PR', 'Run relevant local checks before pushing or opening a pull request and report results. Keep required checks and repository validation rules intact.'),
-        'pr_ci': ('On PR CI', 'Use the pull request\'s required CI for validation rather than routine local test, lint, coverage or compilation suites. Keep required checks and branch protections intact; explicit task instructions and repository rules remain authoritative.'),
+        'pr_ci': ('On PR CI', 'Use the pull request\'s required CI for shared smoke, security and contract checks; reserve full regression and coverage validation for nightly or explicit manual runs. Keep required checks and branch protections intact; explicit task instructions and repository rules remain authoritative.'),
     }},
 }
 
@@ -1405,6 +1405,10 @@ def _stage_text(policy, tool='codex', design_source=None):
                      'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
                      '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
                      '`t runners runs inspect ID`; retrieve complete retained logs with `t runners runs logs ID`. '
+                     'Before pushing or opening a PR, run the repository-defined shared essential-flow smoke selection in the isolated local snapshot runner. '
+                     'After integrating main or resolving merge conflicts, invalidate previous smoke evidence and rerun that same selection on the resolved code before pushing. '
+                     'A failing local smoke blocks the push. Retain the runner receipt with its tested snapshot and source commit; never reuse pre-conflict evidence. '
+                     'Do not substitute a broad local regression suite. Preserve required CI, security and command-contract checks, sandbox HOME/XDG, isolated tmux and worktree safety. '
                      'Native desktop tests remain opt-in.')
     if policy.get('instructions'):
         parts.append('Custom workflow Markdown (takes precedence over behavior preferences and model-stage guidance):\n' + policy['instructions'])

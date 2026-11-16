@@ -11,7 +11,7 @@ versions and tags; continue from the highest published stable version (the next
 routine release after v0.6.0 is v0.6.1), rather than renumbering history.
 The Releases workflow checks main nightly and publishes a patch only when there
 are unreleased commits and full Linux CI in that release workflow passed for the
-exact target commit. Fast PR/push CI cannot authorize a release. Full validation
+exact target commit. Smoke-only PR/push CI cannot authorize a release. Full validation
 and its 97% coverage gate also run nightly when no release is needed.
 Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
@@ -71,7 +71,22 @@ relink shared commands to a development worktree or combine other sessions' bran
 for a preview. The installed source selector automatically chooses the current
 t worktree's executable and shell helpers; outside it, canonical t remains active.
 
-When ready, commit, push, and open a PR to `main`. Immediately enable squash
+Routine local and PR/push validation uses only the shared, bounded essential-flow
+selection in `scripts/smoke.py`, plus focused checks for the change and required
+security/command contracts. New tests do not automatically join smoke. Full Linux
+regression and 97% coverage run nightly or by explicit manual request; changed
+paths never escalate routine CI to full validation.
+
+Before publishing, commit the intended work, then run `python3 scripts/local_smoke.py`
+with a Python environment containing `requirements-dev.txt`. This uses the isolated
+local snapshot runner and records the run ID, snapshot and commit privately. The
+repository's `.githooks/pre-push` rejects missing, failed or stale evidence. After
+integrating main or resolving conflicts, commit the resolved code and rerun the
+same smoke selection before pushing; pre-conflict evidence is invalid. A failing
+local smoke blocks the push. Do not bypass the hook or substitute broad local
+regression runs. See [CI validation](docs/ci.md) for setup and retained evidence.
+
+When ready, commit, validate, push, and open a PR to `main`. Immediately enable squash
 auto-merge with `gh pr merge <number> --auto --squash`. Verify state,
 autoMergeRequest, mergeable, and mergeStateStatus; resolve conflicts and monitor CI
 through merge. After every merge to main, run `t system update --local .` from this
