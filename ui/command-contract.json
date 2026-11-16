@@ -1413,6 +1413,25 @@
           ],
           "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
+        },
+        "discovery_wait": {
+          "argv": [
+            "session",
+            "resume"
+          ],
+          "when": "interactive saved discovery is pending, including plain slot history",
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "layout": "rail",
+          "tests": [
+            "tests/test_resume_wait.py::test_resume_waits_beyond_thirty_seconds_until_settled",
+            "tests/test_resume_wait.py::test_resume_wait_terminal_restores_on_every_exit",
+            "tests/test_resume_wait.py::test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows",
+            "tests/test_resume_wait.py::test_slot_history_wait_gates_and_snapshot"
+          ],
+          "notes": "Shared RailUI observes pending refresh without an overall timeout. Return skips to available cached results; Esc/Ctrl-C returns 130 without cancelling discovery. Settled empty/failure ends observation. Incomplete results retain a warning and require selection, including one row. Nonterminal, JSON and collectors never enter this wait; existing filters, sorting and failed-host cooldowns are unchanged."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -4239,6 +4258,26 @@
           ],
           "notes": "Explicit --all is forwarded to the selected host so its login directory cannot narrow discovery. A locally resolvable repository is forwarded by GitHub identity and resolved to the selected host alias; otherwise a literal host alias is preserved.",
           "layout": "inherit"
+        },
+        "discovery_wait": {
+          "argv": [
+            "remote",
+            "resume",
+            "build"
+          ],
+          "when": "interactive saved discovery is pending, including plain slot history",
+          "patterns": [
+            "single"
+          ],
+          "read_only": false,
+          "layout": "rail",
+          "tests": [
+            "tests/test_resume_wait.py::test_resume_waits_beyond_thirty_seconds_until_settled",
+            "tests/test_resume_wait.py::test_resume_wait_terminal_restores_on_every_exit",
+            "tests/test_resume_wait.py::test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows",
+            "tests/test_resume_wait.py::test_slot_history_wait_gates_and_snapshot"
+          ],
+          "notes": "The selected host uses session resume discovery_wait: Shared RailUI observes pending refresh without an overall timeout. Return skips to available cached results; Esc/Ctrl-C returns 130 without cancelling discovery. Settled empty/failure ends observation. Incomplete results retain a warning and require selection, including one row. Nonterminal, JSON and collectors never enter this wait; existing filters, sorting and failed-host cooldowns are unchanged."
         }
       },
       "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy.",

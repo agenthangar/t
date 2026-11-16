@@ -922,6 +922,16 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
+Interactive resume, including plain slot history, automatically waits while saved
+discovery is pending. The shared RailUI shows **Skip waiting**: Return uses the
+available snapshot, while Esc/Ctrl-C cancels with 130. Neither action cancels the
+shared refresh. There is no overall wait timeout; a settled empty or failed scan
+ends observation, and failed-host cooldowns remain intact. Incomplete results
+retain a warning through filtering, sorting and history paging; even one result
+requires explicit selection after skipping. For example, run `t session resume`
+and press Return to browse cached results before refresh finishes. Nonterminal,
+JSON and private collector output never enter this wait or prompt.
+
 After a saved selection, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
 branch, generation and released ownership, checkpoints eligible outstanding code

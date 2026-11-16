@@ -383,7 +383,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         hosts = [host for host in hosts if host]
         if hosts:
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
-            warning = clip_columns(summary, width) + '\n'
+            warning = clip_columns(summary, width) + '\n' + warning
     controls = header(profile, mask, filters, total - len(selected), columns, width,
                       sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled)
     (directory / 'current-header').write_text(warning + controls)
