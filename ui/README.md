@@ -894,7 +894,7 @@ bindings before proposing changes; history keeps its distinct pagination keys.
 Session picker and history searches accept full literal phrases, ignoring case. Spaces and letters stay in the query; Tab marks rows. Saved-history search covers all pages and cached metadata. Ctrl-S toggles sorting without requiring terminal Option/Meta configuration; Ctrl-Y cycles sort choices.
 
 The open picker hides attached CLI and loaded desktop sessions by default.
-Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open and resume default to last turn, newest first, and also offer repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
+Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state and is highlighted whenever the enabled state filter narrows the view, including the default state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to last closed when verified close evidence exists, otherwise last turn. Both retain repository, agent, host and session sorting. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order.
 
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
@@ -944,9 +944,9 @@ recycled local workspaces retain historical fallback without copying replacement
 files. Local transfers do not require a bundle or inherit the remote size limit.
 Lists, discovery and canceled selections never create checkpoints.
 
-Resume never invents a historical UI. Resume uses actual user-turn timestamps,
-newest first by default, with unknown times last; live rows have no artificial priority.
-Ctrl-Y cycles last turn, repository, agent, host/origin, and session
+Resume never invents a historical UI. Resume defaults to verified close timestamps when available, otherwise actual user-turn timestamps,
+newest first with unknown times last; live rows have no artificial priority.
+Ctrl-Y cycles last closed, last turn, repository, agent, host/origin, and session
 (natural numeric order). Ctrl-S toggles the selected sort. Text modes ascend with newest turn and
 stable identity as tie-breakers. Sorts apply within the private filtered snapshot
 and preserve query and identities. Filters, reset and on/off preserve sorting.
@@ -1144,7 +1144,7 @@ Repositories without a GitHub origin retain their exact local registration
 identity through selection and launch; an unregistered or changed path is refused.
 Paginated history has no default 30-day
 cutoff; Ctrl-F/B pages, Ctrl-R refreshes, and Ctrl-/ shows details.
-Slot history uses the same five sort choices as open/resume: last turn, repository,
+Slot history uses the same six sort choices as resume: last closed, last turn, repository,
 agent, host, and session. Ctrl-S toggles sorting; Ctrl-Y cycles choices.
 The highlighted `Sort: last turn ↓` label means newest actual user turn first,
 unknown times last. Text modes show ↑ and use natural ascending order.
@@ -1933,3 +1933,22 @@ omissions from storage loss; unknown evidence never means success. JSON exposes
 the same facts. See [context use](../docs/context-use.md) and
 [selective visual validation](../docs/validation.md). Workflow settings and the
 sharing editor are unchanged.
+
+### Last closed session
+
+`t session resume` and plain slot history mark the latest verified closure with
+**↶**, in its own fixed-width cell beside the existing row. A compact legend
+explains the icon and close time. Sorting and filtering never reassign that mark
+to another conversation; hiding the marked conversation leaves no marked row.
+Use `t resume`, then Return to resume the initially focused last-closed conversation;
+Ctrl-Y switches to last turn and the existing sort choices.
+
+Closure evidence comes from successful `t close` lifecycle records after writer
+release, including the open picker's close action. It is distinct from last user
+turn, transcript mtime, and last-opened stamps. Native/app exits without a recorded
+closure remain unknown. A later launch/resume/handoff, newer user turn, or live
+owner invalidates that conversation's prior close as a current saved closure.
+Unknown close times sort after recorded closes, with last turn breaking ties.
+Tied latest closures and incomplete discovery suppress the unique marker; they
+never substitute an older session. Remote peers without close metadata retain
+last-turn behavior. All existing guarded exact-conversation resume checks remain.

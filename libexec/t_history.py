@@ -37,7 +37,7 @@ clip_columns = _DISPLAY['clip_columns']
 wrap_columns = _DISPLAY['wrap_columns']
 recorded_model = _DISPLAY['recorded_model']
 _SORT = runpy.run_path(str(Path(__file__).with_name('t_session_sort.py')))
-SORT_MODES = tuple(_SORT['RESUME_SORTS'])
+SORT_MODES = tuple(_SORT['SAVED_SORTS'])
 _THEME = runpy.run_path(str(Path(__file__).with_name('t_picker_theme.py')))
 
 AGENT_GLYPHS = {'codex': '⬡', 'claude': '✱', 'slot': '·', 'revision': '·'}
@@ -562,7 +562,7 @@ def page_rows(rows, query='', limit=50, page=1, sort='turn', sort_enabled=True):
                 return -row.get('updated', 0), identity
             display = row.get('display') or history_display(row)
             value = display['slot'] if sort == 'session' else row['repo'] if sort == 'repo' else display.get(sort, 'unknown')
-            primary = () if sort == 'turn' else _SORT['natural'](value)
+            primary = (-_SORT['closed_epoch'](row),) if sort == 'closed' else () if sort == 'turn' else _SORT['natural'](value)
             return primary, -_SORT['turn_epoch'](row.get('last_turn', '-')), identity
         matches.sort(key=key)
     return matches[(page - 1) * limit:page * limit], len(matches)
@@ -679,8 +679,11 @@ def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=
     _, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     pages = max(1, (total + limit - 1) // limit)
     page_label = f'Page {page} · {total} conversations · {limit} per page' if width >= 60 else f'Page {page}/{pages} · {total} conversations'
-    columns = picker_columns(width, sort != 'updated')
-    gap = '  ' if width >= 60 else ' '
+    closure = closure_records(rows) if sort != 'updated' else {}
+    has_close = any(value['closed'] != '-' for value in closure.values())
+    layout_width = width - 2 if has_close else width
+    columns = picker_columns(layout_width, sort != 'updated')
+    gap = '  ' if layout_width >= 60 else ' '
     heading = gap.join(clip_columns(label, cap).ljust(cap) for label, cap in columns) + gap + 'WORKING ON'
     compact = width <= 40 or int(height or os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     lines = [clip_columns(page_label, width)]
@@ -689,9 +692,14 @@ def picker_header(rows, query, limit, page, width=80, sort='turn', sort_enabled=
     if sort != 'updated':
         if not compact:
             lines.append('')
-        lines += _THEME['sort_rows'](sort, width, sort_enabled, compact)
+        lines += _THEME['sort_rows'](sort, width, sort_enabled, compact, include_closed=True)
     if not compact:
         lines.append('')
+    if has_close:
+        heading = '  ' + heading
+        latest = None if notice else _SORT['latest_closed'](closure)
+        legend = '↶ last closed · ' + _DISPLAY['format_last_turn'](closure[latest]['closed']) if latest else 'Last closed unknown'
+        lines.append(clip_columns(legend, width))
     lines.append(clip_columns(heading, width))
     return '\n'.join(lines) + '\n'
 
@@ -1321,14 +1329,15 @@ class HistoryCommand:
             terminal = shutil.get_terminal_size((80, 24))
             width = max(12, terminal.columns - (16 if terminal.columns > 60 else 12))
             sortable = all(row['agent'] in ('codex', 'claude') for row in rows)
-            sort, sort_enabled = getattr(self, 'picker_sort', ('turn', True)) if sortable else ('updated', True)
+            default_sort = 'closed' if any(_SORT['closed_epoch'](r) != float('-inf') for r in rows) else 'turn'
+            sort, sort_enabled = getattr(self, 'picker_sort', (default_sort, True)) if sortable else ('updated', True)
             notice = getattr(self, 'discovery_notice', '')
             private_write(state, dict(page=page, query=query, limit=limit, width=width, sort=sort, sort_enabled=sort_enabled, notice=notice))
             helper = shlex.join([sys.executable, str(Path(self.root) / 'libexec/t_history.py'), 'picker', str(snapshot), str(state)])
             header = state.with_suffix('.header')
             header.write_text(picker_header(rows, query, limit, page, width, sort, sort_enabled, height=terminal.lines, notice=notice))
             rows_file = state.with_suffix('.rows')
-            rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled))
+            rows_file.write_text(picker_rows(rows, query, limit, page, width, sort, sort_enabled, notice=notice))
             snippet = '. "$1"; shift; _t_fzf_paginated "$@"'
             result = subprocess.run(['sh', '-c', snippet, 't-history', str(Path(self.root) / 'ui/fzf.sh'),
                     str(header), str(rows_file), helper, helper + ' details {1}', query,
@@ -1360,7 +1369,7 @@ class HistoryCommand:
                 if not 0 <= index < len(rows):
                     raise HistoryError('invalid selection')
                 row = rows[index]
-                expected = f'{index}\t{format_row(row, settings.get("width", 80))}\t{clean(json.dumps(row, ensure_ascii=False))}'
+                expected = f'{index}\t{picker_row(row, rows, settings.get("width", 80), settings.get("notice", ""))}\t{clean(json.dumps(row, ensure_ascii=False))}'
                 if row not in matching or line != expected:
                     return None, 'retry', query
                 identity = (row['repo'], row['agent'], row['sid'])
@@ -1824,7 +1833,7 @@ class HistoryCommand:
                 if row['prs']:
                     title += ' · ' + pr_summary(row['prs'])
                 yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state]))
+                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state, _SORT['closed_time'](row)]))
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
@@ -1906,10 +1915,24 @@ class HistoryCommand:
         return 0
 
 
-def picker_rows(rows, query, limit, page, width=80, sort='turn', sort_enabled=True):
+def closure_records(rows):
+    return {(r['repo'], r['agent'], r['sid']): {'closed': _SORT['closed_time'](r)} for r in rows}
+
+
+def picker_row(row, rows, width, notice='', records=None, color=False):
+    records = closure_records(rows) if records is None else records
+    if not any(value['closed'] != '-' for value in records.values()):
+        return format_row(row, width)
+    latest = None if notice else _SORT['latest_closed'](records)
+    marker = (_THEME['paint']('↶', 'heading') if color else '↶') if (row['repo'], row['agent'], row['sid']) == latest else ' '
+    return marker + ' ' + format_row(row, width - 2)
+
+
+def picker_rows(rows, query, limit, page, width=80, sort='turn', sort_enabled=True, notice=''):
     selected, total = page_rows(rows, query, limit, page, sort, sort_enabled)
     indices = {json.dumps([row['repo'], row['agent'], row['sid']]): i for i, row in enumerate(rows)}
-    return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{format_row(row, width)}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
+    records = closure_records(rows)
+    return ''.join(f'{indices[json.dumps([row["repo"], row["agent"], row["sid"]])]}\t{picker_row(row, rows, width, notice, records, color=sys.stderr.isatty())}\t{clean(json.dumps(row, ensure_ascii=False))}\n' for row in selected)
 
 
 def picker(argv):
@@ -1940,7 +1963,7 @@ def picker(argv):
         settings['page'] = max(1, settings['page'] - 1)
     private_write(state, settings)
     Path(state).with_suffix('.header').write_text(picker_header(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled, notice=settings.get('notice', '')))
-    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled)
+    output = picker_rows(rows, value, settings['limit'], settings['page'], settings.get('width', 80), sort, sort_enabled, notice=settings.get('notice', ''))
     Path(state).with_suffix('.rows').write_text(output)
     print(output, end='')
 

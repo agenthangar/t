@@ -13506,8 +13506,9 @@ REMOTE SESSIONS
   scrolls.
 
   Search and sorting cover all pages. Ctrl-S toggles sorting; Ctrl-Y cycles
-  last turn, repository, agent, host, and session. Last turn ↓ defaults to newest
-  user turn first; unknown times sort last. Text sorts ascend. Sorting off
+  last closed, last turn, repository, agent, host, and session. Verified last close
+  defaults to newest first when known; otherwise last turn. ↶ marks the last closed
+  conversation in scope. Unknown times sort last. Text sorts ascend. Sorting off
   restores snapshot order. Sort changes clear marks and return to page 1.
   Search, paging, and refresh retain sort choices and clear marks.
   Extra selections open in new tabs before the first attaches here.
@@ -13556,8 +13557,8 @@ REMOTE SESSIONS
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global
-  newest-first list by last user turn — never grouped by repo; unknown turn times
-  last; conversationless stubs skipped), rebuilding a reaped worktree from its
+  newest-first list by recorded close, or last user turn when close times are unknown;
+  unknown times last; conversationless stubs skipped), rebuilding a reaped worktree from its
   branch first, then resumes the pick in a fresh dev slot and attaches.
 
   Claude and Codex use guarded t transfers. Legacy native-handoff settings
@@ -13575,8 +13576,8 @@ REMOTE SESSIONS
 
   A plain slot target browses saved conversations: select exact
   conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
-  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last turn,
-  repository, agent, host, and session. Last turn ↓ means newest first, unknown last.
+  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last closed, last turn,
+  repository, agent, host, and session. Unknown timestamps sort last.
   Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
@@ -13591,8 +13592,13 @@ PICKER CONTROLS
   Leading PR badges show cached state. Ctrl-D hides/shows merged PR sessions;
   unknown, no-PR and mixed-state histories stay visible. Merged is not completion.
 
-  Ctrl-Y cycles last turn (newest first, the default), repository, agent,
+  Ctrl-Y cycles last closed, last turn, repository, agent,
   host/origin, and session. Arrow keys still move through rows.
+
+  ↶ identifies the latest recorded close in this scope, independently of sort.
+  Verified t close events sort newest first by default; without close evidence,
+  last user turn is the default. An app exit or transcript mtime is not a close.
+  Incomplete discovery or tied close times never claim a unique last session.
 
   Ctrl-S toggles sorting, retaining the chosen sort while off.
   Text sorts ascend, with newest turn breaking ties. Filters, reset and

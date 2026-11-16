@@ -204,7 +204,7 @@ def test_catalog_projection_filters_and_preserves_repository_identity(adapter, m
     row, = adapter._catalog_candidates(data, history, 'mini')
     fields = row.split('\t')
     assert fields[1:4] == ['api', '2', 'saved']
-    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN']
+    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-']
     history.worktree_enabled = lambda alias: False
     assert not list(adapter._catalog_candidates(data, history, 'mini'))
     history.worktree_enabled = lambda alias: True

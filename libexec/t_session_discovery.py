@@ -191,7 +191,7 @@ def candidates(view, aliases, slot=None):
     for host in view.get('hosts', []):
         for raw in (host.get('value') or {}).get('resume', []):
             fields = raw.split('\t')
-            if len(fields) != 12 or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
+            if len(fields) not in (12, 13) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
                 continue
             if slot is not None and fields[2] != slot:
                 continue
@@ -223,7 +223,7 @@ def _catalog_candidates(catalog, history, host):
             title += ' · ' + helper['pr_summary'](row['prs'])
         yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
                                    association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
-                                   title, host, row['agent'], row.get('last_turn', '-'), row['repo'], state]))
+                                   title, host, row['agent'], row.get('last_turn', '-'), row['repo'], state, helper['_SORT']['closed_time'](row)]))
 
 
 def collect(spec, api):

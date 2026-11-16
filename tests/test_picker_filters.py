@@ -441,7 +441,7 @@ def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_p
 def test_resume_turns_preserve_explicit_pr_and_repository_identity(filters, tmp_path):
     row = 'api\t2\tsid\t/wt\tdate\ttitle merged\t-\thistory\tmini\tcodex\t-\t-\torg/api\tMERGED'
     result = filters.resume_turns(row, str(tmp_path), str(tmp_path))[0].split('\t')
-    assert result[11:] == ['org/api', 'MERGED']
+    assert result[11:] == ['org/api', 'MERGED', '-']
     assert filters.resume_turns(row.replace('MERGED', 'invalid'), str(tmp_path), str(tmp_path))[0].split('\t')[12] == 'UNKNOWN'
 
 
