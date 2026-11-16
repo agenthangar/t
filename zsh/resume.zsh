@@ -526,7 +526,7 @@ _t_resume() {
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 12 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 13 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
@@ -547,7 +547,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}")
   done
   # One linear pass removes every local layout/alias copy handled by history.
   for _p in "${(@)pending}"; do
@@ -680,8 +680,8 @@ _t_resume() {
   # dead pick spawns, and what a live slot is running (from the live scan, else
   # the session's own stamp). EVERY row carries all ten, sentinelled, so the
   # positional reads below never slide. Last-turn timestamp is field 11,
-  # repository identity is 12, and explicit cached PR state is 13.
-  # One ALIGNED display column (14) is
+  # repository identity is 12, explicit cached PR state is 13, and close time is 14.
+  # One ALIGNED display column (15) is
   # appended here — fzf renders raw \t fields at literal tab stops (nothing
   # lines up), so both fzf and the no-fzf listing show the same pre-padded
   # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
@@ -731,6 +731,8 @@ _t_resume() {
     fi
     (( i++ ))
   done
+  # Add a fixed-width recency cell without changing selection identity.
+  cands=("${(@f)$(print -rl -- "${(@)cands}" | T_PICKER_NOTICE="${discovery_notice}${auth_hosts}" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-mark)}")
   # Keep the inactive set separate from the initial view so Ctrl-F can always
   # restore it, even when --live (or an explicit slot) starts with all rows.
   # The full row, including every aligned display detail, is identical in both

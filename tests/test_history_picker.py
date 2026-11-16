@@ -279,7 +279,7 @@ finally:
             wait_for(lambda text: 'Conversation 50' in text and 'Page 2 · 120 conversations · 50 per page' in text, 'next page rows')
             tmux('send-keys', '-t', 'picker', 'C-b')
             wait_for(lambda text: 'Conversation 0' in text, 'previous page rows')
-            for label in ('repo ↑', 'agent ↑', 'host ↑', 'session ↑', 'last turn ↓'):
+            for label in ('repo ↑', 'agent ↑', 'host ↑', 'session ↑', 'last closed ↓', 'last turn ↓'):
                 tmux('send-keys', '-t', 'picker', 'C-y')
                 wait_for(lambda text: 'Sort: ' + label in text, 'sort choice ' + label)
             tmux('send-keys', '-t', 'picker', 'C-s')
@@ -453,7 +453,7 @@ def test_history_sort_actions_preserve_query_and_global_identity(history, tmp_pa
     snapshot, state = tmp_path / 'records.json', tmp_path / 'page.json'
     history.private_write(snapshot, data)
     history.private_write(state, dict(page=2, query='Conversation', limit=2, sort='turn', sort_enabled=True))
-    for mode in ('repo', 'agent', 'host', 'session', 'turn'):
+    for mode in ('repo', 'agent', 'host', 'session', 'closed', 'turn'):
         history.picker([str(snapshot), str(state), 'next-sort', 'Conversation'])
         rendered = capsys.readouterr().out.splitlines()
         settings = json.loads(state.read_text())
@@ -500,7 +500,7 @@ def test_history_sort_block_matches_open_and_preserves_section_spacing(history, 
     def sort_block(lines):
         start = next(i for i, line in enumerate(lines) if line.startswith('Sort:'))
         return lines[start:-1]  # Exclude column heading, retain the separating blank row.
-    assert sort_block(saved) == sort_block(opened)
+    assert [line.replace('last closed · ', '') for line in sort_block(saved)] == sort_block(opened)
     start = next(i for i, line in enumerate(saved) if line.startswith('Sort:'))
     if width > 40 and height > 14:
         assert saved[start - 1] == '' and saved[-2] == ''

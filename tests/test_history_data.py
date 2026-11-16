@@ -929,7 +929,7 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
 
@@ -984,7 +984,7 @@ def test_resume_candidate_pr_state_is_cache_only(app, store, history, monkeypatc
         store.db.commit()
         expected = 'OPEN'  # The status cache overrides older transcript evidence.
     fields = list(app.resume_candidates(['repo']))[0].split('\t')
-    assert fields[10:] == ['org/repo', expected]
+    assert fields[10:] == ['org/repo', expected, '-']
 
 
 @pytest.mark.parametrize('state', ['MERGED', 'OPEN', 'CLOSED', 'garbage'])

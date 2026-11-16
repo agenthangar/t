@@ -107,11 +107,13 @@ def picker(t_mod):
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
-            if profile in ('resume-rich', 'resume-merged'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
                 if profile == 'resume-merged':
                     rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
+                if profile == 'resume-closed':
+                    rows = rows.replace('\tNewest web', '\torg/web\tOPEN\t2026-10-23T10:00:00Z\t  Newest web').replace('\tOlder api', '\torg/api\tOPEN\t2026-10-24T10:00:00Z\t↶ Older api')
                 default = rows
                 env['T_HOME'] = str(ROOT)
             if profile == 'list-rich':
@@ -125,7 +127,7 @@ def picker(t_mod):
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile in ('resume-rich', 'resume-merged'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if profile == 'list-rich':
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/source")" T_PICKER_COLUMNS="SESSION TASK" '
@@ -563,6 +565,8 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
     keys('C-y', 'C-y', 'C-y', 'C-y')
+    wait('Sort: last closed', absent=loading, focused='Newest web')
+    keys('C-y')
     if height > 12:
         wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
     else:

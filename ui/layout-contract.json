@@ -42,7 +42,9 @@
         "tests/test_history_picker.py::test_real_isolated_tmux_picker_paging_global_search_refresh_and_cancel",
         "tests/test_history_picker.py::test_history_sort_block_matches_open_and_preserves_section_spacing",
         "tests/test_history_details.py::test_picker_rows_budget_unicode_metadata_before_summary",
-        "tests/test_history_details.py::test_real_details_picker_retains_focus_and_scrollable_metadata_at_each_size"
+        "tests/test_history_details.py::test_real_details_picker_retains_focus_and_scrollable_metadata_at_each_size",
+        "tests/test_recent_close.py::test_history_marker_columns_align",
+        "tests/test_recent_close.py::test_real_recent_close_marker_keeps_focus"
       ],
       "renderers": [
         "fzf"
