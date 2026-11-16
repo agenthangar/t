@@ -470,20 +470,20 @@ reasoning effort; local runtime selection remains Local model.
 ### Pause and resume local inference
 
 ```sh
-t config models runtime disable
-t config models runtime status
-t config models runtime enable
+t config models inference disable
+t config models inference status
+t config models inference enable
 ```
 
 This persistent switch applies to this user's managed local inference across all
 repositories and sessions. Disable rejects new requests, including requests from
-already connected clients. Accepted requests may finish; loaded models retain the
-normal idle timeout. It preserves model files, provider settings, workflows and
+already connected clients. Affected managed requests are cancelled and owned models are released.
+Pending release is reported explicitly. It preserves model files, provider settings, workflows and
 MCP registration. Enable restores permission to submit requests; it does not load
 models, install dependencies or change routing. Both actions are idempotent,
 noninteractive and support `--json`. Status is read-only. A failed write preserves
 the previous setting; an invalid switch file fails closed. An older running
-manager that cannot enforce pause reports an error instead of claiming success;
+manager that cannot enforce disable reports an error instead of claiming success;
 let its sessions finish before refreshing it.
 
 `config local --disable --yes` remains the older worker-only control. If that was
@@ -513,3 +513,24 @@ Memory contention queues the request; it never overrides a provider guardrail.
 
 See the [artifact's runtime requirements](https://huggingface.co/nace-ai/Qwen3.8-Flash-Next-MLX-4bit)
 and [MLX VLM](https://github.com/Neywa-Labs/mlx-vlm).
+
+### Runtime controls
+
+The master switch overrides individual runtime choices without replacing them.
+Disabling interrupts affected t-managed work and releases owned models; external
+models remain untouched. If release is pending, the command says so.
+
+```sh
+t config models inference status
+t config models runtime list
+t config models runtime disable ollama
+t config models runtime enable mlx-vlm
+t config models runtime install mlx-vlm
+```
+
+Runtime installation is separate from model downloads. Review the proposed
+installer, or use `--yes` with an explicit runtime. Installation does not change
+the switches or default model. LM Studio uses the
+[official headless installer](https://lmstudio.ai/docs/developer/core/headless_llmster);
+Ollama uses Homebrew on macOS and the
+[official Linux installer](https://ollama.com/download/linux).

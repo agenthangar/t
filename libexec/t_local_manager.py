@@ -25,7 +25,7 @@ import urllib.parse
 import uuid
 
 LIB = Path(__file__).resolve().parent
-VERSION = 4
+VERSION = 5
 LIMIT = 16 * 1024**2
 TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out', 'busy'}
 DEFAULTS = {'memory_percent': 80, 'idle_seconds': 300,
@@ -113,24 +113,67 @@ def inference_enabled():
     return value['enabled']
 
 
+RUNTIMES = ('mlx-vlm', 'lmstudio', 'ollama')
+
+
+def runtime_enabled(provider):
+    if provider not in RUNTIMES:
+        raise ValueError('Choose mlx-vlm, lmstudio or ollama')
+    value = read_json(root() / 'runtime-switches.json', {})
+    if (not isinstance(value, dict) or set(value) - set(RUNTIMES) or
+            any(type(v) is not bool for v in value.values())):
+        raise ValueError('Invalid runtime switches; no new work admitted')
+    return value.get(provider, True)
+
+
+def require_enabled(provider):
+    if not inference_enabled():
+        raise ValueError('Local inference is disabled; run t config models inference enable')
+    if not runtime_enabled(provider):
+        raise ValueError(provider + ' is disabled; run t config models runtime enable ' + provider)
+
+
 def set_inference_enabled(enabled):
+    return set_enabled(enabled)
+
+
+def set_runtime_enabled(provider, enabled):
+    runtime_enabled(provider)
+    return set_enabled(enabled, provider)
+
+
+def set_enabled(enabled, provider=None):
     if type(enabled) is not bool:
         raise ValueError('Local inference enabled must be a boolean')
     private_directory(root())
-    # Serialize switches without starting the manager or touching model files.
     with (root() / 'inference.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        previous = inference_enabled()
+        previous = runtime_enabled(provider) if provider else inference_enabled()
+        view = None
         if not enabled and (root() / 'control.sock').exists():
             try:
                 view = rpc('status')
             except (ConnectionError, FileNotFoundError):
-                view = None
+                pass
             if view is not None and view.get('protocol') != VERSION:
-                raise ValueError('Older local manager cannot enforce pause; let its sessions finish and refresh the runtime first')
-        if previous != enabled:
+                raise ValueError('Older local manager cannot enforce disable; let its sessions finish and refresh the runtime first')
+        if provider:
+            value = read_json(root() / 'runtime-switches.json', {})
+            value[provider] = enabled
+            if previous != enabled:
+                write_json(root() / 'runtime-switches.json', value)
+        elif previous != enabled:
             write_json(root() / 'inference.json', {'enabled': enabled})
-    return dict(enabled=enabled, changed=previous != enabled)
+        result = dict(enabled=enabled, changed=previous != enabled)
+        if provider:
+            result['runtime'] = provider
+        if not enabled:
+            if view is not None:
+                result.update(rpc('enforce-switches', provider=provider))
+            else:
+                pending = legacy_busy() or bool(read_json(root() / 'leases.json', {}).get('instances'))
+                result.update(stopped=not pending, pending=pending)
+        return result
 
 
 def rpc(action, *, _timeout=5, **fields):
@@ -182,12 +225,15 @@ def legacy_busy():
     return False
 
 
-def availability(deadline=None):
+def availability(deadline=None, provider=None):
     """Never start the manager, a provider, or inference for a preflight."""
     try:
         if not inference_enabled():
-            return dict(state='disabled', reason='Local inference is disabled; run t config models runtime enable',
+            return dict(state='disabled', reason='Local inference is disabled; run t config models inference enable',
                         blockers=[], protocol=VERSION, checked_at=time.time(), retry_after_seconds=None)
+        if provider and not runtime_enabled(provider):
+            return dict(state='disabled', reason=provider + ' runtime is disabled', blockers=[],
+                        protocol=VERSION, checked_at=time.time(), retry_after_seconds=None)
         if deadline is not None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -197,7 +243,7 @@ def availability(deadline=None):
         if view.get('manager') == 'running' and view.get('protocol') == VERSION:
             return rpc('availability')
         state, reason = 'unknown', 'Runtime state is stale or incompatible; refresh the MCP connection after active sessions finish'
-        if (view.get('manager') == 'running' and view.get('protocol') in (1, 2, 3) and
+        if (view.get('manager') == 'running' and view.get('protocol') in (1, 2, 3, 4) and
                 view.get('clients') == [] and
                 all(j.get('state') in TERMINAL for j in view.get('requests', []))):
             # ensure() upgrades only after the old manager atomically confirms it
@@ -222,7 +268,7 @@ def ensure(testing=False):
     try:
         view = rpc('status')
         if view.get('protocol') != VERSION or (testing and not view.get('test_preflight')):
-            if view.get('protocol') not in (1, 2, 3, VERSION) or view.get('clients') != []:
+            if view.get('protocol') not in (1, 2, 3, 4, VERSION) or view.get('clients') != []:
                 raise ValueError('Existing local manager uses a different protocol; let its sessions finish before restarting')
             # The old manager rechecks attached clients under its lock. Never
             # replace a runtime serving a live session, even if admission races.
@@ -496,7 +542,7 @@ class Engine:
         leases = [c for c in self.clients.values() if c['id'] != client_id and c.get('fail_fast')]
         state, reason, retry = 'available', 'Shared runtime is available', None
         if not inference_enabled():
-            state, reason = 'disabled', 'Local inference is disabled; run t config models runtime enable'
+            state, reason = 'disabled', 'Local inference is disabled; run t config models inference enable'
         elif self.blocked or self.recovery_pending or (self.needs_recovery and read_json(root() / 'leases.json', {}).get('instances')):
             state, reason = 'unknown', self.blocked or 'Runtime ownership recovery is pending'
         elif self.test_lease:
@@ -548,12 +594,21 @@ class Engine:
                 return self.snapshot()
             if action == 'availability':
                 return self.availability()
+            if action == 'enforce-switches':
+                self.enforce_switches()
+                provider = data.get('provider')
+                pending = any(j['state'] not in TERMINAL and (not provider or j['provider'] == provider) for j in self.jobs.values())
+                pending = pending or any(x.get('owned') and (not provider or x['provider'] == provider) for x in self.providers.instances.values())
+                pending = pending or bool(self.recovery_pending) or (self.needs_recovery and bool(read_json(root() / 'leases.json', {}).get('instances')))
+                pending = pending or (not self.legacy and legacy_busy())
+                return dict(stopped=not pending, pending=bool(pending))
             if action == 'register':
                 if not inference_enabled():
-                    raise ValueError('Local inference is disabled; run t config models runtime enable')
+                    raise ValueError('Local inference is disabled; run t config models inference enable')
                 if len(self.clients) >= 64:
                     raise ValueError('Local client limit reached')
                 chosen = module('t_local_inference')['policy'](data['chosen'])
+                require_enabled(chosen['provider'])
                 fail_fast = data.get('kind', 'session') == 'worker' and chosen['mode'] == 'automatic'
                 if fail_fast:
                     admission = self.availability()
@@ -648,9 +703,10 @@ class Engine:
     def submit(self, client, path, payload, handler):
         with self.condition:
             if not inference_enabled():
-                raise ValueError('Local inference is disabled; run t config models runtime enable')
+                raise ValueError('Local inference is disabled; run t config models inference enable')
+            require_enabled(client['chosen']['provider'])
             if client.get('interrupted'):
-                raise ValueError('This local worker was interrupted for a model test')
+                raise ValueError('This local client was interrupted; start a new local request')
             if client.get('outcome') in ('busy', 'timed_out'):
                 raise ValueError('Local task has ended; lead continuing')
             if client.get('fail_fast'):
@@ -733,6 +789,7 @@ class Engine:
                 if job['cancel'].is_set() or job['client'] not in self.clients:
                     self.finish(job, 'cancelled')
                     continue
+                require_enabled(job['provider'])
                 job.update(state='loading', started=time.time())
                 instance = self.providers.get(job['chosen'], self.pins())
                 job['alias'], job['revision'] = instance['alias'], instance['revision']
@@ -749,6 +806,7 @@ class Engine:
                         job['timeout_phase'] = 'loading'
                     self.finish(job, 'cancelled')
                     continue
+                require_enabled(job['provider'])
                 client.update(identity_verified=True, revision=instance['revision'], runtime_model=instance['alias'])
                 previous = job['payload'].get('previous_response_id')
                 if previous and self.responses[previous]['alias'] != instance['alias']:
@@ -845,6 +903,30 @@ class Engine:
             handler.close_connection = True
             instance['last_used'] = time.time()
 
+    def enforce_switches(self):
+        """Cancel affected leases under the scheduler lock; never kill client sessions."""
+        for client in self.clients.values():
+            if inference_enabled() and runtime_enabled(client['chosen']['provider']):
+                continue
+            client['interrupted'] = True
+            client.pop('pinned_alias', None)
+            self.responses = {k: v for k, v in self.responses.items() if v['client'] != client['id']}
+            for job in self.jobs.values():
+                if job['client'] == client['id'] and job['state'] not in TERMINAL:
+                    # Every t lease of this runtime is being interrupted together.
+                    if job.get('owned_instance'):
+                        job['interruptible'] = True
+                    self.cancel(job)
+            if self.measurement_owner == client['id']:
+                self.measurement_owner = None
+
+    def release_disabled(self):
+        """Worker and maintenance serialize provider I/O; external instances survive."""
+        for instance in list(self.providers.instances.values()):
+            if instance.get('owned') and (not inference_enabled() or not runtime_enabled(instance['provider'])):
+                self.providers.unload(instance)
+                self.prune_history()
+
     def maintain(self):
         probe_index = 0
         while not self.stopping.wait(1):
@@ -854,6 +936,7 @@ class Engine:
             probe_index += 1
             with self.condition:
                 now = time.time()
+                self.enforce_switches()
                 if self.test_lease and now - self.test_lease['heartbeat'] > 15:
                     self.test_lease = None
                 for job in list(self.jobs.values()):
@@ -873,6 +956,7 @@ class Engine:
                     pins = self.pins()
                     self.condition.release()
                     try:
+                        self.release_disabled()
                         if self.blocked_instance and not self.providers.present(self.blocked_instance):
                             self.blocked_instance = None
                             self.blocked = None
@@ -1097,6 +1181,7 @@ class Client:
     def __enter__(self):
         if self.info:
             return self  # Admission may precede snapshot handoff to the worker thread.
+        require_enabled(self.chosen['provider'])
         ensure()
         self.info = rpc('register', chosen=self.chosen, pid=os.getpid(), kind=self.kind,
                         tmux=os.environ.get('TMUX', '').rsplit(',', 2)[0], pane=os.environ.get('TMUX_PANE', ''),

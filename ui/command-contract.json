@@ -11191,10 +11191,48 @@
       "scope": "per-user machine runtime; no repository inference or selection",
       "confirmation": "none",
       "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands",
         "tests/test_local_runtime_ui.py::test_inference_switch_commands"
       ],
       "modes": {
         "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "ollama"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "ollama",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        },
+        "compatibility": {
           "argv": [
             "config",
             "models",
@@ -11209,9 +11247,10 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "inherit"
+          "layout": "inherit",
+          "notes": "Targetless compatibility route for the master inference switch."
         },
-        "json": {
+        "compatibility-json": {
           "argv": [
             "config",
             "models",
@@ -11227,10 +11266,12 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "machine"
+          "layout": "machine",
+          "notes": "Targetless compatibility route for the master inference switch."
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": "RUNTIME changes only that runtime. Targetless compatibility routes change the master switch."
     },
     "config models runtime disable": {
       "patterns": [
@@ -11241,10 +11282,48 @@
       "scope": "per-user machine runtime; no repository inference or selection",
       "confirmation": "none",
       "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands",
         "tests/test_local_runtime_ui.py::test_inference_switch_commands"
       ],
       "modes": {
         "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "ollama"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "ollama",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        },
+        "compatibility": {
           "argv": [
             "config",
             "models",
@@ -11259,9 +11338,10 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "inherit"
+          "layout": "inherit",
+          "notes": "Targetless compatibility route for the master inference switch."
         },
-        "json": {
+        "compatibility-json": {
           "argv": [
             "config",
             "models",
@@ -11277,10 +11357,12 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "machine"
+          "layout": "machine",
+          "notes": "Targetless compatibility route for the master inference switch."
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": "RUNTIME changes only that runtime. Targetless compatibility routes change the master switch."
     },
     "remote config models runtime enable": {
       "patterns": [
@@ -11291,10 +11373,50 @@
       "scope": "per-user machine runtime; no repository inference or selection",
       "confirmation": "none",
       "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands",
         "tests/test_local_runtime_ui.py::test_inference_switch_commands"
       ],
       "modes": {
         "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "ollama"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "enable",
+            "ollama",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        },
+        "compatibility": {
           "argv": [
             "remote",
             "config",
@@ -11310,9 +11432,10 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "inherit"
+          "layout": "inherit",
+          "notes": "Targetless compatibility route for the master inference switch."
         },
-        "json": {
+        "compatibility-json": {
           "argv": [
             "remote",
             "config",
@@ -11329,10 +11452,12 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "machine"
+          "layout": "machine",
+          "notes": "Targetless compatibility route for the master inference switch."
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": "RUNTIME changes only that runtime. Targetless compatibility routes change the master switch."
     },
     "remote config models runtime disable": {
       "patterns": [
@@ -11343,10 +11468,50 @@
       "scope": "per-user machine runtime; no repository inference or selection",
       "confirmation": "none",
       "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands",
         "tests/test_local_runtime_ui.py::test_inference_switch_commands"
       ],
       "modes": {
         "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "ollama"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "disable",
+            "ollama",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        },
+        "compatibility": {
           "argv": [
             "remote",
             "config",
@@ -11362,9 +11527,10 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
-          "layout": "inherit"
+          "layout": "inherit",
+          "notes": "Targetless compatibility route for the master inference switch."
         },
-        "json": {
+        "compatibility-json": {
           "argv": [
             "remote",
             "config",
@@ -11381,7 +11547,525 @@
           "tests": [
             "tests/test_local_runtime_ui.py::test_inference_switch_commands"
           ],
+          "layout": "machine",
+          "notes": "Targetless compatibility route for the master inference switch."
+        }
+      },
+      "layout": "mixed",
+      "notes": "RUNTIME changes only that runtime. Targetless compatibility routes change the master switch."
+    },
+    "config models inference status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "inference",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "inference",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
           "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "config models inference enable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "inference",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "inference",
+            "enable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "config models inference disable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "inference",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "inference",
+            "disable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "config models runtime list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "config models runtime install": {
+      "patterns": [
+        "action",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine; explicit runtime, separate from model installation",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_install_command",
+        "tests/test_local_runtime_ui.py::test_runtime_install_review"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "install",
+            "ollama",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_install_command"
+          ],
+          "layout": "inherit"
+        },
+        "review": {
+          "argv": [
+            "config",
+            "models",
+            "runtime",
+            "install",
+            "ollama"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_install_review"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models inference status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "inference",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "inference",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models inference enable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "inference",
+            "enable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "inference",
+            "enable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models inference disable": {
+      "patterns": [
+        "action",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "inference",
+            "disable"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "inference",
+            "disable",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models runtime list": {
+      "patterns": [
+        "list",
+        "machine"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine runtime; no repository inference or selection",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "list",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_controls_commands"
+          ],
+          "layout": "machine"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote config models runtime install": {
+      "patterns": [
+        "action",
+        "wizard"
+      ],
+      "renderer": "mixed",
+      "scope": "per-user machine; explicit runtime, separate from model installation",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_local_runtime_ui.py::test_runtime_install_command",
+        "tests/test_local_runtime_ui.py::test_runtime_install_review"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "install",
+            "ollama",
+            "--yes"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_install_command"
+          ],
+          "layout": "inherit"
+        },
+        "review": {
+          "argv": [
+            "remote",
+            "config",
+            "models",
+            "runtime",
+            "install",
+            "ollama"
+          ],
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_local_runtime_ui.py::test_runtime_install_review"
+          ],
+          "layout": "inherit"
         }
       },
       "layout": "mixed"

@@ -110,7 +110,7 @@ def test_runtime_lease(local,monkeypatch):
     assert [c[0] for c in calls]==['ls','load','ps','unload']
     calls.clear()
     original_helper = m.helper
-    monkeypatch.setattr(m, 'helper', lambda n: {'Client': ManagedClientFixture} if n == 't_local_manager' else original_helper(n))
+    monkeypatch.setattr(m, 'helper', lambda n: {'Client': ManagedClientFixture, 'require_enabled': lambda provider: None} if n == 't_local_manager' else original_helper(n))
     with m.provider_runtime(m.policy({'mode':'local-only'})) as (base, model, info):
         assert base.endswith('/client-token') and model == m.DEFAULT_MODEL
         assert not calls  # Managed runtime does not load directly.

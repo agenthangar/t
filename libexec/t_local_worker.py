@@ -391,7 +391,7 @@ class Worker:
             view = dict(state='unknown', reason='Local delegation is disabled or requires a native local lead', blockers=[])
         else:
             probe = inference()['helper']('t_local_manager')['availability']
-            view = probe() if deadline is None else probe(deadline=deadline)
+            view = probe(provider=chosen['provider']) if deadline is None else probe(deadline=deadline, provider=chosen['provider'])
         return dict(view, adapter_version=ADAPTER_VERSION, model=chosen['model'], provider=chosen['provider'],
                     effective_limits={key: chosen[key] for key in ('timeout_seconds', 'max_timeout_seconds', 'inactivity_timeout_seconds', 'queue_timeout_seconds')})
 

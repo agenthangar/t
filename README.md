@@ -630,8 +630,12 @@ Test model** checks availability even when another session uses a different mode
 Shared local inference: `t config` → **Local worker & models** shows model usage,
 requests, provider setup, CLI help and desktop-app launch actions. Use
 `t config models runtime monitor --view cli` or `--view gui` to monitor the same
-runtime. Pause new requests with `t config models runtime disable` and restore
-them with `t config models runtime enable`; model files and routing are preserved.
+runtime. Disable all local inference with `t config models inference disable` and enable
+it with `t config models inference enable`. Use `t config models inference status`
+to see the saved default model. List runtimes with `t config models runtime list`;
+install one with `t config models runtime install RUNTIME`. Each runtime has its
+own `enable RUNTIME` and `disable RUNTIME` actions. Both switches must be enabled;
+model files and routing are preserved.
 Flash-Next can use the managed `mlx-vlm` provider on a 128 GiB Apple Silicon Mac.
 See [shared model usage](docs/local-workers.md#shared-model-usage) for
 queueing, memory caching, cancellation and read-only status commands.

@@ -5202,7 +5202,7 @@ def _config_finish_save(cfg, result, initial_settings, shell_changed, workflow_c
 
 
 def cmd_config(cfg, args):
-    if getattr(args, "models_action", None) in ("runtime", "requests"):
+    if getattr(args, "models_action", None) in ("inference", "runtime", "requests"):
         try:
             return runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_local_runtime_ui.py"))["command"](args, globals())
         except KeyboardInterrupt:
@@ -8297,7 +8297,7 @@ def _command_readonly(argv, *, terminal=None):
         return True  # Incomplete resource paths and help remain read-only.
     if words[:2] == ["config", "models"]:
         return (len(words) == 2 or words[2] in ("list", "show") or
-                (len(words) >= 4 and words[2] in ("runtime", "requests") and words[3] in ("status", "list", "show", "monitor")))
+                (len(words) >= 4 and words[2] in ("inference", "runtime", "requests") and words[3] in ("status", "list", "show", "monitor")))
     if words[:2] == ["config", "workflow"]:
         return (len(words) == 2 or words[2] in ("list", "context") or words[2:4] == ["instructions", "show"] or
                 words[2:] in (["runners"], ["runs"]) or words[2:4] == ["runners", "list"] or
@@ -12395,7 +12395,8 @@ COMMAND_GROUPS = {
                "edit": ("config", "--edit"), "setup": ("setup",),
                "onboard": ("config", "--onboard"), "local": ("config", "--local"),
                "models": {**{verb: ("config", "models", verb) for verb in ("list", "refresh", "show", "install", "measure")},
-                          "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("status", "enable", "disable", "edit", "monitor")},
+                          "inference": {verb: ("config", "models", "inference", verb) for verb in ("status", "enable", "disable")},
+                          "runtime": {verb: ("config", "models", "runtime", verb) for verb in ("list", "install", "status", "enable", "disable", "edit", "monitor")},
                           "requests": {verb: ("config", "models", "requests", verb) for verb in ("list", "show", "cancel")}}},
     "workflow": {"context": ("config", "workflow", "context"), "list": ("config", "workflow", "list"),
                  "edit": ("config", "workflow", "edit"),
@@ -12701,8 +12702,9 @@ def _group_help(group):
             return _wrap_help(f"USAGE\n  t {group} <verb> [host] [arguments] [flags]\n\nCOMMANDS\n" +
                 '\n'.join(rows) + "\n\nHost identifies the source machine. Lists query all registered hosts when omitted.\n" +
                 f"Run t help {group} <verb> for details.\n")
-    if group in ("config models runtime", "config models requests"):
-        verbs = ("status", "enable", "disable", "edit", "monitor") if group.endswith("runtime") else ("list", "show", "cancel")
+    if group in ("config models inference", "config models runtime", "config models requests"):
+        verbs = (("list", "install RUNTIME", "enable RUNTIME", "disable RUNTIME", "status", "edit", "monitor") if group.endswith("runtime") else
+                 ("status", "enable", "disable") if group.endswith("inference") else ("list", "show", "cancel"))
         return _wrap_help("USAGE\n  t " + group + " <verb> [flags]\n\nCOMMANDS\n" +
                           "\n".join("  " + verb for verb in verbs) +
                           "\n\nSCOPE\n  User-wide machine scope; no repository argument, inference or selection.\n" +
@@ -12718,7 +12720,8 @@ COMMANDS
   show     Inspect exact artifact, benchmark sources and measurements
   install  Download and verify an explicit model
   measure  Measure installed inference on this machine
-  runtime  Inspect, configure or monitor the shared local runtime
+  inference Enable, disable or inspect all local inference
+  runtime  List, install and control individual runtimes
   requests List, inspect or cancel local inference requests
 
 SCOPE
@@ -14193,19 +14196,33 @@ EXAMPLES
         if verb == "install":
             leaf.add_argument("--download-only", action="store_true", help="download weights without claiming inference readiness")
             leaf.add_argument("-y", "--yes", action="store_true", help="install the explicit model without confirmation")
-    for resource, verbs in (("runtime", ("status", "enable", "disable", "edit", "monitor")), ("requests", ("list", "show", "cancel"))):
+    for resource, verbs in (("inference", ("status", "enable", "disable")),
+                            ("runtime", ("list", "install", "status", "enable", "disable", "edit", "monitor")),
+                            ("requests", ("list", "show", "cancel"))):
         resource_parser = models_sub.add_parser(resource, help="shared local inference " + resource,
             description="User-wide machine scope. No repository inference or selection.")
         resource_sub = resource_parser.add_subparsers(dest="runtime_action", required=True)
         for verb in verbs:
             description = {"enable": "Allow new local requests across this user's sessions; preserve models and routing. No model is loaded.",
-                           "disable": "Pause new local requests across this user's sessions; accepted work may finish. Preserve models and routing."}.get(
+                           "disable": "Disable local inference and stop affected t-managed work. Preserve downloaded models and routing."}.get(
                                verb, "User-wide local inference; no repository argument or picker.")
+            if resource == "runtime" and verb in ("enable", "disable"):
+                description += " RUNTIME selects one runtime; its saved switch is independent of the master switch."
+            elif resource == "runtime" and verb == "install":
+                description = "Install an explicit runtime after review, or use --yes. Preserve inference switches and model files."
+            elif resource == "inference":
+                description += " The master switch overrides every runtime while preserving individual choices."
             leaf = resource_sub.add_parser(verb, help=verb + " local " + resource,
                 description=description,
-                epilog="EXAMPLES\n  t config models " + resource + " " + verb + (" REQUEST_ID" if resource == "requests" and verb != "list" else ""))
+                epilog="EXAMPLES\n  t config models " + resource + " " + verb + (" REQUEST_ID" if resource == "requests" and verb != "list" else " RUNTIME" if resource == "runtime" and verb in ("enable", "disable", "install") else ""))
             if verb in ("status", "list", "show", "enable", "disable"):
                 leaf.add_argument("--json", action="store_true", help="print structured result")
+            if resource == "runtime" and verb in ("enable", "disable", "install"):
+                leaf.add_argument("runtime_name", metavar="RUNTIME", choices=("mlx-vlm", "lmstudio", "ollama"),
+                                  **({"nargs": "?"} if verb != "install" else {}),
+                                  help="mlx-vlm, lmstudio or ollama")
+                if verb == "install":
+                    leaf.add_argument("-y", "--yes", action="store_true", help="install the explicit runtime without review")
             if resource == "requests" and verb in ("show", "cancel"):
                 leaf.add_argument("request_id", metavar="REQUEST_ID", help="exact ID from requests list")
             if verb == "monitor":

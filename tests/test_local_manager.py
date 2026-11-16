@@ -958,7 +958,7 @@ def test_inference_switch_persists_and_gates_existing_clients(manager, monkeypat
     registered = register(engine, kind='session')
     client = engine.clients[registered['id']]
     job = engine.submit(client, '/v1/responses', {'input': 'accepted'}, handler())
-    assert m.set_inference_enabled(False) == {'enabled': False, 'changed': True}
+    assert m.set_inference_enabled(False) == {'enabled': False, 'changed': True, 'stopped': True, 'pending': False}
     assert m.set_inference_enabled(False)['changed'] is False
     assert engine.availability()['state'] == 'disabled'
     assert not job['cancel'].is_set()
@@ -988,6 +988,98 @@ def test_inference_switch_failure_preserves_state(manager, monkeypatch):
 def test_pause_rejects_older_manager_without_claiming_success(manager, monkeypatch):
     (manager.root() / 'control.sock').touch()
     monkeypatch.setattr(manager, 'rpc', lambda *a, **kw: {'protocol': 3})
-    with pytest.raises(ValueError, match='cannot enforce pause'):
+    with pytest.raises(ValueError, match='cannot enforce disable'):
         manager.set_inference_enabled(False)
     assert manager.inference_enabled()
+
+
+def test_individual_runtime_switches_preserve_master_and_other_choices(manager):
+    m = manager
+    assert m.runtime_enabled('ollama')
+    m.set_runtime_enabled('ollama', False)
+    assert m.inference_enabled() and m.runtime_enabled('lmstudio')
+    assert m.availability(provider='ollama')['state'] == 'disabled'
+    m.set_inference_enabled(False)
+    m.set_runtime_enabled('mlx-vlm', True)
+    assert not m.inference_enabled()
+    m.set_inference_enabled(True)
+    assert not m.runtime_enabled('ollama')
+    with pytest.raises(ValueError, match='ollama is disabled'):
+        m.require_enabled('ollama')
+    with pytest.raises(ValueError, match='Choose'):
+        m.set_runtime_enabled('bad', True)
+    m.write_json(m.root() / 'runtime-switches.json', {'ollama': 'yes'})
+    with pytest.raises(ValueError, match='Invalid'):
+        m.require_enabled('ollama')
+
+
+def test_disable_cancels_only_affected_work_and_preserves_external_instances(manager):
+    m = manager; engine = m.Engine(Providers)
+    first = register(engine, kind='session')
+    other = engine.control(dict(action='register', chosen=dict(chosen('other'), provider='lmstudio'), pid=os.getpid(), kind='session'))
+    jobs = [engine.submit(engine.clients[x['id']], '/v1/responses', {'input': 'hello'}, handler()) for x in (first, other)]
+    owned = engine.providers.get(chosen())
+    borrowed = dict(owned, model='external', alias='external', owned=False)
+    engine.providers.instances['external'] = borrowed
+    m.set_runtime_enabled('ollama', False)
+    result = engine.control({'action': 'enforce-switches', 'provider': 'ollama'})
+    assert result['pending']
+    assert jobs[0]['state'] == 'cancelled' and jobs[1]['state'] == 'queued'
+    assert engine.clients[first['id']]['interrupted']
+    assert not engine.clients[other['id']].get('interrupted')
+    engine.release_disabled()
+    assert list(engine.providers.instances) == ['external']
+    assert engine.control({'action': 'enforce-switches', 'provider': 'ollama'})['stopped']
+    m.set_runtime_enabled('ollama', True)
+    with pytest.raises(ValueError, match='interrupted'):
+        engine.submit(engine.clients[first['id']], '/v1/responses', {}, handler())
+
+
+def test_disable_failure_blocks_admission_and_retains_owned_journal(manager):
+    engine = manager.Engine(Providers)
+    engine.providers.get(chosen())
+    engine.providers.fail_stop = True
+    manager.set_inference_enabled(False)
+    with pytest.raises(ValueError, match='cannot stop'):
+        engine.release_disabled()
+    assert engine.providers.instances
+    with pytest.raises(ValueError, match='disabled'):
+        register(engine)
+
+
+def test_disable_during_loading_cancels_before_forward_and_releases_owned_model(manager, monkeypatch):
+    engine = manager.Engine(Providers); engine.needs_recovery = False
+    lease = register(engine, kind='session')
+    job = engine.submit(engine.clients[lease['id']], '/v1/responses', {}, handler())
+    original = engine.providers.get
+    def disable_during_load(*args):
+        manager.set_runtime_enabled('ollama', False)
+        engine.control({'action': 'enforce-switches', 'provider': 'ollama'})
+        return original(*args)
+    monkeypatch.setattr(engine.providers, 'get', disable_during_load)
+    monkeypatch.setattr(engine, 'forward', lambda *args: pytest.fail('disabled runtime started inference'))
+    engine.thread.start()
+    try:
+        assert job['done'].wait(2) and job['state'] == 'cancelled'
+        engine.release_disabled()
+        assert not engine.providers.instances
+    finally:
+        engine.close()
+
+
+def test_disable_interrupts_owned_socket_but_drains_borrowed_work(manager):
+    engine = manager.Engine(Providers)
+    lease = register(engine, kind='session')
+    client = engine.clients[lease['id']]
+    calls = []
+    for owned in (False, True):
+        job = engine.submit(client, '/v1/responses', {}, handler())
+        engine.active = job
+        job.update(owned_instance=owned, upstream_socket=SimpleNamespace(shutdown=lambda how: calls.append(how)))
+        manager.set_runtime_enabled('ollama', False)
+        engine.control({'action': 'enforce-switches', 'provider': 'ollama'})
+        assert job['state'] == 'cancelling'
+        assert len(calls) == int(owned)
+        engine.finish(job, 'cancelled'); engine.active = None
+        manager.set_runtime_enabled('ollama', True)
+        client.pop('interrupted')

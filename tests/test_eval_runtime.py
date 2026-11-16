@@ -15,9 +15,12 @@ from conftest import load_script
 from test_eval import evaluation, ROOT
 
 
-def test_gateway_revocation_stops_inflight_and_queued_inference(evaluation):
+@pytest.mark.parametrize('disable', [False, True])
+def test_gateway_revocation_stops_inflight_and_queued_inference(evaluation, monkeypatch, disable):
     m, _ = evaluation
     p = load_script(ROOT / 'libexec/t_eval_proxy.py', 'eval_proxy_cancel')
+    allowed = [True]
+    monkeypatch.setattr(p, 'local_enabled', lambda provider: allowed[0])
     entered, release = threading.Event(), threading.Event()
     calls = []
     class SlowEndpoint(BaseHTTPRequestHandler):
@@ -49,7 +52,14 @@ def test_gateway_revocation_stops_inflight_and_queued_inference(evaluation):
             first = threading.Thread(target=request); first.start()
             assert entered.wait(3)
             queued = threading.Thread(target=request); queued.start()
-            gateway.close_lease(lease['token'])
+            if disable:
+                allowed[0] = False
+                assert gateway.switch_thread.is_alive()
+                deadline = time.monotonic() + 3
+                while not gateway.records and time.monotonic() < deadline:
+                    threading.Event().wait(.02)
+            else:
+                gateway.close_lease(lease['token'])
             assert len(gateway.records) == 1  # Usage is settled before final trial totals.
             first.join(3); queued.join(3)
             assert not first.is_alive() and not queued.is_alive()

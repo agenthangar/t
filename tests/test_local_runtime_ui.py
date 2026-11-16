@@ -322,7 +322,7 @@ def test_hub_compact_overview_details_and_return_focus(ui_module,monkeypatch):
     ui=UI('runtime','back');m.hub(ui,{})
     title,rows,options=ui.pages[0]
     assert title=='Local inference'
-    assert rows==[('models','Local model'),('provider','Providers'),('machine','Machine settings'),
+    assert rows==[('models','Local model'),('inference','Enable / disable local inference'),('runtimes','Runtimes'),('provider','Providers'),('machine','Machine settings'),
         ('worker','Install / configure worker'),('monitor','Monitor usage'),('requests','Requests'),
         ('runtime','Runtime details'),('back','Back to t config')]
     assert options['sections']=={'models':'Configure','monitor':'Inspect'}
@@ -335,7 +335,7 @@ def test_hub_compact_overview_details_and_return_focus(ui_module,monkeypatch):
     details='\n'.join(ui.pages[1][1])
     assert 'http://127.0.0.1:1234' in details and 'Fair turns' in details
     assert '37.0 GiB estimated' in details and config['model'] in details
-    assert ui.pages[2][2]['default']==6
+    assert ui.pages[2][2]['default']==8
     assert reads==['status','status']
 
 
@@ -398,3 +398,42 @@ def test_inference_switch_commands(ui_module, monkeypatch, capsys, t_mod):
         assert ui_module.command(args, {}) == 0
         assert ('enabled' if enabled else 'disabled') in capsys.readouterr().out
     assert calls == [False, False, True, True]
+
+
+def test_runtime_controls_commands(ui_module, monkeypatch, capsys, t_mod):
+    m = ui_module; calls = []
+    monkeypatch.setattr(m, 'manager', lambda: {
+        'set_runtime_enabled': lambda p, enabled: calls.append((p, enabled)) or dict(runtime=p, enabled=enabled, changed=True)})
+    monkeypatch.setattr(m, 'inference_status', lambda: dict(enabled=False, runtime='mlx-vlm', runtime_enabled=True, default_model='saved'))
+    monkeypatch.setattr(m, 'helper', lambda name: {'inventory': lambda: [dict(runtime='mlx-vlm', enabled=True, installed=False)]})
+    for words in [('inference', 'status'), ('runtime', 'list'), ('runtime', 'enable', 'ollama'), ('runtime', 'disable', 'lmstudio')]:
+        args = t_mod.build_parser().parse_args(['config', 'models', *words, '--json'])
+        assert m.command(args, {}) == 0
+        assert json.loads(capsys.readouterr().out)
+        args.json = False
+        assert m.command(args, {}) == 0
+        output = capsys.readouterr().out
+        assert 'Generating' not in output and '..' not in output and '…' not in output
+    assert calls == [('ollama', True)] * 2 + [('lmstudio', False)] * 2
+
+
+@pytest.mark.parametrize('choice', ['cancel', 'install'])
+def test_runtime_install_review(ui_module, monkeypatch, choice):
+    calls = []
+    monkeypatch.setattr(ui_module, 'helper', lambda name: {
+        'plan': lambda p: dict(installed=False, steps=['Install runtime']),
+        'install': lambda p: calls.append(p) or dict(runtime=p, installed=True, changed=True)})
+    result = ui_module.install_runtime('ollama', UI(choice))
+    assert calls == (['ollama'] if choice == 'install' else [])
+    assert bool(result) == (choice == 'install')
+    with pytest.raises(ValueError, match='--yes'):
+        ui_module.install_runtime('ollama')
+
+
+def test_runtime_install_command(ui_module, monkeypatch, capsys, t_mod):
+    calls = []
+    monkeypatch.setattr(ui_module, 'install_runtime', lambda p, ui, yes: calls.append((p, yes)) or dict(runtime=p, changed=False))
+    args = t_mod.build_parser().parse_args(['config', 'models', 'runtime', 'install', 'mlx-vlm', '--yes'])
+    assert ui_module.command(args, {}) == 0
+    assert calls == [('mlx-vlm', True)]
+    assert 'already installed' in capsys.readouterr().out

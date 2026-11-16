@@ -6,10 +6,19 @@ import json
 import os
 from pathlib import Path
 import secrets
+import runpy
 import socket
 import threading
 import time
 from urllib.parse import urlsplit
+
+
+def local_enabled(provider):
+    try:
+        runpy.run_path(str(Path(__file__).with_name('t_local_manager.py')))['require_enabled'](provider)
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def frontier_connection():
@@ -83,6 +92,7 @@ class Gateway:
         self.mutex, self.local_lock = threading.RLock(), threading.Lock()
         self.settled = threading.Condition(self.mutex)
         self.server = None
+        self.stopping = threading.Event()
 
     def lease(self, trial_id, mode):
         token = secrets.token_urlsafe(32)
@@ -134,6 +144,15 @@ class Gateway:
         with self.mutex:
             return (any(r['provider'] == 'frontier' and r['cost_usd'] is None for r in self.records) or
                     sum(r['cost_usd'] or 0 for r in self.records) >= limit)
+
+    def watch_switches(self):
+        while not self.stopping.wait(.5):
+            if local_enabled(self.config['local_provider']):
+                continue
+            with self.mutex:
+                tokens = [token for token, row in self.routes.items() if row['mode'] != 'frontier-only']
+            for token in tokens:
+                self.close_lease(token)
 
     def __enter__(self):
         gateway = self
@@ -247,6 +266,9 @@ class Gateway:
 
             def forward(self, record, provider, path, body):
                 with gateway.local_lock if provider == 'local' else contextlib.nullcontext():
+                    if provider == 'local' and not local_enabled(gateway.config['local_provider']):
+                        self.reply(503, {'error': 'Local inference is disabled'})
+                        return
                     with gateway.mutex:
                         if not record['active']:
                             self.close_connection = True
@@ -328,9 +350,15 @@ class Gateway:
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        self.switch_thread = threading.Thread(target=self.watch_switches, daemon=True) if self.local else None
+        if self.switch_thread:
+            self.switch_thread.start()
         return self
 
     def __exit__(self, *_):
+        self.stopping.set()
+        if self.switch_thread:
+            self.switch_thread.join(timeout=36)
         for token in list(self.routes):
             self.close_lease(token)
         self.server.shutdown()
