@@ -1829,6 +1829,9 @@ class HistoryCommand:
     def execute(self, args):
         alias, slot = self.scope(args.target)
         cached = getattr(self, 'discovery_view', None) is not None
+        if cached and self.discovery_view.get('unavailable') and not args.json:
+            print('t resume: Session discovery is unavailable; saved conversations have not been checked.', file=sys.stderr)
+            return 1
         owners = []
         if not cached:
             with self.api.get("_spinner", lambda *a, **kw: nullcontext())("Loading conversation history", machine=args.json):

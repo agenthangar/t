@@ -47,6 +47,11 @@ offer **Force open / Cancel**. Keep the reason brief and identify any live clien
 that force open will stop. Cancel returns 130 and stops remaining batch actions.
 Repair preserves an explicitly selected Codex or Claude agent.
 
+The discovery daemon monitors its bound socket and releases its lifetime lock if
+the endpoint disappears or is replaced. Clients allow a bounded four-second
+startup handoff to a single replacement daemon. Cache restoration preserves saved
+conversations; unavailable discovery is an error, not an empty history result.
+
 An unresolved native writer receives a bounded 30-second metadata-settling wait
 before an open or saved resume refuses. Only unresolved writers wait; healthy
 checks, known conflicts and allocator-proven fresh workspaces retain their fast
