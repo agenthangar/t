@@ -13422,7 +13422,8 @@ EXAMPLES
         usage="%(prog)s [repo] [slot] [flags]",
         description="Browse sessions; attached sessions start hidden. Pending discovery waits up to 30 seconds; "
             "fresh caches open immediately. Failed hosts pause retries for an hour (t hosts reset HOST). "
-            "Ownership is checked live.",
+            "Ownership is checked live. Closing the last terminal stops verified empty/completed sessions; "
+            "active work, drafts and uncertain state stay running. Explicit tmux detach keeps the session running.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos

@@ -147,6 +147,25 @@ def test_close_records_only_after_native_release(engine, monkeypatch, tmp_path):
     assert [e[0] for e in adapter.events] == ['record']
 
 
+@pytest.mark.parametrize('failure', [None, 'auto-close-check', 'stop'])
+def test_automatic_close_carries_guards_and_records_only_verified_release(engine, monkeypatch, tmp_path, failure):
+    adapter = Adapter(fail=failure)
+    released = []
+    monkeypatch.setattr(engine, 'wait_released', lambda *args: released.append(args))
+    args = ['dev-repo-1', str(tmp_path), SID, 'codex', '/socket', '$1', '%1', '123']
+    if failure:
+        with pytest.raises(ValueError, match='injected failure'):
+            engine.execute('auto-close', args, adapter, token=TOKEN)
+        assert not released
+        assert 'record' not in [event[0] for event in adapter.events]
+    else:
+        engine.execute('auto-close', args, adapter, token=TOKEN)
+        assert adapter.events[0] == ('auto-close-check', tuple(args))
+        assert adapter.events[1] == ('stop', ('dev-repo-1', str(tmp_path), '', '/socket', '%1', '123', SID, 'codex'))
+        assert released == [('codex', SID)]
+        assert adapter.events[-1][0] == 'record'
+
+
 @pytest.mark.parametrize('recycle', [None, 'during-inspection', 'before-stop'])
 @pytest.mark.parametrize('path', ['close', 'transfer'])
 def test_stop_never_targets_a_recycled_session_name(engine, tmp_path, recycle, path):
