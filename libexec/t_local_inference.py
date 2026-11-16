@@ -246,6 +246,7 @@ def run_lms(*args, timeout=300):
 
 @contextmanager
 def runtime(name, context=32768, ttl=1800):
+    helper('t_local_manager')['require_enabled']('lmstudio')
     info = receipt(name)
     if not info:
         raise ValueError('model is not completely downloaded; use t config models install')
@@ -1020,6 +1021,7 @@ def reserved_provider_runtime(chosen):
     Entering the queued manager under its legacy lock would wait on ourselves.
     The caller must retain reservation() for this context's entire lifetime.
     """
+    helper('t_local_manager')['require_enabled'](chosen['provider'])
     if chosen['provider'] == 'mlx-vlm':
         raise ValueError('MLX VLM requires the managed runtime; eval reservations are not supported')
     if chosen['provider'] == 'lmstudio':

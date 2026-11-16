@@ -189,8 +189,8 @@ def provider_menu(ui, provider):
         page(ui, 'MLX VLM', ['Private Apple Silicon runtime managed by t.',
              'Install with t config models install MODEL --provider mlx-vlm --yes.',
              't starts it on loopback for accepted requests and stops it after the idle timeout.',
-             'Pause new requests with t config models runtime disable.',
-             'Resume with t config models runtime enable.'])
+             'Pause new requests with t config models inference disable.',
+             'Resume with t config models inference enable.'])
         return
     apps = helper('t_local_apps')
     info = apps['provider_info'](provider)
@@ -404,7 +404,7 @@ def hub(ui, api):
             model = model[:48]
         context = [('Manager', clean(view['manager']) + ' · worker ' + worker),
                    ('Selected model', model)]
-        choices = [('models', 'Local model'), ('provider', 'Providers'), ('machine', 'Machine settings'),
+        choices = [('models', 'Local model'), ('inference', 'Enable / disable local inference'), ('runtimes', 'Runtimes'), ('provider', 'Providers'), ('machine', 'Machine settings'),
                    ('worker', 'Install / configure worker'), ('monitor', 'Monitor usage'),
                    ('requests', 'Requests'), ('runtime', 'Runtime details'), ('back', 'Back to t config')]
         action = ui.pick('Local inference', choices, context=context,
@@ -415,7 +415,14 @@ def hub(ui, api):
             return
         focus = action
         try:
-            if action == 'runtime':
+            if action == 'inference':
+                enabled = manager()['inference_enabled']()
+                selected = ui.pick('Local inference', [('toggle', 'Disable all local inference' if enabled else 'Enable local inference'), ('back', 'Back')], context=inference_lines(inference_status()))
+                if selected == 'toggle':
+                    page(ui, 'Local inference updated', switch_lines(manager()['set_inference_enabled'](not enabled)))
+            elif action == 'runtimes':
+                runtimes_menu(ui)
+            elif action == 'runtime':
                 page(ui, 'Runtime details', [*status_lines(view), '',
                      'Selected worker model   ' + clean(config.get('model', 'Not selected')),
                      'Selected provider       ' + clean(provider)])
@@ -463,17 +470,98 @@ def hub(ui, api):
             page(ui, 'Local action unavailable', [str(exc)])
 
 
+def inference_status():
+    config = helper('t_local_worker')['settings']()
+    return dict(enabled=manager()['inference_enabled'](), default_model=config.get('model'),
+                runtime=config.get('provider'), runtime_enabled=manager()['runtime_enabled'](config['provider']))
+
+
+def inference_lines(value):
+    return ['Local inference   ' + ('Enabled' if value['enabled'] else 'Disabled'),
+            'Default model     ' + clean(value.get('default_model') or 'Not selected'),
+            'Runtime           ' + clean(value.get('runtime') or 'Not selected'),
+            'Runtime enabled   ' + ('Yes' if value['runtime_enabled'] else 'No'),
+            'Workflows may select a different model.']
+
+
+def install_runtime(provider, ui=None, yes=False):
+    installer = helper('t_runtime_install')
+    proposed = installer['plan'](provider)
+    if proposed['installed']:
+        return dict(runtime=provider, installed=True, changed=False)
+    if not yes:
+        if ui is None:
+            raise ValueError('Review installation in a terminal or pass --yes with an explicit runtime')
+        choice = ui.pick('Install ' + provider, [('install', 'Install runtime'), ('cancel', 'Cancel')],
+                         context=proposed['steps'] + ['Model files and inference settings are unchanged.'])
+        if choice != 'install':
+            return None
+    if ui:
+        ui.restore()
+    try:
+        return installer['install'](provider)
+    finally:
+        if ui:
+            ui.raw()
+
+
+def runtimes_menu(ui):
+    while True:
+        rows = helper('t_runtime_install')['inventory']()
+        choice = ui.pick('Runtimes', [(x['runtime'], x['runtime']) for x in rows] + [('back', 'Back')],
+                         values={x['runtime']: ('Enabled' if x['enabled'] else 'Disabled') + ' · ' +
+                                 ('Installed' if x['installed'] else 'Not installed') for x in rows})
+        if choice in (None, 'back'):
+            return
+        row = next(x for x in rows if x['runtime'] == choice)
+        action = ui.pick(choice, [('toggle', 'Disable runtime' if row['enabled'] else 'Enable runtime'),
+                                 ('install', 'Install runtime'), ('back', 'Back')])
+        if action == 'install':
+            result = install_runtime(choice, ui)
+            if result:
+                page(ui, 'Runtime installed', [choice, 'Inference settings and model files are unchanged.'])
+        elif action == 'toggle':
+            result = manager()['set_runtime_enabled'](choice, not row['enabled'])
+            page(ui, 'Runtime updated', switch_lines(result))
+
+
+def switch_lines(value):
+    lines = [(value.get('runtime') or 'Local inference') + ' ' +
+             ('is already ' if not value['changed'] else '') + ('enabled.' if value['enabled'] else 'disabled.')]
+    if value.get('pending'):
+        lines.append('New requests are blocked. Stopping affected work or releasing owned models is pending.')
+    return lines
+
+
 def command(args, api):
     m = manager()
     resource, action = args.models_action, args.runtime_action
     ui = None
     try:
-        if resource == 'runtime' and action in ('enable', 'disable'):
-            value = m['set_inference_enabled'](action == 'enable')
-            lines = ['Local inference ' + ('' if value['changed'] else 'is already ') +
-                     ('enabled.' if value['enabled'] else 'disabled.'), '',
-                     'New local requests follow your saved workflow routing.' if value['enabled'] else
-                     'New local requests are blocked. Already accepted work may finish.']
+        if resource in ('inference', 'runtime') and action in ('enable', 'disable'):
+            provider = getattr(args, 'runtime_name', None)
+            value = m['set_runtime_enabled'](provider, action == 'enable') if provider else m['set_inference_enabled'](action == 'enable')
+            lines = switch_lines(value)
+        elif resource == 'inference' and action == 'status':
+            value = inference_status()
+            lines = inference_lines(value)
+        elif resource == 'runtime' and action == 'list':
+            value = helper('t_runtime_install')['inventory']()
+            lines = ['RUNTIME       ENABLED  INSTALLED'] + [
+                x['runtime'].ljust(14) + ('Yes' if x['enabled'] else 'No').ljust(9) +
+                ('Yes' if x['installed'] else 'No') for x in value]
+        elif resource == 'runtime' and action == 'install':
+            if not args.yes and sys.stdin.isatty() and sys.stdout.isatty():
+                ui = api['_RailUI']()
+                ui.raw()
+            value = install_runtime(args.runtime_name, ui, args.yes)
+            if ui:
+                ui.restore()
+            if value is None:
+                print('Runtime installation cancelled.')
+                return 130
+            print(value['runtime'] + (' installed.' if value['changed'] else ' is already installed.'))
+            return 0
         elif resource == 'runtime' and action == 'status':
             value = m['status']()
             lines = status_lines(value)

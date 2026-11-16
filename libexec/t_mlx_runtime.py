@@ -29,15 +29,15 @@ def available():
         raise ValueError('MLX VLM requires Apple Silicon macOS')
     binary = python()
     if not binary.is_file():
-        raise ValueError('MLX VLM runtime missing; install the model with --provider mlx-vlm --yes')
+        raise ValueError('MLX VLM runtime missing; run t config models runtime install mlx-vlm')
     result = subprocess.run([str(binary), '-c', 'from importlib.metadata import version; print(version("mlx-vlm"))'],
                             capture_output=True, text=True, timeout=10)
     if result.returncode or result.stdout.strip() != VERSION:
-        raise ValueError('MLX VLM runtime version is unverified; reinstall with --provider mlx-vlm --yes')
+        raise ValueError('MLX VLM runtime version is unverified; run t config models runtime install mlx-vlm')
     return binary
 
 
-def install():
+def install(runner=None):
     if sys.platform != 'darwin' or platform.machine() != 'arm64':
         raise ValueError('MLX VLM requires Apple Silicon macOS')
     destination = python().parent.parent
@@ -54,8 +54,10 @@ def install():
         binary = next((shutil.which(name) for name in ('python3.14', 'python3.13', 'python3.12') if shutil.which(name)), None)
         if not binary:
             raise ValueError('Install Python 3.12–3.14 before installing MLX VLM')
-        subprocess.run([binary, '-m', 'venv', str(destination)], check=True, timeout=120)
-        subprocess.run([str(python()), '-m', 'pip', 'install', 'mlx-vlm==' + VERSION], check=True, timeout=900)
+        if runner is None:
+            runner = lambda command, timeout: subprocess.run(command, check=True, timeout=timeout)
+        runner([binary, '-m', 'venv', str(destination)], timeout=120)
+        runner([str(python()), '-m', 'pip', 'install', 'mlx-vlm==' + VERSION], timeout=900)
         return available()
 
 

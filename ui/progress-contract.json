@@ -668,6 +668,10 @@
     "libexec/t_mlx_runtime.py:start:time.sleep": {
       "kind": "background",
       "reason": "Manager polls provider identity with a bounded loading deadline; the shared request monitor owns progress."
+    },
+    "libexec/t_runtime_install.py:run:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "Explicit reviewed runtime installation announces its phase and streams installer output; cancellation terminates the owned child group."
     }
   },
   "shell": [

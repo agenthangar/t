@@ -23,7 +23,7 @@ def worker(tmp_path, monkeypatch):
     def inference():
         result = real()
         helper = result['helper']
-        result['helper'] = lambda name: {'Client': ManagedClientFixture, 'availability': lambda: {'state': 'available'}} if name == 't_local_manager' else helper(name)
+        result['helper'] = lambda name: {'Client': ManagedClientFixture, 'availability': lambda **kwargs: {'state': 'available'}} if name == 't_local_manager' else helper(name)
         return result
     monkeypatch.setattr(module, 'inference', inference)
     return module
@@ -324,7 +324,7 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     status=worker.inference()['helper']('t_local_status')
     local={'leased_runtime':lambda chosen:None,'effective':lambda workspace:routing,'report':lambda *a:{'fit':True},'artifact':lambda n:{},
            'policy':worker.inference()['policy'],
-           'helper':lambda n:status if n=='t_local_status' else {'Client':ManagedClientFixture, 'availability': lambda: {'state': 'available'}} if n=='t_local_manager' else {'hardware':lambda:{}},'runtime':runtime}
+           'helper':lambda n:status if n=='t_local_status' else {'Client':ManagedClientFixture, 'availability': lambda **kwargs: {'state': 'available'}} if n=='t_local_manager' else {'hardware':lambda:{}},'runtime':runtime}
     monkeypatch.setattr(worker,'inference',lambda:local)
     monkeypatch.setattr(worker,'run_worker',lambda *a,**k:observed.append(a[3:]) or 'completed')
     manager=worker.Worker();args={'workspace':str(repo),'assignment':'inspect','timeout_seconds':300,'routing_reason':'bounded fixture'}
@@ -343,7 +343,7 @@ def test_mlx_routing_identity_context_and_local_only_gate(worker,repo,monkeypatc
     routing['mode']='automatic'
     class Unavailable(ManagedClientFixture):
         def __enter__(self): raise ValueError('does not fit')
-    local['helper'] = lambda n:status if n=='t_local_status' else {'Client':Unavailable, 'availability': lambda: {'state': 'available'}}
+    local['helper'] = lambda n:status if n=='t_local_status' else {'Client':Unavailable, 'availability': lambda **kwargs: {'state': 'available'}}
     failed=manager.start(args)
     for thread in manager.threads:thread.join(2)
     assert failed['status']=='busy' and not failed['accepted'] and failed['availability']['reason']=='does not fit'
@@ -490,7 +490,7 @@ def test_admitted_lease_is_released_before_worker_start(worker, repo, monkeypatc
     def inference():
         local = original(); helper = local['helper']
         local['effective'] = lambda path: local['policy']({'mode': 'automatic'})
-        local['helper'] = lambda name: {'Client': Admitted, 'availability': lambda: {'state': 'available'}} if name == 't_local_manager' else helper(name)
+        local['helper'] = lambda name: {'Client': Admitted, 'availability': lambda **kwargs: {'state': 'available'}} if name == 't_local_manager' else helper(name)
         return local
     monkeypatch.setattr(worker, 'inference', inference)
     monkeypatch.setattr(worker.threading.Thread, 'start', lambda self: None)

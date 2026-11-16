@@ -2020,17 +2020,50 @@ Tied latest closures and incomplete discovery suppress the unique marker; they
 never substitute an older session. Remote peers without close metadata retain
 last-turn behavior. All existing guarded exact-conversation resume checks remain.
 
-### Local inference switch
+### Local inference and runtime controls
 
-`t config models runtime enable` and `disable` are direct actions with static
-results and optional JSON. They never open a picker or start a provider. The
-switch is persistent and per-user on this machine, shared by all sessions.
-Disable rejects new requests while accepted work may finish; enable restores
-permission without changing saved routing or installing models. Repeating an
-action reports the existing state. Runtime status starts with Enabled/Disabled
-and stays read-only. Errors must preserve the previous saved state.
+`t config models inference enable`, `disable`, and `status` control the persistent
+master switch shared by this user's sessions. Each runtime has a separate saved
+switch: `t config models runtime enable RUNTIME` or `disable RUNTIME`. Effective
+permission requires both switches. Master changes preserve individual choices;
+enabling never loads a model. Targetless runtime enable/disable remain compatibility
+routes for the master switch.
+
+`t config models runtime list` prints Runtime, Enabled and Installed columns,
+with JSON available. `inference status` shows the saved default model and runtime;
+workflows may override that default. These views never start services, load models,
+open a picker, or display generation activity. Runtime status and monitor retain
+their existing detailed inspection behavior.
+
+Disable blocks new requests immediately, cancels affected managed work, and releases
+t-owned models. It never kills terminal sessions or externally owned models. A
+pending stop is reported explicitly; failed cleanup retains ownership evidence.
+Interrupted clients must start a new request. Downloaded files and model selection
+are preserved. Invalid settings fail closed. Save failures retain the previous state.
+
+`t config models runtime install RUNTIME` reviews installation with the shared
+RailUI; Cancel makes no changes. `--yes` runs an explicitly selected installation
+without review. Missing prerequisites and unsupported hosts fail with guidance.
+Already installed is a no-op. Ctrl-C cancels the installer process group. Installation
+preserves inference switches and model selection and never downloads model weights.
+Supported runtimes are `mlx-vlm`, `lmstudio`, and `ollama`. MLX VLM uses a private
+pinned Python environment on Apple Silicon. LM Studio uses its official headless
+installer without modifying shell profiles. Ollama uses Homebrew on macOS and its
+official installer on Linux; the Linux review explains administrator access and
+service startup. Provider installation output streams directly to the terminal.
+
+Examples:
+
+```sh
+t config models inference disable
+t config models runtime list
+t config models runtime install mlx-vlm
+t config models runtime disable ollama
+t config models inference enable
+t config models inference status
+```
 
 The `mlx-vlm` provider uses the existing model picker and exact provider/model
-identity. Its runtime is private and managed, so its guide explains installation
-and lifecycle; the desktop-app action is disabled. Verification and measurement
-are separate from LM Studio even when both use the same downloaded artifact.
+identity. Its runtime is private and managed; no desktop app is needed.
+Verification and measurement remain separate from LM Studio even when both use
+the same downloaded artifact.
