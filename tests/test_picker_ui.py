@@ -57,7 +57,7 @@ def test_terminal_state_keeps_unknown_serializations_exact():
 
 
 @pytest.fixture
-def picker():
+def picker(t_mod):
     if not shutil.which('fzf') or not shutil.which('tmux'):
         pytest.skip('real terminal picker requires fzf and tmux')
     with tempfile.TemporaryDirectory(prefix='t-picker-ui-', dir='/tmp') as directory:
@@ -192,10 +192,11 @@ def picker():
             tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
                  shell + ' ' + shlex.quote(str(root / 'run.sh')))
 
-        def wait(text, absent=(), ordered=(), focused=None):
+        def wait(text, absent=(), ordered=(), focused=None, columns=None):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
+                fits = columns is None or all(t_mod._display_width(line) <= columns for line in screen.splitlines())
                 # Compare semantic controls across native OS labels. Exact label
                 # spellings and width budgets have separate renderer coverage.
                 screen = screen.replace('↩ Return', 'Enter').replace('↩', 'Enter')
@@ -207,7 +208,8 @@ def picker():
                 in_order = all(p >= 0 for p in positions) and positions == sorted(positions)
                 has_focus = focused is None or any(
                     '▸' in line and focused in line for line in screen.splitlines())
-                if text in screen and not any(value in screen for value in absent) and in_order and has_focus:
+                if (text in screen and not any(value in screen for value in absent) and in_order and has_focus
+                        and fits):
                     return screen
                 time.sleep(.05)
             pytest.fail(f'Picker never displayed {text!r}:\n{screen}')
@@ -225,7 +227,10 @@ def picker():
             assert not list(root.glob('t-picker.*'))
             return (root / 'selected').read_text().splitlines()
 
-        yield start, wait, lambda *keys: tmux('send-keys', *keys), finish
+        def keys(*values):
+            return tmux('send-keys', *values)
+        keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
+        yield start, wait, keys, finish
         tmux('kill-server', check=False)
 
 

@@ -65,3 +65,13 @@ setup and aggregation, rather than only pytest execution time.
 macOS remains default-off. Dispatch with `run_macos=true` to run the full suite
 against both fzf versions with native desktop tests enabled. No local validation
 suite is needed for the CI workflow; required pre-merge jobs provide validation.
+
+### Required design adherence
+
+The `design-adherence` matrix runs on every PR, against pinned fzf 0.44.1 and
+0.74.5. It validates `ui/layout-contract.json` references and every command/mode's
+layout declaration, then runs those rendered fixtures with a no-skips outcome
+audit. The aggregate `CI` gate requires both matrix jobs even on the fast path.
+Artifacts named `design-<version>` include JUnit, exact collected/outcome records,
+and failure output with rendered frames and coordinate comparisons. Tests use
+private tmux sockets and sandbox homes; no native desktop windows are opened.
