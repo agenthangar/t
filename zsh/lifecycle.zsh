@@ -130,6 +130,11 @@ _t_lifecycle_effect() {
       fi
       [[ $event != new ]] || event=launch
       [[ $event != replace ]] || event=resume
+      if [[ $event == (launch|resume) ]]; then
+        local fresh=0
+        [[ $event == launch ]] && fresh=1
+        tmux set-option -t "=$session:" @t_fresh_launch "$fresh" 2>/dev/null || true
+      fi
       # Launch history invalidates discovery after its detached publication. Do
       # not wait for cache overlays here or enqueue a launch row that could be
       # delivered after this slot closes. Close/handoff retain their direct rows.
@@ -158,6 +163,12 @@ _t_lifecycle_effect() {
       }
       pid=$(_dev_session_claude_pid "$1")
       [[ -z $pid ]] || { _dev_agent_is_service "$pid" && return 1; }
+      if [[ -n $4 ]]; then
+        _t_terminal_close_guard "$1" "$2" "$4" "$immutable" "$5" "$6" || return 1
+        _dev_kill_no_pending_work "$2" && _t_terminal_processes_clear "$1" "$2" || return 1
+        [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
+           $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
+      fi
       tmux kill-session -t "$immutable:" || return 1
       if [[ -n $pid ]]; then
         _t_wait_for_exit "$pid"
@@ -165,8 +176,14 @@ _t_lifecycle_effect() {
           print -u2 't close: agent has not exited; no release recorded'; return 1
         fi
       fi
-      [[ -n $DEV_WORKTREE_ROOT && $2 == $DEV_WORKTREE_ROOT/* ]] && _dev_stop_rooted "$2"
+      [[ -z $4 && -n $DEV_WORKTREE_ROOT && $2 == $DEV_WORKTREE_ROOT/* ]] && _dev_stop_rooted "$2"
       return 0 ;;
+    auto-close-check)
+      _t_terminal_close_guard "$1" "$2" "$5" "$6" "$7" "$8" || return 1
+      local checked
+      checked=$(_t_lifecycle_effect close-check "$1" "$2" "$3" "$4") || return 1
+      [[ $checked == "$6" ]] || return 1
+      print -r -- "$checked" ;;
     peer)
       local host=$1 payload=$2 worker
       if [[ -z $host ]]; then _t_lifecycle_run peer "$payload"
@@ -188,9 +205,10 @@ _t_lifecycle_effect() {
       rsync -az -e ssh -- "$source_file" "$destination_file" ;;
     attach)
       if [[ -z $1 ]]; then
+        [[ $3 == fg ]] || _t_terminal_close_install "$2"
         if [[ $3 == fg ]]; then _t_pop "$2"; else tmux attach-session -t "=$2:"; fi
       else
-        local worker="tmux attach-session -t ${(q)"=$2:"}"
+        local worker="(( \${+functions[_t_terminal_close_install]} )) && _t_terminal_close_install ${(q)2}; tmux attach-session -t ${(q)"=$2:"}"
         [[ $3 != fg ]] || worker="_t_pop ${(q)2}"
         ssh -t "$1" "zsh -lic ${(q)worker}"
       fi ;;

@@ -1279,6 +1279,19 @@ hosts without changing repository scope; unavailable-host warnings preserve
 reachable results. For example, run `t ls -r` for all repositories across hosts,
 or `t ls api -r` for only api.
 
+Closing the last terminal viewing a managed tmux session also closes that
+session when its work is verified empty or completed. An active turn, background
+task, dirty worktree, unmerged commits, open PR (including drafts), or unsent
+prompt keeps it running. Unreadable or unsupported agent/composer/PR evidence
+also keeps it running. Explicit tmux detach leaves the session running. For
+example, opening a fresh slot and closing its untouched terminal releases the
+live slot; closing a terminal with an open PR leaves its agent available to
+reattach with `t open`. Termination retains saved conversations, branches, and
+worktrees. This is a one-time check on terminal loss, not a periodic idle sweep.
+Hooks are installed on launch/resume and managed attachment, on the owning host;
+list/status never install hooks or initiate cleanup. Desktop and unmanaged
+foreground sessions retain their existing behavior.
+
 `t session list` places LAST TURN in the final column, after MODELS when space permits.
 It shows the latest turn initiation as `YYYY-MM-DD HH:MM:SS TZ` in the viewer's
 local timezone, including remote rows; unavailable evidence displays `-`.

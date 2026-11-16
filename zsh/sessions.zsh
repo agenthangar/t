@@ -1005,11 +1005,13 @@ _dev_attach_fg() {
   if [[ ! -t 1 || -n $CLAUDE_CODE_SESSION_ID ]]; then
     echo "  Attach: tmux attach -t $tsess"       # no TTY, or we are inside an agent
   elif [[ -n $TMUX ]]; then
+    _t_terminal_close_install "$tsess"
     tmux switch-client -t "=$tsess:"               # tmux refuses a nested attach
   else
     # Title before attaching: tmux (set-titles off) swallows OSC from inside the pane,
     # so this pre-attach write is the one that sticks (same reason as the slot landing).
     _term_title "$tsess"
+    _t_terminal_close_install "$tsess"
     tmux attach-session -t "=$tsess:"
   fi
   return 0
@@ -2172,9 +2174,76 @@ _dev_kill() {
 # The supervisor is independent of the agent, so a disconnected client cannot
 # disable its recovery menu. It exits when no managed sessions remain.
 _dev_recovery_watch() {
+  _t_terminal_close_install "$1"
   [[ -z ${T_RECOVERY_DISABLE:-} ]] || return 0
   ( local key; for key in ${(k)parameters}; do [[ $key == COV_CORE_* ]] && unset "$key"; done
     python3 "$T_HOME/libexec/t_recovery.py" start "$1" ) </dev/null >/dev/null 2>&1 &!
+  return 0
+}
+
+# Install only on mutation/attachment paths, never discovery or list/status.
+_t_terminal_close_install() {
+  python3 "$T_HOME/libexec/t_terminal_close.py" install "$1" </dev/null >/dev/null 2>&1 || true
+}
+
+# The event runs in a private shell on the owner host. Pin every tmux call to
+# that server; neither a default socket nor a recycled session name is a target.
+_t_terminal_close_event() {
+  local T_CLOSE_SOCKET=$1 identity=$2 pane=$3 pane_pid=$4 session dir sid agent
+  tmux() { command tmux -S "$T_CLOSE_SOCKET" "$@"; }
+  session=$(tmux display-message -p -t "$identity:" '#{session_name}') || return 1
+  [[ $session == dev-* ]] || return 1
+  dir=$(tmux display-message -p -t "$identity:" '#{session_path}') || return 1
+  sid=$(_dev_session_sid "$session" "$dir")
+  agent=$(_dev_agent_of_session "$session")
+  _dev_with_launch_locks "$dir" "$sid" _t_lifecycle_run auto-close \
+    "$session" "$dir" "$sid" "$agent" "$T_CLOSE_SOCKET" "$identity" "$pane" "$pane_pid"
+}
+
+_t_terminal_close_guard() {
+  local session=$1 dir=$2 socket=$3 identity=$4 pane=$5 pane_pid=$6
+  local agent sid tx fresh clean=0 clear=0
+  _DEV_PS_AT=0
+  [[ $(tmux display-message -p -t "=$session:" '#{session_id}') == "$identity" ]] || return 1
+  agent=$(_dev_agent_of_session "$session")
+  sid=$(_dev_session_sid "$session" "$dir")
+  tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
+  fresh=$(tmux show-options -qv -t "$identity:" @t_fresh_launch)
+  [[ $agent == codex && -n $sid ]] && fresh=0
+  _dev_kill_no_pending_work "$dir" && clean=1
+  _t_terminal_processes_clear "$session" "$dir" && clear=1
+  python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
+    "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" >/dev/null
+}
+
+_t_terminal_processes_clear() {
+  local pending pid children child up
+  local -A allowed
+  _DEV_PS_AT=0
+  _dev_ps_snapshot
+  _dev_snap_ok || return 1
+  # Rooted detached work and agent children are both vetoes. Unknown process
+  # snapshots preserve the session. Auto-close never sweeps rooted processes.
+  pid=$(_dev_session_claude_pid "$1")
+  [[ -n $pid ]] || return 1
+  pending=$(_dev_cwd_pids "$2") || return 1
+  children=$(ps -A -o ppid= 2>/dev/null) || return 1
+  # The generic reaper protects all agent descendants from signals, but those
+  # descendants are precisely work that automatic closure must retain. Only
+  # this agent and its launcher ancestors are exempt here.
+  for up in "$pid" $$; do
+    while [[ $up == <-> ]] && (( up > 1 )); do
+      [[ -n ${allowed[$up]} ]] && break
+      allowed[$up]=1
+      up=${_DEV_PS_PPID[$up]:-}
+    done
+  done
+  for child in ${(f)pending}; do
+    [[ -n ${allowed[$child]} ]] || return 1
+  done
+  for child in ${(f)children}; do
+    [[ ${child//[[:space:]]/} == "$pid" ]] && return 1
+  done
   return 0
 }
 
@@ -2490,6 +2559,7 @@ _t_history_attach() {
   immutable=$(_t_history_owner "$@") || return $?
   _t_discovery_event local --activity
   _dev_workflow_attach "$agent"
+  _t_terminal_close_install "dev-$1"
   if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
   else tmux attach-session -t "$immutable:"; fi
 }
@@ -2977,6 +3047,7 @@ _t_dev() {
 
 # MCP lifecycle calls leave the existing or newly created slot detached.
 _t_session_attach() {
+  _t_terminal_close_install "$1"
   # Fresh lifecycle completion already queues discovery; its launch applied the
   # resolved policy, so the live-attach advisory has no pending work to report.
   if [[ $3 != fresh ]]; then

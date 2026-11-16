@@ -121,6 +121,8 @@ int main(int argc, char **argv) {
     if (f) { fprintf(f, "%s\t%s\n", sid, cwd); fclose(f); }
   }
   const char *seconds = getenv("T_TEST_AGENT_SECONDS");
+  const char *screen = getenv("T_TEST_AGENT_SCREEN");
+  if (screen) { fputs(screen, stdout); fflush(stdout); }
   sleep(seconds ? atoi(seconds) : 60);
   return 0;
 }

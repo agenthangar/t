@@ -840,11 +840,13 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                 result = operation.step('ready', lambda: adapter.call('ready', session, workspace, agent, sid), repeat=True)
                 operation.step('writer-ready', lambda: verify_ready(agent, sid), repeat=True)
                 operation.step('record', lambda: adapter.call('record', verb, session, workspace, agent, sid))
-            elif verb == 'close':
-                session, workspace, sid, agent = arguments
+            elif verb in ('close', 'auto-close'):
+                session, workspace, sid, agent = arguments[:4]
+                automatic = verb == 'auto-close'
                 if 'stop' not in operation.value['receipts']:
-                    owner = operation.step('inspect', lambda: adapter.call('close-check', *arguments), repeat=True)
-                    operation.step('stop', lambda: adapter.call('stop', session, workspace, owner))
+                    owner = operation.step('inspect', lambda: adapter.call('auto-close-check' if automatic else 'close-check', *arguments), repeat=True)
+                    guard = [arguments[4], *arguments[6:], sid, agent] if automatic else []
+                    operation.step('stop', lambda: adapter.call('stop', session, workspace, owner, *guard))
                 operation.step('released', lambda: wait_released(agent, sid), repeat=True)
                 operation.step('record', lambda: adapter.call('record', 'close', session, workspace, agent, sid))
                 result = session
