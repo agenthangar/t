@@ -13280,6 +13280,9 @@ OPENING DEFAULTS
 
 RECOVERY
   When a numbered open fails in a terminal, choose Repair or Cancel.
+  Repair retains an explicit --codex or --claude choice. Unresolved native
+  writers get a bounded 30-second wait to publish their worktree metadata;
+  healthy ownership checks do not wait. Expiry never bypasses ownership.
   If repair fails, choose Force open to reset only that session's t records,
   reopen its existing worktree, and resume saved context when available.
   Force open preserves source files and native transcripts. If context is
@@ -13580,6 +13583,14 @@ LIVE OWNERS
   A conversation is live by its ID too: one resumed into ANOTHER slot (or run as a
   foreground session) is shown as a row pointing at that owner — never resumed a
   second time.
+
+REPAIR
+  If a selected saved conversation fails to resume, choose Repair or Cancel.
+  Repair refreshes local discovery and retries that exact conversation once,
+  with fresh source and ownership checks. It never substitutes a fresh chat.
+  Cancel stops the remaining batch. Nonterminal calls never prompt.
+  Unresolved native writers get a bounded 30-second metadata-settling wait;
+  known conflicts still block and healthy ownership checks do not wait.
 
 REMOTE HISTORY
   Registered hosts refresh by repository identity on every scan; only a selected
@@ -14774,7 +14785,7 @@ def _main(argv):
                 rows = [row for row in history.records(identity) if row['sid'] == sid and row['agent'] == agent]
                 if len(rows) != 1:
                     raise helper['HistoryError']('saved conversation changed; select it again')
-                print(history.resume(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
+                print(history.resume_with_repair(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
             return 0
         except helper['HistoryCancelled']:
             return 130

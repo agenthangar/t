@@ -63,7 +63,7 @@ def test_fast_shards_partition_all_eligible_cases_once(monkeypatch):
 
 def results(full=True, macos=False, reference=False):
     data = {key: {'result': 'success'} for key in (
-        'scope', 'cli-contract', 'shell', 'startup-smoke', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
+        'scope', 'cli-contract', 'design-adherence', 'shell', 'startup-smoke', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
         'reference', 'verify-shards', 'macos', 'playground', 'gitleaks', 'pip-audit', 'codeql')}
     skipped = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage'}
     if not macos:
@@ -76,7 +76,7 @@ def results(full=True, macos=False, reference=False):
 
 
 @pytest.mark.parametrize('full,macos,reference', [(False, False, False), (True, False, False), (True, True, True)])
-@pytest.mark.parametrize('job', ['playground', 'startup-smoke'])
+@pytest.mark.parametrize('job', ['playground', 'startup-smoke', 'design-adherence'])
 def test_required_gate_rejects_failures_cancellation_missing_and_unexpected_skips(full, macos, reference, job):
     data = results(full, macos, reference)
     policy.check_results(data, full=full, macos=macos, reference=reference)

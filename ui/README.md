@@ -45,6 +45,30 @@ Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
 refreshes discovery and retries, or revives a verified exited pane. If it fails,
 offer **Force open / Cancel**. Keep the reason brief and identify any live client
 that force open will stop. Cancel returns 130 and stops remaining batch actions.
+Repair preserves an explicitly selected Codex or Claude agent.
+
+An unresolved native writer receives a bounded 30-second metadata-settling wait
+before an open or saved resume refuses. Only unresolved writers wait; healthy
+checks, known conflicts and allocator-proven fresh workspaces retain their fast
+paths. Every retry reads live ownership, and saved resume rechecks its selected
+writer after the wait. Expiry never authorizes a conflicting launch.
+
+Failed interactive saved resumes also offer **Repair / Cancel** through the same
+rail. Repair refreshes local discovery and retries the exact selected conversation
+once, including source and owner validation. It never switches to the latest
+conversation in that slot or force-opens a fresh context. A second failure retains
+the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
+calls never prompt. When the shell captures an owner on stdout, render recovery
+on the original terminal stderr, keeping the owner protocol clean.
+
+Missing Codex metadata can also be scoped through a verified standalone CLI: its
+process identity, sole thread lock, and working directory must remain stable across
+two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
+evidence remain blocked. This fallback never deletes a lock or stops its owner.
+
+Development preview: `python3 scripts/preview_session_repair.py` exercises the
+shared repair rail with sample data. Use `open` for numbered-open recovery or
+`--blocked` for a persistent ownership refusal. No real sessions are changed.
 
 `t session open api 3 --force` enters the force confirmation directly. `--yes`
 confirms only an explicit numeric force target; redirected commands never prompt.

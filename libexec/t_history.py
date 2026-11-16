@@ -1,5 +1,5 @@
 """Private, durable conversation history and guarded exact-conversation resume."""
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext, redirect_stdout
 import ast
 import datetime
 import fcntl
@@ -1444,7 +1444,7 @@ class HistoryCommand:
         owners = []
         for index, row in enumerate(rows):
             try:
-                owner = self.resume(alias, row, return_owner=True)
+                owner = self.resume_with_repair(alias, row, return_owner=True)
                 self.attach_command(owner)  # Reject unsupported owners before tab handling.
                 owners.append(owner)
             except HistoryCancelled:
@@ -1564,11 +1564,16 @@ class HistoryCommand:
         value = transcript(source, 'codex')
         helper = runpy.run_path(str(Path(self.root) / 'libexec/t_codex_ownership.py'))
         try:
-            helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
-                ownership_cwd=workspace,
-                codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
-                rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                retry='Retry: t session resume, then select the conversation again.')
+            terminal = (os.environ.get('T_RESUME_REPAIR') == '1' and
+                        sys.stdin.isatty() and sys.stderr.isatty())
+            # This probe returns no stdout data. Let its shared wait spinner
+            # use the terminal while the shell captures the eventual owner.
+            with redirect_stdout(sys.stderr) if terminal else nullcontext():
+                helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                    ownership_cwd=workspace,
+                    codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
+                    rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
+                    retry='Retry: t session resume, then select the conversation again.')
         except ValueError as error:
             raise HistoryError(str(error)) from error
 
@@ -1679,6 +1684,31 @@ class HistoryCommand:
     def reconcile_source(self, alias, row):
         return _RESUME_SOURCE['reconcile'](self, alias, row)
 
+    def resume_with_repair(self, alias, row, **options):
+        """Repair retries the selected conversation, never a slot's latest one."""
+        try:
+            return self.resume(alias, row, **options)
+        except HistoryCancelled:
+            raise
+        except (HistoryError, OSError, ValueError) as error:
+            # The shell captures the resulting owner on stdout. Its explicit
+            # terminal marker lets the shared rail use stderr without putting
+            # escape sequences in that owner or prompting redirected callers.
+            interactive = (sys.stdin.isatty() and sys.stderr.isatty() and
+                           (sys.stdout.isatty() or os.environ.get('T_RESUME_REPAIR') == '1'))
+            if not interactive:
+                raise
+            print('t resume: ' + str(error), file=sys.stderr)
+            ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
+            with redirect_stdout(sys.stderr):
+                if not ask(self.api, 'Could not resume ' + alias,
+                           'Retry the selected conversation after checking ownership.', 'Repair'):
+                    raise HistoryCancelled('resume repair cancelled') from error
+        _CACHE_REQUEST('event', {'targets': ['local']})
+        # The failed resume has released its reservations and claims. Repeat
+        # every live ownership/source check once; do not loop or force a launch.
+        return self.resume(alias, row, **options)
+
     def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
@@ -1730,7 +1760,9 @@ class HistoryCommand:
                     # use the claimed helper, never recursively acquire those locks.
                     snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
                     if not prepare_only:
-                        run(self.shell(snippet))
+                        # Allow the final ownership guard's startup settling
+                        # window plus native readiness and shell startup.
+                        run(self.shell(snippet), timeout=90)
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
                 if self.reservation:
@@ -1857,7 +1889,7 @@ class HistoryCommand:
                     return self.resume_many(alias, row)
                 row = row[0]
             try:
-                return self.resume(alias, row)
+                return self.resume_with_repair(alias, row)
             except HistoryCancelled:
                 return 130
             except (HistoryError, OSError, ValueError) as error:

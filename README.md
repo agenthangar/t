@@ -719,6 +719,22 @@ these are the common migrations:
 | `t permissions`, `t permissions --show/--apply` | `t policy check`, `t policy show/apply` |
 | `t install`, `t trust`, `t integrate`, `t update`, `t doctor` | `t agent install`, `t agent trust`, `t system integrate`, `t system update`, `t system diagnose` |
 
+When `t open api 3` fails, choose **Repair** to refresh and retry the selected
+session, retaining an explicit `--codex` or `--claude` choice. If repair fails,
+the existing **Force open** option resets only that session's t records. It still
+requires verified ownership and preserves worktree files and native transcripts.
+
+Saved `t resume api 3` selections also offer **Repair / Cancel** after failure.
+Repair retries that exact conversation once. Native writers that have not yet
+published their worktree metadata get a bounded 30-second settling wait; normal
+launches do not wait. A writer that remains unknown or owns the target still
+blocks the launch. Cancel stops any remaining batch selections.
+
+Missing Codex metadata can also be scoped through a verified standalone CLI: its
+process identity, sole thread lock, and working directory must remain stable across
+two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
+evidence remain blocked. This fallback never deletes a lock or stops its owner.
+
 If a CLI cannot reconnect but its tmux slot is still live, run
 `t session restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
 first. Restart saves the pane text, including any visible unsent draft, to a

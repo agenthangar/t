@@ -66,6 +66,30 @@ jobs:
         run: python3 scripts/lint_cli.py
       - name: Long-running command progress contract
         run: python3 scripts/lint_progress.py
+  design-adherence:
+    needs: scope
+    name: Design adherence fzf ${{ matrix.fzf }}
+    strategy:
+      fail-fast: false
+      matrix:
+        fzf: ['0.44.1', '0.74.5']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scope.outputs.sha }}
+      - uses: ./.github/actions/test-runtime
+        with:
+          fzf: ${{ matrix.fzf }}
+      - name: Required rendered layout contracts
+        run: python3 scripts/design_check.py run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: design-${{ matrix.fzf }}
+          path: artifacts/design/
+          if-no-files-found: error
+          retention-days: 14
   shell:
     needs: scope
     runs-on: ubuntu-latest
@@ -355,7 +379,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [scope, cli-contract, shell, startup-smoke, pytest, smoke, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
+    needs: [scope, cli-contract, design-adherence, shell, startup-smoke, pytest, smoke, fzf-legacy, coverage, reference, verify-shards, macos, playground, gitleaks, pip-audit, codeql]
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ needs.scope.outputs.sha }}
