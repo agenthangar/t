@@ -13516,6 +13516,8 @@ REMOTE SESSIONS
   Extra selections open in new tabs before the first attaches here.
   Resume errors exit nonzero without reopening the picker; batches stop and
   report already-resumed conversations.
+  Saved Codex resumes keep native cloud retries; automatic local continuation
+  is unavailable. Startup failures retain the specific lifecycle diagnostic.
 
   Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.

@@ -2416,14 +2416,24 @@ _t_history_owner() {
     current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
       print -u2 't resume: selected owner exited; rerun t resume'; return 1
     }
-    [[ $current == $identity && ${actual_dir:A} == $dir && $actual_agent == $agent &&
-       ( -z $sid || -z $actual_sid || $actual_sid == $sid ) ]] || {
-      print -u2 't resume: selected owner changed; rerun t resume'; return 1
+    [[ ${current%%|*} == $immutable ]] || {
+      print -u2 't resume: selected owner changed (session); rerun t resume'; return 1
     }
+    [[ $current == $identity && ${actual_dir:A} == $dir ]] || {
+      print -u2 't resume: selected owner changed (workspace); rerun t resume'; return 1
+    }
+    # An exited startup can lose its process identity. Report that failure before
+    # comparing the fallback agent/SID, without following a replaced session.
     if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
       print -u2 -- "t resume: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
       return 1
     fi
+    [[ $actual_agent == $agent ]] || {
+      print -u2 't resume: selected owner changed (agent); rerun t resume'; return 1
+    }
+    [[ -z $sid || -z $actual_sid || $actual_sid == $sid ]] || {
+      print -u2 't resume: selected owner changed (conversation); rerun t resume'; return 1
+    }
     [[ -n $actual_sid && ( $wait_ready != wait || -n $owner_pid ) ]] && { print -r -- "$immutable"; return 0; }
     [[ $wait_ready == wait ]] || {
       print -u2 't resume: selected owner changed; rerun t resume'; return 1
