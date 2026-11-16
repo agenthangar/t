@@ -1434,3 +1434,15 @@ except h['HistoryCancelled']: sys.exit(130)
             process.kill()
             process.wait(timeout=5)
         os.close(master)
+
+
+def test_unavailable_history_is_not_reported_as_empty(app, history, monkeypatch, capsys):
+    app.discovery_view = {'unavailable': True, 'hosts': []}
+    monkeypatch.setattr(app, 'records', lambda *a: [])
+    monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: False)
+    monkeypatch.setattr(history.sys.stdout, 'isatty', lambda: False)
+    args = SimpleNamespace(target=['repo', '23'], json=False, refresh=False, limit=50, page=1)
+    assert app.execute(args) == 1
+    output = capsys.readouterr()
+    assert 'unavailable' in output.err
+    assert 'No matching' not in output.out
