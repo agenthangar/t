@@ -37,7 +37,8 @@ def main():
         jobs = []
         memory = cache['_Memory'](collect=lambda spec: {
             'rows': 'sample\t/demo/api\tapi-2\tdetached\tactive\tReview retry behavior\tcodex\tgpt-6.1-sol\t2026-11-10T12:00:00Z\n',
-            'resume': []}, submit=lambda *job: jobs.append(job))
+            'resume': [], 'catalog': {'version': 1, 'repositories': [], 'conversations': []}},
+            submit=lambda *job: jobs.append(job))
         memory.restore({})
         original = adapter['discover'].__globals__['request']
         adapter['discover'].__globals__['request'] = memory.handle
@@ -48,11 +49,13 @@ def main():
             callback(*values)
             for entry in memory.entries.values():
                 if args.scenario in ('expired', 'offline'):
-                    entry['checked'] -= 3601
+                    entry['checked'] -= cache['TTL'] + 1
                     entry['retry'] = 0
                 if args.scenario == 'offline':
                     entry['error'] = 'Sample host unavailable'
                     entry['retry'] = memory.clock() + 3600
+                    memory.failures[entry['spec']['target']] = dict(
+                        error=entry['error'], retry_at=entry['retry'], kind='transport')
         # Subsequent refreshes finish asynchronously using only the synthetic
         # collector, so --wait exercises completion without real discovery.
         def refresh_later(callback, *values):

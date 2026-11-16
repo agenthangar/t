@@ -72,7 +72,9 @@ writer after the wait. Expiry never authorizes a conflicting launch.
 
 Failed interactive saved resumes also offer **Repair / Cancel** through the same
 rail. Repair refreshes local discovery and retries the exact selected conversation
-once, including source and owner validation. It never switches to the latest
+once, including source and owner validation. Failures preserve a bounded shell
+cause and identify which readiness field changed (session, workspace, agent or
+conversation). They never relax ownership checks. It never switches to the latest
 conversation in that slot or force-opens a fresh context. A second failure retains
 the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
 calls never prompt. When the shell captures an owner on stdout, render recovery
@@ -871,20 +873,22 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
-Before freezing its snapshot, the open picker observes pending discovery for up
-to 30 seconds with the shared delayed spinner. A fresh snapshot opens immediately.
-Timeout or unavailable local discovery offers **Retry refresh / Browse older
-results / Cancel** through RailUI; omit browsing when no rows are available.
-An older or partial snapshot keeps a warning through filter and sort changes.
-An empty incomplete snapshot never starts a fresh session. Cancel returns 130
-without canceling the shared refresh. Settled remote failures retain reachable
-rows and their freshness notices without delaying each subsequent open.
+The open picker shows retained sessions immediately and freezes that snapshot.
+Background refresh never reorders an active selection. With no usable results,
+open and resume use the shared wait rail: Return skips; Esc/Ctrl-C cancels only
+observation. Completed discovery opens selection. A settled failure offers
+**Retry / Browse retained results / Cancel**; omit Browse when unavailable.
+Skipping without results says **No sessions available yet**. Incomplete empty
+results never start a fresh session. Cancel returns 130.
 
-Failed discovery targets pause automatic retries for one hour across aliases and
-repository views, including normal invalidation and cache service restarts.
-`t hosts reset HOST` clears only that registered target's discovery cooldown and
-marks its snapshot stale. It is a direct action with no picker or connection;
-the next browse may retry. Registrations, sessions and worktrees are retained.
+Inventory reconciliation has a 24-hour TTL and never discards retained results.
+Recently used namespaces receive lightweight local activity checks every five
+seconds and updated-peer generation checks every thirty seconds; idle polling
+stops after one hour. Transport/authentication failures retain an hour cooldown;
+collector/protocol failures retry after 5, 15, 60, then 300 seconds. Explicit Retry
+can reset failed targets once. `t hosts reset HOST` remains a direct scoped action.
+Failure messages distinguish refresh errors from unreachable hosts and preserve
+available rows. Old peers retain the hourly full-collector fallback.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
@@ -933,15 +937,14 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
-Interactive resume, including plain slot history, automatically waits while saved
-discovery is pending. The shared RailUI shows **Skip waiting**: Return uses the
-available snapshot, while Esc/Ctrl-C cancels with 130. Neither action cancels the
-shared refresh. There is no overall wait timeout; a settled empty or failed scan
-ends observation, and failed-host cooldowns remain intact. Incomplete results
-retain a warning through filtering, sorting and history paging; even one result
-requires explicit selection after skipping. For example, run `t session resume`
-and press Return to browse cached results before refresh finishes. Nonterminal,
-JSON and private collector output never enter this wait or prompt.
+Interactive resume, including plain slot history, displays retained results
+immediately. Cold discovery and service recovery use the same wait/recovery rail
+as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
+no overall timeout for an advancing cold refresh; repeated service connection
+failures return to Retry / Cancel. Incomplete results retain a warning through
+filtering, sorting and history paging, and require explicit selection. For example,
+run `t session resume`; retained conversations appear while refresh continues.
+Nonterminal, JSON and private collector output never enter this rail.
 
 After a saved selection, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
@@ -1031,13 +1034,12 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
-Session discovery uses one RAM-serving cache service for CLI and MCP. Local and
-remote snapshots and host status expire hourly. Missing/expired entries refresh
-asynchronously; cached rows remain visible with their age, and an open picker
-stays stable until the next invocation. Cold discovery reports refreshing,
-never a false empty result. Failed hosts retry on use after one hour. Session
-lifecycle events invalidate affected hosts; live ownership checks always bypass
-the cache. SQLite is asynchronous persistence for startup recovery only.
+Session discovery uses one RAM-serving cache API for CLI and MCP. Inventory has
+a 24-hour reconciliation interval; expiry never clears successful snapshots.
+Activity and membership changes update incrementally. The daemon observes recently
+used hosts in the background and retains records across failures. Cold discovery
+reports refreshing or offers recovery, never a false empty result. Live ownership
+checks bypass the cache. SQLite is asynchronous restart persistence only.
 See [session cache storage and lifecycle](../docs/session-cache.md).
 
 Quiet blocking work (provider calls, repository/setup probes, updates, AgentCore,

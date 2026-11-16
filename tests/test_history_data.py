@@ -317,7 +317,7 @@ def test_run_strips_coverage_environment_and_errors_without_exposing_output(hist
     monkeypatch.setattr(history.subprocess, 'run', run)
     assert history.run(['metadata']) == 'metadata'
     assert observed[0]['stdin'] == subprocess.DEVNULL
-    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1, stdout='sensitive'))
+    monkeypatch.setattr(history.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1, stdout='sensitive', stderr=''))
     assert history.run(['metadata'], optional=True) == ''
     with pytest.raises(history.HistoryError, match='retained') as exc:
         history.run(['metadata'])

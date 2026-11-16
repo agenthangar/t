@@ -24,7 +24,7 @@ def pending(cold=False):
     return data
 
 
-@pytest.mark.parametrize('cold', [False, True])
+@pytest.mark.parametrize('cold', [True])
 @pytest.mark.parametrize('outcome', ['rows', 'empty', 'failed', 'unavailable'])
 def test_resume_waits_beyond_thirty_seconds_until_settled(adapter, monkeypatch, cold, outcome):
     initial, done = pending(cold), view()
@@ -34,7 +34,7 @@ def test_resume_waits_beyond_thirty_seconds_until_settled(adapter, monkeypatch, 
         done['hosts'][0].update(error='offline', value=None, retry_at=99999)
     elif outcome == 'unavailable':
         done = {'unavailable': True}
-    sequence = iter([initial, *[initial for _ in range(35)], done])
+    sequence = iter([initial, *[initial for _ in range(35)], *([done] * 5 if outcome == 'unavailable' else [done])])
     calls, clock = [], [0]
     monkeypatch.setattr(adapter.time, 'monotonic', lambda: clock[0])
     def discover(cfg, **kwargs):
@@ -52,12 +52,12 @@ def test_resume_waits_beyond_thirty_seconds_until_settled(adapter, monkeypatch, 
     assert all(call[1]['deadline'] == i + 1 for i, call in enumerate(calls[1:], 1))
     assert bool(notice) == (outcome in ('failed', 'unavailable'))
     if outcome == 'unavailable':
-        assert result == dict(initial, wait_unavailable=True)
+        assert result == dict(initial, unavailable=True, wait_unavailable=True)
     else:
         assert result == done
 
 
-@pytest.mark.parametrize('cold', [False, True])
+@pytest.mark.parametrize('cold', [True])
 def test_resume_skip_retains_available_snapshot(adapter, monkeypatch, cold):
     data = pending(cold)
     monkeypatch.setattr(adapter, 'discover', lambda *a, **kw: data)
@@ -67,7 +67,7 @@ def test_resume_skip_retains_available_snapshot(adapter, monkeypatch, cold):
     assert list(adapter.candidates(result, ['api'])) == list(adapter.candidates(data, ['api']))
 
 
-@pytest.mark.parametrize('state', ['fresh', 'failed', 'unavailable'])
+@pytest.mark.parametrize('state', ['fresh', 'failed'])
 def test_resume_settled_snapshot_never_waits(adapter, monkeypatch, state):
     data = view()
     if state == 'failed':
@@ -81,7 +81,7 @@ def test_resume_settled_snapshot_never_waits(adapter, monkeypatch, state):
 
 
 def test_resume_cancel_does_not_mutate_shared_refresh(adapter, monkeypatch):
-    data = pending()
+    data = pending(cold=True)
     before = copy.deepcopy(data)
     monkeypatch.setattr(adapter, 'discover', lambda *a, **kw: data)
     def cancel(refresh):
@@ -139,7 +139,7 @@ def test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows(t_mod, monkey
     monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(sys.stderr, 'isatty', lambda: True)
     calls = []
-    def snapshot(cfg, wait):
+    def snapshot(cfg, wait, *, choose):
         calls.append('wait')
         print('WAIT UI')
         return view(), 'Older results'
@@ -174,7 +174,7 @@ def test_slot_history_wait_gates_and_snapshot(t_mod, monkeypatch, terminal, json
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda *a, **kw: {'HistoryCommand': History})
     def snapshot(cfg, wait, **kwargs):
         calls.append('wait')
-        assert kwargs == {'fields': ['catalog']}
+        assert kwargs == {'fields': ['catalog'], 'choose': t_mod._open_discovery_choice}
         return {'hosts': []}, 'incomplete'
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
         resume_snapshot=snapshot, discover=lambda *a, **kw: {'hosts': []},

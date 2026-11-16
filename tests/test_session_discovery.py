@@ -64,7 +64,7 @@ def test_announcements_distinguish_warming_empty_offline(adapter, capsys):
     data['hosts'][0].update(checked=0, error='SSH failure', refreshing=True)
     adapter.announce(data)
     text = capsys.readouterr().err
-    assert 'not yet checked' in text and 'unavailable' in text and 'retaining' in text
+    assert 'not yet checked' in text and 'refresh failed' in text and 'retaining' in text
     data['hosts'][0].update(checked=10000, error='', refreshing=False)
     adapter.announce(data)
     assert 'checked' in capsys.readouterr().err
@@ -188,7 +188,7 @@ def test_failed_cold_host_reports_cooldown(adapter, capsys):
     data['hosts'][0].update(value=None, checked=0, error='offline')
     adapter.announce(data)
     text = capsys.readouterr().err
-    assert 'unavailable' in text and 'refreshing' not in text
+    assert 'refresh failed' in text and 'refreshing' not in text
 
 
 def test_catalog_projection_filters_and_preserves_repository_identity(adapter, monkeypatch):
@@ -252,3 +252,21 @@ def test_local_snapshot_includes_unindexed_live_sessions_and_repo_scopes(adapter
     assert value['scopes']['api'] == value['scopes']['org/api'] == ['/work/api', '/trees/api']
     row = value['mcp']['recs'][0]['_cached_row']
     assert row['title'] == '(no transcript yet)' and row['url'].endswith(':5201')
+
+
+@pytest.mark.parametrize('fields_count', [12, 13])
+def test_remote_delta_retains_unchanged_closed_resume_rows(adapter, collector, monkeypatch, fields_count):
+    def candidate(sid):
+        fields = ['api', 'local', '1', sid, '/sample', 'date', 'Title', 'mini',
+                  'codex', '-', 'org/repo', 'OPEN', '2026-11-16T10:00:00Z']
+        return '\t'.join(fields[:fields_count])
+    records = [dict(repo='org/repo', agent='codex', sid=sid) for sid in ('keep', 'remove')]
+    previous = dict(rows='', catalog={'conversations': records}, _remote_generation='before',
+                    resume=[candidate('keep'), candidate('remove')])
+    wire = dict(protocol=2, generation='after', delta=dict(
+        removed=[adapter._CACHE['record_key'](records[1])], changed=[], fields={}, catalog={}))
+    monkeypatch.setattr(adapter.subprocess, 'run', lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout=json.dumps(wire), stderr=''))
+    result = adapter.collect({'target': 'mini', 'previous': previous}, collector)
+    assert result['resume'] == [candidate('keep')]
+    assert result['_remote_generation'] == 'after'
