@@ -28,7 +28,7 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: .ci-alert-state.json
           key: scheduled-health-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -43,7 +43,7 @@ jobs:
           if [ "$TEST_NOTIFICATION" = true ]; then args+=(--test); fi
           python3 scripts/scheduled_health.py "${args[@]}"
       # Preserve earlier acknowledged deliveries even if a later send fails.
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: always() && hashFiles('.ci-alert-state.json') != ''
         with:
           path: .ci-alert-state.json
