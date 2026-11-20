@@ -123,7 +123,7 @@ def state_label(profile, mask):
         'pending included' if mask & 2 else 'clean only')
 
 
-def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False, sort_enabled=True):
+def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False, sort_enabled=True, legend=''):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
     compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
@@ -161,6 +161,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'), include_closed=profile == 'resume')
     if not compact:
         lines += ['']
+    if legend:
+        lines.append(style(clip_columns(legend, width)))
     if columns:
         lines.append(style(clip_columns(columns, width)))
     return '\n'.join(lines) + '\n'
@@ -386,12 +388,11 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         if hosts:
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
             warning = clip_columns(summary, width) + '\n' + warning
+    legend = closure_legend(records, bool(warning)) if profile == 'resume' else ''
+    if legend and columns:
+        columns = '  ' + columns
     controls = header(profile, mask, filters, total - len(selected), columns, width,
-                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled)
-    if profile == 'resume':
-        legend = closure_legend(records, bool(warning))
-        if legend:
-            controls += clip_columns(legend, width) + '\n'
+                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled, legend)
     (directory / 'current-header').write_text(warning + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))

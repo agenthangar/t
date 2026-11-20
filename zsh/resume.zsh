@@ -670,65 +670,52 @@ _t_resume() {
     return 1
   fi
 
-  # Picker rows: repo(1) slot(2) sid(3) wt(4) when(5) title(6) loc(7) alias(8)
-  # origin(9) agent(10) — loc/alias are `-` for a dead (resumable) row, the `here`
-  # sentinel (displayed "● active") for a live local slot, or the host + remote
-  # alias for a slot live on a $REMOTE_HOSTS
-  # host (pick → attach in place, never a second owner); origin is the machine a
-  # dead conversation LAST RAN on (`-`/empty = here or unstamped — live rows name
-  # their host in the ● label instead); agent is the row's claude/codex — what a
-  # dead pick spawns, and what a live slot is running (from the live scan, else
-  # the session's own stamp). EVERY row carries all ten, sentinelled, so the
-  # positional reads below never slide. Last-turn timestamp is field 11,
-  # repository identity is 12, explicit cached PR state is 13, and close time is 14.
-  # One ALIGNED display column (15) is
-  # appended here — fzf renders raw \t fields at literal tab stops (nothing
-  # lines up), so both fzf and the no-fzf listing show the same pre-padded
-  # gh-style row: [repo]  slot  agent  [origin]  date|●-where  title. The agent
-  # column is `<icon> <name>` on every row — a ⬡ in the date cell was too easy to
-  # miss ("need to more clearly indicate which is claude, codex"), and the icon
-  # is the same one `t ls` shows — under the full legend (_dev_agent_legend: every
-  # supported tool, always) on the fzf header and the listing's footer. fzf
-  # renders it as --with-nth=-1 — the LAST field, the same rule as the listing's
-  # `${c##*$'\t'}` — never a fixed index: when the agent field landed as column
-  # 10, a hard-coded --with-nth=10 showed every dead row as the word `claude`
-  # (and matched queries against nothing else) — "t resume shows no session
-  # info", 2026-09-14. The
-  # origin column only appears when some row has one (a single-machine setup
-  # never sees it); all-repos mode adds the repo column. Both pad to the widest
-  # value in this candidate set.
-  local pick c fprompt prbadge; local -a f
-  local rw=0 ow=0 aw=0 i=1
+  # Preserve repo, slot, conversation ID, workspace, activity, label, location,
+  # remote alias, origin, agent, turn, repository identity, PR state, and close
+  # time. Add one display field for fzf's --with-nth=-1.
+  # Measure the full snapshot so filtering does not move the columns.
+  local pick c fprompt columns row_format
+  local -a f cells
+  local rw=4 sw=4 ow=0 aw=5 tw=8 i=1
+  for c in "${(@)cands}"; do
+    f=("${(@ps:\t:)c}")
+    (( ${#f[1]} > rw )) && rw=${#f[1]}
+    (( ${#f[2]} > sw )) && sw=${#f[2]}
+    (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))
+    (( ${#f[5]} > tw )) && tw=${#f[5]}
+    [[ ${f[9]:-} != - ]] && (( ${#f[9]} > ow )) && ow=${#f[9]}
+  done
+  row_format='%-9s  '
+  cells=(PR)
   if [[ -n $all_mode ]]; then
     fprompt="resume (${days}d)> "
-    for c in "${(@)cands}"; do f=("${(@ps:\t:)c}"); (( ${#f[1]} > rw )) && rw=${#f[1]}; done
+    row_format+="%-${rw}s  "
+    cells+=(REPO)
   else
     fprompt="resume $repo (${days}d)> "
   fi
-  for c in "${(@)cands}"; do
-    f=("${(@ps:\t:)c}")
-    [[ ${f[9]:-} != - && -n ${f[9]:-} ]] && (( ${#f[9]} > ow )) && ow=${#f[9]}
-    (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))   # `<icon> <name>`
-  done
+  row_format+="%-${sw}s  %-${aw}s  "
+  cells+=(SLOT AGENT)
+  if (( ow )); then
+    (( ow < 4 )) && ow=4
+    row_format+="%-${ow}s  "
+    cells+=(HOST)
+  fi
+  row_format+="%-${tw}s  %s"
+  cells+=(ACTIVITY 'WORKING ON')
+  columns=$(printf "$row_format" "${cells[@]}")
+
   local legend; legend=$(_dev_agent_legend)
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
     org=${f[9]:-}; [[ $org == - ]] && org=
-    prbadge=$(printf '[%-7s] ' "${f[13]:-UNKNOWN}")
     agent="${_DEV_AGENT_GLYPH[${f[10]:-claude}]:-?} ${f[10]:-claude}"
-    if [[ -n $all_mode ]]; then
-      if (( ow )); then
-        cands[$i]+=$'\t'"$prbadge$(printf '%-*s  %2s  %-*s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
-      else
-        cands[$i]+=$'\t'"$prbadge$(printf '%-*s  %2s  %-*s  %-14s  %s' "$rw" "$f[1]" "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
-      fi
-    else
-      if (( ow )); then
-        cands[$i]+=$'\t'"$prbadge$(printf '%2s  %-*s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$ow" "$org" "$f[5]" "$f[6]")"
-      else
-        cands[$i]+=$'\t'"$prbadge$(printf '%2s  %-*s  %-14s  %s' "$f[2]" "$aw" "$agent" "$f[5]" "$f[6]")"
-      fi
-    fi
+    cells=("$(printf '[%-7s]' "${f[13]:-UNKNOWN}")")
+    [[ -n $all_mode ]] && cells+=("$f[1]")
+    cells+=("$f[2]" "$agent")
+    (( ow )) && cells+=("$org")
+    cells+=("$f[5]" "$f[6]")
+    cands[$i]+=$'\t'"$(printf "$row_format" "${cells[@]}")"
     (( i++ ))
   done
   # Add a fixed-width recency cell without changing selection identity.
@@ -761,7 +748,7 @@ _t_resume() {
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?

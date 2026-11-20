@@ -12,7 +12,7 @@ FZF_ALL = """#!/usr/bin/env python3
 import os, sys, subprocess
 from pathlib import Path
 if '--help' in sys.argv:
-    print('--id-nth')
+    print('--id-nth --header-border')
     sys.exit()
 rows = sys.stdin.read().splitlines()
 Path(os.environ['FZF_LOG'] + '.initial').write_text('\\n'.join(rows))
@@ -300,6 +300,9 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
     assert [row.split('\t')[1] for row in initial] == ['2', '10']
     for index in range(7):
         assert pathlib.Path(f'{log}.step{index}').read_text().splitlines() == initial
+        header = semantic_chrome(pathlib.Path(f'{log}.header{index}').read_text()).splitlines()[-1]
+        assert header.index('WORKING ON') == initial[0].split('\t')[-1].index('Task 2')
+        assert header.split() == ['PR', 'SLOT', 'AGENT', 'ACTIVITY', 'WORKING', 'ON']
     arguments = pathlib.Path(f'{log}.args').read_text()
     assert '--no-sort' in arguments
     for letter in ('t', 'r', 'g', 'o', 'v'):

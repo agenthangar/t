@@ -117,7 +117,8 @@ def test_marker_survives_sort_and_filter(history, filters, tmp_path):
     assert (tmp_path / 'sort').read_text() == 'closed'
     assert 'session-2' in (tmp_path / 'current').read_text().splitlines()[0]
     assert '↶ last closed' in (tmp_path / 'current-header').read_text()
-    filters.render(tmp_path, 'resume', 'next-sort', 68)
+    filters.render(tmp_path, 'resume', 'next-sort', 68, 'WORKING ON')
+    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == '  WORKING ON'
     assert (tmp_path / 'sort').read_text() == 'turn'
     output = (tmp_path / 'current').read_text().splitlines()
     assert output[0].split('\t')[2] == 'session-0'
@@ -160,6 +161,8 @@ def test_real_recent_close_marker_keeps_focus(picker, width, height, plain):
     frames.mkdir(parents=True, exist_ok=True)
     (frames / f'{width}x{height}-{"plain" if plain else "color"}.txt').write_text(screen)
     before = marked.index('Older api')
+    heading = next(line for line in screen.splitlines() if 'WORKING ON' in line)
+    assert heading.index('WORKING ON') == before
     keys('C-y')
     screen = wait('Sort: turn' if width <= 44 else 'Sort: last turn', ordered=['Newest web', 'Older api'])
     assert '↶' in next(line for line in screen.splitlines() if 'Older api' in line)
