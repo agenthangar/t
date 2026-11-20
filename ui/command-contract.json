@@ -920,7 +920,8 @@
       "tests": [
         "tests/test_t.py::test_ls_scope_defaults_to_all_repos",
         "tests/test_command_behavior.py::test_session_list_default_includes_other_repositories",
-        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema"
+        "tests/test_command_behavior.py::test_session_and_history_display_follow_shared_schema",
+        "tests/test_external_codex.py::test_desktop_requires_live_writer_and_exact_rollout"
       ],
       "modes": {
         "default": {
@@ -1073,7 +1074,7 @@
           "tests/test_command_behavior.py::test_session_table_clips_only_task_when_other_columns_fit"
         ]
       },
-      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead with WATCHER before last turn. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns while prioritizing WATCHER after the first three fields. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history.",
+      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead with WATCHER before last turn. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns while prioritizing WATCHER after the first three fields. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Include verified external Codex desktop conversations using held writer locks, exact rollout identity and live frontend ancestry; exclude saved history, helper threads and clients already represented by a managed slot.",
       "layout": "plain"
     },
     "session close": {
@@ -1087,7 +1088,8 @@
       "confirmation": "enter",
       "tests": [
         "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
-        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer"
+        "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer",
+        "tests/test_external_codex.py::test_external_rows_survive_picker_filters_and_refuse_app_close"
       ],
       "modes": {
         "default": {
@@ -1104,10 +1106,11 @@
             "tests/test_kill_multiselect.py::test_kill_picker_starts_with_only_proven_safe_rows",
             "tests/test_kill_multiselect.py::test_kill_picker_dispatches_multiple_cli_and_desktop_rows",
             "tests/test_kill_multiselect.py::test_picker_enter_stops_live_agents_without_reading_confirmation",
-            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values"
+            "tests/test_picker_filters.py::test_every_filter_key_survives_long_values",
+            "tests/test_external_codex.py::test_external_picker_renders_and_reveals_hidden_sessions"
           ],
           "confirmation": "enter",
-          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Filtering preserves search and removes hidden marks without discovery or scope expansion.",
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Filtering preserves search and removes hidden marks without discovery or scope expansion. Standalone terminal clients and verified loaded Codex app conversations remain in the all-results view; existing attachment/pending filters and hidden counts are preserved. Managed clients are deduplicated from supervised backends. External app handles are browse-only and refuse close with guidance to use Codex; never stop a shared service.",
           "layout": "inherit"
         },
         "explicit": {
@@ -1122,10 +1125,12 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_kill_multiselect.py::test_selected_local_close_disables_remote_fallback"
+            "tests/test_kill_multiselect.py::test_selected_local_close_disables_remote_fallback",
+            "tests/test_external_codex.py::test_external_app_close_never_reaches_process_or_remote_dispatch"
           ],
           "confirmation": "when_interrupting",
-          "layout": "inherit"
+          "layout": "inherit",
+          "notes": "External <folder>:app-<thread-id> handles report individual app close unavailable without process lookup, signaling or host fallback. Terminal handles retain existing confirmation and exact-host routing."
         }
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",

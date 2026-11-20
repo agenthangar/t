@@ -54,6 +54,18 @@ _dev_agent_is_service() {
   local -a words; read -r -A words <<< "$cmdline"
   (( ${words[(Ie)app-server]} ))
 }
+# Bundled executables can also be real terminal clients. Require a terminal for
+# these, rather than treating every binary shipped with an app as its backend.
+_dev_agent_is_client() {
+  _dev_agent_is_proc "$2" || return 1
+  _dev_agent_is_service "$1" && return 1
+  if [[ $2 == *.app/Contents/* ]]; then
+    local tty_name=$(ps -o tty= -p "$1" 2>/dev/null)
+    tty_name=${tty_name//[[:space:]]/}
+    [[ -n $tty_name && $tty_name != ('?'|'??'|'-') ]] || return 1
+  fi
+  return 0
+}
 # _dev_agent_of_comm <comm> — the agent name for a process name (empty if none).
 _dev_agent_of_comm() { case "${1:t}" in claude) print -r -- claude ;; codex|codex-aarch64-*|codex-x86_64-*) print -r -- codex ;; esac }
 # _dev_agent_of_session <tmux-session> — which agent a slot runs: the comm of its live

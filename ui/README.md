@@ -1030,6 +1030,22 @@ focused row), including live local and remote agents; do not prompt again per
 target. Explicit close targets retain live-agent confirmation unless `-y` is
 supplied.
 
+The close picker includes standalone terminal clients and verified loaded Codex
+app conversations. Its existing default still hides attached or uncertain work;
+Ctrl-F reveals all discovered rows, and the header retains its hidden-result
+count. For example, run `t session close`, then Ctrl-F to find a directly launched
+Codex client. Bundled CLI executables require a terminal and must not be a service.
+Managed clients appear once, even when their supervisor also runs an app-server.
+
+External app rows use `<folder>:app-<thread-id>` handles and the existing desktop
+interface. Discovery requires a held writer lock, exact rollout identity and
+verified live desktop ancestry, rechecked after reading metadata. Saved/unloaded
+history and subagents are excluded. These are browse-only identities: selecting
+one in close or opening its handle explains that it must be opened or closed in
+Codex. Never signal the shared backend, fall back to another host or turn a stale
+app handle into a terminal target. Discovery failures warn while preserving CLI
+rows. No new command, flag, filter, sort option or confirmation step is added.
+
 Saved Codex resumes also resolve unindexed held sibling locks from
 validated `session_meta` identity in active and archived rollouts. If that identity
 is not indexed or discoverable there, bounded open-file inspection of the exact

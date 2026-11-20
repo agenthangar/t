@@ -345,7 +345,7 @@ _dev_session_claude_pid() {
     stack=(${=_DEV_PANE_PIDS[$s]:-})
     while (( $#stack )); do
       pid=$stack[1]; shift stack
-      if _dev_agent_is_proc "${_DEV_PS_COMM[$pid]:-}"; then
+      if _dev_agent_is_client "$pid" "${_DEV_PS_COMM[$pid]:-}"; then
         _DEV_SESS_PID[$s]=$pid; print -r -- "$pid"; return 0
       fi
       stack+=(${=_DEV_PS_KIDS[$pid]:-})
@@ -355,7 +355,7 @@ _dev_session_claude_pid() {
   fi
   for pane_pid in ${(f)"$(tmux list-panes -t "=$s:" -F '#{pane_pid}' 2>/dev/null)"}; do
     comm=$(ps -o comm= -p "$pane_pid" 2>/dev/null)
-    _dev_agent_is_proc "$comm" && { print -r -- "$pane_pid"; return 0; }
+    _dev_agent_is_client "$pane_pid" "$comm" && { print -r -- "$pane_pid"; return 0; }
     for kid in ${(f)"$(pgrep -P "$pane_pid" 2>/dev/null)"}; do
       found=$(_dev_pid_tree_claude_pid "$kid") && { print -r -- "$found"; return 0; }
     done
@@ -367,7 +367,7 @@ _dev_session_claude_pid() {
 _dev_pid_tree_claude_pid() {
   local pid="$1" comm kid found
   comm=$(ps -o comm= -p "$pid" 2>/dev/null)
-  _dev_agent_is_proc "$comm" && { print -r -- "$pid"; return 0; }
+  _dev_agent_is_client "$pid" "$comm" && { print -r -- "$pid"; return 0; }
   for kid in ${(f)"$(pgrep -P "$pid" 2>/dev/null)"}; do
     found=$(_dev_pid_tree_claude_pid "$kid") && { print -r -- "$found"; return 0; }
   done
@@ -733,7 +733,6 @@ _dev_fg_rows() {
       up=${_DEV_PS_PPID[$up]:-}
     done
     for p in ${(k)_DEV_PS_COMM}; do
-      [[ -n ${_DEV_PS_APP[$p]:-} ]] && continue     # a GUI bundle's agent core, not a session
       _dev_agent_is_proc "${_DEV_PS_COMM[$p]}" && claudes+=($p)
     done
     claudes=(${(no)claudes})                # assoc keys are unordered; pid order is stable
@@ -742,7 +741,7 @@ _dev_fg_rows() {
       _dev_agent_is_proc "$(ps -o comm= -p $up 2>/dev/null)" && { me=$up; break; }
       up=$(ps -o ppid= -p $up 2>/dev/null | tr -d ' ')
     done
-    claudes=(${(f)"$(ps -Axo pid,comm 2>/dev/null | awk '$0 ~ /\.app\/Contents\// {next} {n=$2; sub(/.*\//,"",n)} n=="claude"||n=="codex"||n~/^codex-(aarch64|x86_64)-/{print $1}')"})
+    claudes=(${(f)"$(ps -Axo pid,comm 2>/dev/null | awk '{n=$0; sub(/^[[:space:]]*[0-9]+[[:space:]]+/,"",n); sub(/.*\//,"",n)} n=="claude"||n=="codex"||n~/^codex-(aarch64|x86_64)-/{print $1}')"})
   fi
   local -A live
   local pid cwd repo k label sid title summary context agent
@@ -750,7 +749,9 @@ _dev_fg_rows() {
     live[$pid]=1
     [[ -n ${inslot[$pid]} || $pid == $me ]] && continue
     _dev_agent_nested "$pid" && continue          # part of another agent's session
-    _dev_agent_is_service "$pid" && continue      # shared daemon, possibly reparented
+    local process_comm="${_DEV_PS_COMM[$pid]:-}"
+    [[ -n $process_comm && -z ${_DEV_PS_APP[$pid]:-} ]] || process_comm=$(ps -o comm= -p "$pid" 2>/dev/null)
+    _dev_agent_is_client "$pid" "$process_comm" || continue
     agent=$(_dev_agent_of_comm "${_DEV_PS_COMM[$pid]:-$(ps -o comm= -p $pid 2>/dev/null)}"); [[ -n $agent ]] || agent=claude
     sid= cwd=
     [[ -r $reg/$pid ]] && IFS=$'\t' read -r sid cwd < "$reg/$pid"
@@ -1029,6 +1030,7 @@ _dev_attach_fg() {
 # handle nothing anywhere answers reports once, from the path that knows the local rows.
 _dev_open_fg() {
   local handle="$1" rc
+  _dev_external_codex_handle "$handle" && { _dev_external_codex_notice "$handle"; return 1; }
   _dev_attach_fg "$handle"; rc=$?
   (( rc == 0 )) && return 0
   (( rc == 130 || rc > 2 )) && return $rc
@@ -1370,6 +1372,14 @@ _dev_session_rows_impl() {
     _dev_session_rows --transcripts | python3 "$T_HOME/libexec/t_session_details.py"
     return
   fi
+  local cli_rows
+  cli_rows=$(_dev_session_rows_cli "$@") || return $?
+  [[ -z $cli_rows ]] || print -r -- "$cli_rows"
+  # Desktop rows are browsing metadata only, never terminal/process targets.
+  print -r -- "$cli_rows" | python3 "$T_HOME/libexec/t_external_codex.py" "${CODEX_HOME:-$HOME/.codex}" "$@"
+}
+
+_dev_session_rows_cli() {
   setopt local_options null_glob bare_glob_qual
   # Two passes, because the expensive part is per-transcript and batches. Pass 1
   # asks tmux and the process table (ONE list-sessions carrying name+path+attached,
@@ -1755,10 +1765,10 @@ _dev_fg_pids() {
     up=$(ps -o ppid= -p $up 2>/dev/null | tr -d ' ')
   done
   local pid cwd repo sid label agent
-  for pid in ${(f)"$(ps -Axo pid,comm 2>/dev/null | awk '$0 ~ /\.app\/Contents\// {next} {n=$2; sub(/.*\//,"",n)} n=="claude"||n=="codex"||n~/^codex-(aarch64|x86_64)-/{print $1}')"}; do
+  for pid in ${(f)"$(ps -Axo pid,comm 2>/dev/null | awk '{n=$0; sub(/^[[:space:]]*[0-9]+[[:space:]]+/,"",n); sub(/.*\//,"",n)} n=="claude"||n=="codex"||n~/^codex-(aarch64|x86_64)-/{print $1}')"}; do
     [[ -n ${inslot[$pid]} || $pid == $me ]] && continue
     _dev_agent_nested "$pid" && continue          # part of another agent's session
-    _dev_agent_is_service "$pid" && continue      # never a foreground kill target
+    _dev_agent_is_client "$pid" "$(ps -o comm= -p "$pid" 2>/dev/null)" || continue
     sid= cwd=
     [[ -r $reg/$pid ]] && IFS=$'\t' read -r sid cwd < "$reg/$pid"
     [[ -n $cwd ]] || cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)   # Linux: no lsof needed
@@ -1807,25 +1817,34 @@ _dev_fg_match() {
 # <force>. Returns 0 if it killed something, 1 if a row matched but was not killed
 # (confirm declined / kill failed), 2 if nothing matched — so _dev_kill only falls through
 # to its "no session" path on a true miss (2), not after a deliberate skip.
+_dev_external_codex_handle() {
+  [[ $1 == *:app-* ]] && [[ ${1##*:app-} =~ '^[0-9a-fA-F]{8}((-([0-9a-fA-F]{4})){3}-[0-9a-fA-F]{12})?$' ]]
+}
+
+_dev_external_codex_notice() {
+  print -u2 -- "t: $1 is a Codex app conversation; open or close it in Codex. Individual app close is unavailable here; no shared service was stopped."
+}
+
 _dev_kill_fg() {
   local handle="$1" force="$2"
   [[ -n $handle ]] || return 1
+  _dev_external_codex_handle "$handle" && { _dev_external_codex_notice "$handle"; return 1; }
   setopt local_options null_glob
   local rows; rows=$(_dev_fg_match "$handle") || return 2
-  local line pid sid cwd label agent context title tsess killed= matched=
-  local -a tx
+  local line pid sid cwd label agent tsess current birth killed= matched=
   for line in ${(f)rows}; do
     IFS=$'\t' read -r pid sid cwd label agent <<< "$line"
     matched=1
-    context=idle
-    if [[ -n $sid && $sid != - ]]; then
-      tx=( "$HOME/.claude/projects"/*/"$sid".jsonl(N) )
-      [[ -n ${tx[1]} ]] && title=$(_transcript_title "${tx[1]}") && [[ -n $title ]] && context=active
-    fi
-    if [[ -z $force && $context == active ]]; then
-      read -q "REPLY?Kill $label? Claude is live there (context interrupted). [y/N] " \
+    birth=$(ps -o lstart= -p "$pid" 2>/dev/null)
+    if [[ -z $force ]]; then
+      read -q "REPLY?Kill $label? $agent is live there (context interrupted). [y/N] " \
         || { print; echo "Skipped $label."; continue; }
       print
+    fi
+    current=$(_dev_fg_match "$label")
+    if [[ -z $birth || $current != "$line" || $birth != "$(ps -o lstart= -p "$pid" 2>/dev/null)" ]]; then
+      print -u2 -- "t kill: $label changed or exited; nothing stopped"
+      continue
     fi
     tsess=$(_dev_tmux_session_of_pid "$pid")
     if [[ -n $tsess ]]; then
