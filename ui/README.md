@@ -974,14 +974,20 @@ Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T c
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
 The compatibility --attached flag starts with filtering off and defaults retained.
-There is no new-session shortcut or details preview in open; use `t open --new`.
+Ctrl-N starts a fresh local session: a repository-scoped picker keeps that
+repository; the unscoped picker first selects a registered local repository with
+the shared single picker. Inclusive browsing never chooses a remote destination
+for new work. Explicit `--remote` and host-targeted pickers keep their existing
+remote routing and use `--new` directly. There is no details preview in open.
+Empty and filtered-empty lists stay open: Enter does nothing, Ctrl-N starts new
+work, and Esc cancels without starting anything.
 Press `Ctrl-K` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
 and ownership safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
 filters, and other marks on both supported fzf versions. Failed or canceled closes
 keep their row and show the outcome in the picker. Closing the last row leaves an
-empty picker; Esc exits without starting a session.
+empty picker; Ctrl-N remains available and Esc exits without starting a session.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.
