@@ -2325,7 +2325,7 @@ def test_list_columns_align_interface_model_and_context(t_mod, capsys, remote):
     lines = capsys.readouterr().out.splitlines()
     header = next(x for x in lines if 'STATUS' in x)
     body = next(x for x in lines if 'web-3' in x)
-    for heading, content in [('TOOL','⬡'),('MODELS','★ model-test'),('SESSION','web-3'),('WORKING ON','Investigate')]:
+    for heading, content in [('TOOL','⬡'),('MODELS','Lead model-test'),('SESSION','web-3'),('WORKING ON','Investigate')]:
         assert header.index(heading) == body.index(content)
     assert 'Codex desktop workspace' not in body
     if not remote:

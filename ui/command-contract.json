@@ -936,7 +936,7 @@
             "tests/test_t.py::test_ls_scope_defaults_to_all_repos",
             "tests/test_command_behavior.py::test_readonly_commands_never_offer_updates"
           ],
-          "notes": "Include local and registered remote hosts by default; repository scope and --all remain independent. Unavailable hosts warn; lists never prompt.",
+          "notes": "Include local and registered remote hosts by default; repository scope and --all remain independent. One line per session, showing Lead and recorded stage models when space permits. Unavailable hosts warn; lists never prompt.",
           "terminal": false,
           "layout": "inherit"
         },

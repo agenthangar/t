@@ -183,6 +183,57 @@ def format_last_turn(value):
     return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
 
 
+MODEL_STAGE_LABELS = {'planning': 'Plan', 'implementation': 'Build', 'review': 'Review'}
+
+
+def _stage_spawn(meta):
+    source = meta.get('subagent') if isinstance(meta, dict) else None
+    spawn = source.get('thread_spawn') if isinstance(source, dict) else None
+    return spawn if isinstance(spawn, dict) else {}
+
+
+def _stage_name(spawn):
+    path = spawn.get('agent_path')
+    return path.rsplit('/', 1)[-1] if isinstance(path, str) else None
+
+
+def _stage_candidates(db):
+    candidates = {}
+    try:
+        rows = db.execute(
+            "select id, source, rollout_path from threads where instr(source, 'thread_spawn')>0 "
+            "order by updated_at desc, id"
+        )
+        for sid, source, path in rows:
+            try:
+                spawn = _stage_spawn(json.loads(source))
+            except (TypeError, ValueError):
+                continue
+            parent, stage = spawn.get('parent_thread_id'), _stage_name(spawn)
+            if isinstance(parent, str) and parent and stage in MODEL_STAGE_LABELS and path:
+                candidates.setdefault(parent, []).append((sid, stage, path))
+    except sqlite3.Error:
+        pass
+    return candidates
+
+
+def _observed_stages(parent, candidates, usage_module):
+    stages = {}
+    for sid, stage, path in candidates:
+        if stage in stages:
+            continue
+        meta, requests, _ = usage_module['transcript'](path, 'codex')
+        spawn = _stage_spawn(meta.get('source'))
+        if meta.get('id') != sid or spawn.get('parent_thread_id') != parent or _stage_name(spawn) != stage:
+            continue
+        for request in reversed(requests):
+            model, usage = request.get('model'), request.get('usage')
+            if isinstance(model, str) and model and usage and any(usage.values()):
+                stages[stage] = model
+                break
+    return [{'stage': stage, 'model': stages[stage]} for stage in MODEL_STAGE_LABELS if stage in stages]
+
+
 def enrich(lines, home, codex_home):
     db = None
     try:
@@ -192,6 +243,8 @@ def enrich(lines, home, codex_home):
             columns = {r[1] for r in db.execute('pragma table_info(threads)')}
         except (OSError, sqlite3.Error):
             columns = set()
+        stage_candidates = _stage_candidates(db) if {'id', 'source', 'rollout_path', 'updated_at'} <= columns else {}
+        usage_module = None
         out = []
         for line in lines:
             row = line.rstrip('\n').split('\t')
@@ -247,10 +300,16 @@ def enrich(lines, home, codex_home):
             row[5] = clean(summary)
             usage = {}
             if turn_transcript:
-                module = runpy.run_path(str(Path(__file__).with_name('t_usage.py')))
-                candidates = module['session_rows']([(turn_transcript, agent)])
+                if usage_module is None:
+                    usage_module = runpy.run_path(str(Path(__file__).with_name('t_usage.py')))
+                candidates = usage_module['session_rows']([(turn_transcript, agent)])
                 if candidates and candidates[0]['requests']:
                     usage = {k: candidates[0][k] for k in ('models', 'lead_model', 'local_cloud_percent', 'coverage')}
+                if agent == 'codex' and candidates and sid in ('-', candidates[0]['sid']):
+                    parent = candidates[0]['sid']
+                    stages = _observed_stages(parent, stage_candidates.get(parent, ()), usage_module)
+                    if stages:
+                        usage['model_stages'] = stages
             watches = runpy.run_path(str(Path(__file__).with_name('t_watch.py')))['records'](sid)
             out.append('\t'.join(row[:7] + [clean(model), transcript_last_turn(turn_transcript, agent)] +
                                  ([json.dumps(usage)] if usage else []) +
@@ -268,7 +327,7 @@ if __name__ == '__main__':
 
 
 def usage_preview(row, width=100):
-    """Compact t ls vocabulary for one recorded session, with full models on wrap."""
+    """Compact usage summary for one recorded session, with full models on wrap."""
     width = max(20, width)
     safe = lambda value: ''.join(c if c.isprintable() else ' ' for c in str(value))
     meta = row.get('session_display') or {}

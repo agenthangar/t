@@ -535,7 +535,7 @@ def _header(st, scope):
         # Make the scoped repo prominent (bold cyan) — the rest of the note stays dim.
         repo = os.path.basename(scope)
         note = f"   {st.y}(repo: {st.r}{st.b}{st.c}{repo}{st.r}{st.y} — --all for all){st.r}"
-    return f"dev sessions   {st.g}●{st.r} attached/loaded · ○ detached/unloaded · {st.c}✓{st.r} active context · {st.w}↻{st.r} merged, still in progress · ▣ desktop · ★ lead model · LOC/CLD TOKEN% observed local/cloud · {_agent_legend()}{note}"
+    return f"dev sessions   {st.g}●{st.r} attached/loaded · ○ detached/unloaded · {st.c}✓{st.r} active context · {st.w}↻{st.r} merged, still in progress · ▣ desktop · LOC/CLD TOKEN% observed local/cloud · {_agent_legend()}{note}"
 
 
 def _ls_scope(cfg, repo, all_repos, cwd):
@@ -779,13 +779,14 @@ def _watchers():
     return runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_watch.py'))
 
 
-def _session_table_lines(rows, remote=False):
-    """Approved usage overview; model continuations never repeat session marks."""
+def _session_table_lines(rows, remote=False, style=None):
+    """Render the session overview with one line per session."""
     helpers = _session_display_helpers()
     width = _columns() if sys.stdout.isatty() else 100000
-    clip, wrap = helpers['clip_columns'], helpers['wrap_columns']
+    clip = helpers['clip_columns']
+    labels = helpers['MODEL_STAGE_LABELS']
     headings = ['STATUS', 'SESSION', 'WORKING ON'] + (['HOST'] if remote else []) + ['LOC/CLD TOKEN%', 'TOOL', 'MODELS', 'WATCHER', 'LAST TURN']
-    cells = []
+    cells, model_entries = [], []
     for row in rows:
         marks = helpers['session_cells'](row, '', remote)[0]
         if row.get('state') == 'app':
@@ -793,34 +794,45 @@ def _session_table_lines(rows, remote=False):
         usage = row.get('usage') or {}
         share = usage.get('local_cloud_percent')
         share = '/'.join(map(str, share)) if isinstance(share, list) and len(share) == 2 and all(type(v) is int and 0 <= v <= 100 for v in share) else '—'
-        safe = lambda value: ''.join(c if c.isprintable() else ' ' for c in str(value))
-        lead = safe(usage.get('lead_model') or row.get('model') or '')
-        models = list(dict.fromkeys([safe(v['model']) for v in usage.get('models', []) if isinstance(v, dict) and v.get('model')]))
-        if lead and lead != '-':
-            models = ['★ ' + lead] + [m for m in models if m != lead]
+        safe = lambda value: ''.join(c if c.isprintable() else ' ' for c in value).strip() if isinstance(value, str) else ''
+        lead = safe(usage.get('lead_model')) or safe(row.get('model'))
+        models = [f'Lead {lead}'] if lead and lead != '-' else []
+        stage_models = {}
+        stages = usage.get('model_stages')
+        if isinstance(stages, list):
+            for entry in stages:
+                if not isinstance(entry, dict):
+                    continue
+                role, model = entry.get('stage'), safe(entry.get('model'))
+                if isinstance(role, str) and role in labels and model and model != '-':
+                    stage_models.setdefault(role, model)
+        models.extend(f'{label} {stage_models[role]}' for role, label in labels.items() if role in stage_models)
+        model_entries.append(models or ['—'])
         values = [marks, row['slot'], row.get('summary') or '-']
         if remote:
             values.append(row.get('host', 'local'))
-        cells.append(values + [share, _agent_glyph(row.get('agent', 'claude')), ', '.join(models) or '—', _watchers()['label'](row.get('watchers', [])),
+        cells.append(values + [share, _agent_glyph(row.get('agent', 'claude')), ' · '.join(model_entries[-1]), _watchers()['label'](row.get('watchers', [])),
                                helpers['format_last_turn'](row.get('last_turn_started_at'))])
     if not cells or width == 100000:
         return _table_lines(headings, cells)
     widths = [max(_display_width(label), *(_display_width(r[i]) for r in cells)) for i, label in enumerate(headings)]
     widths[1] = min(widths[1], 16)
     widths[2] = min(widths[2], 32)
-    widths[headings.index('MODELS')] = min(widths[headings.index('MODELS')], 44)
     if 2 + sum(widths) + 2 * (len(widths) - 1) > width:
         for row in cells:
             row[-1] = row[-1][11:16] if row[-1] != '-' else '-'
         widths[-1] = len('LAST TURN')
     excess = 2 + sum(widths) + 2 * (len(widths) - 1) - width
     widths[2] -= min(max(0, excess), max(0, widths[2] - 12))
+    index = headings.index('MODELS')
+    model_width = widths[index]
+    excess = 2 + sum(widths) + 2 * (len(widths) - 1) - width
+    widths[index] -= min(max(0, excess), max(0, widths[index] - 16))
     # Remove optional fields consistently, leaving the first three intact.
+    drop_order = ('LAST TURN', 'TOOL', 'LOC/CLD TOKEN%', 'MODELS', 'HOST', 'WATCHER') if width >= 80 else (
+        'LAST TURN', 'MODELS', 'TOOL', 'LOC/CLD TOKEN%', 'HOST', 'WATCHER')
     while len(headings) > 3 and 2 + sum(widths) + 2 * (len(widths)-1) > width:
-        if 'MODELS' in headings and widths[headings.index('MODELS')] > 16:
-            widths[headings.index('MODELS')] = 16
-            continue
-        index = next(headings.index(field) for field in ('LAST TURN', 'MODELS', 'TOOL', 'LOC/CLD TOKEN%', 'HOST', 'WATCHER') if field in headings)
+        index = next(headings.index(field) for field in drop_order if field in headings)
         if remote and headings[index] == 'HOST':
             for row in cells:
                 row[1] = row[1] + '@' + row[index]
@@ -829,38 +841,45 @@ def _session_table_lines(rows, remote=False):
         for row in cells:
             row.pop(index)
     gap = '  '
+    model_index = headings.index('MODELS') if 'MODELS' in headings else None
     if len(headings) == 3:
         widths[0] = max(len('STATUS'), max(_display_width(r[0]) for r in cells))
         widths[1] = min(widths[1], max(3, width - widths[0] - 16), 12)
         widths[2] = max(1, width - 2 - widths[0] - widths[1] - 4)
     else:
-        widths[2] += max(0, width - 2 - sum(widths) - 2*(len(widths)-1))
-    def line(values):
+        spare = max(0, width - 2 - sum(widths) - 2*(len(widths)-1))
+        if model_index is not None:
+            growth = min(spare, model_width - widths[model_index])
+            widths[model_index] += growth
+            spare -= growth
+        widths[2] += spare
+
+    def line(values, color_models=False):
         fitted = [clip(value, size) for value, size in zip(values, widths)]
-        return '  ' + gap.join(value + ' ' * (size - _display_width(value)) for value, size in zip(fitted, widths)).rstrip()
+        padded = [value + ' ' * (size - _display_width(value)) for value, size in zip(fitted, widths)]
+        if style and style.c and color_models and model_index is not None:
+            padded[model_index] = re.sub(r'(^| · )(Lead|Plan|Build|Review)(?= )',
+                                         rf'\1{style.b}{style.c}\2{style.r}', padded[model_index])
+        return '  ' + gap.join(padded).rstrip()
+
     output = [line(headings)]
-    for row in cells:
-        continuation = []
-        if 'MODELS' in headings:
-            size = widths[headings.index('MODELS')]
-            for model in row[headings.index('MODELS')].split(', '):
-                if continuation and _display_width(continuation[-1] + ', ' + model) <= size:
-                    continuation[-1] += ', ' + model
-                else:
-                    continuation.extend(wrap(model, size))
-        if continuation:
-            row = list(row); row[headings.index('MODELS')] = continuation[0]
-        output.append(line(row))
-        for part in continuation[1:]:
-            extra = [''] * len(headings); extra[headings.index('MODELS')] = part
-            output.append(line(extra))
+    for row, models in zip(cells, model_entries):
+        if model_index is not None:
+            size = widths[model_index]
+            for count in range(len(models), 0, -1):
+                suffix = f' · +{len(models) - count}' if count < len(models) else ''
+                value = ' · '.join(models[:count])
+                if _display_width(value + suffix) <= size or count == 1:
+                    row[model_index] = clip(value, size - _display_width(suffix)) + suffix
+                    break
+        output.append(line(row, color_models=True))
     return output
 
 
 def _render_local(rows, scope, st, has_remote=False):
     print(_header(st, scope))
     print()
-    for line in _session_table_lines(rows):
+    for line in _session_table_lines(rows, style=st):
         print(line.replace("●", f"{st.g}●{st.r}").replace("✓", f"{st.c}✓{st.r}").replace("↻", f"{st.w}↻{st.r}"))
     has_fg = False
     for r in rows:
@@ -878,7 +897,7 @@ def _render_local(rows, scope, st, has_remote=False):
 def _render_remote(rows, scope, st):
     print(_header(st, scope))
     print()
-    for line in _session_table_lines(rows, remote=True):
+    for line in _session_table_lines(rows, remote=True, style=st):
         print(line.replace("●", f"{st.g}●{st.r}").replace("✓", f"{st.c}✓{st.r}").replace("↻", f"{st.w}↻{st.r}"))
     has_fg = False
     for r in rows:
@@ -13548,6 +13567,8 @@ REMOTE SESSIONS
 
   List dev sessions: whether each is attached, and whether it has an active
   conversation loaded (vs. parked on the startup splash).
+  MODELS lists the Lead and any recorded Plan, Build or Review stage models.
+  On compact terminals, +N counts stage models that did not fit.
 
   Bare `t session list` shows every repository, including when run inside a
   checkout or worktree, like bare `t session open`. Name a repo to scope the list:
