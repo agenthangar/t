@@ -2,11 +2,13 @@
 
 import fcntl
 import glob
+import hashlib
 import json
 import os
 import re
 import select
 import shlex
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -26,6 +28,10 @@ _WRITER_SETTLE_SECONDS = 30.0
 
 class UnresolvedWriterError(ValueError):
     """A held writer has not published verifiable workspace metadata yet."""
+
+    def __init__(self, message, *, fingerprint=None):
+        super().__init__(message)
+        self.fingerprint = fingerprint
 
 
 def _processes(run, retry):
@@ -218,7 +224,8 @@ def _standalone_writer_cwd(path, pid, run):
 
     This deliberately excludes shared servers, resumed/forked threads, cwd
     overrides and unknown CLI options. A process cwd alone is not evidence.
-    Both the process birth/command and its complete fd map must remain stable.
+    Process birth/command, sole thread lock and cwd must remain stable; unrelated
+    descriptors may change while the CLI is working.
     """
     def snapshot():
         process = run(['ps', '-ww', '-p', str(pid), '-o', 'lstart=,command='], timeout=5)
@@ -233,7 +240,7 @@ def _standalone_writer_cwd(path, pid, run):
         if not args or os.path.basename(args.pop(0)) != 'codex' or '--no-daemon' not in args:
             return None
         values = {'-c', '--config', '-m', '--model', '-s', '--sandbox',
-                  '-a', '--ask-for-approval'}
+                  '-a', '--ask-for-approval', '--enable'}
         switches = {'--no-daemon', '--no-alt-screen', '--full-auto',
                     '--dangerously-bypass-approvals-and-sandbox'}
         standalone = False
@@ -247,6 +254,8 @@ def _standalone_writer_cwd(path, pid, run):
                 standalone |= arg == '--no-daemon'
                 continue
             else:
+                return None
+            if arg == '--enable' and value != 'fast_mode':
                 return None
             if arg in {'-c', '--config'}:
                 key = value.split('=', 1)[0]
@@ -271,9 +280,177 @@ def _standalone_writer_cwd(path, pid, run):
                     locks.add(filename)
         if len(cwd) != 1 or not os.path.isabs(cwd[0]) or locks != {path}:
             return None
-        return process.stdout, files.stdout, cwd[0]
+        return process.stdout, frozenset(locks), cwd[0]
     before = snapshot()
     return before[2] if before is not None and snapshot() == before else None
+
+
+def _holder_identity(pids, run):
+    """An opaque retry token includes process birth, never just reusable PIDs."""
+    if not pids or run is None:
+        return None
+    identities = []
+    try:
+        for pid in pids:
+            result = run(['ps', '-ww', '-p', str(pid), '-o', 'lstart=,command='], timeout=5)
+            if (result.returncode or (result.stderr or '').strip() or
+                    len(result.stdout) > 1024 * 1024 or len(result.stdout.strip().split(None, 5)) != 6):
+                return None
+            identities.append((pid, hashlib.sha256(result.stdout.strip().encode()).hexdigest()))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return tuple(identities)
+
+
+def _writer_fds(pid, run):
+    result = run(['lsof', '-nP', '-a', '-p', str(pid), '-FpcfdDtin'], timeout=5)
+    if result.returncode or (result.stderr or '').strip() or len(result.stdout) > 1024 * 1024:
+        return None
+    owner, current, records = False, None, []
+    for line in result.stdout.splitlines():
+        if line.startswith('p'):
+            if owner or line != 'p' + str(pid):
+                return None
+            owner = True
+        elif line.startswith('f') and owner:
+            current = {'f': line[1:]}
+            records.append(current)
+        elif line[:1] in {'d', 'D', 't', 'i', 'n'} and current is not None:
+            if line[0] in current:
+                return None
+            current[line[0]] = line[1:]
+    return records if owner else None
+
+
+def _pipe_identity(fd):
+    if fd.get('t') == 'PIPE' and fd.get('d', '').startswith('0x') and fd.get('n', '').startswith('->0x'):
+        return tuple(sorted((fd['d'], fd['n'][2:])))
+    if fd.get('t') == 'FIFO' and fd.get('i', '').isdecimal() and fd.get('D', '').startswith('0x'):
+        return fd['D'], fd['i']
+    return None
+
+
+def _private_file(path, *, directory=False):
+    info = os.lstat(path)
+    kind = stat.S_ISDIR if directory else stat.S_ISREG
+    if not kind(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError('the owned runtime evidence is not private')
+    return info
+
+
+def _checkpoint_workspace(path, sid, legacy_native=False):
+    """Read bounded private identity evidence; do not retain task or chat text."""
+    _private_file(os.path.dirname(path), directory=True)
+    before = _private_file(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            return None
+        with os.fdopen(fd, encoding='utf-8', closefd=False) as handle:
+            raw = handle.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            return None
+        value = json.loads(raw)
+    finally:
+        os.close(fd)
+    after = _private_file(path)
+    if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+        return None
+    if (not isinstance(value, dict) or value.get('thread_id') != sid or
+            not isinstance(value.get('workspace'), str) or not os.path.isabs(value['workspace'])):
+        return None
+    workspace = os.path.realpath(value['workspace'])
+    if 'thread_workspace' in value:
+        return workspace if value['thread_workspace'] == workspace else None
+    # Before explicit evidence was saved, Checkpoint compared the correlated
+    # native response cwd with launch cwd. In this known protocol cwd is a
+    # required ThreadStartResponse/Thread field. Do not generalize that promise
+    # to unknown native versions, which may omit it and trigger the old default.
+    return workspace if legacy_native and value.get('unavailable_reason') == '' else None
+
+
+def _supervisor_scripts():
+    """Only this t source, its canonical checkout, or the installed t source."""
+    source = Path(__file__).resolve().parents[1]
+    roots = {source}
+    try:
+        scope = runpy.run_path(str(source / 'libexec/t_launch_policy.py'))['repository_scope']
+        common = scope(source)[1]
+        if common is not None and common.name == '.git' and (common.parent / '.git').resolve() == common:
+            roots.add(common.parent)
+    except (OSError, ValueError):
+        pass
+    installed = shutil.which('t')
+    if installed:
+        command = Path(installed).resolve()
+        if command.name == 't' and command.parent.name == 'bin':
+            roots.add(command.parent.parent)
+    return {(root / 'libexec/t_local_inference.py').resolve() for root in roots
+            if (root / 'libexec/t_local_inference.py').is_file()}
+
+
+def _supervised_writer_cwd(path, sid, pid, run):
+    """Bind an exact thread to t's private backend, never a shared server cwd."""
+    def snapshot():
+        child = run(['ps', '-ww', '-p', str(pid), '-o', 'ppid=,lstart=,command='], timeout=5)
+        fields = child.stdout.strip().split(None, 6)
+        if (child.returncode or (child.stderr or '').strip() or len(child.stdout) > 1024 * 1024 or
+                len(fields) != 7 or not fields[0].isdecimal() or int(fields[0]) <= 1):
+            return None
+        argv = shlex.split(fields[6])
+        if (not argv or os.path.basename(argv[0]) != 'codex' or
+                argv[1:4] != ['app-server', '--listen', 'stdio://']):
+            return None
+        parent_pid = int(fields[0])
+        parent = run(['ps', '-ww', '-p', str(parent_pid), '-o', 'lstart=,command='], timeout=5)
+        fields = parent.stdout.strip().split(None, 5)
+        if (parent.returncode or (parent.stderr or '').strip() or len(parent.stdout) > 1024 * 1024 or len(fields) != 6):
+            return None
+        command = shlex.split(fields[5])
+        if (len(command) < 4 or not os.path.basename(command[0]).lower().startswith('python') or
+                not os.path.isabs(command[1]) or Path(command[1]).resolve() not in _supervisor_scripts() or
+                command[2] not in {'--lead', '--lead-policy'}):
+            return None
+        backend, supervisor = _writer_fds(pid, run), _writer_fds(parent_pid, run)
+        if not backend or not supervisor or path not in {fd.get('n') for fd in backend}:
+            return None
+        pipes = [_pipe_identity(fd) for descriptor in ('0', '1')
+                 for fd in backend if fd['f'].rstrip('rwu') == descriptor]
+        parent_pipes = {_pipe_identity(fd) for fd in supervisor} - {None}
+        if len(pipes) != 2 or None in pipes or len(set(pipes)) != 2 or not set(pipes) <= parent_pipes:
+            return None
+        logs = [fd for fd in backend if fd['f'].rstrip('rwu') == '2' and
+                os.path.basename(fd.get('n', '')) == 'runtime.log' and os.path.isabs(fd['n'])]
+        if len(logs) != 1:
+            return None
+        log = logs[0]
+        info = _private_file(log['n'])
+        identity = (str(info.st_ino), info.st_dev)
+        def same_log(fd):
+            return (fd.get('n') == log['n'] and fd.get('i') == identity[0] and
+                    int(fd.get('D', '-1'), 16) == identity[1])
+        if not same_log(log) or not any(same_log(fd) for fd in supervisor):
+            return None
+        checkpoint = os.path.join(os.path.dirname(log['n']), 'checkpoint.json')
+        # A legacy checkpoint relied on cwd being required by the native
+        # protocol. Recognize only the verified installed 0.170.0 cask build,
+        # mapped by this backend. Never execute a process-provided argv path.
+        installed = shutil.which('codex')
+        native = os.path.realpath(installed) if installed else ''
+        legacy_native = False
+        if re.search(r'/Caskroom/codex/0\.170\.0/bin/codex$', native):
+            native_info = os.stat(native)
+            legacy_native = (stat.S_ISREG(native_info.st_mode) and not native_info.st_mode & 0o022 and
+                any(fd['f'] == 'txt' and fd.get('n') == native and
+                    fd.get('i') == str(native_info.st_ino) and
+                    int(fd.get('D', '-1'), 16) == native_info.st_dev for fd in backend))
+        workspace = _checkpoint_workspace(checkpoint, sid, legacy_native)
+        if not workspace:
+            return None
+        return child.stdout, parent.stdout, tuple(pipes), identity, log['n'], workspace
+    before = snapshot()
+    return before[-1] if before is not None and before == snapshot() else None
 
 
 def _open_writer_cwds(path, sid, run):
@@ -311,7 +488,8 @@ def _open_writer_cwds(path, sid, run):
         cwds = {_rollout_cwd(filename, sid, exact=False) for filename in paths}
         cwds.discard(None)
         if not cwds and len(pids) == 1 and ('n' + path) in result.stdout.splitlines():
-            cwd = _standalone_writer_cwd(path, pids[0], run)
+            cwd = (_standalone_writer_cwd(path, pids[0], run)
+                   or _supervised_writer_cwd(path, sid, pids[0], run))
             if cwd:
                 cwds.add(cwd)
         return cwds, pids
@@ -380,18 +558,24 @@ def _scan_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=Fal
         if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
             raise ValueError("a Codex writer lock changed during inspection")
         if not cwds:
-            unresolved.append((other, pids))
+            unresolved.append((other, pids, (after.st_dev, after.st_ino)))
             if unknown is not None:
                 unknown.add(other)
             continue
         if any(os.path.realpath(path) == os.path.realpath(cwd) for path in cwds):
             return other
     if unresolved and unknown is None and not for_close:
-        raise UnresolvedWriterError(_unknown_writer_message(*unresolved[0]))
+        unresolved.sort(key=lambda item: item[0])
+        identities = tuple(_holder_identity(pids, run) for _, pids, _ in unresolved)
+        fingerprint = tuple((thread, inode, identity)
+                            for (thread, _, inode), identity in zip(unresolved, identities)) if all(identities) else None
+        raise UnresolvedWriterError(_unknown_writer_message(*unresolved[0][:2]),
+                                    fingerprint=fingerprint)
     return None
 
 
-def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False, run=None):
+def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=False, run=None,
+                     unresolved_fingerprint=None):
     """Let starting writers publish metadata; never treat a timeout as release.
 
     Healthy launches and allocator-proven fresh workspaces take one scan. Only
@@ -401,8 +585,9 @@ def _other_cwd_owner(folder, sid, cwd, codex_home, *, unknown=None, for_close=Fa
     options = dict(unknown=unknown, for_close=for_close, run=run)
     try:
         return _scan_cwd_owner(folder, sid, cwd, codex_home, **options)
-    except UnresolvedWriterError:
-        if _WRITER_SETTLE_SECONDS <= 0:
+    except UnresolvedWriterError as exc:
+        if (_WRITER_SETTLE_SECONDS <= 0 or
+                (exc.fingerprint is not None and exc.fingerprint == unresolved_fingerprint)):
             raise
     return _wait_cwd_owner(folder, sid, cwd, codex_home, options)
 
@@ -486,7 +671,7 @@ def _archived_released(codex_home, sid, cwd, rollout, run):
 
 def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                     archived=False, retry=_RETRY, unknown=None, for_close=False,
-                    ownership_cwd=None):
+                    ownership_cwd=None, unresolved_fingerprint=None):
     """Allow only a free selected writer lock and no other writer in its cwd.
 
     The eventual `codex resume --no-daemon` takes the lock atomically. This
@@ -523,7 +708,10 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                              + "Exit the owning client and wait for its backend to release the writer. " + retry)
         try:
             other = _other_cwd_owner(folder, sid, ownership_cwd or cwd, codex_home, unknown=unknown,
-                                     for_close=for_close, run=run)
+                                     for_close=for_close, run=run,
+                                     unresolved_fingerprint=unresolved_fingerprint)
+        except UnresolvedWriterError as exc:
+            raise UnresolvedWriterError(str(exc) + ". " + retry, fingerprint=exc.fingerprint) from exc
         except ValueError as exc:
             raise ValueError(str(exc) + ". " + retry) from exc
         if other:

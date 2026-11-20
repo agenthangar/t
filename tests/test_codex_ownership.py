@@ -812,6 +812,8 @@ def open_writer_probe(lock, paths, *, pids=(123, 456), failure=None, after_probe
     calls = []
     def run(argv, **kwargs):
         calls.append(argv)
+        if argv[0] == 'ps':
+            return subprocess.CompletedProcess(argv, 1, '', '')
         assert argv[0] == 'lsof'
         assert kwargs['timeout'] == 5
         if '-t' in argv:
@@ -879,7 +881,7 @@ def test_open_writer_unresolved_diagnostic_is_targeted_and_private(
     assert 'close the owning app' in message and 'shared backend' in message
     assert 'secret-argv' not in message
     assert ('PID 123, 456' in message) == (problem not in ('owners', 'bad_pid'))
-    assert all(call[0] != 'ps' for call in calls)
+    assert all(call[0] in {'ps', 'lsof'} for call in calls)
 
 
 def test_unresolved_writer_does_not_hide_later_known_conflict(handoff, target, tmp_path, monkeypatch):
@@ -1154,3 +1156,149 @@ def test_standalone_writer_without_metadata_is_scoped(handoff, target, tmp_path,
             with pytest.raises(ValueError, match='in this worktree' if problem == 'same' else 'could not be matched'):
                 handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
         assert handoff._lock_held(str(lock))
+
+
+@pytest.mark.parametrize('flag', ['--enable fast_mode', '--enable=fast_mode', '--enable other_feature'])
+def test_standalone_speed_flag_and_unrelated_fd_churn(handoff, tmp_path, flag):
+    lock = tmp_path / 'thread-writer-locks' / f'{OTHER}.lock'
+    probes = []
+    def run(argv, **_):
+        if argv[0] == 'ps':
+            text = f'Tue Nov 10 12:10:57 2026 /opt/bin/codex --no-daemon {flag}\n'
+        else:
+            probes.append(argv)
+            text = f'p123\nfcwd\nn/other/worktree\nf7\nn{lock}\nf{20 + len(probes)}\nn/tmp/changing-file\n'
+        return subprocess.CompletedProcess(argv, 0, text, '')
+    assert handoff._standalone_writer_cwd(str(lock), 123, run) == (
+        '/other/worktree' if 'fast_mode' in flag else None)
+
+
+def supervised_probe(handoff, tmp_path, monkeypatch, sid=OTHER, problem=''):
+    root = tmp_path / 'private-runtime'
+    root.mkdir(mode=0o700)
+    log = root / 'runtime.log'
+    log.touch(mode=0o600)
+    cwd = tmp_path / 'other-worktree'
+    checkpoint = root / 'checkpoint.json'
+    metadata = dict(thread_id=sid, workspace=str(cwd), thread_workspace=str(cwd), unavailable_reason='')
+    if problem == 'wrong-sid': metadata['thread_id'] = SID
+    if problem == 'wrong-workspace': metadata['thread_workspace'] = str(tmp_path / 'different')
+    if problem in {'legacy', 'unknown-version', 'legacy-unsafe-mapping'}: metadata.pop('thread_workspace')
+    if problem == 'unconfirmed': metadata['thread_workspace'] = None
+    if problem == 'continuation-unavailable': metadata['unavailable_reason'] = 'Input exceeds checkpoint budget'
+    if problem == 'invalid':
+        metadata.pop('thread_workspace')
+        metadata['unavailable_reason'] = 'Workspace mismatch'
+    checkpoint.write_text(json.dumps(metadata)); checkpoint.chmod(0o600)
+    if problem == 'missing-checkpoint': checkpoint.unlink()
+    if problem == 'public-checkpoint': checkpoint.chmod(0o644)
+    if problem == 'symlink-checkpoint':
+        checkpoint.rename(root / 'real.json'); checkpoint.symlink_to(root / 'real.json')
+    version = '0.171.0' if problem == 'unknown-version' else '0.170.0'
+    executable = tmp_path / 'Caskroom' / 'codex' / version / 'bin' / 'codex'
+    executable.parent.mkdir(parents=True)
+    executable.touch(mode=0o700)
+    monkeypatch.setattr(handoff.shutil, 'which', lambda name: str(executable) if name == 'codex' else None)
+    lock = tmp_path / 'thread-writer-locks' / f'{sid}.lock'
+    calls = []
+    def run(argv, **_):
+        calls.append(argv)
+        if argv[0] == 'ps':
+            if argv[3] == '123':
+                parent = '1' if problem == 'wrong-parent' else '122'
+                text = f'{parent} Tue Nov 10 12:10:57 2026 {executable} app-server --listen stdio://\n'
+                if problem == 'changed-process' and sum(a[0] == 'ps' and a[3] == '123' for a in calls) > 1:
+                    text = text.replace('12:10:57', '12:10:58')
+            else:
+                script = Path(handoff.__file__).with_name('t_local_inference.py')
+                if problem == 'shared': script = script.with_name('shared.py')
+                if problem == 'lookalike': script = tmp_path / 'libexec/t_local_inference.py'
+                text = f'Tue Nov 10 12:10:56 2026 /usr/bin/python3 {script} --lead {executable} --no-daemon\n'
+        else:
+            pid = argv[4]
+            log_info = log.stat()
+            if pid == '123':
+                native_info = executable.stat()
+                text = (f'p123\nftxt\ntREG\nD{hex(native_info.st_dev)}\ni{native_info.st_ino}\nn{executable}\nf0\ntPIPE\nd0xa\nn->0xb\nf1\ntPIPE\nd0xc\nn->0xd\n'
+                        f'f2\ntREG\nD{hex(log_info.st_dev)}\ni{log_info.st_ino}\nn{log}\nf7\nn{lock}\n')
+                if problem == 'legacy-unsafe-mapping':
+                    text = text.replace(f'i{native_info.st_ino}', 'i0')
+                if problem == 'missing-lock': text = text.replace(str(lock), '/another.lock')
+            else:
+                text = (f'p122\nf4\ntPIPE\nd0xb\nn->0xa\nf5\ntPIPE\nd0xd\nn->0xc\n'
+                        f'f6\ntREG\nD{hex(log_info.st_dev)}\ni{log_info.st_ino}\nn{log}\n')
+                if problem == 'stdio': text = text.replace('d0xb', 'd0xe')
+                if problem == 'log-inode': text = text.replace(f'i{log_info.st_ino}', 'i0')
+        if problem == 'linux-pipes' and argv[0] == 'lsof':
+            for local, remote, inode in [('a', 'b', 1), ('b', 'a', 1), ('c', 'd', 2), ('d', 'c', 2)]:
+                text = text.replace(f'tPIPE\nd0x{local}\nn->0x{remote}', f'tFIFO\nD0x1\ni{inode}\nnpipe')
+        return subprocess.CompletedProcess(argv, 0, text, '')
+    return lock, cwd, run
+
+
+@pytest.mark.parametrize('problem', ['', 'legacy', 'wrong-sid', 'wrong-workspace', 'unconfirmed', 'invalid', 'continuation-unavailable',
+    'unknown-version', 'legacy-unsafe-mapping', 'linux-pipes', 'public-checkpoint', 'symlink-checkpoint', 'wrong-parent', 'shared', 'lookalike', 'missing-checkpoint',
+    'changed-process', 'missing-lock', 'stdio', 'log-inode'])
+def test_private_supervisor_requires_exact_native_thread_and_transport(handoff, tmp_path, monkeypatch, problem):
+    lock, cwd, run = supervised_probe(handoff, tmp_path, monkeypatch, problem=problem)
+    try:
+        result = handoff._supervised_writer_cwd(str(lock), OTHER, 123, run)
+    except (OSError, ValueError):
+        result = None
+    assert result == (str(cwd) if problem in ('', 'legacy', 'linux-pipes', 'continuation-unavailable') else None)
+
+
+@pytest.mark.parametrize('change', ['', 'birth', 'lock', 'missing-identity'])
+def test_unresolved_retry_only_skips_wait_for_same_held_writer(handoff, target, tmp_path, monkeypatch, change):
+    lock = target['locks'] / f'{OTHER}.lock'
+    lock.touch()
+    birth = ['12:10:57']
+    def run(argv, **_):
+        if argv[0] == 'ps':
+            text = f'Tue Nov 10 {birth[0]} 2026 /opt/bin/shared-backend\n'
+            return subprocess.CompletedProcess(argv, int(change == 'missing-identity'), text, '')
+        return subprocess.CompletedProcess(argv, 0, '123\n' if '-t' in argv else 'p123\n', '')
+    with locked(lock, tmp_path):
+        with pytest.raises(handoff.UnresolvedWriterError) as caught:
+            handoff.assert_released(None, SID, str(target['cwd']), run, **options(target))
+        fingerprint = caught.value.fingerprint
+        assert bool(fingerprint) == (change != 'missing-identity')
+        if change == 'birth': birth[0] = '12:10:58'
+        if change == 'lock': fingerprint = ((OTHER, (0, 0), ()),)
+        monkeypatch.setattr(handoff, '_WRITER_SETTLE_SECONDS', 30)
+        waits = []
+        def wait(*args):
+            waits.append(True)
+            raise handoff.UnresolvedWriterError('waited')
+        monkeypatch.setattr(handoff, '_wait_cwd_owner', wait)
+        with pytest.raises(handoff.UnresolvedWriterError):
+            handoff.assert_released(None, SID, str(target['cwd']), run,
+                **options(target, unresolved_fingerprint=fingerprint))
+        assert bool(waits) == bool(change)
+
+
+@pytest.mark.parametrize('scope', ['other', 'same', 'selected'])
+def test_private_supervisor_owner_keeps_conflict_guards(handoff, target, tmp_path, monkeypatch, scope):
+    lock, cwd, run = supervised_probe(handoff, tmp_path, monkeypatch)
+    actual_lock = target['locks'] / f'{OTHER if scope != "selected" else SID}.lock'
+    actual_lock.touch()
+    def probe(argv, **kwargs):
+        if argv[0] == 'lsof' and '-t' in argv:
+            return subprocess.CompletedProcess(argv, 0, '123\n', '')
+        if argv[-1] == '-Fpn':
+            return subprocess.CompletedProcess(argv, 0, f'p123\nn{actual_lock}\n', '')
+        result = run(argv, **kwargs)
+        return subprocess.CompletedProcess(argv, result.returncode,
+            result.stdout.replace(str(lock), str(actual_lock)), result.stderr)
+    if scope == 'same':
+        checkpoint = tmp_path / 'private-runtime' / 'checkpoint.json'
+        data = json.loads(checkpoint.read_text())
+        data.update(workspace=str(target['cwd']), thread_workspace=str(target['cwd']))
+        checkpoint.write_text(json.dumps(data))
+    with locked(actual_lock, tmp_path):
+        if scope == 'other':
+            handoff.assert_released(None, SID, str(target['cwd']), probe, **options(target))
+        else:
+            with pytest.raises(ValueError, match='in this worktree' if scope == 'same' else 'selected Codex conversation'):
+                handoff.assert_released(None, SID, str(target['cwd']), probe, **options(target))
+        assert handoff._lock_held(str(actual_lock))
