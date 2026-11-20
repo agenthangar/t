@@ -887,8 +887,8 @@ provider termination cannot be confirmed. See [test runners](../docs/test-runner
 dev sessions   ● attached/loaded · ✓ active context · ↻ still in progress
 
   STATUS  SESSION  WORKING ON  LOC/CLD TOKEN%  TOOL  MODELS
-  ○       api-2    Fix login   69/31           ⬡     ★ cloud, local
-  ○ ▣     web-1    Review UI   —               ✱     ★ opus
+  ○       api-2    Fix login   69/31           ⬡     Lead gpt-6-astra · Build gpt-6.1-sol
+  ○ ▣     web-1    Review UI   —               ✱     Lead opus
 
   reattach: t open <repo> <slot>
 
@@ -1311,7 +1311,7 @@ protocol remain valid. The table remains read-only. History's DATE
 continues to describe retained activity.
 
 `t session list` keeps STATUS, SESSION and WORKING ON in that order. It reduces
-task width, wraps model names, then omits optional columns when necessary. Remote
+task and model widths and omits optional columns when necessary. Remote
 rows keep a separate HOST column when possible; otherwise the session is suffixed
 with @host. Timestamps use `HH:MM` when the full timestamp cannot fit. Count Unicode
 display columns and mark clipped values with an ellipsis. Redirected output retains
@@ -1957,8 +1957,13 @@ activity; completion never implies that an agent reviewed the result.
 
 `t ls` preserves STATUS, SESSION and WORKING ON first. Optional columns follow:
 LOC/CLD TOKEN% (observed input + output token percentage pair), TOOL (icon only),
-MODELS (a list with ★ on the lead), WATCHER, LAST TURN. Model lists may wrap; continuation
-lines never repeat status or session identity. Narrow screens omit optional columns.
+MODELS, WATCHER, LAST TURN. Each session uses one row. MODELS shows Lead followed
+by observed Plan, Build and Review models, separated by middle dots. A compact
+cell uses `+N` for stage models that do not fit. Narrow screens omit optional columns.
+Codex stage attribution requires a direct child conversation named `planning`,
+`implementation`, or `review` with recorded model usage. If a stage ran more than
+once, show the latest observed stage model. Older peers can show just Lead.
+Workflow settings and model history alone do not establish a stage.
 The legend retains attachment, active context, merged/still-in-progress, desktop
 and all tool icons. UI remains metadata; estimated costs live in usage details.
 

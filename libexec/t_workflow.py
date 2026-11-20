@@ -1482,6 +1482,9 @@ def _model_stage_text(policy, tool='codex'):
                        'The main conversation owns fixes, rechecks, PR updates, merge conflicts and required CI '
                        'through completion under the repository merge policy, selected delivery preferences '
                        'and existing authorization.')
+    stage_names = ('For Codex delegation, name the stage task `planning`, `implementation`, or `review` '
+                   'when the tool supports task names, so the session list can attribute observed model use. '
+                   if tool == 'codex' else '')
     if implementation_worker(policy):
         worker = f'{implement["model"]} worker' if implement['model'] else 'worker using the current session model'
         implementation_text = (f'Delegate implementation to a bounded {worker}; '
@@ -1516,6 +1519,7 @@ def _model_stage_text(policy, tool='codex'):
             f'reasoning settings. Do not blindly inherit the parent model. When model overrides '
             f'require fresh context, use it with a concise handoff containing the plan, relevant '
             f'repository instructions, acceptance criteria and implementation evidence. '
+            f'{stage_names}'
             f'Unless an explicit stage speed is configured, each sub-agent should inherit the parent agent\'s current speed/service tier '
             f'(including Fast or Ultrafast), independently of its model and reasoning effort. '
             f'Check the parent\'s current speed at delegation and at any supported subsequent-turn boundary; '

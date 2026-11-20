@@ -32,6 +32,49 @@ def test_inactive_desktop_gets_last_context_and_model_without_becoming_live(deta
     assert enriched[5:] == ['Investigate cache invalidation', 'codex', 'model-test', '-']
 
 
+def test_enrich_attributes_only_named_stages_with_verified_native_usage(details, monkeypatch):
+    module, home, codex = details
+    monkeypatch.setenv('XDG_STATE_HOME', str(home / 'state'))
+
+    def source(parent, stage):
+        return {'subagent': {'thread_spawn': {'parent_thread_id': parent, 'agent_path': f'/root/{stage}'}}}
+
+    def rollout(sid, spawn, model, measured):
+        path = codex / f'{sid}.jsonl'
+        events = [
+            ('session_meta', {'id': sid, 'source': spawn, 'model_provider': 'openai'}),
+            ('turn_context', {'model': model}),
+        ]
+        if measured:
+            events.append(('event_msg', {'type': 'token_count', 'info': {
+                'total_token_usage': {'input_tokens': 10, 'output_tokens': 4}}}))
+        path.write_text(''.join(json.dumps({'type': kind, 'payload': payload}) + '\n' for kind, payload in events))
+        return str(path)
+
+    lead = rollout('saved', 'cli', 'gpt-6-astra', False)
+    records = [
+        ('build', 'implementation', 'saved', 'gpt-6.1-sol', True),
+        ('unmetered', 'implementation', 'saved', 'unobserved', False),
+        ('review', 'review', 'saved', 'gpt-6-astra', True),
+        ('foreign', 'planning', 'another-parent', 'unrelated', True),
+        ('helper-task', 'investigation', 'saved', 'unlabelled', True),
+    ]
+    with sqlite3.connect(codex / 'state_5.sqlite') as db:
+        db.execute('update threads set rollout_path=? where id=?', (lead, 'saved'))
+        for time, (sid, stage, parent, model, measured) in enumerate(records):
+            path = rollout(sid, source(parent, stage), model, measured)
+            db.execute('insert into threads values (?,?,?,?,?,?,?,?,?)',
+                       (sid, '/wt/3', '', '', json.dumps(source('saved', stage)), 0, time, path, 'stale-model'))
+
+    row = 'saved\t/wt/3\tweb-3\tattached\tactive\tCurrent session title\tcodex'
+    enriched = module['enrich']([row], home, codex)[0].split('\t')
+    assert enriched[:7] == row.split('\t')
+    assert json.loads(enriched[9]) == {'model_stages': [
+        {'stage': 'implementation', 'model': 'gpt-6.1-sol'},
+        {'stage': 'review', 'model': 'gpt-6-astra'},
+    ]}
+
+
 @pytest.mark.parametrize('sid,state', [('missing', 'app'), ('-', 'attached')])
 def test_does_not_borrow_another_threads_context(details, sid, state):
     m, home, codex = details

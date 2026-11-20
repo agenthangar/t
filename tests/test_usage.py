@@ -152,17 +152,24 @@ def test_eval_list_show_same_picker(t_mod, tmp_path, monkeypatch):
 def test_approved_session_layout(t_mod,monkeypatch,width):
     monkeypatch.setattr(t_mod.sys.stdout,'isatty',lambda:True);monkeypatch.setattr(t_mod,'_columns',lambda:width)
     row=dict(slot='t-13',state='attached',context='active',agent='codex',model='cloud-model',summary='Fix parser #1 merged, still in progress',
-             usage={'lead_model':'cloud-model','models':[{'model':'cloud-model'},{'model':'local-model'}],'local_cloud_percent':[69,31]})
+             usage={'lead_model':'gpt-6-astra','models':[{'model':'historical-model'}],
+                    'model_stages':[{'stage':'review','model':'gpt-6-astra'},
+                                    {'stage':'implementation','model':'gpt-6.1-sol'}],
+                    'local_cloud_percent':[69,31]})
     lines=t_mod._session_table_lines([row])
     assert all(t_mod._display_width(v)<=width for v in lines)
     assert lines[0].index('STATUS')<lines[0].index('SESSION')<lines[0].index('WORKING')
     assert '● ✓ ↻' in lines[1]
+    assert len(lines) == 2
+    assert 'historical-model' not in lines[1]
     assert 'UI' not in lines[0] and 'EST' not in lines[0]
     if width>=220:
-        assert '69/31' in lines[1] and '★ cloud-model, local-model' in lines[1]
+        assert '69/31' in lines[1] and 'Lead gpt-6-astra · Build gpt-6.1-sol · Review gpt-6-astra' in lines[1]
         assert 'Codex' not in lines[1] and '⬡' in lines[1]
+    if width == 80:
+        assert 'Lead ' in lines[1] and '· +2' in lines[1]
     legend=t_mod._header(t_mod.Style(tty=False),'')
-    for mark in ('●','○','✓','↻','▣','★','✱','⬡','◆'):assert mark in legend
+    for mark in ('●','○','✓','↻','▣','✱','⬡','◆'):assert mark in legend
 
 
 def test_updated_claude_message_replaces_streaming_usage(usage,tmp_path):
