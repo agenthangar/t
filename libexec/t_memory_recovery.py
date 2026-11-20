@@ -9,6 +9,7 @@ import time
 
 GIB = 1024**3
 LIB = Path(__file__).resolve().parent
+_spinner = runpy.run_path(str(LIB / 't_progress.py'))['spinner']
 # Exclude terminal hosts conservatively, even when tmux detached from its parent.
 PROTECTED = {'com.apple.Terminal', 'com.googlecode.iterm2', 'com.mitchellh.ghostty',
              'dev.warp.Warp-Stable', 'net.kovidgoyal.kitty', 'org.alacritty',
@@ -39,7 +40,8 @@ def helper(name):
 
 
 def processes():
-    raw = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,uid=,rss=,lstart='], text=True, timeout=5)
+    with _spinner('Measuring application memory'):
+        raw = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,uid=,rss=,lstart='], text=True, timeout=5)
     result = {}
     for line in raw.splitlines():
         fields = line.split(None, 4)
@@ -62,7 +64,8 @@ def running_apps():
         raise ValueError('Application controls are available on macOS. Release memory using your operating system.')
     table = processes()
     protected = ancestors(table, os.getpid())
-    raw = subprocess.check_output(['/usr/bin/osascript', '-l', 'JavaScript', '-e', INVENTORY], text=True, timeout=10)
+    with _spinner('Listing applications'):
+        raw = subprocess.check_output(['/usr/bin/osascript', '-l', 'JavaScript', '-e', INVENTORY], text=True, timeout=10)
     result = []
     for app in json.loads(raw):
         app['name'] = ''.join(c for c in app['name'] if c.isprintable())[:200]
@@ -82,14 +85,15 @@ def quit_app(app):
     current = next((row for row in running_apps() if row['pid'] == app['pid']), None)
     if not current or any(current[k] != app[k] for k in ('identity', 'bundle', 'name')):
         return 'No longer eligible'
-    subprocess.run(['/usr/bin/osascript', '-l', 'JavaScript', '-e', QUIT, str(app['pid'])],
-                   check=True, capture_output=True, text=True, timeout=10)
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        process = processes().get(app['pid'])
-        if not process or process['identity'] != app['identity']:
-            return 'Quit'
-        time.sleep(.1)
+    with _spinner('Requesting app quit'):
+        subprocess.run(['/usr/bin/osascript', '-l', 'JavaScript', '-e', QUIT, str(app['pid'])],
+                       check=True, capture_output=True, text=True, timeout=10)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            process = processes().get(app['pid'])
+            if not process or process['identity'] != app['identity']:
+                return 'Quit'
+            time.sleep(.1)
     return 'Still open'
 
 

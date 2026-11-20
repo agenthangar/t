@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from contextlib import nullcontext
 
 import pytest
 from conftest import load_script
@@ -24,7 +25,9 @@ def memory(monkeypatch, tmp_path):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path/'state'))
     monkeypatch.delenv('TMUX', raising=False)
     monkeypatch.delenv('TMUX_PANE', raising=False)
-    return load_script(ROOT/'libexec/t_memory_recovery.py', 'memory_recovery_test')
+    module = load_script(ROOT/'libexec/t_memory_recovery.py', 'memory_recovery_test')
+    monkeypatch.setattr(module, '_spinner', lambda *a: nullcontext())
+    return module
 
 
 def test_live_shortfall_uses_physical_and_budget_constraints(runtime, provider, monkeypatch):

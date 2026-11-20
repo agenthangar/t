@@ -684,6 +684,10 @@
     "libexec/t_runtime_install.py:run:subprocess.Popen": {
       "kind": "passthrough",
       "reason": "Explicit reviewed runtime installation announces its phase and streams installer output; cancellation terminates the owned child group."
+    },
+    "libexec/t_session_models.py:run:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "After reviewed same-worktree handoff and verified source shutdown, the native Claude CLI owns the interactive terminal and renders its own progress."
     }
   },
   "shell": [
