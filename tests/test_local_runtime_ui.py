@@ -437,3 +437,51 @@ def test_runtime_install_command(ui_module, monkeypatch, capsys, t_mod):
     assert ui_module.command(args, {}) == 0
     assert calls == [('mlx-vlm', True)]
     assert 'already installed' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('choice,code', [('cancel', 130), ('install', 0)])
+def test_interactive_runtime_install_command_requires_review(ui_module, monkeypatch, capsys, t_mod, choice, code):
+    calls = []
+    monkeypatch.setattr(ui_module.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(ui_module.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(ui_module, 'helper', lambda name: {
+        'plan': lambda provider: dict(installed=False, steps=['Review runtime setup']),
+        'install': lambda provider: calls.append(provider) or dict(runtime=provider, changed=True),
+    })
+    ui = UI(choice)
+    args = t_mod.build_parser().parse_args(['config', 'models', 'runtime', 'install', 'ollama'])
+    assert ui_module.command(args, {'_RailUI': lambda: ui}) == code
+    assert 'Review runtime setup' in ui.pages[0][2]['context']
+    assert calls == (['ollama'] if code == 0 else [])
+    assert capsys.readouterr().out.strip() == (
+        'ollama installed.' if code == 0 else 'Runtime installation cancelled.')
+
+
+def test_runtime_menu_keeps_install_separate_from_toggle(ui_module, monkeypatch):
+    calls = []
+    row = dict(runtime='ollama', enabled=True, installed=False)
+
+    def install(provider):
+        calls.append(('install', provider))
+        row.update(installed=True)
+        return dict(runtime=provider, changed=True)
+
+    def toggle(provider, enabled):
+        calls.append(('toggle', provider, enabled))
+        row.update(enabled=enabled)
+        return dict(runtime=provider, enabled=enabled, changed=True, pending=True)
+
+    monkeypatch.setattr(ui_module, 'helper', lambda name: {
+        'inventory': lambda: [row],
+        'plan': lambda provider: dict(installed=False, steps=[]),
+        'install': install,
+    })
+    monkeypatch.setattr(ui_module, 'manager', lambda: {'set_runtime_enabled': toggle})
+    ui = UI('ollama', 'install', 'install', 'ollama', 'toggle', 'back')
+    ui_module.runtimes_menu(ui)
+    assert calls == [('install', 'ollama'), ('toggle', 'ollama', False)]
+    assert [entry[2]['values']['ollama'] for entry in ui.pages if entry[0] == 'Runtimes'] == [
+        'Enabled · Not installed', 'Enabled · Installed', 'Disabled · Installed',
+    ]
+    assert any('releasing owned models is pending' in ' '.join(entry[1])
+               for entry in ui.pages if entry[0] == 'Runtime updated')

@@ -1,4 +1,5 @@
 """Runtime installers use only synthetic binaries and sandbox homes."""
+import fcntl
 from pathlib import Path
 import subprocess
 import pytest
@@ -19,6 +20,29 @@ def test_inventory_does_not_launch_or_install(installer, monkeypatch):
     assert [r['runtime'] for r in rows] == list(m.RUNTIMES)
     assert rows[0] == {'runtime': 'mlx-vlm', 'enabled': True, 'installed': True}
     assert not (Path.home() / 'state').exists()
+
+
+def test_inventory_checks_runtime_executables_and_mlx_readiness(installer, monkeypatch):
+    lms = Path.home() / '.lmstudio/bin/lms'
+    lms.parent.mkdir(parents=True)
+    lms.touch()
+    monkeypatch.setattr(installer.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(installer, 'helper', lambda name: {
+        'python': lambda: Path('/fake/mlx-python'),
+        'available': lambda: None,
+    })
+    assert not installer.installed('lmstudio')
+    lms.chmod(0o700)
+    assert installer.installed('lmstudio')
+    assert installer.binary('mlx-vlm') == Path('/fake/mlx-python')
+    assert installer.installed('mlx-vlm')
+
+    def unavailable():
+        raise OSError('missing MLX runtime')
+    monkeypatch.setattr(installer, 'helper', lambda name: {'available': unavailable})
+    assert not installer.installed('mlx-vlm')
+    with pytest.raises(ValueError, match='Choose'):
+        installer.installed('invalid')
 
 
 def test_install_already_present_and_invalid(installer, monkeypatch):
@@ -76,6 +100,21 @@ def test_failed_install_does_not_claim_success(installer, monkeypatch):
         m.install('ollama')
 
 
+def test_concurrent_install_rechecks_readiness_under_lock(installer, monkeypatch):
+    root = Path.home() / '.local/share/t/runtime-install'
+    root.mkdir(parents=True)
+    monkeypatch.setattr(installer, 'plan', lambda provider: {'installed': False})
+    monkeypatch.setattr(installer, 'installed', lambda provider: True)
+    monkeypatch.setattr(installer, 'run', lambda *args: pytest.fail('installer ran'))
+    with (root / 'ollama.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ValueError, match='in progress'):
+            installer.install('ollama')
+    assert installer.install('ollama') == {
+        'runtime': 'ollama', 'installed': True, 'changed': False,
+    }
+
+
 @pytest.mark.parametrize('failure', [KeyboardInterrupt(), subprocess.TimeoutExpired('install', 1), ValueError('failed')])
 def test_cancel_and_failure_stop_installer_group(installer, monkeypatch, failure):
     m = installer; killed = []; waits = []
@@ -91,3 +130,32 @@ def test_cancel_and_failure_stop_installer_group(installer, monkeypatch, failure
     with pytest.raises(type(failure)):
         m.run(['installer'])
     assert killed == [(123, m.signal.SIGTERM)] and len(waits) == 2
+
+
+@pytest.mark.parametrize('exited', [False, True])
+def test_installer_failure_preserves_error_during_group_cleanup(installer, monkeypatch, exited):
+    calls = []
+
+    class Child:
+        pid = 123
+
+        def wait(self, timeout):
+            calls.append(timeout)
+            if len(calls) == 1:
+                return 7
+            if len(calls) == 3:
+                raise subprocess.TimeoutExpired('install', timeout)
+            return 0
+
+    def kill(pid, signal):
+        assert pid == Child.pid
+        calls.append(signal)
+        if exited:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(installer.subprocess, 'Popen', lambda *a, **kw: Child())
+    monkeypatch.setattr(installer.os, 'killpg', kill)
+    with pytest.raises(ValueError, match='exit code 7'):
+        installer.run(['installer'], timeout=10)
+    assert calls == ([10, installer.signal.SIGTERM] if exited else
+                     [10, installer.signal.SIGTERM, 5, installer.signal.SIGKILL, 5])

@@ -236,7 +236,7 @@ _dev_ps_snapshot() {
     _DEV_PS_COMM[$pid]=${comm:t}
     _DEV_PS_PPID[$pid]=$ppid
     _DEV_PS_KIDS[$ppid]="${_DEV_PS_KIDS[$ppid]:-} $pid"
-  done < <(ps -Axo pid=,ppid=,comm= 2>/dev/null)
+  done < <(ps -A -o pid=,ppid=,comm= 2>/dev/null)
   # tmux sanitizes a literal tab in -F to `_` on macOS (tmux 3.7c), so use a
   # printable separator. Without this the pane map is empty and a live Codex
   # child is invisible to the session PID resolver.

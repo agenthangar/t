@@ -34,8 +34,12 @@ HOOK = REPO_ROOT / "bin" / "t-session-start"
 PS_STUB = r"""#!/bin/bash
 # ps -o comm= -p <pid> | ps -o ppid= -p <pid>, answered from $FAKE_PS ("pid ppid comm").
 # `ps -Axo pid,comm` (the whole table — what _dev_fg_pids enumerates over) is answered
-# too; `-Axo pid,ppid,comm` deliberately is NOT, so _dev_ps_snapshot stays empty and the
-# walkers keep taking their per-pid fallback path, as every other test here assumes.
+# too. Only tests with FAKE_PS_SNAPSHOT opt in to a full snapshot; the rest
+# exercise the per-pid fallback.
+if [[ "$*" == "-A -o pid=,ppid=,comm=" ]]; then
+  [[ -n "${FAKE_PS_SNAPSHOT:-}" ]] && cat "$FAKE_PS"
+  exit 0
+fi
 if [[ "$1" == -ww ]]; then
   pid="${@: -1}"
   [[ -n "${FAKE_ARGS:-}" ]] && awk -v p="$pid" '$1==p {$1=""; print}' "$FAKE_ARGS"
@@ -484,12 +488,6 @@ def test_zsh_agent_of_session_reads_the_stamp_when_no_process(zsh):
 
 def test_session_pid_snapshot_uses_tmux_printable_separator(zsh, tmp_path):
     """tmux 3.7c renders a tab in -F as `_`; the pane map must survive that."""
-    ps = tmp_path / "stubbin" / "ps"
-    ps.write_text(PS_STUB.replace(
-        '[[ "$2" == pid,comm ]] && awk \'{print $1, $3}\' "$FAKE_PS"',
-        '[[ "$2" == pid,comm ]] && awk \'{print $1, $3}\' "$FAKE_PS"\n'
-        '  [[ "$2" == pid=,ppid=,comm= ]] && cat "$FAKE_PS"',
-    ))
     (tmp_path / "ps.txt").write_text(
         "4241 1 zsh\n"
         "4242 4241 /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/../CodexCLI.app/Contents/MacOS/codex\n"
@@ -497,6 +495,7 @@ def test_session_pid_snapshot_uses_tmux_printable_separator(zsh, tmp_path):
     r = zsh("_dev_ps_snapshot; [[ -z ${_DEV_PANE_PIDS[dev-api-4]:-} ]] || return 91; "
             "print -r -- pane=${_DEV_PANE_PIDS[dev-api-3]}; "
             "_dev_session_claude_pid dev-api-3",
+            FAKE_PS_SNAPSHOT="1",
             FAKE_PANES="dev-api-3|4241\ndev-api-4|not-a-pid")
     assert r.returncode == 0, r.stderr
     assert r.stdout.splitlines() == ["pane= 4241", "4242"]
