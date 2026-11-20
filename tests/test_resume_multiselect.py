@@ -12,7 +12,7 @@ FZF_ALL = """#!/usr/bin/env python3
 import os, sys, subprocess
 from pathlib import Path
 if '--help' in sys.argv:
-    print('--id-nth')
+    print('--id-nth --header-border')
     sys.exit()
 rows = sys.stdin.read().splitlines()
 Path(os.environ['FZF_LOG'] + '.initial').write_text('\\n'.join(rows))
