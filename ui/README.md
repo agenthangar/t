@@ -999,6 +999,10 @@ and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
+The resume picker labels the PR, slot, agent, activity, and working-on columns.
+All-repository views include REPO, and HOST appears when an origin is recorded.
+ACTIVITY shows the last user turn and, for live rows, the current owner status.
+Columns use the full snapshot to stay aligned when filtering or sorting.
 Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
 recorded), UNKNOWN, or MIXED. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
