@@ -22,7 +22,7 @@ def request(operation, payload=None, *, deadline=None):
     return _CACHE['request'](operation, payload)
 
 
-def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, refresh=False):
+def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, refresh=False, observe=False):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
     if host is not None:
@@ -32,6 +32,8 @@ def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline
                                          for host, target in targets.items()]}
     if refresh:
         payload['refresh'] = True
+    if observe:
+        payload['observe'] = True
     return request('discover', payload, **options)
 
 

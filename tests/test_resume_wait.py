@@ -304,3 +304,49 @@ def test_explicit_resume_refresh_preserves_snapshot_on_failure(t_mod, monkeypatc
         assert (tmp_path / 'source').read_text() == 'new source'
         assert status['timed_out'] == (outcome == 'timeout')
     assert calls == ([True, False] if outcome == 'complete' else [True])
+
+
+def test_observer_repaints_a_settled_host_before_a_pending_peer(t_mod, monkeypatch, tmp_path):
+    status_file = tmp_path / 'discovery-status'
+    def status(local, mini):
+        return dict(hosts=[dict(host='local', status=local), dict(host='mini', status=mini)])
+    status_file.write_text(json.dumps(status('refreshing', 'refreshing')))
+    clock, observed = [0], []
+    def discover(_, *, observe, deadline):
+        assert observe and deadline > clock[0]
+        return status('current', 'refreshing' if not observed else 'unreachable')
+    def stage(snapshot, *args):
+        (snapshot / 'source').write_text('New local row')
+    class Picker:
+        def __init__(self, count): pass
+        def request(self, actions):
+            if actions.startswith('execute-silent('):
+                t_mod._resume_picker_adopt(tmp_path)
+                (tmp_path / 'observed/ready').touch()
+                observed.append(json.loads(status_file.read_text()))
+    monkeypatch.setitem(sys.modules, 't_picker_close', SimpleNamespace(Picker=Picker))
+    monkeypatch.setattr(t_mod.signal, 'signal', lambda *a: None)
+    monkeypatch.setattr(t_mod, 'Config', lambda: None)
+    monkeypatch.setattr(t_mod, '_resume_picker_stage', stage)
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(discover=discover, resume_health=lambda view: view))
+    monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(t_mod.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + dt))
+    assert t_mod._resume_picker_observe(tmp_path, ['api'], None, []) == 0
+    assert observed == [status('current', 'refreshing'), status('current', 'unreachable')]
+    assert (tmp_path / 'source').read_text() == 'New local row'
+    assert not (tmp_path / 'observed').exists()
+
+
+def test_queued_observer_does_not_overwrite_a_superseding_manual_refresh(t_mod, tmp_path):
+    status = tmp_path / 'discovery-status'
+    status.write_text('new manual state')
+    source = tmp_path / 'source'
+    source.write_text('new manual rows')
+    observed = tmp_path / 'observed'
+    observed.mkdir()
+    (observed / 'base').write_text('old state')
+    (observed / 'discovery-status').write_text('settled old state')
+    (observed / 'source').write_text('older observed rows')
+    assert t_mod._resume_picker_adopt(tmp_path) == 0
+    assert status.read_text() == 'new manual state'
+    assert source.read_text() == 'new manual rows'

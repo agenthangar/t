@@ -974,7 +974,8 @@ immediately. Cold discovery and service recovery use the same wait/recovery rail
 as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
 no overall timeout for an advancing cold refresh; repeated service connection
 failures return to Retry / Cancel. The filtered picker reports the last refresh
-and the status of each host. Press Ctrl-U to refresh the same scope in place.
+and the status of each host. Refreshes already running when the picker opens
+update it as hosts finish. Press Ctrl-U to refresh the same scope on demand.
 The picker retains query, filter, and sort choices and uses the available
 snapshot if a host fails. Ctrl-R remains the repository filter in this picker
 and refreshes in plain slot history. Nonterminal, JSON, and private collector
@@ -1001,16 +1002,17 @@ and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
-The resume picker labels the PRS, WORK, SLOT, AGENT, LAST TURN, and WORKING ON
-columns. A bare command outside a registered repository includes a REPO column,
-as does `t session resume --all`. HOST appears when known.
+The resume picker always labels PRS, REPO, SLOT, AGENT, LAST TURN, and WORKING ON.
+A bare command outside a registered repository browses all repos, as does
+`t session resume --all`. HOST appears when results span hosts.
 LAST TURN shows the local date and time to the minute. The footer explains the
 latest verified close (↶), verified work in progress (↻), live ownership (●),
-and no recorded PR (—). WORK is independent of PR state.
+and no recorded PR (—). The work-in-progress icon appears in the left gutter
+independently of PR state. The gutter reserves space only when a row has evidence.
 Columns stay aligned when filtering or sorting. Timeouts use amber, active
 filtering and sort use highlighted labels, and column headings use high contrast.
-PRS shows up to two associated pull request numbers and their cached states,
-followed by a count of any additional PRs. A dash indicates no recorded PR, and
+PRS shows up to two associated pull request numbers with compact state suffixes
+(M merged, O open, C closed, ? unknown) and a count of any additional PRs. A dash indicates no recorded PR, and
 `?` indicates unavailable PR evidence.
 The picker refreshes stale states in the background. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.

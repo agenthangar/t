@@ -82,7 +82,7 @@ def picker(t_mod):
                      timestamp=f'2026-11-{number + 10}T10:00:00Z',
                      message=dict(role='user', content=title))) + '\n')
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False, warm_resume=False):
             env['T_HOME'] = str(ROOT)
             if slow_update:
                 library = root / 'slow/libexec'
@@ -166,7 +166,7 @@ def picker(t_mod):
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1', XDG_RUNTIME_DIR=directory,
                            T_LOCAL_RC=str(root / 'local.zsh'), CLAUDE_CONFIG_DIR=str(root / '.claude'),
-                           CODEX_HOME=str(root / '.codex'), T_DISCOVERY_COLLECTOR='0')
+                           CODEX_HOME=str(root / '.codex'), T_DISCOVERY_COLLECTOR='0', TMUX_TMPDIR=directory)
                 (root / 'repo').mkdir()
                 config = f'DEV_REPOS[repo]={shlex.quote(str((root / "repo").resolve()))}\n'
                 (root / 'local.zsh').write_text(config)
@@ -175,6 +175,37 @@ def picker(t_mod):
                 if not empty:
                     saved_resume_row(1, 'First Task')
                     saved_resume_row(2, 'Second Task')
+                if warm_resume:
+                    # Pause only the shared cache's local collector after seeding
+                    # its retained snapshot. The picker and its read-only zsh row
+                    # renderer still execute their real code.
+                    stub = root / 'zsh'
+                    stub.write_text('''#!/bin/sh
+case "$*" in
+  *'_dev_session_rows --details'*)
+    if [ -f "$HOME/hold-collector" ]; then
+      while [ -f "$HOME/hold-collector" ]; do sleep .05; done
+    fi
+    ;;
+esac
+exec /bin/zsh "$@"
+''')
+                    stub.chmod(0o700)
+                    env['PATH'] = directory + os.pathsep + env['PATH']
+                    command = [str(ROOT / 'bin/t'), '__resume-candidates', '--all']
+                    deadline = time.monotonic() + 8
+                    while True:
+                        seed = subprocess.run(command, env=env, capture_output=True, text=True, timeout=5, cwd=root)
+                        if 'Second Task' in seed.stdout:
+                            break
+                        assert time.monotonic() < deadline, seed.stderr
+                        time.sleep(.1)
+                    (root / 'hold-collector').touch()
+                    saved_resume_row(3, 'New Task')
+                    cache = ('import runpy, sys; runpy.run_path(sys.argv[1])'
+                             '["request"]("event", {"targets": ["local"]})')
+                    subprocess.run([sys.executable, '-c', cache, str(ROOT / 'libexec/t_session_cache.py')],
+                                   env=env, check=True, cwd=root)
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'cd "$HOME"\n'
                           '_t_resume_history_launch() { print -r -- "LAUNCHED $*" >> "$HOME/selected"; return 99; }\n'
@@ -264,7 +295,9 @@ def picker(t_mod):
             return tmux('send-keys', *values)
         keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
         keys.saved_resume_row = saved_resume_row
+        keys.release_collector = lambda: (root / 'hold-collector').unlink(missing_ok=True)
         yield start, wait, keys, finish
+        keys.release_collector()
         tmux('kill-server', check=False)
 
 
@@ -296,6 +329,22 @@ def test_empty_public_resume_can_refresh_in_a_short_terminal(picker):
     keys('C-u')
     screen = wait('1/1 (0)', absent=['No matching conversations'])
     assert '▸' in screen and 'REPO' in screen
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-resume-refresh', mode='resume', warm_resume=True, width=105, height=24)
+    wait('Refreshing local', focused='Second Task')
+    keys('-l', 'Task')
+    keys('Tab')
+    wait('(1)', focused='First Task')
+    keys.release_collector()
+    stable_ids = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
+    screen = wait('3/3 (1)' if stable_ids else '3/3 (0)', focused='First Task' if stable_ids else None,
+                  absent=['Refreshing local'])
+    assert 'New Task' in screen and 'local current' in screen and '> Task' in screen
     assert finish('Escape', status=130) == []
 
 

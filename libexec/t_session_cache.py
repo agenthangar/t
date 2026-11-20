@@ -171,6 +171,8 @@ def request(operation, payload=None, *, deadline=None):
         return _wire(operation, payload) if deadline is None else _wire(operation, payload, deadline)
     except (OSError, ValueError):
         pass
+    if operation == 'discover' and payload.get('observe') is True:
+        return {'hosts': [], 'loading': False, 'unavailable': True}
     if operation == 'artifact':
         return {'value': None}  # Standalone live collectors must not start a daemon.
     # The daemon holds its own lifetime lock. Multiple requesting processes may
@@ -409,27 +411,29 @@ class _Memory:
                 return {'invalidated': targets}
             if operation != 'discover':
                 raise ValueError('unknown session cache operation')
+            observe = payload.get('observe') is True
             hosts = []
             for spec in payload.get('hosts', []):
                 if not isinstance(spec, dict) or not isinstance(spec.get('target'), str):
                     raise ValueError('invalid discovery host')
                 # Friendly aliases do not create a second host cache.
                 key = _digest({k: v for k, v in spec.items() if k != 'host'})
-                if self.loading:
+                if self.loading and not observe:
                     self.waiting[key] = spec
                 entry = self.entries.get(key)
-                if entry is None and not self.loading:
+                if entry is None and not self.loading and not observe:
                     entry = self.entries.setdefault(key, dict(spec=spec, checked=0, retry=0, refreshing=False))
                 if entry is not None:
-                    self._overlay(entry)
                     now = self.clock()
                     failure = self.failures.get(spec['target'], {})
-                    entry['last_used'] = now
+                    if not observe:
+                        self._overlay(entry)
+                        entry['last_used'] = now
                     retry = failure.get('retry_at', 0)
                     missing = any(field not in entry.get('value', {}) for field in payload.get('fields', []) if field in ('rows', 'resume', 'catalog', 'mcp', 'scopes'))
                     force = payload.get('refresh') is True and spec['target'] not in self.active_targets and not entry.get('pending')
                     stale = bool(entry.get('dirty')) or not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
-                    if (not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets
+                    if (not observe and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets
                             and (force or ((stale or missing or entry.get('pending')) and now >= retry
                                            and now >= entry.get('next_poll', 0)))):
                         entry['refreshing'] = True

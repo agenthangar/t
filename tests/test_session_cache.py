@@ -143,6 +143,25 @@ def test_explicit_refresh_coalesces_without_evicting_retained_rows(engine, cache
     assert not refreshed['refreshing'] and refreshed['value']['rows'] == 'New rows'
 
 
+def test_observing_discovery_neither_schedules_nor_renews_collectors(engine, cache):
+    memory, now, jobs, _ = engine
+    discover(memory)
+    drain(jobs)
+    existing = next(iter(memory.entries.values()))
+    last_used = existing['last_used']
+    now[0] += cache.TTL + 1
+    def observe():
+        return memory.handle('discover', {'hosts': [spec(), spec('new')], 'observe': True})
+    saved = observe()['hosts']
+    assert saved[0]['stale'] and saved[0]['value'] and saved[1]['value'] is None
+    assert not jobs and len(memory.entries) == 1 and existing['last_used'] == last_used
+    discover(memory)
+    assert observe()['hosts'][0]['refreshing']
+    assert len(jobs) == 1
+    drain(jobs)
+    assert not observe()['hosts'][0]['refreshing'] and not jobs
+
+
 def drain(jobs):
     callback, *args = jobs.pop(0)
     callback(*args)

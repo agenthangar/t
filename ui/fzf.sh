@@ -232,7 +232,15 @@ _t_fzf_filtered() (
   fi
   umask 077
   _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || return 1
-  trap '[ ! -f "$_t_picker_dir/update.pid" ] || kill "$(cat "$_t_picker_dir/update.pid")" 2>/dev/null; rm -rf -- "$_t_picker_dir"' EXIT
+  # shellcheck disable=SC2329
+  _t_picker_cleanup() {
+    for _t_picker_pid_file in "$_t_picker_dir/update.pid" "$_t_picker_dir/observe.pid"; do
+      _t_picker_pid=$(cat "$_t_picker_pid_file" 2>/dev/null) || continue
+      kill "$_t_picker_pid" 2>/dev/null
+    done
+    rm -rf -- "$_t_picker_dir"
+  }
+  trap '_t_picker_cleanup' EXIT
   trap 'exit 130' HUP INT TERM
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
   export T_PICKER_STATE="$_t_picker_dir/show-all" T_PICKER_TOGGLE="$_t_picker_dir/toggle"
@@ -478,6 +486,18 @@ SH
         # shellcheck disable=SC2016
         _t_picker_bind="${_t_picker_bind},ctrl-u:${_t_picker_track}${T_PICKER_CLEAR_MARKS}"'execute(sh -c "$T_PICKER_REFRESH_CALLBACK" </dev/tty >/dev/tty)+execute-silent(sh "$T_PICKER_TOGGLE" current)+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
       fi
+      case ${T_PICKER_DISCOVERY_STATUS:-} in
+        *'"status": "refreshing"'*)
+          if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
+            export FZF_API_KEY T_PICKER_TRACK="$_t_picker_track"
+            FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+            # The worker stages rows privately. fzf adopts them alongside its
+            # normal filter and sort actions through its authenticated listener.
+            # shellcheck disable=SC2016
+            set -- --listen=127.0.0.1:0 --bind='start:execute-silent(T_PICKER_OBSERVE=1 sh -c "exec $T_PICKER_REFRESH_CALLBACK" </dev/null >/dev/null 2>&1 & echo $! > "$T_PICKER_VIEWS/observe.pid")' "$@"
+          fi
+          ;;
+      esac
       if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then
         set -- --footer="$(cat "$_t_picker_dir/footer")" --footer-border=none "$@"
       fi

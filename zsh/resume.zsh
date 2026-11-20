@@ -661,7 +661,7 @@ _t_resume() {
 
   # Measure display widths from the full snapshot so filtering cannot move a
   # column. Keep the verified merged aggregate in the private selection fields.
-  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_text pr_count pr_aggregate slot_label pr_display no_pr_display work_display slot_display agent_display slot_width
+  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_text pr_count pr_aggregate slot_label pr_display no_pr_display slot_display agent_display slot_width
   local -a f cells pr_cells host_cells slot_cells
   local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 i=1
   for c in "${(@)cands}"; do
@@ -679,7 +679,11 @@ _t_resume() {
       elif [[ $pr_aggregate != "$pr_state" ]]; then
         pr_aggregate=MIXED
       fi
-      (( ++pr_count <= 2 )) && pr_text+="${pr_text:+  }#$pr_number ${(L)pr_state}"
+      if (( ++pr_count <= 2 )); then
+        pr_symbol=${pr_state[1]}
+        [[ $pr_state != UNKNOWN ]] || pr_symbol='?'
+        pr_text+="${pr_text:+ }#$pr_number$pr_symbol"
+      fi
     done
     (( pr_count > 2 )) && pr_text+=" +$(( pr_count - 2 ))"
     if [[ -z $pr_text && $f[13] != NONE && $f[13] != UNKNOWN ]]; then
@@ -712,16 +716,14 @@ _t_resume() {
     (( i++ ))
   done
   _pr_state_flush
-  row_format='%s  %s  '
+  row_format="%s  %-${rw}s  "
   printf -v pr_display "%-${pw}s" PRS
   printf -v no_pr_display '—%*s' $(( pw - 1 )) ''
-  cells=("$pr_display" WORK)
+  cells=("$pr_display" REPO)
   local period=$days
   [[ $days == all ]] || period+="d"
   if [[ -n $all_mode ]]; then
     fprompt="resume ($period)> "
-    row_format+="%-${rw}s  "
-    cells+=(REPO)
   else
     fprompt="resume $repo ($period)> "
   fi
@@ -730,7 +732,7 @@ _t_resume() {
   printf -v agent_display "%-${aw}s" AGENT
   cells+=("$slot_display" "$agent_display")
   if (( ow )); then
-    (( ow < 4 )) && ow=4
+    (( ow < 5 )) && ow=5
     row_format+="%-${ow}s  "
     cells+=(HOST)
   fi
@@ -749,15 +751,12 @@ _t_resume() {
     else
       printf -v pr_display "%-${pw}s" "$pr_cells[$i]"
     fi
-    work_display='    '
-    [[ ${f[16]:--} != yes ]] || work_display='↻   '
-    cells=("$pr_display" "$work_display")
-    [[ -n $all_mode ]] && cells+=("$f[1]")
+    cells=("$pr_display" "$f[1]")
     slot_width=${#f[2]}
     [[ $f[7] == - ]] || (( slot_width += 2 ))
     printf -v slot_display '%s%*s' "$slot_cells[$i]" $(( sw - slot_width )) ''
     cells+=("$slot_display" "$agent_display")
-    (( ow )) && cells+=("$host_cells[$i]")
+    (( ow )) && cells+=("${host_cells[$i]:-local}")
     cells+=("$f[5]" "$f[6]")
     cands[$i]+=$'\t'"$(printf "$row_format" "${cells[@]}")"
     (( i++ ))

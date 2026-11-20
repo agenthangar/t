@@ -36,7 +36,8 @@ def metadata(source, profile):
                 host='local' if host == 'here' else host, repo=repo, session=slot,
                 turn=fields[10] if len(fields) > 11 else '-',
                 pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN',
-                closed=fields[13] if len(fields) > 14 and location == '-' else '-')
+                closed=fields[13] if len(fields) > 14 and location == '-' else '-',
+                work=len(fields) > 16 and fields[15] == 'yes')
         else:
             if len(fields) < 7:
                 continue
@@ -139,6 +140,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     resume = profile == 'resume'
     lines = list(status[:3] if tight_resume else status)
     if not compact:
+        if resume and lines:
+            lines.append('')
         lines.append(style('HOTKEYS', 'heading'))
     if resume:
         actions = ['Enter/Esc' if compact else 'Enter resume', 'Tab ✓',
@@ -193,7 +196,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if legend:
         lines.append(style(clip_columns(legend, width)))
     if columns:
-        lines.append(style(clip_columns(columns, width)))
+        lines.append(style(clip_columns(columns, width), 'action' if resume else 'hint'))
     return '\n'.join(lines) + '\n'
 
 
@@ -406,7 +409,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     sort_file.write_text(sort)
     sort_enabled_file.write_text('1' if sort_enabled else '0')
     total = sum(bool(row) for row in (directory / 'all').read_text().splitlines())
-    if profile == 'resume' and any(record['closed'] != '-' for record in records.values()):
+    if profile == 'resume':
         selected = mark_resume('\n'.join(selected), records).splitlines()
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
     status = []
@@ -438,8 +441,8 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         if not selected:
             status.append('No matching conversations')
         if columns:
-            if any(record['closed'] != '-' for record in records.values()):
-                columns = ('↶ ' if latest_closed(records) else '  ') + columns
+            latest, close_gutter, work_gutter = resume_gutters(records)
+            columns = (('↶ ' if latest else '  ') if close_gutter else '') + ('  ' if work_gutter else '') + columns
             if os.environ.get('T_PICKER_LEGACY_COLUMNS') == '1':
                 columns = '  ' + columns
         legend = resume_legend(width)
@@ -460,13 +463,17 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
 
 
 def resume_legend(width):
-    if width >= 108:
-        return '↶ latest verified close in these results · ↻ work in progress · ● live · — no PR recorded'
+    close = '↶ latest verified close in these results' if width >= 108 else '↶ latest verified close'
+    markers = close + ' · ↻ work in progress · ● live · — no PR'
+    states = 'M merged · O open · C closed · ? unknown'
+    if width >= display_width(markers + ' · ' + states):
+        return markers + ' · ' + states
     if width >= 64:
-        return '↶ latest verified close · ↻ work in progress · ● live · — no PR'
-    if width >= 38:
-        return '↶ latest close · ↻ in progress · ● live\n— no PR recorded'
-    return '↶ latest close · ↻ WIP\n● live · — no PR'
+        return markers + '\n' + states
+    if width < 38:
+        return '↶ latest close · ↻ WIP\n● live · — no PR · M/O/C/?'
+    markers = '↶ latest close · ↻ WIP · ● live'
+    return '\n'.join(pack([markers, '— no PR', 'M merged · O open', 'C closed · ? unknown'], width))
 
 
 def resume_health(health, width, color):
@@ -505,15 +512,27 @@ def resume_health(health, width, color):
     return pack(healthy, width)
 
 
+def resume_gutters(records):
+    return (latest_closed(records), any(record['closed'] != '-' for record in records.values()),
+            any(record.get('work') for record in records.values()))
+
+
 def mark_resume(source, records=None):
-    latest = latest_closed(metadata(source, 'resume') if records is None else records)
+    records = metadata(source, 'resume') if records is None else records
+    latest, close_gutter, work_gutter = resume_gutters(records)
+    if not close_gutter and not work_gutter:
+        return source.rstrip('\n')
+    color = os.environ.get('T_PICKER_COLOR') == '1'
     result = []
     for line in source.splitlines():
         fields = line.split('\t')
-        marker = '↶' if tuple(fields[:3]) == latest else ' '
-        if marker == '↶' and os.environ.get('T_PICKER_COLOR') == '1':
-            marker = paint(marker, 'heading')
-        fields[-1] = marker + ' ' + fields[-1]
+        key = tuple(fields[:3])
+        close = '↶' if key == latest else ' '
+        work = '↻' if records.get(key, {}).get('work') else ' '
+        prefix = ((paint(close, 'heading') if color and close != ' ' else close) + ' ' if close_gutter else '')
+        if work_gutter:
+            prefix += (paint(work, 'warning') if color and work != ' ' else work) + ' '
+        fields[-1] = prefix + fields[-1]
         result.append('\t'.join(fields))
     return '\n'.join(result)
 
