@@ -1778,6 +1778,40 @@ completion. Public instructions use `session resume`.
 
 ### Local inference activity
 
+Fresh local-only Codex sessions in tmux expose **Prefix F6** session controls.
+Verification (for example, **Verified on this Mac at 32K**) and live availability
+are separate: **Waiting for memory · 5.0 GiB short** uses the scheduler's current
+physical-memory, budget and GPU constraints. Auxiliary queued requests cannot
+hide this blocker. Details retain elapsed time, deadline and the cause on timeout.
+The native conversation stays queued while the user explores either action.
+
+**Free memory…** shows already released idle, unpinned t-owned models. macOS
+applications are sorted by estimated resident memory with nothing selected.
+Space marks apps; Enter reviews their names; **Quit selected apps** sends normal
+quit requests. Save dialogs remain owned by each app; an app that remains running
+is **Still open**. Terminal hosts, runtime/provider applications, system services
+and other users' apps are excluded. External models link to their provider's
+controls. Measure physical memory after every quit; estimates never authorize
+admission. Expiry requires explicit **Retry**, never automatic resubmission.
+Read-only request lists and JSON never open these controls or quit applications.
+
+**Choose model…** offers Local, OpenAI and Claude using shared selection and
+review. Each local model shows verification and current availability using the
+scheduler's memory calculation, including loaded/generating, memory shortfall,
+disabled runtime and unknown measurements. Browsing never loads a model.
+Review the destination, unchanged worktree, bounded context and screenshot
+support. Missing model readiness or image capability disables that destination.
+Retain PNG/JPEG attachments privately and verify their contents before handoff.
+Stop the owned Codex backend before launching the destination. Failed handoffs
+retain the source conversation and checkpoint. Native `/model` keeps the native
+provider's supported controls; Prefix F6 is the cross-provider entry point.
+Existing user F6 bindings are preserved. Unsupervised worker-only panes offer
+memory recovery and direct users to their native model controls; they never
+invent a conversation export. After a Claude handoff, its native `/model` owns
+model selection; further cross-provider export requires a supported controller.
+Existing managers upgrade only when idle; active requests are never restarted
+to install these controls.
+
 In an owned tmux pane, local lead and worker launches add a compact
 `local MODEL · inferring` status segment only during observed model requests.
 Loading, work between requests, idle and failure are separate states. Pane ancestry

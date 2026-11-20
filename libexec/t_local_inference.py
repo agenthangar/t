@@ -1101,6 +1101,13 @@ def lead(argv, cwd=None, chosen=None, runner=None):
             raise ValueError('Choose an installed model from the catalog')
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
+    if runner is None and not leased and os.environ.get('TMUX_PANE') and os.isatty(0) and os.isatty(1):
+        try:
+            helper('t_offline')['launch_options'](argv, cwd or os.getcwd())
+        except ValueError:
+            print('Cross-provider controls unavailable for this invocation; using native model controls.', file=sys.stderr)
+        else:
+            return helper('t_session_models')['run'](argv, chosen, cwd or os.getcwd())
     w = helper('t_local_worker')
     with helper('t_local_status')['Activity'](chosen['model']) as activity, lead_client(chosen, activity, leased) as client:
         base, alias = client.base, leased['alias'] if leased else chosen['model']
@@ -1111,6 +1118,12 @@ def lead(argv, cwd=None, chosen=None, runner=None):
         except (OSError, ValueError):
             pass  # Telemetry must not block an otherwise valid local-only launch.
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
+        if hasattr(client, 'info'):
+            env['T_LOCAL_CLIENT_ID'] = client.info.get('id', '')
+        verification = f"Verified on this Mac at {chosen['context_tokens']//1024}K" if fit.get('ready') else 'Verification unavailable'
+        env['T_LOCAL_VERIFICATION'] = verification
+        if hasattr(activity, 'update_memory'):
+            activity.update_memory(verification=verification)
         codex_home = Path(env['CODEX_HOME'])
         if trusted_workspace(cwd or os.getcwd()):
             (codex_home/'config.toml').write_text('[projects.'+json.dumps(str(Path(cwd or os.getcwd()).resolve()))+']\ntrust_level = "trusted"\n')

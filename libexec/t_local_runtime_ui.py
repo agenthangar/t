@@ -61,7 +61,8 @@ def request_lines(row):
             'Queue time  ' + str(row.get('queue_seconds', 0)) + 's',
             'Execution   ' + str(row.get('execution_seconds', 0)) + 's',
             'Tokens      ' + str(row.get('tokens') if row.get('tokens') is not None else 'not reported'),
-            *([clean(row['error'])] if row.get('error') else [])]
+            *([clean(row['error'])] if row.get('error') else []),
+            *(helper('t_memory_recovery')['details'](row) if row.get('memory') else [])]
 
 
 def page(ui, title, lines):
@@ -101,10 +102,13 @@ def requests_menu(ui):
         while True:
             row = next((x for x in manager()['status']().get('requests', []) if x['id'] == picked), row)
             active = row['state'] not in ('completed', 'cancelled', 'failed', 'timed_out', 'busy', 'unknown')
-            action = ui.pick('Request ' + row['id'][:12], [('refresh', 'Refresh'), ('cancel', 'Cancel request'), ('back', 'Back')],
+            actions = [('memory', 'Free memory…')] if row.get('memory') else []
+            action = ui.pick('Request ' + row['id'][:12], actions + [('refresh', 'Refresh'), ('cancel', 'Cancel request'), ('back', 'Back')],
                              context=request_lines(row), disabled={} if active else {'cancel': 'This request is not active.'})
             if action in (None, 'back'):
                 break
+            if action == 'memory':
+                helper('t_memory_recovery')['free_memory'](ui, lambda: next((x for x in manager()['status']().get('requests', []) if x['id'] == picked), row))
             if action == 'cancel':
                 try:
                     cancel_request(row['id'], ui)
