@@ -15,9 +15,11 @@ import sys
 
 OWNERS = runpy.run_path(str(Path(__file__).with_name('t_codex_ownership.py')))
 STORE = runpy.run_path(str(Path(__file__).with_name('t_codex_store.py')))
+_spinner = OWNERS['_spinner']
 UUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z')
 
 
+@_spinner('Checking Codex app sessions')
 def run(args):
     return subprocess.run(args, capture_output=True, text=True, timeout=5)
 
