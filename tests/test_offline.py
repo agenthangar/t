@@ -375,3 +375,16 @@ def test_new_input_invalidates_exhausted_outage(offline, tmp_path):
     event(c, 'turn/started', turn={})
     event(c, 'error', error=error())
     assert c.network_since is None
+
+
+@pytest.mark.parametrize('native_cwd', [None, 'relative', 'matching', 'different'])
+def test_checkpoint_saves_only_explicit_native_workspace(offline, tmp_path, native_cwd):
+    checkpoint = offline.Checkpoint(tmp_path, tmp_path)
+    checkpoint.client({'id': 1, 'method': 'thread/start', 'params': {}})
+    thread = {'id': 'main'}
+    if native_cwd is not None:
+        thread['cwd'] = str(tmp_path if native_cwd == 'matching' else tmp_path / 'other') if native_cwd != 'relative' else 'relative'
+    checkpoint.server({'id': 1, 'result': {'thread': thread}})
+    saved = json.loads((tmp_path / 'checkpoint.json').read_text())
+    expected = str(tmp_path if native_cwd == 'matching' else tmp_path / 'other') if native_cwd in ('matching', 'different') else None
+    assert saved['thread_workspace'] == expected

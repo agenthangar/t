@@ -94,8 +94,9 @@ once, including source and owner validation. Failures preserve a bounded shell
 cause and identify which readiness field changed (session, workspace, agent or
 conversation). They never relax ownership checks. It never switches to the latest
 conversation in that slot or force-opens a fresh context. A second failure retains
-the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
-calls never prompt. When the shell captures an owner on stdout, render recovery
+the diagnostic. When Repair finds the same unresolved lock and holder again, it
+reports the refusal after a fresh scan without a second settling wait. Cancel returns
+130 and stops the batch. Redirected and machine calls never prompt. When the shell captures an owner on stdout, render recovery
 on the original terminal stderr, keeping the owner protocol clean.
 
 Saved resume failures retain bounded, sanitized lifecycle diagnostics instead of
@@ -105,8 +106,11 @@ identity is compared. These diagnostics never weaken the ownership checks.
 
 Missing Codex metadata can also be scoped through a verified standalone CLI: its
 process identity, sole thread lock, and working directory must remain stable across
-two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
-evidence remain blocked. This fallback never deletes a lock or stops its owner.
+two live probes, including when the CLI uses t’s fast-mode launch options. For
+t’s supervised private Codex backend, the verifier can match the exact thread
+and workspace in its checkpoint to the live supervisor, stdio pipes and runtime
+log. Shared backends, cwd overrides on standalone clients, unsupported modes,
+and ambiguous evidence remain blocked. These checks never delete a lock or stop its owner.
 
 Development preview: `python3 scripts/preview_session_repair.py` exercises the
 shared repair rail with sample data. Use `open` for numbered-open recovery or
