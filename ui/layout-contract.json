@@ -23,7 +23,8 @@
         "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
         "tests/test_picker_ui.py::test_open_discovery_notice_keeps_focused_row_visible",
         "tests/test_design_geometry.py::test_real_picker_columns_do_not_shift_on_search",
-        "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state"
+        "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state",
+        "tests/test_external_codex.py::test_external_picker_renders_and_reveals_hidden_sessions"
       ],
       "renderers": [
         "fzf"

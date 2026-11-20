@@ -13621,7 +13621,8 @@ REMOTE SESSIONS
   further prompts; ownership checks still apply.
 
   Initially shows only unattached sessions with clean, merged work; pending or
-  uncertain work stays hidden.
+  uncertain work stays hidden. Ctrl-F reveals standalone terminal sessions and
+  loaded Codex app conversations too; the header counts hidden results.
 
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
   Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
@@ -13634,9 +13635,13 @@ REMOTE SESSIONS
   Explicit numbers default to the cwd repo, so `t session close 3` kills this repo's
   slot 3 and `t session close all` kills every slot for it.
 
-  A foreground / :fg row from `t session list` (a bare `claude`, or one in a tmux
+  A foreground / :fg row from `t session list` (a bare `codex` or `claude`, or one in a tmux
   session of its own) is killed by its shown SESSION name — `t session close
   ff:p4242` or `t session close <short-id>` — since it is not a dev slot.
+
+  Codex app conversations appear as <folder>:app-<thread-id>. Open or close these
+  in Codex; t never stops a shared backend to close one conversation. Saved,
+  unloaded conversations appear in `t session resume`, not the close picker.
 
   Explicit targets confirm while an agent is live unless `-y`; `-r` kills it on its
   remote host instead.""")
