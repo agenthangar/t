@@ -328,12 +328,21 @@ Tab mark ✓"
   # New fzf versions retain marks for identities still visible after reload.
   # Older versions clear marks explicitly so a hidden target cannot be accepted.
   export T_PICKER_CLEAR_MARKS='deselect-all+'
-  case "$(command fzf --help </dev/null 2>/dev/null)" in
+  _t_picker_fzf_help=$(command fzf --help </dev/null 2>/dev/null)
+  case $_t_picker_fzf_help in
     *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
   esac
   if [ -n "$_t_picker_source" ]; then
     printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
     if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
+      # fzf 0.58 added --header-border and began using the actual marker and
+      # pointer widths for header indentation. Older versions assume two cells.
+      if [ -n "$_t_picker_columns" ]; then
+        case $_t_picker_fzf_help in
+          *--header-border*) ;;
+          *) export T_PICKER_COLUMNS="  $_t_picker_columns" ;;
+        esac
+      fi
       printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
       # The persistent warning needs another row; fzf 0.44 otherwise exhausts
       # its 60%-height window at 80x24 before rendering a focused session.

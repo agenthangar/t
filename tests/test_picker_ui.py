@@ -129,6 +129,8 @@ def picker(t_mod):
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
             if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
+            if profile == 'resume-closed':
+                mode_env += 'T_PICKER_COLUMNS="WORKING ON" '
             if profile == 'list-rich':
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/source")" T_PICKER_COLUMNS="SESSION TASK" '
             if mode == 'kill':
