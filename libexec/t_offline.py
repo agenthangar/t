@@ -72,6 +72,7 @@ class Checkpoint:
         self.directory, self.cwd = directory, str(Path(cwd).resolve())
         self.retry_seconds = RETRY_WINDOW if retry_seconds is None else retry_seconds
         self.thread = self.turn = None
+        self.thread_workspace = None
         self.users, self.evidence, self.pending = [], deque(maxlen=8), {}
         self.invalid, self.network_since, self.failed = '', None, False
         self.model = None
@@ -91,6 +92,7 @@ class Checkpoint:
     def save(self):
         private_write(self.directory/'checkpoint.json', {
             'workspace': self.cwd, 'thread_id': self.thread, 'turn_id': self.turn,
+            'thread_workspace': self.thread_workspace,
             'cloud_model': self.model, 'requests': self.users, 'recent_evidence': list(self.evidence),
             'startup_failure': self.startup_failure,
             'attachments': self.attachments,
@@ -234,6 +236,9 @@ class Checkpoint:
                 if thread.get('id'):
                     self.startup_failure = False
                     self.thread, self.turn = thread['id'], None
+                    native_cwd = thread.get('cwd')
+                    self.thread_workspace = (str(Path(native_cwd).resolve())
+                        if isinstance(native_cwd, str) and os.path.isabs(native_cwd) else None)
                     self.users.clear(); self.evidence.clear()
                     if self.seed:
                         self.users.extend(self.seed.users)

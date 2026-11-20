@@ -1466,7 +1466,7 @@
           "tests": [
             "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "discovery_wait": {
@@ -1696,7 +1696,7 @@
           "tests": [
             "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "bounded_wait": {

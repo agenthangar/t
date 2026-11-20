@@ -154,7 +154,7 @@ def _shell(base, env, script, *, cwd=None):
     return _run(["zsh", "-lic", script], env=env, cwd=cwd or base, timeout=60)
 
 
-def _shell_tty(base, env, script):
+def _shell_tty(base, env, script, *, timeout=25):
     argv = ["zsh", "-lic", script]
     master, slave = pty.openpty()
     try:
@@ -165,7 +165,7 @@ def _shell_tty(base, env, script):
         # Drain while the command runs: a progress rail can fill the PTY buffer
         # and block the child if the parent waits for exit before reading.
         chunks = []
-        deadline = time.monotonic() + 25
+        deadline = time.monotonic() + timeout
         while True:
             if select.select([master], [], [], 0.1)[0]:
                 try:

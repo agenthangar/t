@@ -1449,3 +1449,39 @@ def test_unavailable_history_is_not_reported_as_empty(app, history, monkeypatch,
     output = capsys.readouterr()
     assert 'unavailable' in output.err
     assert 'No matching' not in output.out
+
+
+def test_repair_rechecks_same_workspace_without_repeating_settle_wait(app, history, tmp_path, monkeypatch):
+    workspace = tmp_path / 'saved-worktree'
+    source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace))
+    row = {'agent': 'codex', 'sid': 'selected'}
+    probes = []
+    class Unresolved(ValueError):
+        fingerprint = ('sibling-lock', 'holder-birth')
+
+    def probe(*args, **options):
+        probes.append(options.get('unresolved_fingerprint'))
+        if len(probes) == 1:
+            raise Unresolved('workspace unavailable')
+
+    helpers = history.runpy.run_path
+    def load(path, *args, **kwargs):
+        if str(path).endswith('t_codex_ownership.py'):
+            return {'assert_released': probe, 'UnresolvedWriterError': Unresolved}
+        if str(path).endswith('t_open_recovery.py'):
+            return {'ask': lambda *args: True}
+        return helpers(path, *args, **kwargs)
+    monkeypatch.setattr(history.runpy, 'run_path', load)
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *args: {})
+    monkeypatch.setenv('T_RESUME_REPAIR', '1')
+    monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(history.sys.stderr, 'isatty', lambda: True)
+    app.api['_run'] = lambda *args: None
+    def resume(alias, selected):
+        app.codex_released(selected, source, workspace=str(workspace))
+        app.codex_released(selected, source, workspace=str(tmp_path / 'other'))
+        return selected['sid']
+    monkeypatch.setattr(app, 'resume', resume)
+    assert app.resume_with_repair('repo', row) == 'selected'
+    assert probes == [None, Unresolved.fingerprint, None]
+    assert app.repair_writer is None
