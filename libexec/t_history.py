@@ -23,7 +23,8 @@ import uuid
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["resolve_repo"]
 
-_codex_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))["rows"]
+_CODEX_STORE = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))
+_codex_rows = _CODEX_STORE["rows"]
 
 _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
 
@@ -116,12 +117,15 @@ def validate(record):
         record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
     if 'work_in_progress' in record and type(record['work_in_progress']) is not bool:
         raise HistoryError('invalid work status')
-    for field in ('model', 'model_source', 'summary', 'summary_source', 'interface'):
+    if 'title_kind' in record and (not isinstance(record['title_kind'], str)
+                                   or record['title_kind'] not in _RESUME_SOURCE['TITLE_KINDS']):
+        raise HistoryError('invalid title provenance')
+    for field in ('title', 'model', 'model_source', 'summary', 'summary_source', 'interface'):
         if field in record and not isinstance(record[field], str):
             raise HistoryError('invalid recorded display metadata')
     if record.get('interface', 'unknown') not in ('cli', 'desktop', 'foreground', 'unknown'):
         raise HistoryError('invalid recorded interface')
-    for field in ('model_updated', 'summary_updated', 'interface_updated'):
+    for field in ('title_updated', 'model_updated', 'summary_updated', 'interface_updated'):
         if field in record and (not isinstance(record[field], (int, float)) or not math.isfinite(record[field]) or not 0 <= record[field] <= 253402300799):
             raise HistoryError('invalid display metadata timestamp')
     for field in ('associations', 'sources', 'prs', 'mentions'):
@@ -226,19 +230,18 @@ class Store:
         key = json.dumps([record['repo'], record['agent'], record['sid']])
         existing = self.db.execute('select record from conversations where key=?', (key,)).fetchone()
         old = json.loads(existing[0]) if existing else {}
-        merged = {**old, **record, 'version': VERSION}
-        for field in ('title', 'model', 'summary', 'interface'):
+        merged = {**old, **record, **_RESUME_SOURCE['verified_title'](record, old), 'version': VERSION}
+        for field in ('model', 'summary', 'interface'):
             incoming_known = record.get(field) not in (None, '', '-', 'unknown')
             old_known = old.get(field) not in (None, '', '-', 'unknown')
             incoming_time = record.get(field + '_updated', record.get('updated', 0))
             old_time = old.get(field + '_updated', old.get('updated', 0))
             if old_known and (not incoming_known or incoming_time < old_time):
                 merged[field] = old[field]
-                if field in ('model', 'summary', 'interface'):
-                    merged[field + '_updated'] = old_time
+                merged[field + '_updated'] = old_time
                 if field + '_source' in old:
                     merged[field + '_source'] = old[field + '_source']
-            elif incoming_known and field in ('model', 'summary', 'interface'):
+            elif incoming_known:
                 merged[field + '_updated'] = incoming_time
         for field in ('associations', 'prs', 'mentions', 'sources'):
             values = old.get(field, []) + record.get(field, [])
@@ -286,6 +289,24 @@ def timestamp(value):
         return datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp()
     except (ValueError, TypeError):
         return 0
+
+
+def codex_title(row, index_name):
+    """Prefer a persisted name and identify a stored copy of the first prompt."""
+    sql_name = clean(row.get('name'))
+    indexed = clean(index_name.get('thread_name'))
+    sql_updated = timestamp(row.get('updated_at_ms') or row.get('updated_at'))
+    indexed_updated = timestamp(index_name.get('updated_at'))
+    if indexed and (not sql_name or indexed_updated > sql_updated):
+        title, kind, observed = indexed, 'name', indexed_updated
+    elif sql_name:
+        title, kind, observed = sql_name, 'name', sql_updated
+    else:
+        prompt = clean(row.get('first_user_message'))
+        title = clean(row.get('title')) or prompt
+        kind = 'prompt' if title and prompt.startswith(title) else 'unknown'
+        observed = sql_updated
+    return dict(title=title, title_kind=kind, title_updated=observed)
 
 
 def pr_refs(text):
@@ -539,9 +560,10 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                     if not record['associations'] or any(record['associations'][-1].get(key) != association.get(key) for key in ('workspace', 'branch', 'commit')):
                         record['associations'].append(association)
                 if row.get('type') in ('custom-title', 'ai-title'):
-                    record['title'] = clean(row.get('customTitle') or row.get('aiTitle'))
-                    if record['title']:
-                        record.update(summary=record['title'], summary_source='transcript title', summary_updated=record['updated'])
+                    title = clean(row.get('customTitle') or row.get('aiTitle'))
+                    if title:
+                        record.update(title=title, title_kind='name', title_updated=record['updated'],
+                                      summary=title, summary_source='transcript title', summary_updated=record['updated'])
                 message = payload if agent == 'codex' else row.get('message', {})
                 if not isinstance(message, dict):
                     continue
@@ -550,7 +572,7 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                 blocks = content if isinstance(content, list) else [{'text': content}]
                 text = ' '.join(str(b.get('text', '')) for b in blocks if isinstance(b, dict))
                 if role == 'user' and not record['title'] and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
-                    record['title'] = clean(text)[:200]
+                    record.update(title=clean(text)[:200], title_kind='prompt', title_updated=record['updated'])
                 if role == 'user' and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
                     record.update(summary=record['title'] or clean(text), summary_source='transcript', summary_updated=record['updated'])
                 if not metadata_only and role in ('user', 'assistant'):
@@ -718,30 +740,32 @@ def resume_candidate(row, alias, association, host):
                               association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
                               clean(row['title']), host, row['agent'], row.get('last_turn', '-'), row['repo'],
                               state, _SORT['closed_time'](row), refs or '-',
-                              'yes' if row.get('work_in_progress') else '-']))
+                              'yes' if row.get('work_in_progress') else '-', _RESUME_SOURCE['title_kind'](row)]))
 
 
-def worktree_has_pending_work(workspace, branch, merged_heads, published_heads, deadline):
-    def git(*args):
+def worktree_has_pending_work(workspace, branch, baselines, published_heads, deadline, *, exact_owner=False):
+    def git(*args, optional=False):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise HistoryError('work status deadline exceeded')
         return run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', workspace, *args],
-                   timeout=min(1, remaining)).strip()
+                   timeout=min(1, remaining), optional=optional).strip()
 
     try:
-        if not branch or git('symbolic-ref', '--quiet', '--short', 'HEAD') != branch:
+        current = git('symbolic-ref', '--quiet', '--short', 'HEAD')
+        if not current or (current != branch and not exact_owner):
             return False
         if git('status', '--porcelain'):
             return True
-        if not merged_heads:
+        if not baselines:
             return False
         head = git('rev-parse', 'HEAD')
-        if head in merged_heads or head in published_heads:
+        if head in baselines or head in published_heads():
             return False
-        if not any(git('merge-base', head, merged) == merged for merged in sorted(merged_heads)):
+        if not any(git('merge-base', head, baseline, optional=True) == baseline for baseline in baselines):
             return False
-        default_refs = ('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master')
+        default_refs = ('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master',
+                        'refs/heads/main', 'refs/heads/master')
         refs = git('for-each-ref', '--format=%(refname)', *default_refs).splitlines()
         base = next((ref for ref in default_refs if ref in refs), '')
         if not base:
@@ -751,7 +775,8 @@ def worktree_has_pending_work(workspace, branch, merged_heads, published_heads, 
             return False
         tree = git('rev-parse', 'HEAD^{tree}')
         # A squash merge changes the commit ID but can publish the same tree.
-        return tree not in git('log', '--first-parent', '--format=%T', common + '..' + base).splitlines()
+        return (tree != git('rev-parse', common + '^{tree}')
+                and tree not in git('log', '--first-parent', '--format=%T', common + '..' + base).splitlines())
     except HistoryError:
         return False
 
@@ -1087,6 +1112,7 @@ class HistoryCommand:
         # Codex names and relocated workspaces can change without appending a
         # rollout. Read its index once, independently of transcript file stamps.
         native = []
+        native_names = _CODEX_STORE['session_names'](codex)
         for database in sorted(codex.glob('state_*.sqlite'), reverse=True):
             try:
                 native = [dict(row) for row in _codex_rows(database, 'select * from threads',
@@ -1165,7 +1191,7 @@ class HistoryCommand:
                 value['prs'] = value.get('prs', []) + [dict(repo=p.get('repo') or identity, number=p['number'],
                     url=f'https://github.com/{p.get("repo") or identity}/pull/{p["number"]}') for p in value.pop('pr_numbers', [])]
             self.store.merge(value)
-        indexed = {}
+        indexed, indexed_sids = {}, set()
         by_source = {s['path']: record for record in self.store.records() for s in record.get('sources', [])
                      if s.get('host') == 'local' and s.get('path') in paths}
         for row in native:
@@ -1174,8 +1200,9 @@ class HistoryCommand:
             if (not original or original['agent'] != 'codex' or original['sid'] != row.get('id')
                     or '"subagent"' in str(row.get('source', ''))):
                 continue
-            title = clean(row.get('name') or row.get('title') or row.get('first_user_message'))
-            value = dict(repo=original['repo'], agent='codex', sid=row['id'], title=title, summary=title,
+            metadata = codex_title(row, native_names.get(row['id'], {}))
+            indexed_sids.add(row['id'])
+            value = dict(repo=original['repo'], agent='codex', sid=row['id'], **metadata, summary=metadata['title'],
                          summary_source='index', model=clean(row.get('model')) or '-',
                          model_source='index' if row.get('model') else 'unknown',
                          updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')),
@@ -1186,6 +1213,15 @@ class HistoryCommand:
             indexed[name] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
             if indexed[name] != old.get('index', {}).get(name) or name in self.catalog_changed_paths:
                 self.store.merge(value)
+                self.catalog_changed_paths.add(name)
+        for name, original in by_source.items():
+            sid = original['sid']
+            if original['agent'] != 'codex' or sid in indexed_sids or sid not in native_names:
+                continue
+            metadata = codex_title({}, native_names[sid])
+            indexed[name] = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
+            if indexed[name] != old.get('index', {}).get(name) or name in self.catalog_changed_paths:
+                self.store.merge({**{key: original[key] for key in ('repo', 'agent', 'sid')}, **metadata})
                 self.catalog_changed_paths.add(name)
         rows = []
         for original in self.store.records():
@@ -1407,6 +1443,7 @@ class HistoryCommand:
         self.discovery_identities[alias] = identity
         home = Path.home()
         codex = Path(os.environ.get('CODEX_HOME') or home / '.codex')
+        native_names = _CODEX_STORE['session_names'](codex)
         for directory, pattern, agent in [(home / '.claude/projects', '*/*.jsonl', 'claude'),
                                            (codex / 'sessions', '**/rollout-*.jsonl', 'codex'),
                                            (codex / 'archived_sessions', '**/rollout-*.jsonl', 'codex')]:
@@ -1444,11 +1481,19 @@ class HistoryCommand:
                     row = dict(row)
                     if '"subagent"' in str(row.get('source', '')):
                         continue
-                    value = dict(agent='codex', sid=row.get('id', ''), title=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
+                    sid = row.get('id', '')
+                    metadata = codex_title(row, native_names.get(sid, {}))
+                    value = dict(agent='codex', sid=sid, **metadata, summary=metadata['title'], summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
                     self.ingest(value, alias)
                 break
             except sqlite3.Error:
                 continue
+        for original in self.store.records():
+            sid = original['sid']
+            if (original['agent'] == 'codex' and original['repo'] == identity and sid in native_names
+                    and any(source.get('host') == 'local' for source in original.get('sources', []))):
+                self.store.merge({**{key: original[key] for key in ('repo', 'agent', 'sid')},
+                                  **codex_title({}, native_names[sid])})
 
     def export(self, alias):
         self.check_auth()
@@ -1604,29 +1649,49 @@ class HistoryCommand:
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
 
-    def annotate_resume_work(self, rows, live=None):
-        """Check the latest captured worktree association once per local path."""
+    def annotate_resume_work(self, rows, live=()):
+        """Check each worktree against its exact live owner or captured generation."""
+        owners_by_path = {}
+        for owner in live:
+            owners_by_path.setdefault(owner['cwd'], set()).add((owner['agent'], owner['sid']))
         by_workspace = {}
         for row in rows:
             row.pop('work_in_progress', None)
             for association in row.get('associations', []):
-                if association.get('host') == 'local' and association.get('generation') and association.get('slot'):
+                if association.get('host') == 'local' and association.get('slot'):
                     by_workspace.setdefault(association['workspace'], []).append((row, association))
         deadline = time.monotonic() + 3
-        live = live or {}
         aliases = {**self.local_identities, **self.discovery_identities}
         legacy = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
         published = {}
-        for workspace, entries in by_workspace.items():
+        def published_heads(repo):
+            if repo not in published:
+                published[repo] = cached_merged_heads(legacy, repo, deadline)
+            return published[repo]
+
+        def workspace_order(item):
+            workspace, entries = item
+            return workspace in owners_by_path, max(entry[1].get('observed', 0) for entry in entries)
+        for workspace, entries in sorted(by_workspace.items(), key=workspace_order, reverse=True):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             if not (Path(workspace) / '.git').is_file():
                 continue
-            row, captured = max(entries, key=lambda entry: entry[1].get('observed', 0))
+            owners = {owner for cwd, identities in owners_by_path.items()
+                      if cwd == workspace or cwd.startswith(workspace.rstrip('/') + '/') for owner in identities}
+            if len(owners) > 1:
+                continue
+            if owners:
+                matching = [(row, a) for row, a in entries if (row['agent'], row['sid']) in owners]
+            else:
+                matching = [(row, a) for row, a in entries if a.get('generation')]
+            if not matching:
+                continue
+            row, captured = max(matching, key=lambda entry: entry[1].get('observed', 0))
             observed = captured.get('observed', 0)
-            if any((other['agent'], other['sid']) != (row['agent'], row['sid']) and evidence.get('observed', 0) == observed
-                   for other, evidence in entries):
+            if not owners and any((other['agent'], other['sid']) != (row['agent'], row['sid'])
+                   and evidence.get('observed', 0) >= observed for other, evidence in entries):
                 continue
             latest = max(row['associations'], key=lambda entry: entry.get('observed', 0))
             if latest['workspace'] != workspace or latest.get('host') != 'local':
@@ -1634,10 +1699,8 @@ class HistoryCommand:
             if not any(repo == row['repo'] and workspace in self.cfg.worktree_paths(alias, captured['slot'])
                        for alias, repo in aliases.items() if alias in self.cfg.repos):
                 continue
-            if any(sid != row['sid'] and (info.get('cwd') == workspace or
-                   (info.get('cwd') or '').startswith(workspace.rstrip('/') + '/')) for sid, info in live.items()):
-                continue
-            if generation(workspace, timeout=min(1, remaining)) != captured['generation']:
+            current_generation = generation(workspace, timeout=min(1, remaining))
+            if not current_generation or (not owners and current_generation != captured['generation']):
                 continue
             merged_heads = set()
             for pr in row.get('prs', []):
@@ -1650,11 +1713,18 @@ class HistoryCommand:
                 if re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', head):
                     merged_heads.add(head.lower())
             repo = row['repo']
-            if merged_heads and repo not in published:
-                published[repo] = cached_merged_heads(legacy, repo, deadline)
-            if worktree_has_pending_work(workspace, captured.get('branch'), merged_heads, published.get(repo, ()), deadline):
+            baselines = merged_heads
+            if not baselines:
+                revisions = [a for r, a in entries if r is row
+                             and (a.get('generation') == current_generation or owners)
+                             and re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', a.get('commit', ''))]
+                if revisions:
+                    initial = min(revisions, key=lambda a: a.get('observed', 0))
+                    baselines = {initial['commit'].lower()}
+            if worktree_has_pending_work(workspace, captured.get('branch'), baselines, lambda: published_heads(repo),
+                                         deadline, exact_owner=bool(owners)):
                 remaining = deadline - time.monotonic()
-                if remaining > 0 and generation(workspace, timeout=min(1, remaining)) == captured['generation']:
+                if remaining > 0 and generation(workspace, timeout=min(1, remaining)) == current_generation:
                     row['work_in_progress'] = True
 
     def pick(self, rows, alias, limit=50, page=1, query='', multi=False):

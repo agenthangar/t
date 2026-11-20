@@ -1002,7 +1002,10 @@ and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
-The resume picker always labels PRS, REPO, SLOT, AGENT, LAST TURN, and WORKING ON.
+The resume picker always labels PRS, REPO, SLOT, AGENT, LAST TURN, and TITLE.
+TITLE prefers the recorded conversation name. A `Prompt:` prefix identifies
+an opening prompt used as a fallback. `Saved label:` identifies older display
+text whose source cannot be verified.
 A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
 LAST TURN shows the local date and time to the minute. The footer explains the
@@ -1012,7 +1015,7 @@ independently of PR state. The gutter reserves space only when a row has evidenc
 Columns stay aligned when filtering or sorting. Timeouts use amber, active
 filtering and sort use highlighted labels, and column headings use high contrast.
 PRS shows up to two associated pull request numbers with compact state suffixes
-(M merged, O open, C closed, ? unknown) and a count of any additional PRs. A dash indicates no recorded PR, and
+(◆ merged, ○ open, × closed, ? unknown) and a count of any additional PRs. A dash indicates no recorded PR, and
 `?` indicates unavailable PR evidence.
 The picker refreshes stale states in the background. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.

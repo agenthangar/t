@@ -1010,7 +1010,8 @@ def test_sequential_poll_uses_first_structured_result(history, tmp_path):
 
 
 @pytest.mark.parametrize('mode', ['dirty', 'clean', 'open', 'new-sid', 'live-owner', 'stale-generation',
-                                  'new-branch', 'commits', 'published', 'published-pr'])
+                                  'new-branch', 'commits', 'published', 'published-pr', 'live-exact',
+                                  'no-generation', 'open-commits', 'saved-new-sid'])
 def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history, git_repo, mode):
     workspace = Path(app.cfg.worktree_root) / 'repo/repo-1'
     repo = app.cfg.repos['repo']
@@ -1019,15 +1020,23 @@ def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history,
     app.discovery_identities['repo'] = 'org/repo'
     row = saved_row(app, git_repo, workspace)
     rows = [row]
-    live = {}
-    if mode in ('dirty', 'new-sid', 'live-owner', 'stale-generation', 'new-branch', 'commits', 'published', 'published-pr'):
+    live = []
+    if mode not in ('clean', 'open'):
         (workspace / 'tracked').write_text('local change\n')
     if mode == 'open':
         row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
     if mode == 'new-sid':
         rows.append(saved_row(app, git_repo, workspace, sid='later', observed=2))
     if mode == 'live-owner':
-        live['later'] = {'cwd': str(workspace)}
+        live.append(dict(agent='codex', sid='later', cwd=str(workspace)))
+    if mode in ('no-generation', 'live-exact'):
+        row['associations'][0]['generation'] = ''
+    if mode == 'live-exact':
+        live.append(dict(agent='codex', sid=row['sid'], cwd=str(workspace)))
+    if mode == 'saved-new-sid':
+        replacement = saved_row(app, git_repo, workspace, sid='later', observed=2)
+        replacement['associations'][0]['generation'] = ''
+        rows.append(replacement)
     if mode == 'stale-generation':
         row['associations'][0]['generation'] = 'previous'
     if mode == 'new-branch':
@@ -1046,9 +1055,14 @@ def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history,
             tip = history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD'])
             (cache.parent / 'org#repo#8.head').write_text(tip)
         history.run(['git', '-C', repo, 'update-ref', 'refs/remotes/origin/main', 'main'])
+    if mode == 'open-commits':
+        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
+        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Open working branch'])
+        row['associations'].append({**row['associations'][0], 'evidence': 'close', 'observed': 2,
+                                    'commit': history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD']).strip()})
     app.annotate_resume_work(rows, live)
     fields = history.resume_candidate(row, 'repo', row['associations'][0], 'local').split('\t')
-    assert fields[14] == ('yes' if mode in ('dirty', 'commits') else '-')
+    assert fields[14] == ('yes' if mode in ('dirty', 'commits', 'open-commits', 'live-exact') else '-')
     if mode == 'new-sid':
         assert rows[-1].get('work_in_progress') is True
 

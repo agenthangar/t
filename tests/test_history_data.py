@@ -473,6 +473,23 @@ def test_empty_index_title_does_not_erase_durable_title(store):
     assert store.merge(conversation(title=''))['title'] == 'Retained conversation title'
 
 
+def test_codex_sqlite_prompt_copy_remains_prompt(history):
+    title = history.codex_title(dict(name=' ', title='Shortened opening prompt',
+        first_user_message='Shortened opening prompt with additional details'), {})
+    assert title['title'] == 'Shortened opening prompt'
+    assert title['title_kind'] == 'prompt'
+    label = history.codex_title(dict(title='Unclassified stored title',
+        first_user_message='Opening prompt with additional details'), {})
+    assert label['title'] == 'Unclassified stored title'
+    assert label['title_kind'] == 'unknown'
+
+
+def test_legacy_recorded_title_is_not_replaced_by_newer_prompt(store):
+    store.merge(conversation(title='Recorded title', summary='Recorded title', summary_source='transcript title'))
+    merged = store.merge(conversation(title='An opening prompt', title_kind='prompt', updated=20))
+    assert (merged['title'], merged['title_kind']) == ('Recorded title', 'name')
+
+
 @pytest.mark.parametrize('command,expected', [
     ('env SAFE=1 command gh pr checkout 8 -R Org/Repo', [('org/repo', 8)]),
     ('gh pr edit 9 --repo=Other/Repo', [('other/repo', 9)]),
@@ -1002,7 +1019,7 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-', '-']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-', '-', '-', 'unknown']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
 

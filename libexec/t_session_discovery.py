@@ -13,6 +13,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 _CACHE = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
+_verified_title = runpy.run_path(str(ROOT / 'libexec/t_resume_source.py'))['verified_title']
 _spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 
 
@@ -260,7 +261,7 @@ def candidates(view, aliases, slot=None):
     for host in view.get('hosts', []):
         for raw in (host.get('value') or {}).get('resume', []):
             fields = raw.split('\t')
-            if len(fields) not in (12, 13, 14, 15) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
+            if len(fields) not in (12, 13, 14, 15, 16) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
                 continue
             if slot is not None and fields[2] != slot:
                 continue
@@ -314,6 +315,20 @@ def apply_remote(wire, previous):
     return value, delta['changed']
 
 
+def active_resume_owners(rows):
+    """Only the inventory's verified live targeting identities can prove ownership."""
+    owners = []
+    for line in rows.splitlines():
+        fields = line.split('\t')
+        if len(fields) < 7:
+            continue
+        sid, cwd, _, state, context, _, agent = fields[:7]
+        if (sid not in ('', '-') and cwd.startswith('/') and context == 'active'
+                and state in ('attached', 'detached', 'foreground', 'app') and agent in ('codex', 'claude')):
+            owners.append(dict(sid=sid, cwd=cwd, agent=agent))
+    return owners
+
+
 def collect(spec, api):
     """Bounded worker; caller is the cache service, never the display path."""
     started = time.monotonic()
@@ -348,7 +363,7 @@ def collect(spec, api):
             catalog['diagnostics'] = auth
             timings['history_seconds'] = round(time.monotonic() - stage, 4)
             stage = time.monotonic()
-            cache_key = 'display-v5:' + _CACHE['_digest'](spec.get('context', {}))
+            cache_key = 'display-v6:' + _CACHE['_digest'](spec.get('context', {}))
             previous = request('artifact', {'key': cache_key}).get('value') or {}
             state = {}
             old_context = previous.get('mcp', {})
@@ -392,7 +407,7 @@ def collect(spec, api):
             records = catalog.get('conversations', [])
             if records:
                 history.pr_states(records)
-                history.annotate_resume_work(records, ctx.get('live'))
+                history.annotate_resume_work(records, active_resume_owners(row_text))
             projections, dirty = {}, []
             for record in records:
                 key = _CACHE['record_key'](record)
@@ -482,7 +497,7 @@ def collect(spec, api):
             kept = []
             for candidate in previous.get('resume', []):
                 f = candidate.split('\t')
-                if len(f) in (12, 13, 14, 15) and _CACHE['record_key']({'repo': f[10], 'agent': f[8], 'sid': f[3]}) not in removed:
+                if len(f) in (12, 13, 14, 15, 16) and _CACHE['record_key']({'repo': f[10], 'agent': f[8], 'sid': f[3]}) not in removed:
                     kept.append(candidate)
             value['resume'] = kept + list(_catalog_candidates({**catalog, 'conversations': changed}, history, spec['target']))
         timings['import_seconds'] = round(time.monotonic() - stage, 4)
@@ -525,6 +540,7 @@ class SnapshotStore:
                     old = merged[key]
                     if row.get('updated', 0) < old.get('updated', 0):
                         old, row = row, old
+                    row.update(_verified_title(row, old))
                     for field in ('sources', 'associations'):
                         row[field] += old.get(field, [])
                 merged[key] = row

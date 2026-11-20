@@ -13972,9 +13972,11 @@ REMOTE SESSIONS
 PICKER CONTROLS
   Tab marks rows with ✓. Ctrl-U refreshes this picker and reports host status.
   Ctrl-/ shows details for the focused row.
-  PRS lists related pull requests with M (merged), O (open), C (closed), or ?.
+  PRS shows pull requests with ◆ merged, ○ open, × closed, or ? unknown.
   ↻ in the left gutter marks verified work in progress. LAST TURN shows the
-  local date and time. REPO is present in every view.
+  local date and time. TITLE uses the saved name when available.
+  A Prompt: prefix identifies a fallback to the conversation’s opening prompt.
+  REPO is present in every view.
   Run from outside a registered repo to browse all repos.
 
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.

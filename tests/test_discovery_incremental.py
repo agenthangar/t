@@ -241,12 +241,39 @@ def test_native_rename_refreshes_without_reparsing_unchanged_rollout(app, histor
                    ('one', app.cfg.repos['repo'], str(path), 'Original name', time.time() + 1))
     first = app.local_catalog()
     assert first['conversations'][0]['title'] == 'Original name'
+    assert first['conversations'][0]['title_kind'] == 'name'
+    with path.open('a') as stream:
+        stream.write(json.dumps({'type': 'response_item', 'payload': {
+            'role': 'user', 'content': [{'text': 'This should not replace the native name'}]}}) + '\n')
+    os.utime(path, (time.time() + 5, time.time() + 5))
+    assert app.local_catalog()['conversations'][0]['title'] == 'Original name'
     monkeypatch.setattr(store, 'scan', lambda *a, **k: pytest.fail('Unchanged rollout was reparsed'))
     with sqlite3.connect(database) as db:
         db.execute('update threads set name=?, updated_at=?', ('Renamed', time.time() + 2))
     assert app.local_catalog()['conversations'][0]['title'] == 'Renamed'
     assert app.catalog_changed_paths == {str(path)}
     app.local_catalog()
+    assert not app.catalog_changed_paths
+
+
+def test_codex_session_index_names_exact_rollout_without_sqlite(app, history, monkeypatch):
+    artifacts = {}
+    def request(op, payload):
+        if 'value' in payload:
+            artifacts[payload['key']] = copy.deepcopy(payload['value'])
+        return {'value': copy.deepcopy(artifacts.get(payload['key']))}
+    monkeypatch.setattr(history, '_CACHE_REQUEST', request)
+    app.cache_discovery = True
+    codex = Path(os.environ['CODEX_HOME'])
+    path = transcript_file(codex / 'sessions/rollout-one.jsonl', codex_rows(app.cfg.repos['repo'], sid='one'))
+    before, = app.local_catalog()['conversations']
+    assert before['title_kind'] == 'prompt'
+    index = codex / 'session_index.jsonl'
+    index.write_text(json.dumps(dict(id='one', thread_name='Native name', updated_at='2026-11-20T00:00:00Z')) + '\n')
+    after, = app.local_catalog()['conversations']
+    assert (after['title'], after['title_kind']) == ('Native name', 'name')
+    assert app.catalog_changed_paths == {str(path)}
+    assert app.local_catalog()['conversations'] == [after]
     assert not app.catalog_changed_paths
 
 

@@ -295,11 +295,13 @@ _t_resume() {
   # is running ANYWHERE becomes a live row pointing at its owner.
   # live_sid[sid] = loc \t alias \t slot \t summary \t agent, loc = here | <host>
   # | fg:<host> (a foreground owner: alias = its `t open` label, slot = -).
-  local -A live_sid live_sid_agent; local _lh _ls _lc _ln _lst _lctx _lsm _lag2
+  local -A live_sid live_sid_agent live_owner_sid
+  local _lh _ls _lc _ln _lst _lctx _lsm _lag2
   while IFS=$'\t' read -r _lh _ls _lc _ln _lst _lctx _lsm _lag2; do
     [[ -n $_ls && $_ls != - && -n $_ln ]] || continue
     live_sid_agent[$_ls]=${_lag2:-claude}
     [[ $_lh == local ]] && _lh=here
+    live_owner_sid[$_lh/$_ln]=$_ls
     if [[ $_ln == *:* ]]; then
       live_sid[$_ls]="fg:${_lh}"$'\t'"$_ln"$'\t'-$'\t'"$_lsm"$'\t'"${_lag2:-claude}"
     else
@@ -495,7 +497,8 @@ _t_resume() {
   # conversation may have moved, or several selections may share it.
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_emitted
+  local -A history_seen history_emitted live_titles live_work
+  local live_identity live_host
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
@@ -534,7 +537,7 @@ _t_resume() {
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 15 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 16 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
@@ -542,7 +545,17 @@ _t_resume() {
     # every pending transcript again for each history row.
     (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
     [[ -z $slot || $history_fields[3] == $slot ]] || continue
+    title=$history_fields[7]
+    case ${history_fields[16]:-} in
+      prompt) title="Prompt: $title" ;;
+      unknown) title="Saved label: $title" ;;
+    esac
     if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
+      live_identity="$history_fields[9]/$history_fields[4]"
+      live_titles[$live_identity]=$title
+      if [[ ${history_fields[15]:--} == yes ]]; then
+        live_work[$live_identity/$history_fields[8]]=yes
+      fi
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
@@ -550,7 +563,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}"$'\t'"${history_fields[14]:--}"$'\t'"${history_fields[15]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$title"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}"$'\t'"${history_fields[14]:--}"$'\t'"${history_fields[15]:--}")
   done
   # One linear pass removes every local layout/alias copy handled by history.
   for _p in "${(@)pending}"; do
@@ -661,12 +674,28 @@ _t_resume() {
 
   # Measure display widths from the full snapshot so filtering cannot move a
   # column. Keep the verified merged aggregate in the private selection fields.
-  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_text pr_count pr_aggregate slot_label pr_display no_pr_display slot_display agent_display slot_width
-  local -a f cells pr_cells host_cells slot_cells
+  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_text pr_count pr_aggregate slot_label pr_display pr_width pr_extra slot_display agent_display slot_width
+  local -a f cells pr_cells pr_widths host_cells slot_cells
   local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
-    pr_text= pr_count=0 pr_aggregate=
+    if [[ $f[7] != - ]]; then
+      live_host=${${f[7]#app:}#fg:}
+      sid=$f[3]
+      if [[ $sid == - ]]; then
+        sid=${live_owner_sid[$live_host/${${f[8]:#-}:-$f[1]}-$f[2]]:--}
+      fi
+      live_identity="$f[10]/$sid"
+      if [[ -n ${live_titles[$live_identity]:-} ]]; then
+        f[6]=$live_titles[$live_identity]
+      fi
+      [[ $live_host != here ]] || live_host=local
+      if [[ ${live_work[$live_identity/$live_host]:-} == yes ]]; then
+        f[16]=yes
+      fi
+      cands[$i]="${(pj:\t:)f}"
+    fi
+    pr_text= pr_count=0 pr_width=0 pr_aggregate=
     for pr_ref in ${=f[15]}; do
       [[ $pr_ref =~ '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*:(OPEN|MERGED|CLOSED|UNKNOWN)$' ]] || continue
       pr_key=${pr_ref%:*}
@@ -680,17 +709,30 @@ _t_resume() {
         pr_aggregate=MIXED
       fi
       if (( ++pr_count <= 2 )); then
-        pr_symbol=${pr_state[1]}
-        [[ $pr_state != UNKNOWN ]] || pr_symbol='?'
+        case $pr_state in
+          MERGED) pr_symbol=◆ ;;
+          OPEN) pr_symbol=○ ;;
+          CLOSED) pr_symbol=× ;;
+          *) pr_symbol='?' ;;
+        esac
+        (( pr_count == 1 )) || (( pr_width++ ))
+        (( pr_width += ${#pr_number} + 2 ))
         pr_text+="${pr_text:+ }#$pr_number$pr_symbol"
       fi
     done
-    (( pr_count > 2 )) && pr_text+=" +$(( pr_count - 2 ))"
-    if [[ -z $pr_text && $f[13] != NONE && $f[13] != UNKNOWN ]]; then
-      pr_text=${(L)f[13]}
+    if (( pr_count > 2 )); then
+      pr_extra=" +$(( pr_count - 2 ))"
+      pr_text+=$pr_extra
+      (( pr_width += ${#pr_extra} ))
+    elif (( ! pr_count )); then
+      case $f[13] in
+        NONE) pr_text=—; pr_width=1 ;;
+        UNKNOWN) pr_text='?'; pr_width=1 ;;
+        *) pr_text=${(L)f[13]}; pr_width=${#pr_text} ;;
+      esac
     fi
-    [[ -n $pr_text || $f[13] != NONE ]] || pr_text=—
-    pr_cells+=("${pr_text:-?}")
+    pr_cells+=("$pr_text")
+    pr_widths+=("$pr_width")
     if [[ -n $pr_aggregate ]]; then
       f[13]=$pr_aggregate
       cands[$i]="${(pj:\t:)f}"
@@ -712,13 +754,12 @@ _t_resume() {
     (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))
     (( ${#f[5]} > tw )) && tw=${#f[5]}
     (( ${#host_cells[-1]} > ow )) && ow=${#host_cells[-1]}
-    (( ${#pr_cells[-1]} > pw )) && pw=${#pr_cells[-1]}
+    (( pr_width > pw )) && pw=$pr_width
     (( i++ ))
   done
   _pr_state_flush
   row_format="%s  %-${rw}s  "
   printf -v pr_display "%-${pw}s" PRS
-  printf -v no_pr_display '—%*s' $(( pw - 1 )) ''
   cells=("$pr_display" REPO)
   local period=$days
   [[ $days == all ]] || period+="d"
@@ -737,7 +778,7 @@ _t_resume() {
     cells+=(HOST)
   fi
   row_format+="%-${tw}s  %s"
-  cells+=('LAST TURN' 'WORKING ON')
+  cells+=('LAST TURN' TITLE)
   columns=$(printf "$row_format" "${cells[@]}")
 
   local legend; legend=$(_dev_agent_legend)
@@ -746,11 +787,7 @@ _t_resume() {
     f=("${(@ps:\t:)c}")
     agent=${f[10]:-claude}
     printf -v agent_display '%s %-*s' "${_DEV_AGENT_GLYPH[$agent]:-?}" $(( aw - 2 )) "$agent"
-    if [[ $pr_cells[$i] == — ]]; then
-      pr_display=$no_pr_display
-    else
-      printf -v pr_display "%-${pw}s" "$pr_cells[$i]"
-    fi
+    printf -v pr_display '%s%*s' "$pr_cells[$i]" $(( pw - pr_widths[i] )) ''
     cells=("$pr_display" "$f[1]")
     slot_width=${#f[2]}
     [[ $f[7] == - ]] || (( slot_width += 2 ))

@@ -465,15 +465,15 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
 def resume_legend(width):
     close = '↶ latest verified close in these results' if width >= 108 else '↶ latest verified close'
     markers = close + ' · ↻ work in progress · ● live · — no PR'
-    states = 'M merged · O open · C closed · ? unknown'
+    states = '◆ merged · ○ open · × closed · ? unknown'
     if width >= display_width(markers + ' · ' + states):
         return markers + ' · ' + states
     if width >= 64:
         return markers + '\n' + states
     if width < 38:
-        return '↶ latest close · ↻ WIP\n● live · — no PR · M/O/C/?'
+        return '↶ latest close · ↻ WIP\n● live · — no PR · ◆/○/×/?'
     markers = '↶ latest close · ↻ WIP · ● live'
-    return '\n'.join(pack([markers, '— no PR', 'M merged · O open', 'C closed · ? unknown'], width))
+    return '\n'.join(pack([markers, '— no PR', '◆ merged · ○ open', '× closed · ? unknown'], width))
 
 
 def resume_health(health, width, color):

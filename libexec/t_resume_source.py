@@ -13,6 +13,26 @@ import uuid
 
 LIFECYCLE = ('launch', 'resume', 'close', 'handoff', 'checkpoint')
 MAX_BUNDLE = 64 * 1024 * 1024
+TITLE_KINDS = {'unknown': 0, 'prompt': 1, 'name': 2}
+
+
+def title_kind(row):
+    kind = row.get('title_kind', 'unknown')
+    if (kind == 'unknown' and row.get('title') and row.get('title') == row.get('summary')
+            and row.get('summary_source') == 'transcript title'):
+        return 'name'
+    return kind
+
+
+def verified_title(*rows):
+    """A fresh prompt or missing title cannot supersede an observed name."""
+    metadata = max(rows, key=lambda row: (
+        row.get('title') not in (None, '', '-', 'unknown'),
+        TITLE_KINDS.get(title_kind(row), 0),
+        row.get('title_updated', row.get('updated', 0)),
+    ))
+    return dict(title=metadata.get('title', ''), title_kind=title_kind(metadata),
+                title_updated=metadata.get('title_updated', metadata.get('updated', 0)))
 
 
 def merge_records(rows):
@@ -23,7 +43,7 @@ def merge_records(rows):
         if key in merged:
             previous = merged[key]
             newer = row if row.get('updated', 0) >= previous.get('updated', 0) else previous
-            combined = {**previous, **newer}
+            combined = {**previous, **newer, **verified_title(row, previous)}
             for field in ('associations', 'sources', 'prs', 'mentions'):
                 combined[field] = list({json.dumps(value, sort_keys=True): value
                     for value in previous.get(field, []) + row.get(field, [])}.values())
