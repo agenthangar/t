@@ -17,6 +17,7 @@ from pathlib import Path
 import runpy
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -67,7 +68,7 @@ def private_write(path, value):
 
 
 class Checkpoint:
-    def __init__(self, directory, cwd, seed=None, handoff=None, retry_seconds=None):
+    def __init__(self, directory, cwd, seed=None, handoff=None, retry_seconds=None, allow_images=False):
         self.directory, self.cwd = directory, str(Path(cwd).resolve())
         self.retry_seconds = RETRY_WINDOW if retry_seconds is None else retry_seconds
         self.thread = self.turn = None
@@ -83,16 +84,33 @@ class Checkpoint:
         self.declined = False
         self.notice = ''
         self.startup_failure = False
+        self.allow_images = allow_images
+        self.attachments = list(getattr(seed, 'attachments', []))
+        self.native_home = None
 
     def save(self):
         private_write(self.directory/'checkpoint.json', {
             'workspace': self.cwd, 'thread_id': self.thread, 'turn_id': self.turn,
             'cloud_model': self.model, 'requests': self.users, 'recent_evidence': list(self.evidence),
             'startup_failure': self.startup_failure,
+            'attachments': self.attachments,
+            'native_home': self.native_home,
             'unavailable_reason': self.invalid, 'updated_at': time.time()})
 
     def user(self, content):
         # Images and expanded mentions can carry context beyond the visible text.
+        if self.allow_images and isinstance(content, list):
+            try:
+                texts = []
+                for item in content:
+                    if item.get('type') == 'text':
+                        texts.append(item)
+                    else:
+                        self.capture_image(item)
+                content = texts or [{'type': 'text', 'text': '[Screenshot attached]'}]
+            except (OSError, ValueError, TypeError) as exc:
+                self.invalid = 'Attachment transfer unavailable: '+str(exc)
+                return
         if not isinstance(content, list) or any(item.get('type') != 'text' for item in content):
             self.invalid = 'The checkpoint contains non-text input; continue manually from the saved cloud session.'
             return
@@ -101,6 +119,49 @@ class Checkpoint:
             self.invalid = 'Task instructions exceed the local checkpoint budget; continue manually.'
         elif text:
             self.users.append(text)
+
+    def capture_image(self, item):
+        limit = 20 * 1024**2
+        if len(self.attachments) >= 8:
+            raise ValueError('too many screenshots for the bounded checkpoint')
+        if item.get('type') == 'localImage':
+            path = Path(item['path'])
+            if not path.is_absolute():
+                path = Path(self.cwd) / path
+            fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ValueError('screenshot must be a regular file')
+                data = stream.read(limit+1)
+        elif item.get('type') == 'image' and isinstance(item.get('url'), str) and item['url'].startswith('data:image/'):
+            header, encoded = item['url'].split(',', 1)
+            if not header.endswith(';base64') or len(encoded) > limit*2:
+                raise ValueError('unsupported screenshot encoding')
+            data = base64.b64decode(encoded, validate=True)
+        else:
+            raise ValueError('non-text input is not a supported local screenshot')
+        if len(data) > limit or sum(a['bytes'] for a in self.attachments)+len(data) > 32*1024**2:
+            raise ValueError('screenshot exceeds the checkpoint budget')
+        suffix = '.png' if data.startswith(b'\x89PNG\r\n\x1a\n') else '.jpg' if data.startswith(b'\xff\xd8\xff') else None
+        if suffix is None:
+            raise ValueError('only PNG and JPEG screenshots can be transferred')
+        digest = hashlib.sha256(data).hexdigest()
+        if any(a['sha256'] == digest for a in self.attachments):
+            return
+        path = self.directory / (uuid.uuid4().hex+suffix)
+        with path.open('xb') as stream:
+            os.chmod(path, 0o600)
+            stream.write(data)
+        self.attachments.append(dict(path=str(path), sha256=digest, bytes=len(data)))
+
+    def attachment_paths(self):
+        paths = []
+        for item in self.attachments:
+            path = Path(item['path'])
+            if path.is_symlink() or not path.is_file() or path.stat().st_size != item['bytes'] or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+                raise ValueError('Retained screenshot changed; source conversation preserved')
+            paths.append(str(path))
+        return paths
 
     def item(self, item, history=False):
         kind = item.get('type')
@@ -134,8 +195,17 @@ class Checkpoint:
                 self.model = params.get('model') or self.model
                 self.declined = False
                 content = params.get('input', [])
-                if not (self.handoff and isinstance(content, list) and len(content) == 1 and
-                        content[0].get('type') == 'text' and content[0].get('text') == self.handoff):
+                transferred = (self.handoff and isinstance(content, list) and
+                               [x.get('text') for x in content if x.get('type') == 'text'] == [self.handoff] and
+                               all(x.get('type') in ('text', 'image', 'localImage') for x in content))
+                if transferred and self.allow_images:
+                    try:
+                        for item in content:
+                            if item.get('type') != 'text':
+                                self.capture_image(item)
+                    except (OSError, ValueError, TypeError) as exc:
+                        self.invalid = 'Attachment transfer unavailable: '+str(exc)
+                elif not transferred or (not self.allow_images and len(content) != 1):
                     self.user(content)
                 self.handoff = None
                 self.save()
@@ -228,6 +298,7 @@ class Checkpoint:
 
     def prompt(self, target='local'):
         with self.lock:
+            self.attachment_paths()
             if self.invalid or not self.users or not self.thread:
                 raise ValueError(self.invalid or 'No complete task checkpoint is available; keep the cloud session paused.')
             return ('Continue this task in a new '+target+' conversation after a user-authorized handoff. '

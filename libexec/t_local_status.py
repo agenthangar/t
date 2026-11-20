@@ -87,7 +87,17 @@ def render(side, folder, socket, pane):
                 or data['state'] not in ('loading', 'inferring', 'working', 'idle', 'failed', 'queued', 'waiting', 'cancelling')):
             return watching
         label = re.sub(r'(?i)-(?:mlx-)?\d+bit$', '', data['model'].split('/')[-1])
-        return watching + 'local ' + safe(label, 35) + ' · ' + data['state'] + ' '
+        state = data['state']
+        if data.get('memory'):
+            state = 'Timed out · memory' if state == 'failed' else 'Waiting for memory'
+            shortfall = data['memory'].get('shortfall_bytes')
+            if shortfall is not None:
+                state += f' · {shortfall/1024**3:.1f} GiB short'
+        verification = data.get('verification')
+        if data.get('memory'):
+            compact = verification.replace('Verified on this Mac at ', 'Verified here · ') if verification else ''
+            return watching + state + (' · '+safe(compact, 30) if compact else '') + (' · Prefix F6' if data.get('controls') else '') + ' '
+        return watching + 'local ' + safe(label, 35) + ' · ' + (safe(verification, 40)+' · ' if verification else '') + state + (' · Prefix F6' if data.get('controls') else '') + ' '
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return ''
 
@@ -124,6 +134,7 @@ class Activity:
         self.lock = threading.Lock()
         self.active = 0
         self.failed = False
+        self.metadata = {}
 
     def __enter__(self):
         try:
@@ -136,6 +147,9 @@ class Activity:
                 self.path = record_path(folder, socket, pane)
                 self.pane_pid = int(info[1])
                 install(socket, info[2], folder)
+                controls = runpy.run_path(str(Path(__file__).with_name('t_session_models.py')))
+                command = shlex.join([sys.executable, str(Path(__file__).with_name('t_session_models.py')), '--waiting', socket, pane])
+                self.metadata['controls'] = controls['install'](socket, pane, command)
                 self.write()
                 self.thread = threading.Thread(target=self.heartbeat, daemon=True)
                 self.thread.start()
@@ -147,7 +161,7 @@ class Activity:
         if self.path:
             temp = self.path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
             try:
-                temp.write_text(json.dumps({'model': self.model, 'state': self.state,
+                temp.write_text(json.dumps({**self.metadata, 'model': self.model, 'state': self.state,
                                            'pane_pid': self.pane_pid, 'updated': time.time()}))
                 temp.chmod(0o600)
                 temp.replace(self.path)
@@ -166,6 +180,10 @@ class Activity:
         with self.lock:
             self.state = state
             self.write()
+
+    def update_memory(self, **metadata):
+        with self.lock:
+            self.metadata.update(metadata)
 
     def request(self, delta, failed=False):
         with self.lock:

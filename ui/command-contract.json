@@ -9324,7 +9324,8 @@
           "layout": "machine"
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": " Memory-blocked request details retain the scheduler shortfall and deadline. This command remains static; the interactive Local worker & models requests menu offers Free memory with explicit app selection and review. Expired turns require an explicit retry."
     },
     "config models requests cancel": {
       "patterns": [
@@ -12480,7 +12481,8 @@
         "passthrough",
         "action",
         "single",
-        "review"
+        "review",
+        "multi"
       ],
       "input": "Native Codex argv selected by the existing guarded t launcher; effective saved workflow policy",
       "interactive": true,
@@ -12525,6 +12527,16 @@
             "passthrough"
           ],
           "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
+        },
+        "local_controls": {
+          "condition": "fresh local-only Codex in an owned interactive tmux pane",
+          "patterns": [
+            "single",
+            "multi",
+            "review",
+            "passthrough"
+          ],
+          "behavior": "Prefix F6 opens shared pane-scoped recovery controls. Keep a memory-blocked request queued while reviewing normal macOS app quits or a same-worktree model handoff. Show verified context separately from live shortfall; preserve cause and explicit Retry after expiry. Revalidate pane, generation, destination readiness and screenshots before stopping the owned source. Preserve existing F6 bindings; native /model remains native. Unsupported source exports fail closed."
         }
       },
       "tests": [
@@ -12544,7 +12556,11 @@
         "tests/test_local_inference.py::test_saved_resume_launcher_executes_native_command",
         "tests/test_offline_startup.py::test_bootstrap_error_survives_immediate_frontend_exit",
         "tests/test_offline_startup.py::test_startup_recovery_retries_or_launches_local_without_extra_screen",
-        "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible"
+        "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible",
+        "tests/test_memory_recovery.py::test_two_waiting_clients_overlap_and_share_one_load",
+        "tests/test_memory_recovery.py::test_waiting_controls_shared_layout",
+        "tests/test_session_models.py::test_local_to_openai_preserves_attachment_and_worktree",
+        "tests/test_session_models.py::test_controller_rechecks_owner_generation_and_readiness"
       ],
       "notes": "Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption."
     },

@@ -82,7 +82,9 @@ def stopped_error(exc):
 
 
 class WaitingForMemory(ValueError):
-    pass
+    def __init__(self, reason, **memory):
+        super().__init__(reason)
+        self.memory = dict(memory, reason=reason, measured_at=time.time())
 
 
 class Providers:
@@ -95,6 +97,7 @@ class Providers:
         self.machine = helper('t_local_models')['hardware']()
         self.external = []
         self.problem = None
+        self.released = []
 
     def endpoint(self, provider, start=False):
         config = self.settings['providers'][provider]
@@ -237,12 +240,19 @@ class Providers:
             raise WaitingForMemory('A model loaded outside t has unknown memory use; unload it in its provider app')
         required = description['estimate']
         used = sum(x['estimate'] for x in self.instances.values()) + sum(x['memory_bytes'] for x in self.external)
-        if used + required > ram * self.settings['memory_percent'] / 100 or required > max(0, available - ram * .1):
-            raise WaitingForMemory('Waiting for available memory within the machine budget')
+        budget_short = max(0, used + required - ram * self.settings['memory_percent'] / 100)
+        physical_short = max(0, required - max(0, available - ram * .1))
+        if budget_short or physical_short:
+            raise WaitingForMemory('Waiting for available memory within the machine budget',
+                                   shortfall_bytes=int(max(budget_short, physical_short)),
+                                   physical_shortfall_bytes=int(physical_short), budget_shortfall_bytes=int(budget_short),
+                                   available_bytes=available, required_bytes=required, resource='physical')
         if 'NVIDIA' in self.machine.get('accelerator', ''):
             free_gpu = gpu_available()
             if not vram or free_gpu is None or required > min(vram * .85, free_gpu - vram * .1):
-                raise WaitingForMemory('Waiting for GPU memory and headroom')
+                raise WaitingForMemory('Waiting for GPU memory and headroom', resource='gpu',
+                                       shortfall_bytes=int(max(0, required - min(vram * .85, free_gpu - vram * .1)))
+                                       if vram and free_gpu is not None else None)
 
     def get(self, chosen, pinned=()):
         description = self.describe(chosen)
@@ -284,7 +294,11 @@ class Providers:
             except WaitingForMemory:
                 if not candidates:
                     raise
-                self.unload(candidates.pop(0))
+                candidate = candidates.pop(0)
+                self.unload(candidate)
+                self.released.append(dict(model=candidate['model'], provider=candidate['provider'],
+                                          released_at=time.time()))
+                self.released = self.released[-50:]
         provider, base = description['provider'], description['base']
         instance = dict(description, alias=None, owned=(description['provider'] == 'lmstudio' or self.ollama_private), last_used=time.time())
         if provider == 'mlx-vlm':
