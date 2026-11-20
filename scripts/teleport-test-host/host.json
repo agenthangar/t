@@ -1,0 +1,231 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "REVIEW ONLY: isolated disposable base host, not a Teleport installer. Explicit approval required.",
+  "Parameters": {
+    "AmiId": {
+      "Type": "AWS::EC2::Image::Id",
+      "Description": "Owner-verified Ubuntu 22.04 x86_64 HVM EBS AMI, /dev/sda1 root <=8GiB; no Marketplace subscription."
+    },
+    "ExistingKeyName": {
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Description": "Existing approved sandbox SSH key pair. Never create or upload a key for this template."
+    },
+    "OperatorCidr": {
+      "Type": "String",
+      "AllowedPattern": "(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/32",
+      "Description": "Approved operator/test client public IPv4 /32; no broad ingress."
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.219.0.0/24",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "t-teleport-acceptance"
+          }
+        ]
+      }
+    },
+    "Subnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.219.0.0/28",
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "t-teleport-acceptance"
+          }
+        ]
+      }
+    },
+    "Gateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "t-teleport-acceptance"
+          }
+        ]
+      }
+    },
+    "GatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "Gateway"
+        }
+      }
+    },
+    "RouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "t-teleport-acceptance"
+          }
+        ]
+      }
+    },
+    "Route": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "Gateway"
+        }
+      },
+      "DependsOn": "GatewayAttachment"
+    },
+    "SubnetRoute": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "Subnet"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        }
+      }
+    },
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Disposable Teleport lab: explicitly approved single client IPv4",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": {
+              "Ref": "OperatorCidr"
+            }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": {
+              "Ref": "OperatorCidr"
+            }
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "t-teleport-acceptance"
+          }
+        ]
+      }
+    },
+    "Host": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {
+          "Ref": "AmiId"
+        },
+        "InstanceType": "t3.small",
+        "KeyName": {
+          "Ref": "ExistingKeyName"
+        },
+        "CreditSpecification": {
+          "CPUCredits": "standard"
+        },
+        "MetadataOptions": {
+          "HttpTokens": "required",
+          "HttpPutResponseHopLimit": 1
+        },
+        "InstanceInitiatedShutdownBehavior": "terminate",
+        "Monitoring": false,
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": "0",
+            "AssociatePublicIpAddress": true,
+            "SubnetId": {
+              "Ref": "Subnet"
+            },
+            "GroupSet": [
+              {
+                "Ref": "SecurityGroup"
+              }
+            ]
+          }
+        ],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+              "VolumeSize": 8,
+              "VolumeType": "gp3",
+              "Encrypted": true,
+              "DeleteOnTermination": true
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": "#cloud-config\n# Only installs a fallback termination timer. No Teleport or credentials created.\nwrite_files:\n  - path: /etc/systemd/system/t-lab-expiry.service\n    permissions: '0644'\n    content: |\n      [Unit]\n      Description=Terminate disposable t lab host\n      [Service]\n      Type=oneshot\n      ExecStart=/usr/sbin/shutdown -h now\n  - path: /etc/systemd/system/t-lab-expiry.timer\n    permissions: '0644'\n    content: |\n      [Unit]\n      Description=Expire disposable t lab four hours after boot\n      [Timer]\n      OnBootSec=4h\n      Unit=t-lab-expiry.service\n      [Install]\n      WantedBy=timers.target\nruncmd:\n  - [systemctl, daemon-reload]\n  - [systemctl, enable, --now, t-lab-expiry.timer]\n"
+        },
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "t-teleport-acceptance"
+          }
+        ]
+      },
+      "DependsOn": [
+        "Route",
+        "SubnetRoute"
+      ]
+    }
+  },
+  "Outputs": {
+    "InstanceId": {
+      "Value": {
+        "Ref": "Host"
+      }
+    },
+    "PublicIp": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Host",
+          "PublicIp"
+        ]
+      }
+    }
+  }
+}
