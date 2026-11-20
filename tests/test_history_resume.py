@@ -992,7 +992,12 @@ def test_prepared_create_uses_verified_process_output(history, tmp_path, mode):
         tool_event('poll', 'text(await tools.write_stdin({session_id:42,chars:""}));'),
         structured_tool_output('poll', result),
     ]
-    value = history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')
+    path = transcript_file(tmp_path / 'rollout-selected.jsonl', rows[:-2])
+    checkpoint = json.loads(json.dumps(history.transcript(path, 'codex')))
+    with path.open('a') as stream:
+        for entry in rows[-2:]:
+            stream.write(json.dumps(entry) + '\n')
+    value = history.transcript(path, 'codex', checkpoint)
     assert [pr['number'] for pr in value['prs']] == ([489] if mode == 'success' else [])
 
 

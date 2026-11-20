@@ -500,7 +500,7 @@ def tool_pr_command(command):
             refs = pr_refs(target) if PR_URL.fullmatch(target) else []
             if re.fullmatch(r'[1-9][0-9]*', target):
                 numbers = [dict(number=int(target), repo=repo)]
-        out.append(dict(refs=refs, numbers=numbers, action=words[2], repo=repo, explicit_exit=preparation))
+        out.append(dict(refs=refs, numbers=numbers, action=words[2], repo=repo, explicit_exit=bool(preparation)))
     return out
 
 
