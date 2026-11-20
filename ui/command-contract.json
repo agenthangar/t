@@ -903,6 +903,23 @@
           ],
           "notes": "Attach to the existing shared Start locally rail only for the live recovery controller in the exact pane and workspace. Ready models select directly; retry and cancel retain their existing behavior. Clear attachable state before launch or cancellation. This does not establish a model writer or relax saved-conversation ownership.",
           "layout": "rail"
+        },
+        "bounded_wait": {
+          "argv": [
+            "session",
+            "open",
+            "--wait"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -1131,6 +1148,23 @@
           "confirmation": "when_interrupting",
           "layout": "inherit",
           "notes": "External <folder>:app-<thread-id> handles report individual app close unavailable without process lookup, signaling or host fallback. Terminal handles retain existing confirmation and exact-host routing."
+        },
+        "bounded_wait": {
+          "argv": [
+            "session",
+            "close",
+            "--wait"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
@@ -1453,6 +1487,42 @@
             "tests/test_resume_wait.py::test_slot_history_wait_gates_and_snapshot"
           ],
           "notes": "Shared RailUI observes pending refresh without an overall timeout. Return skips to available cached results; Esc/Ctrl-C returns 130 without cancelling discovery. Settled empty/failure ends observation. Incomplete results retain a warning and require selection, including one row. Nonterminal, JSON and collectors never enter this wait; existing filters, sorting and failed-host cooldowns are unchanged."
+        },
+        "bounded_wait": {
+          "argv": [
+            "session",
+            "resume",
+            "--wait"
+          ],
+          "patterns": [
+            "multi",
+            "filtered"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+        },
+        "last_closed": {
+          "argv": [
+            "session",
+            "resume",
+            "--last",
+            "--wait"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_resume_last.py::test_last_closed_scope_and_duplicate_evidence",
+            "tests/test_resume_last.py::test_last_closed_refuses_incomplete_missing_tied_or_conflicting"
+          ],
+          "layout": "inherit",
+          "notes": "No picker: exact most recent verified close across all scoped history. Refuse incomplete, missing, tied or invalidated evidence; preserve guarded destinations."
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -1628,6 +1698,22 @@
           ],
           "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
+        },
+        "bounded_wait": {
+          "argv": [
+            "session",
+            "history",
+            "--wait"
+          ],
+          "patterns": [
+            "multi"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "display_schema": "history_information",
@@ -1870,6 +1956,23 @@
           ],
           "notes": "Discover the source across hosts; local is this machine. Reject local-to-local moves. Guard the selected identity through remote stop, push, transcript transfer and local landing. --detach never attaches.",
           "layout": "inherit"
+        },
+        "bounded_wait": {
+          "argv": [
+            "session",
+            "move",
+            "--wait"
+          ],
+          "patterns": [
+            "multi",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. When no current owner is found, suggest t session resume [repo] [slot] for saved work. Worktree snapshots preflight push access and peer capability before stopping; exact immutable transfer refs preserve divergent slot branches. No destination starts when snapshot publication or fetching fails.",
@@ -4012,6 +4115,25 @@
             "tests/test_remote_commands.py::test_remote_open_resume_delegate_quoted_worker_and_status"
           ],
           "layout": "inherit"
+        },
+        "bounded_wait": {
+          "argv": [
+            "remote",
+            "open",
+            "--wait"
+          ],
+          "patterns": [
+            "single",
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "layout": "mixed"
@@ -4098,6 +4220,23 @@
             "tests/test_remote_commands.py::test_remote_kill_discovers_owner_and_preserves_confirmation_and_status"
           ],
           "layout": "inherit"
+        },
+        "bounded_wait": {
+          "argv": [
+            "remote",
+            "kill",
+            "--wait"
+          ],
+          "patterns": [
+            "filtered",
+            "multi"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "notes": "Repository-first targets reuse session close --remote discovery, shared filtered multi-picker and confirmation safeguards. Preserve saved conversations, worktrees, remote zsh -lic and delegated exit status.",
@@ -4178,6 +4317,24 @@
           ],
           "notes": "Compatibility route for session move --remote: multi-select current local/remote owners, then choose one destination. Recheck every selected identity before mutation, exclude all source targets/aliases, move batches sequentially and detached, stop on the first failure or cancellation and report outcomes.",
           "layout": "inherit"
+        },
+        "bounded_wait": {
+          "argv": [
+            "remote",
+            "move",
+            "--wait"
+          ],
+          "patterns": [
+            "multi",
+            "single",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
         }
       },
       "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Host-first [host] [repo] [slot] names the source. --to selects the destination; --from/--host remain compatibility input.",
@@ -4300,6 +4457,44 @@
             "tests/test_resume_wait.py::test_slot_history_wait_gates_and_snapshot"
           ],
           "notes": "The selected host uses session resume discovery_wait: Shared RailUI observes pending refresh without an overall timeout. Return skips to available cached results; Esc/Ctrl-C returns 130 without cancelling discovery. Settled empty/failure ends observation. Incomplete results retain a warning and require selection, including one row. Nonterminal, JSON and collectors never enter this wait; existing filters, sorting and failed-host cooldowns are unchanged."
+        },
+        "bounded_wait": {
+          "argv": [
+            "remote",
+            "resume",
+            "--wait"
+          ],
+          "patterns": [
+            "single",
+            "filtered",
+            "multi",
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
+          ],
+          "layout": "inherit",
+          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+        },
+        "last_closed": {
+          "argv": [
+            "remote",
+            "resume",
+            "--last",
+            "--wait"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "terminal": false,
+          "tests": [
+            "tests/test_resume_last.py::test_last_closed_scope_and_duplicate_evidence",
+            "tests/test_resume_last.py::test_last_closed_refuses_incomplete_missing_tied_or_conflicting"
+          ],
+          "layout": "inherit",
+          "notes": "No picker: exact most recent verified close across all scoped history. Refuse incomplete, missing, tied or invalidated evidence; preserve guarded destinations."
         }
       },
       "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy.",
