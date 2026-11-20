@@ -53,14 +53,14 @@ def test_ready_selects_directly_and_compares_all_published_scores(local, rows):
 @pytest.mark.parametrize('installed', [True,False])
 def test_prepare_is_explicit_and_stages_only_after_verification(local, rows, monkeypatch, installed):
     row=rows[1]; row['installed']=installed; called=[]
-    def install(name, download_only, context, *, cancel):
-        called.append((name,download_only,context));row.update(installed=True,ready=True,fit=True)
+    def install(name, download_only, context, *, cancel, provider):
+        called.append((name,download_only,context,provider));row.update(installed=True,ready=True,fit=True)
     monkeypatch.setattr(local,'install',install)
     ui=Menu([row['model'],'back','__back'])
     assert local.select_model(ui) is None and not called
     ui=Menu([row['model'],'prepare'])
     assert local.select_model(ui,context=8192)==local.selection(row)
-    assert called==[(row['model'],False,8192)] and not ui.restored
+    assert called==[(row['model'],False,8192,row['provider'])] and not ui.restored
     prepare=ui.views[1]
     assert dict(prepare[1])['prepare']==('Verify & use' if installed else 'Download, verify & use')
     assert ('On disk' in dict(prepare[2]['context'])['Files']) is installed

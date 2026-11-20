@@ -100,7 +100,10 @@ def attached(socket, tty, pid=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 0  # the same client switched managed sessions
-        fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+        try:
+            fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+        except FileNotFoundError:
+            return 1  # Linux can remove the slave path before we open it.
         if hung_up(fd):
             return 1  # missed attachment: preserve, never guess
         Path(str(base) + '.event').unlink(missing_ok=True)

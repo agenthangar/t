@@ -227,22 +227,30 @@ def test_usage_wire_retains_legacy_and_rejects_invalid_json(t_mod):
 def test_reserved_eval_runtime_never_enters_manager(tmp_path,monkeypatch):
     from contextlib import contextmanager
     local=load_script(ROOT/'libexec/t_local_inference.py','usage_reserved_runtime')
+    enabled_checks = []
     @contextmanager
     def runtime(*args):yield ('http://fixture','alias',{'revision':'pinned'})
+    @contextmanager
+    def ollama(*args):yield ('http://fixture',{})
+    helpers = {
+        't_local_manager': {'require_enabled': enabled_checks.append},
+        't_local_worker': {'ollama_server': ollama, 'check_model': lambda *args: None},
+    }
+    monkeypatch.setattr(local,'helper',helpers.__getitem__)
     monkeypatch.setattr(local,'runtime',runtime)
     monkeypatch.setattr(local,'managed_runtime',lambda *a,**kw:pytest.fail('would deadlock on reservation'))
     with local.reserved_provider_runtime({'provider':'lmstudio','model':'model','context_tokens':32768}) as result:
         assert result[2]['revision']=='pinned'
-    monkeypatch.setattr(local,'helper',lambda n:{'ollama_server':runtime,'check_model':lambda *a:None})
     monkeypatch.setattr(local,'request',lambda *a:{'models':[{'name':'model','digest':'revision'}]})
-    @contextmanager
-    def ollama(*args):yield ('http://fixture',{})
-    monkeypatch.setattr(local,'helper',lambda n:{'ollama_server':ollama,'check_model':lambda *a:None})
     chosen={'provider':'ollama','model':'model','context_tokens':32768}
     with local.reserved_provider_runtime(chosen) as result:assert result[2]['revision']=='revision'
     monkeypatch.setattr(local,'request',lambda *a:{'models':[]})
     with pytest.raises(ValueError):
         with local.reserved_provider_runtime(chosen):pass
+    with pytest.raises(ValueError, match='requires the managed runtime'):
+        with local.reserved_provider_runtime(dict(chosen, provider='mlx-vlm')):
+            pytest.fail('exclusive eval entered the managed MLX runtime')
+    assert enabled_checks == ['lmstudio', 'ollama', 'ollama', 'mlx-vlm']
 
 
 def test_cumulative_usage_spanning_unmetered_model_switch_is_unattributed(usage,tmp_path):

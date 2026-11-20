@@ -13442,10 +13442,8 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Browse sessions; attached sessions start hidden. Pending discovery waits up to 30 seconds; "
-            "fresh caches open immediately. Failed hosts pause retries for an hour (t hosts reset HOST). "
-            "Ownership is checked live. Closing the last terminal stops verified empty/completed sessions; "
-            "active work, drafts and uncertain state stay running. Explicit tmux detach keeps the session running.",
+        description="Browse sessions with attached sessions hidden by default. Ownership is checked live. "
+            "Closing the last terminal stops verified empty or completed sessions. Explicit tmux detach keeps them running.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions across repos
@@ -13471,6 +13469,8 @@ SELECTION
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
   LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
   Retained sessions appear immediately; cold discovery offers wait, retry and cancel.
+  Pending discovery waits up to 30 seconds. Failed hosts pause retries for
+  an hour; use `t hosts reset HOST` to retry earlier.
   Inventory is retained with a 24-hour reconciliation interval; activity refreshes separately.
   Turning filters or sorting off preserves their choices. Search stays in place.
   Headers use native Mac labels, or Ctrl and Alt elsewhere.
@@ -13492,6 +13492,8 @@ SELECTION
 
 OPENING DEFAULTS
   Sessions use an isolated worktree and tmux; --fg runs inline.
+  Closing the last terminal keeps sessions with active work, drafts or
+  uncertain state running.
   If startup offers local recovery, the model picker opens in your terminal.
   Fresh local allocation uses a durable next-slot counter and local refs.
   It skips existing paths and branches without reclaiming or contacting hosts.
