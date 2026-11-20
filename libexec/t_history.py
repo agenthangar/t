@@ -1524,16 +1524,26 @@ class HistoryCommand:
             if settings['query'] != query:
                 return None, 'retry', query
             selected, identities = [], set()
+            closures = closure_records(rows)
             for line in lines[2:]:
+                fields = line.split('\t', 2)
                 try:
-                    index = int(line.split('\t')[0])
+                    index = int(fields[0])
                 except ValueError as error:
                     raise HistoryError('invalid selection') from error
                 if not 0 <= index < len(rows):
                     raise HistoryError('invalid selection')
                 row = rows[index]
-                expected = f'{index}\t{picker_row(row, rows, settings.get("width", 80), settings.get("notice", ""))}\t{clean(json.dumps(row, ensure_ascii=False))}'
-                if row not in matching or line != expected:
+                # fzf may return the terminal-colored marker verbatim or strip
+                # its ANSI styling. In either case verify the full identity.
+                payload = clean(json.dumps(row, ensure_ascii=False))
+                if (row not in matching or len(fields) != 3 or fields[0] != str(index)
+                        or fields[2] != payload):
+                    return None, 'retry', query
+                displays = (picker_row(row, rows, settings.get('width', 80),
+                                       settings.get('notice', ''), closures, color=color)
+                            for color in (False, True))
+                if fields[1] not in displays:
                     return None, 'retry', query
                 identity = (row['repo'], row['agent'], row['sid'])
                 if identity in identities:
