@@ -156,7 +156,11 @@ def test_structured_pr_evidence_is_distinct_from_incidental_links(history, tmp_p
         rows = [{'type': 'user', 'sessionId': 'claude-session', 'cwd': str(tmp_path), 'gitBranch': 'feature', 'message': {'role': 'user', 'content': 'Implement history'}},
                 {'type': 'assistant', 'message': {'role': 'assistant', 'content': [{'text': incidental}, {'type': 'tool_use', 'id': 'create', 'input': {'command': 'gh pr create'}}, {'type': 'tool_use', 'id': 'edit', 'input': {'command': 'gh pr edit ' + edited}}]}},
                 {'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'create', 'content': created}, {'type': 'tool_result', 'tool_use_id': 'edit', 'content': 'edited'}]}}]
-    value = history.transcript(transcript_file(tmp_path / 'tx.jsonl', rows), agent)
+    path = transcript_file(tmp_path / 'tx.jsonl', rows)
+    value = history.transcript(path, agent)
+    resume = history.transcript(path, agent, metadata_only=True)
+    assert resume['prs'] == value['prs']
+    assert not resume['mentions']
     assert {(p['repo'], p['number']) for p in value['prs']} == {('org/repo', 2), ('other/repo', 3)}
     assert incidental in [p['url'] for p in value['mentions']]
     assert value['title'] == 'Implement history'
@@ -998,7 +1002,7 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-', '-']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
 
@@ -1053,7 +1057,8 @@ def test_resume_candidate_pr_state_is_cache_only(app, store, history, monkeypatc
         store.db.commit()
         expected = 'OPEN'  # The status cache overrides older transcript evidence.
     fields = list(app.resume_candidates(['repo']))[0].split('\t')
-    assert fields[10:] == ['org/repo', expected, '-']
+    assert fields[10:13] == ['org/repo', expected, '-']
+    assert len(fields[13].split()) == len(states) or fields[13] == '-' and not states
 
 
 @pytest.mark.parametrize('state', ['MERGED', 'OPEN', 'CLOSED', 'garbage'])
@@ -1068,8 +1073,10 @@ def test_resume_history_reuses_legacy_pr_cache_and_keeps_numbers(app, store, his
     monkeypatch.setattr(app, 'refresh', lambda *args: None)
     monkeypatch.setattr(history, 'run', lambda *args, **kwargs: pytest.fail('cache-only PR status'))
     fields = list(app.resume_candidates(['repo']))[0].split('\t')
-    assert '#42[' in fields[6]
-    assert fields[11] == (state if state != 'garbage' else 'UNKNOWN')
+    expected = state if state != 'garbage' else 'UNKNOWN'
+    assert '#42' not in fields[6]
+    assert fields[11] == expected
+    assert fields[13] == f'org/repo#42:{expected}'
 
 
 def test_cached_selection_returns_to_fresh_action_state(app, history, monkeypatch):

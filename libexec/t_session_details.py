@@ -176,11 +176,11 @@ def transcript_last_turn(path, agent):
     return fallback
 
 
-def format_last_turn(value):
+def format_last_turn(value, date_format='%Y-%m-%d %H:%M:%S %Z'):
     stamp = _turn_timestamp(value)
     if stamp == '-':
         return '-'
-    return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
+    return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone().strftime(date_format)
 
 
 MODEL_STAGE_LABELS = {'planning': 'Plan', 'implementation': 'Build', 'review': 'Review'}
