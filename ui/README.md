@@ -1796,7 +1796,10 @@ admission. Expiry requires explicit **Retry**, never automatic resubmission.
 Read-only request lists and JSON never open these controls or quit applications.
 
 **Choose model…** offers Local, OpenAI and Claude using shared selection and
-review. Review the destination, unchanged worktree, bounded context and screenshot
+review. Each local model shows verification and current availability using the
+scheduler's memory calculation, including loaded/generating, memory shortfall,
+disabled runtime and unknown measurements. Browsing never loads a model.
+Review the destination, unchanged worktree, bounded context and screenshot
 support. Missing model readiness or image capability disables that destination.
 Retain PNG/JPEG attachments privately and verify their contents before handoff.
 Stop the owned Codex backend before launching the destination. Failed handoffs

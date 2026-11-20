@@ -205,11 +205,47 @@ def test_model_catalogues_preserve_readiness_and_image_metadata(models,monkeypat
            dict(model='missing',provider='ollama',ready=False,fit=False)]
     app={'_config_live_models':lambda agent:[{'model':'m','inputModalities':['text','image']}],
          '_config_catalog':lambda *a:[dict(id='m',label='M')]}
-    monkeypatch.setattr(models,'helper',lambda n:{'catalogue':lambda **kw:{'models':local}} if n=='t_local_inference' else {'ui_helpers':lambda:app})
+    runtime=load_script(ROOT/'libexec/t_local_runtime.py','availability_runtime')
+    managers={'status':lambda:{'manager':'running','models':[]},'require_enabled':lambda p:None}
+    helpers={'t_local_inference':{'catalogue':lambda **kw:{'models':local}},'t_local_manager':managers,
+             't_local_runtime':dict(vars(runtime),available_memory=lambda:64*1024**3),
+             't_offline':{'ui_helpers':lambda:app}}
+    monkeypatch.setattr(models,'helper',lambda n:helpers[n])
     assert models.model_choices('local',32768)[0]['images']
     assert not models.model_choices('local',32768)[1]['ready']
     assert models.model_choices('openai',32768)[0]['images']
     assert not models.model_choices('claude',32768)[0]['images']
+    def disabled(provider):raise ValueError('inference disabled')
+    managers['require_enabled']=disabled
+    result=models.model_choices('local',32768)[0]
+    assert not result['ready'] and 'inference disabled' in result['detail']
+
+
+def test_alternate_models_use_live_scheduler_availability(models):
+    runtime=load_script(ROOT/'libexec/t_local_runtime.py','alternate_availability')
+    gib=1024**3
+    large={'model':'large','provider':'mlx-vlm','memory_bytes':10*gib,'revision':'rev'}
+    small=dict(large,model='small',memory_bytes=4*gib)
+    machine={'ram_bytes':128*gib}
+    view={'manager':'running','models':[],'settings':{'memory_percent':80}}
+    check=lambda row:models.local_availability(row,32768,machine,view,17.8*gib,vars(runtime))
+    assert check(large)=='Waiting for memory · 5.0 GiB short'
+    assert check(small)=='Memory available · shared queue'
+    view['models']=[dict(large,context=32768,active=True)]
+    assert check(large)=='Loaded · generating'
+    view['models'][0]['active']=False
+    assert check(large)=='Loaded · available in shared queue'
+    view['models'][0]['memory_bytes']=None
+    assert 'unverified' in check(small)
+    view['models']=[]
+    assert 'not measured' in check(dict(small,memory_bytes=None))
+    view['manager']='stale'
+    assert 'runtime stale' in check(large)
+    view['manager']='running';machine.update(accelerator='NVIDIA',vram_bytes=32*gib)
+    values=dict(vars(runtime),gpu_available=lambda:None)
+    assert 'GPU not measured' in models.local_availability(small,32768,machine,view,100*gib,values)
+    values['gpu_available']=lambda:4*gib
+    assert models.local_availability(small,32768,machine,view,100*gib,values)=='Waiting for GPU memory'
 
 
 def test_exact_pane_request_selects_memory_blocker(models,monkeypatch):

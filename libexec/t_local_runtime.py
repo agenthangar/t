@@ -2,6 +2,7 @@
 from contextlib import ExitStack
 import errno
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -85,6 +86,15 @@ class WaitingForMemory(ValueError):
     def __init__(self, reason, **memory):
         super().__init__(reason)
         self.memory = dict(memory, reason=reason, measured_at=time.time())
+
+
+def memory_shortfall(required, ram, available, used, percent):
+    """One admission calculation for the scheduler and read-only model choices."""
+    budget = max(0, used + required - ram * percent / 100)
+    physical = max(0, required - max(0, available - ram * .1))
+    return dict(shortfall_bytes=math.ceil(max(budget, physical)), physical_shortfall_bytes=math.ceil(physical),
+                budget_shortfall_bytes=math.ceil(budget), available_bytes=available, required_bytes=required,
+                resource='physical')
 
 
 class Providers:
@@ -240,13 +250,10 @@ class Providers:
             raise WaitingForMemory('A model loaded outside t has unknown memory use; unload it in its provider app')
         required = description['estimate']
         used = sum(x['estimate'] for x in self.instances.values()) + sum(x['memory_bytes'] for x in self.external)
-        budget_short = max(0, used + required - ram * self.settings['memory_percent'] / 100)
-        physical_short = max(0, required - max(0, available - ram * .1))
-        if budget_short or physical_short:
+        memory = memory_shortfall(required, ram, available, used, self.settings['memory_percent'])
+        if memory['shortfall_bytes']:
             raise WaitingForMemory('Waiting for available memory within the machine budget',
-                                   shortfall_bytes=int(max(budget_short, physical_short)),
-                                   physical_shortfall_bytes=int(physical_short), budget_shortfall_bytes=int(budget_short),
-                                   available_bytes=available, required_bytes=required, resource='physical')
+                                   **memory)
         if 'NVIDIA' in self.machine.get('accelerator', ''):
             free_gpu = gpu_available()
             if not vram or free_gpu is None or required > min(vram * .85, free_gpu - vram * .1):

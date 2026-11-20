@@ -78,12 +78,23 @@ def call(endpoint, action='status', **data):
 
 def model_choices(provider, context):
     if provider == 'local':
-        return [dict(id=r['provider']+'|'+r['model'], model=r['model'], provider=r['provider'],
-                     label=r['model'].split('/')[-1], ready=bool(r.get('ready') and r.get('fit') is True),
+        catalogue = helper('t_local_inference')['catalogue'](context=context)
+        manager, runtime = helper('t_local_manager'), helper('t_local_runtime')
+        view, available = manager['status'](), runtime['available_memory']()
+        rows = []
+        for r in catalogue['models']:
+            enabled = True
+            try:
+                manager['require_enabled'](r['provider'])
+                availability = local_availability(r, context, catalogue.get('hardware', {}), view, available, runtime)
+            except ValueError as exc:
+                enabled, availability = False, str(exc)
+            rows.append(dict(id=r['provider']+'|'+r['model'], model=r['model'], provider=r['provider'],
+                     label=r['model'].split('/')[-1], ready=bool(enabled and r.get('ready') and r.get('fit') is True),
                      images='image' in r.get('input_modalities', []),
                      detail=('Verified on this Mac at '+str(context//1024)+'K' if r.get('ready') else 'Not verified')+
-                     ' · '+('Fits hardware' if r.get('fit') is True else r.get('reason', 'Fit unknown')))
-                for r in helper('t_local_inference')['catalogue'](context=context)['models']]
+                     ' · '+availability))
+        return rows
     agent = 'codex' if provider == 'openai' else 'claude'
     app = helper('t_offline')['ui_helpers']()
     raw = app['_config_live_models'](agent)
@@ -91,6 +102,32 @@ def model_choices(provider, context):
     return [dict(id=r['id'], model=r['id'], provider=provider, label=r['label'], ready=True,
                  images=provider == 'openai' and any('image' in v.get('inputModalities', []) for v in raw if v.get('model') == r['id']),
                  detail='Available in native catalogue') for r in normalized]
+
+
+def local_availability(row, context, machine, view, available, runtime):
+    if view.get('manager') != 'running':
+        return 'Availability unknown · runtime '+view.get('manager', 'unavailable')
+    loaded = view.get('models', [])
+    exact = next((r for r in loaded if r.get('model') == row['model'] and r.get('provider') == row['provider']
+                  and r.get('context') == context and r.get('revision') == row.get('revision') and r.get('revision')), None)
+    if exact:
+        return 'Loaded · '+('generating' if exact.get('active') else 'available in shared queue')
+    if any(r.get('memory_bytes') is None for r in loaded):
+        return 'Availability unknown · unverified model memory'
+    required, ram = row.get('memory_bytes'), machine.get('ram_bytes')
+    if required is None or not ram or available is None:
+        return 'Availability unknown · memory not measured'
+    memory = runtime['memory_shortfall'](required, ram, available, sum(r['memory_bytes'] for r in loaded),
+                                         view.get('settings', {}).get('memory_percent', 80))
+    if memory['shortfall_bytes']:
+        return f"Waiting for memory · {memory['shortfall_bytes']/1024**3:.1f} GiB short"
+    if 'NVIDIA' in machine.get('accelerator', ''):
+        free, total = runtime['gpu_available'](), machine.get('vram_bytes')
+        if free is None or not total:
+            return 'Availability unknown · GPU not measured'
+        if required > min(total*.85, free-total*.1):
+            return 'Waiting for GPU memory'
+    return 'Memory available · shared queue'
 
 
 def startup_argv(argv, continuation):
@@ -130,8 +167,9 @@ def choose(ui, view, fetch=model_choices):
         disabled.update({r['id']: 'Screenshot input support is not verified.' for r in models if view.get('attachments') and not r['images']})
         values = {r['id']: r['detail'] for r in models}
         for r in models:
-            if provider == 'local' and r['model'] == view.get('model') and view.get('request', {}).get('memory'):
-                values[r['id']] += ' · '+helper('t_memory_recovery')['blocker'](view['request'])
+            if (provider == 'local' and r['model'] == view.get('model') and r['provider'] == view.get('provider')
+                    and view.get('request', {}).get('memory')):
+                values[r['id']] = values[r['id']].split(' · ', 1)[0]+' · '+helper('t_memory_recovery')['blocker'](view['request'])
         selected = ui.pick(provider.title()+' models', [(r['id'], r['label']) for r in models]+[('back', 'Back')],
                            values=values, disabled=disabled,
                            context=['Benchmark unavailable · speed not measured'] if not models else [], back_label='back')
@@ -222,7 +260,7 @@ class Controller:
             except ValueError as exc:
                 reason = str(exc)
             return dict(cwd=self.cp.cwd, generation=self.cp.generation, attachments=len(self.cp.attachments),
-                        model=self.chosen.get('model'), context_tokens=self.chosen['context_tokens'], request=self.request(),
+                        model=self.chosen.get('model'), provider=self.chosen.get('provider'), context_tokens=self.chosen['context_tokens'], request=self.request(),
                         verification=self.verification, can_switch=not reason, unavailable=reason)
 
     def accept(self, selection):
