@@ -30,11 +30,12 @@ def key_labels(text, platform=None, compact=False):
 def paint(text, role='hint'):
     if 'NO_COLOR' in os.environ or os.environ.get('TERM') == 'dumb':
         return text
-    code = {'heading': '36', 'action': '37', 'hint': '90', 'active': '1;4;96'}[role]
+    code = {'heading': '36', 'action': '37', 'hint': '90', 'active': '1;4;96',
+            'selected': '1;4;97;48;5;23', 'warning': '33'}[role]
     return '\033[' + code + 'm' + text + '\033[0m' if text else ''
 
 
-def control_rows(parts, width, selected=(), compact=False, color=False):
+def control_rows(parts, width, selected=(), compact=False, color=False, selected_role='active'):
     """Pack whole key labels with the same spacing in every session picker."""
     active = {key_labels(part, compact=compact) for part in selected}
     lines = []
@@ -44,7 +45,7 @@ def control_rows(parts, width, selected=(), compact=False, color=False):
             lines[-1] += ' · ' + part
         else:
             lines.append(part)
-    return [' · '.join(paint(part, 'active' if part in active else 'action') if color else part
+    return [' · '.join(paint(part, selected_role if part in active else 'action') if color else part
                       for part in line.split(' · ')) for line in lines]
 
 
@@ -54,7 +55,8 @@ def sort_rows(mode, width, enabled=True, compact=False, color=False, include_tur
                for name, (_, label) in (_SORT['SAVED_SORTS'] if include_closed else _SORT['RESUME_SORTS']).items()
                if (include_turn or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = 'Sort: ' + (_SORT['sort_label'](mode, compact) if enabled else 'OFF')
-    return (control_rows([label, 'Ctrl-S toggle'], width, [label] if enabled else [], compact, color)
+    return (control_rows([label, 'Ctrl-S toggle'], width, [label] if enabled else [], compact, color,
+                         selected_role='selected' if include_closed else 'active')
             + control_rows(['Ctrl-Y next'] + ([] if compact else list(choices.values())), width,
                            [choices[mode]] if enabled and mode in choices and not compact else [], compact, color))
 

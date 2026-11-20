@@ -302,7 +302,7 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
         assert pathlib.Path(f'{log}.step{index}').read_text().splitlines() == initial
         header = semantic_chrome(pathlib.Path(f'{log}.header{index}').read_text()).splitlines()[-1]
         assert header.index('WORKING ON') == initial[0].split('\t')[-1].index('Task 2')
-        assert header.split() == ['PRS', 'SLOT', 'AGENT', 'LAST', 'TURN', 'WORKING', 'ON']
+        assert header.split() == ['PRS', 'WORK', 'SLOT', 'AGENT', 'LAST', 'TURN', 'WORKING', 'ON']
     arguments = pathlib.Path(f'{log}.args').read_text()
     assert '--no-sort' in arguments
     for letter in ('t', 'r', 'g', 'o', 'v'):
@@ -360,7 +360,7 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
                             'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api',
-                            aggregate, '-', 'org/api#42:MERGED org/api#43:OPEN'])
+                            aggregate, '-', 'org/api#42:MERGED org/api#43:OPEN', 'yes'])
         shell += f"_t_resume_history_candidates() {{ print -r -- '{record}'; }}; "
     result = zsh(shell + '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log),
                  PICK_ACTIONS='merged,merged', PICK_CANCEL='1')
@@ -370,6 +370,7 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
     pr_column, _, working_on = merged.split('\t')[-1].partition('  2')
     assert pr_column.startswith('#42 merged')
     assert ('#43 open' in pr_column) == bool(aggregate)
+    assert ('↻' in pr_column) == bool(aggregate)
     assert '#42' not in working_on
     hidden = pathlib.Path(f'{log}.step0').read_text()
     assert ('\tc2\t' in hidden) == bool(aggregate)

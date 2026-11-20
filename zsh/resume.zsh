@@ -185,7 +185,7 @@ _t_resume() {
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  if [[ -n $repo && $slot == <-> ]]; then
+  if [[ -z ${_T_RESUME_PICKER_SNAPSHOT:-} && -n $repo && $slot == <-> ]]; then
     local recovery recovery_rc=0
     recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$repo" "$slot") || recovery_rc=$?
     if (( recovery_rc == 0 )); then
@@ -256,7 +256,9 @@ _t_resume() {
   # `dev-dotfiles-2` here — both key one dir); the alias is captured so an attach
   # needs no second scan.
   local all_rows= remote_rows= live_all= live_scan_rc=0
-  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    live_all=$(<"$_T_RESUME_PICKER_SNAPSHOT/live") || return $?
+  elif [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
     live_all=$(python3 "$T_HOME/bin/t" __cache-rows --basic) || return $?
   elif (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
@@ -505,14 +507,20 @@ _t_resume() {
   [[ -n $slot ]] && history_scope+=(--slot "$slot")
   local auth_file auth_hosts auth_host discovery_notice=
   local -x T_RESUME_NOTICE_FILE=
+  local -x T_RESUME_STATUS_FILE=
+  local discovery_status=
   auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
-  if [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    history_rows=$(<"$_T_RESUME_PICKER_SNAPSHOT/history") || history_rc=$?
+  elif [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
     T_RESUME_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || { rm -f -- "$auth_file"; return 1; }
+    T_RESUME_STATUS_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-status.XXXXXX") || { rm -f -- "$auth_file" "$T_RESUME_NOTICE_FILE"; return 1; }
     # The shared rail owns stderr and terminal input during this wait. A shell
     # spinner would capture its controls and hide the skip/cancel action.
     history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
     discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
-    rm -f -- "$T_RESUME_NOTICE_FILE"
+    discovery_status=$(<"$T_RESUME_STATUS_FILE")
+    rm -f -- "$T_RESUME_NOTICE_FILE" "$T_RESUME_STATUS_FILE"
   else
     history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
   fi
@@ -526,7 +534,7 @@ _t_resume() {
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 14 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 15 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
@@ -542,7 +550,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}"$'\t'"${history_fields[14]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}"$'\t'"${history_fields[14]:--}"$'\t'"${history_fields[15]:--}")
   done
   # One linear pass removes every local layout/alias copy handled by history.
   for _p in "${(@)pending}"; do
@@ -626,7 +634,8 @@ _t_resume() {
     cands=("${(@f)$(print -rl -- "${(@)cands}" | T_RESUME_OWNER_ROWS="$live_all" T_RESUME_CACHED=$([[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]] && print 0 || print 1) python3 "$T_HOME/libexec/t_picker_filters.py" --resume-turns)}")
   fi
 
-  if (( ! $#cands )); then
+  if (( ! $#cands )) && [[ -z ${_T_RESUME_PICKER_SNAPSHOT:-} ]] &&
+      [[ -z $discovery_status || ! -t 0 || ! -t 1 ]]; then
     if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
       if [[ $T_RESUME_WAIT != 1 ]]; then
         print -u2 -- 'No matching cached conversations. Discovery status is shown above; run again after a pending refresh.'
@@ -652,7 +661,7 @@ _t_resume() {
 
   # Measure display widths from the full snapshot so filtering cannot move a
   # column. Keep the verified merged aggregate in the private selection fields.
-  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_text pr_count pr_aggregate slot_label
+  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_text pr_count pr_aggregate slot_label pr_display no_pr_display work_display slot_display agent_display slot_width
   local -a f cells pr_cells host_cells slot_cells
   local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 i=1
   for c in "${(@)cands}"; do
@@ -676,7 +685,8 @@ _t_resume() {
     if [[ -z $pr_text && $f[13] != NONE && $f[13] != UNKNOWN ]]; then
       pr_text=${(L)f[13]}
     fi
-    pr_cells+=("${pr_text:--}")
+    [[ -n $pr_text || $f[13] != NONE ]] || pr_text=—
+    pr_cells+=("${pr_text:-?}")
     if [[ -n $pr_aggregate ]]; then
       f[13]=$pr_aggregate
       cands[$i]="${(pj:\t:)f}"
@@ -684,15 +694,17 @@ _t_resume() {
 
     org=${f[9]:-}
     slot_label=$f[2]
+    slot_width=${#slot_label}
     if [[ $f[7] != - ]]; then
       slot_label+=" ●"
+      (( slot_width += 2 ))
       org=${${f[7]#app:}#fg:}
       [[ $org == here ]] && org=-
     fi
     host_cells+=("${org:#-}")
     slot_cells+=("$slot_label")
     (( ${#f[1]} > rw )) && rw=${#f[1]}
-    (( ${#slot_label} > sw )) && sw=${#slot_label}
+    (( slot_width > sw )) && sw=$slot_width
     (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))
     (( ${#f[5]} > tw )) && tw=${#f[5]}
     (( ${#host_cells[-1]} > ow )) && ow=${#host_cells[-1]}
@@ -700,17 +712,23 @@ _t_resume() {
     (( i++ ))
   done
   _pr_state_flush
-  row_format="%-${pw}s  "
-  cells=(PRS)
+  row_format='%s  %s  '
+  printf -v pr_display "%-${pw}s" PRS
+  printf -v no_pr_display '—%*s' $(( pw - 1 )) ''
+  cells=("$pr_display" WORK)
+  local period=$days
+  [[ $days == all ]] || period+="d"
   if [[ -n $all_mode ]]; then
-    fprompt="resume (${days}d)> "
+    fprompt="resume ($period)> "
     row_format+="%-${rw}s  "
     cells+=(REPO)
   else
-    fprompt="resume $repo (${days}d)> "
+    fprompt="resume $repo ($period)> "
   fi
-  row_format+="%-${sw}s  %-${aw}s  "
-  cells+=(SLOT AGENT)
+  row_format+='%s  %s  '
+  printf -v slot_display "%-${sw}s" SLOT
+  printf -v agent_display "%-${aw}s" AGENT
+  cells+=("$slot_display" "$agent_display")
   if (( ow )); then
     (( ow < 4 )) && ow=4
     row_format+="%-${ow}s  "
@@ -724,17 +742,27 @@ _t_resume() {
   i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
-    agent="${_DEV_AGENT_GLYPH[${f[10]:-claude}]:-?} ${f[10]:-claude}"
-    cells=("$pr_cells[$i]")
+    agent=${f[10]:-claude}
+    printf -v agent_display '%s %-*s' "${_DEV_AGENT_GLYPH[$agent]:-?}" $(( aw - 2 )) "$agent"
+    if [[ $pr_cells[$i] == — ]]; then
+      pr_display=$no_pr_display
+    else
+      printf -v pr_display "%-${pw}s" "$pr_cells[$i]"
+    fi
+    work_display='    '
+    [[ ${f[16]:--} != yes ]] || work_display='↻   '
+    cells=("$pr_display" "$work_display")
     [[ -n $all_mode ]] && cells+=("$f[1]")
-    cells+=("$slot_cells[$i]" "$agent")
+    slot_width=${#f[2]}
+    [[ $f[7] == - ]] || (( slot_width += 2 ))
+    printf -v slot_display '%s%*s' "$slot_cells[$i]" $(( sw - slot_width )) ''
+    cells+=("$slot_display" "$agent_display")
     (( ow )) && cells+=("$host_cells[$i]")
     cells+=("$f[5]" "$f[6]")
     cands[$i]+=$'\t'"$(printf "$row_format" "${cells[@]}")"
     (( i++ ))
   done
-  # Add a fixed-width recency cell without changing selection identity.
-  cands=("${(@f)$(print -rl -- "${(@)cands}" | T_PICKER_NOTICE="${discovery_notice}${auth_hosts}" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-mark)}")
+  # The picker marks the latest verified closure in its full snapshot.
   # Keep the inactive set separate from the initial view so Ctrl-F can always
   # restore it, even when --live (or an explicit slot) starts with all rows.
   # The full row, including every aligned display detail, is identical in both
@@ -746,6 +774,14 @@ _t_resume() {
     f=("${(@ps:\t:)c}")
     [[ $f[7] == - ]] && inactive+=("$c")
   done
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    print -r -- "$columns" > "$_T_RESUME_PICKER_SNAPSHOT/columns"
+    : > "$_T_RESUME_PICKER_SNAPSHOT/source"
+    : > "$_T_RESUME_PICKER_SNAPSHOT/rows-0"
+    (( ! $#cands )) || print -rl -- "${(@)cands}" > "$_T_RESUME_PICKER_SNAPSHOT/source"
+    (( ! $#inactive )) || print -rl -- "${(@)inactive}" > "$_T_RESUME_PICKER_SNAPSHOT/rows-0"
+    return 0
+  fi
   if [[ -n $show_all ]]; then
     visible=("${(@)cands}")
   else
@@ -763,7 +799,11 @@ _t_resume() {
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    local refresh_callback=
+    if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+      refresh_callback="${(q)T_HOME}/bin/t __resume-picker-refresh \"\$T_PICKER_VIEWS\" ${(j: :)${(@q)history_scope}} -- ${(j: :)${(@q)@}}"
+    fi
+    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_DISCOVERY_STATUS="$discovery_status" T_PICKER_REFRESH_CALLBACK="$refresh_callback" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?

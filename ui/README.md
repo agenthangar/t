@@ -973,10 +973,12 @@ Interactive resume, including plain slot history, displays retained results
 immediately. Cold discovery and service recovery use the same wait/recovery rail
 as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
 no overall timeout for an advancing cold refresh; repeated service connection
-failures return to Retry / Cancel. Incomplete results retain a warning through
-filtering, sorting and history paging, and require explicit selection. For example,
-run `t session resume`; retained conversations appear while refresh continues.
-Nonterminal, JSON and private collector output never enter this rail.
+failures return to Retry / Cancel. The filtered picker reports the last refresh
+and the status of each host. Press Ctrl-U to refresh the same scope in place.
+The picker retains query, filter, and sort choices and uses the available
+snapshot if a host fails. Ctrl-R remains the repository filter in this picker
+and refreshes in plain slot history. Nonterminal, JSON, and private collector
+output stay static.
 
 After a saved selection, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
@@ -999,12 +1001,17 @@ and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
-The resume picker labels the PRS, SLOT, AGENT, LAST TURN, and WORKING ON
-columns. All-repository views include REPO, and HOST appears when known.
-LAST TURN shows the local date and time to the minute. A dot beside the slot
-marks a live conversation. Columns stay aligned when filtering or sorting.
+The resume picker labels the PRS, WORK, SLOT, AGENT, LAST TURN, and WORKING ON
+columns. A bare command outside a registered repository includes a REPO column,
+as does `t session resume --all`. HOST appears when known.
+LAST TURN shows the local date and time to the minute. The footer explains the
+latest verified close (↶), verified work in progress (↻), live ownership (●),
+and no recorded PR (—). WORK is independent of PR state.
+Columns stay aligned when filtering or sorting. Timeouts use amber, active
+filtering and sort use highlighted labels, and column headings use high contrast.
 PRS shows up to two associated pull request numbers and their cached states,
-followed by a count of any additional PRs. A dash indicates no recorded PR.
+followed by a count of any additional PRs. A dash indicates no recorded PR, and
+`?` indicates unavailable PR evidence.
 The picker refreshes stale states in the background. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
 Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
@@ -2043,9 +2050,10 @@ sharing editor are unchanged.
 ### Last closed session
 
 `t session resume` and plain slot history mark the latest verified closure with
-**↶**, in its own fixed-width cell beside the existing row. A compact legend
-explains the icon and close time. Sorting and filtering never reassign that mark
-to another conversation; hiding the marked conversation leaves no marked row.
+**↶**, in its own fixed-width cell beside the row. The filtered picker uses the
+latest verified close in its available snapshot. A bottom legend explains the
+icon. Sorting and filtering never reassign the mark to another conversation;
+hiding the marked conversation leaves no marked row.
 Use `t resume`, then Return to resume the initially focused last-closed conversation;
 Ctrl-Y switches to last turn and the existing sort choices.
 
@@ -2055,9 +2063,9 @@ turn, transcript mtime, and last-opened stamps. Native/app exits without a recor
 closure remain unknown. A later launch/resume/handoff, newer user turn, or live
 owner invalidates that conversation's prior close as a current saved closure.
 Unknown close times sort after recorded closes, with last turn breaking ties.
-Tied latest closures and incomplete discovery suppress the unique marker; they
-never substitute an older session. Remote peers without close metadata retain
-last-turn behavior. All existing guarded exact-conversation resume checks remain.
+Tied latest closures suppress the marker. History paging retains its own
+partial-discovery rules. Remote peers without close metadata retain last-turn
+behavior. All existing guarded exact-conversation resume checks remain.
 
 ### Local inference and runtime controls
 

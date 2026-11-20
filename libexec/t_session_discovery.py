@@ -22,14 +22,17 @@ def request(operation, payload=None, *, deadline=None):
     return _CACHE['request'](operation, payload)
 
 
-def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None):
+def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, refresh=False):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
     if host is not None:
         targets = {host: 'local' if host == 'local' else cfg.hosts.get(host, host)}
     options = {'deadline': deadline} if deadline is not None else {}
-    return request('discover', {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
-                                         for host, target in targets.items()]}, **options)
+    payload = {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
+                                         for host, target in targets.items()]}
+    if refresh:
+        payload['refresh'] = True
+    return request('discover', payload, **options)
 
 
 def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=None):
@@ -174,6 +177,32 @@ def freshness(view):
         'hosts': [{k: v for k, v in host.items() if k != 'value'} for host in view.get('hosts', [])]}
 
 
+def resume_health(view):
+    hosts, auth_hosts = [], []
+    for host in view.get('hosts', []):
+        error = host.get('error', '')
+        kind = host.get('error_kind')
+        if host.get('resume_pr_auth_failed'):
+            auth_hosts.append(host['host'])
+        if (host.get('refreshing') or view.get('loading')) and view.get('wait_timed_out'):
+            status = 'timed out'
+        elif host.get('refreshing') or view.get('loading'):
+            status = 'refreshing'
+        elif kind == 'timeout' or 'timed out' in error.lower():
+            status = 'timed out'
+        elif error:
+            status = {'transport': 'unreachable', 'authentication': 'SSH auth failed'}.get(kind, 'refresh failed')
+        elif not host.get('checked'):
+            status = 'not checked'
+        elif host.get('stale'):
+            status = 'retained'
+        else:
+            status = 'current'
+        hosts.append(dict(host=host['host'], status=status, checked=host.get('checked'), observed=host.get('observed')))
+    return dict(hosts=hosts, auth_hosts=auth_hosts,
+                unavailable=bool(view.get('unavailable') or view.get('wait_unavailable')))
+
+
 def announce(view):
     if view.get('wait_timed_out'):
         print('t: Refresh wait timed out; showing available sessions.', file=sys.stderr)
@@ -229,7 +258,7 @@ def candidates(view, aliases, slot=None):
     for host in view.get('hosts', []):
         for raw in (host.get('value') or {}).get('resume', []):
             fields = raw.split('\t')
-            if len(fields) not in (12, 13, 14) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
+            if len(fields) not in (12, 13, 14, 15) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
                 continue
             if slot is not None and fields[2] != slot:
                 continue
@@ -251,7 +280,8 @@ def _catalog_candidates(catalog, history, host):
             continue
         if not row.get('title') or not row.get('sources') or not row.get('associations'):
             continue
-        history.pr_states([row])
+        if host != 'local':
+            history.pr_states([row])
         association = max(row['associations'], key=lambda a: a.get('observed', 0))
         yield helper['resume_candidate'](row, alias, association, host)
 
@@ -259,7 +289,7 @@ def _catalog_candidates(catalog, history, host):
 def export_local(cfg, payload):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     return request('export', {'spec': dict(host='local', target='local', context=context),
-                              'generation': payload.get('generation')})
+                              'generation': payload.get('generation'), 'refresh': payload.get('refresh') is True})
 
 
 def apply_remote(wire, previous):
@@ -307,9 +337,16 @@ def collect(spec, api):
                 return dict(rows=row_text, resume=[], _timings=timings)
             stage = time.monotonic()
             catalog = history.local_catalog()
+            auth = request('artifact', {'key': 'resume-pr-auth'}).get('value') or []
+            if spec.get('reconcile') and any(row.get('prs') for row in catalog.get('conversations', [])):
+                history.diagnostics_enabled = True
+                history.check_auth()
+                auth = history.diagnostic_rows()
+                request('artifact', {'key': 'resume-pr-auth', 'value': auth})
+            catalog['diagnostics'] = auth
             timings['history_seconds'] = round(time.monotonic() - stage, 4)
             stage = time.monotonic()
-            cache_key = 'display-v4:' + _CACHE['_digest'](spec.get('context', {}))
+            cache_key = 'display-v5:' + _CACHE['_digest'](spec.get('context', {}))
             previous = request('artifact', {'key': cache_key}).get('value') or {}
             state = {}
             old_context = previous.get('mcp', {})
@@ -350,8 +387,12 @@ def collect(spec, api):
                 if path:
                     roots = [path, str(Path(cfg.worktree_root) / Path(path).name)]
                     scopes[repository['alias']] = scopes[repository['repo']] = roots
+            records = catalog.get('conversations', [])
+            if records:
+                history.pr_states(records)
+                history.annotate_resume_work(records, ctx.get('live'))
             projections, dirty = {}, []
-            for record in catalog.get('conversations', []):
+            for record in records:
                 key = _CACHE['record_key'](record)
                 stamp = _CACHE['_digest'](record)
                 old = previous.get('projections', {}).get(key, {})
@@ -383,8 +424,11 @@ def collect(spec, api):
                 return subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', spec['target'],
                                        'zsh -lic ' + shlex.quote(command)], **options)
             except subprocess.TimeoutExpired as exc:
-                raise _CACHE['DiscoveryError']('Remote discovery timed out', 'collector') from exc
-        result = remote(command, None if legacy else {'generation': previous.get('_remote_generation')})
+                raise _CACHE['DiscoveryError']('Remote discovery timed out', 'timeout') from exc
+        payload = {'generation': previous.get('_remote_generation')}
+        if spec.get('refresh'):
+            payload['refresh'] = True
+        result = remote(command, payload)
         unsupported = lambda r: r.returncode == 2 and any(marker in r.stderr for marker in ('invalid choice', 'unrecognized arguments', 'unknown command'))
         if not legacy and unsupported(result):
             legacy = True
@@ -414,9 +458,9 @@ def collect(spec, api):
         else:
             if not isinstance(wire, dict) or wire.get('protocol') != 2:
                 raise _CACHE['DiscoveryError']('invalid remote inventory', 'protocol')
-            if wire.get('pending'):
-                health = wire.get('health') or {}
-                if health.get('error'):
+            health = wire.get('health') or {}
+            if wire.get('pending') or health.get('refreshing'):
+                if health.get('error') and not health.get('refreshing'):
                     raise _CACHE['DiscoveryError'](health['error'], health.get('error_kind') or 'collector')
                 return {'_pending': True}
             value, changed = apply_remote(wire, previous)
@@ -436,7 +480,7 @@ def collect(spec, api):
             kept = []
             for candidate in previous.get('resume', []):
                 f = candidate.split('\t')
-                if len(f) in (12, 13, 14) and _CACHE['record_key']({'repo': f[10], 'agent': f[8], 'sid': f[3]}) not in removed:
+                if len(f) in (12, 13, 14, 15) and _CACHE['record_key']({'repo': f[10], 'agent': f[8], 'sid': f[3]}) not in removed:
                     kept.append(candidate)
             value['resume'] = kept + list(_catalog_candidates({**catalog, 'conversations': changed}, history, spec['target']))
         timings['import_seconds'] = round(time.monotonic() - stage, 4)

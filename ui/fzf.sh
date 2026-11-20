@@ -20,7 +20,8 @@ _t_fzf_worker() {
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
       T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK T_PICKER_NOTICE \
-      T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
+      T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS \
+      T_PICKER_DISCOVERY_STATUS T_PICKER_REFRESH_CALLBACK; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
     # Keep large prefix-assigned inputs out of the environment of exec itself.
@@ -332,7 +333,7 @@ Tab mark ✓"
   case $_t_picker_fzf_help in
     *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
   esac
-  if [ -n "$_t_picker_source" ]; then
+  if [ -n "$_t_picker_source" ] || [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
     printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
     if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
       # fzf 0.58 added --header-border and began using the actual marker and
@@ -340,10 +341,13 @@ Tab mark ✓"
       if [ -n "$_t_picker_columns" ]; then
         case $_t_picker_fzf_help in
           *--header-border*) ;;
-          *) export T_PICKER_COLUMNS="  $_t_picker_columns" ;;
+          *) export T_PICKER_LEGACY_COLUMNS=1 ;;
         esac
       fi
+      printf '%s\n' "$_t_picker_columns" > "$_t_picker_dir/columns"
+      printf '%s' "${T_PICKER_DISCOVERY_STATUS:-}" > "$_t_picker_dir/discovery-status"
       printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
+      case $_t_picker_fzf_help in *--footer=*) export T_PICKER_NATIVE_FOOTER=1 ;; esac
       # The persistent warning needs another row; fzf 0.44 otherwise exhausts
       # its 60%-height window at 80x24 before rendering a focused session.
       [ -z "${T_PICKER_AUTH_HOSTS:-}" ] || set -- --height=100% "$@"
@@ -351,6 +355,9 @@ Tab mark ✓"
     T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
     [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
     T_PICKER_HEADER_WIDTH=$(( T_PICKER_HEADER_WIDTH - 12 ))
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_compact" ]; then
+      T_PICKER_HEADER_WIDTH=$(( ${_t_picker_size#* } - 5 ))
+    fi
     if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size%% *}" -le 14 ]; then
       set -- --height=100% --border=none "$@"
       _t_picker_margin=0
@@ -464,6 +471,16 @@ SH
     set -- --no-sort "$@"
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
       _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
+        _t_picker_track=
+        case $_t_picker_fzf_help:$T_PICKER_CLEAR_MARKS in *--track*:) _t_picker_track='track-current+' ;; esac
+        # fzf suspends keyboard handling while the shared refresh rail is up.
+        # shellcheck disable=SC2016
+        _t_picker_bind="${_t_picker_bind},ctrl-u:${_t_picker_track}${T_PICKER_CLEAR_MARKS}"'execute(sh -c "$T_PICKER_REFRESH_CALLBACK" </dev/tty >/dev/tty)+execute-silent(sh "$T_PICKER_TOGGLE" current)+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+      fi
+      if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then
+        set -- --footer="$(cat "$_t_picker_dir/footer")" --footer-border=none "$@"
+      fi
     fi
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
       if [ "$_t_picker_spec" = alt-t:turn ]; then

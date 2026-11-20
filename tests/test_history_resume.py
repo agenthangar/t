@@ -966,6 +966,93 @@ def tool_output(call_id, **result):
     return dict(type='response_item', payload=dict(type='custom_tool_call_output', call_id=call_id, output=json.dumps(result)))
 
 
+def structured_tool_output(call_id, *results):
+    row = tool_output(call_id)
+    row['payload']['output'] = [
+        dict(type='input_text', text='Script completed\nWall time 0.0 seconds\nOutput:\n'),
+        *(dict(type='input_text', text=json.dumps(result)) for result in results),
+    ]
+    return row
+
+
+@pytest.mark.parametrize('mode', ['success', 'failed', 'missing-exit', 'prose', 'wrong-repo', 'redirected'])
+def test_prepared_create_uses_verified_process_output(history, tmp_path, mode):
+    command = "python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/body').write_text('PR body')\nPY\n"
+    command += 'gh pr create --body-file /tmp/body --repo org/repo'
+    if mode == 'redirected':
+        command += ' >/dev/null'
+    url = 'https://github.com/org/repo/pull/489'
+    output = 'link: ' + url if mode == 'prose' else url.replace('org/repo', 'other/repo') if mode == 'wrong-repo' else url
+    result = dict(output=output + '\n')
+    if mode != 'missing-exit':
+        result['exit_code'] = 1 if mode == 'failed' else 0
+    rows = codex_rows(tmp_path) + [
+        tool_event('create', 'text(await tools.exec_command({cmd: ' + json.dumps(command) + '}));'),
+        structured_tool_output('create', dict(session_id=42, output='')),
+        tool_event('poll', 'text(await tools.write_stdin({session_id:42,chars:""}));'),
+        structured_tool_output('poll', result),
+    ]
+    value = history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')
+    assert [pr['number'] for pr in value['prs']] == ([489] if mode == 'success' else [])
+
+
+def test_sequential_poll_uses_first_structured_result(history, tmp_path):
+    rows = codex_rows(tmp_path) + [
+        tool_event('create', 'text(await tools.exec_command({cmd:"gh pr create"}));'),
+        structured_tool_output('create', dict(session_id=42, output='')),
+        tool_event('poll', 'text(await tools.write_stdin({session_id:42,chars:""}));\n'
+                   'text(await tools.exec_command({cmd:"echo unrelated"}));'),
+        structured_tool_output('poll', dict(exit_code=0, output='https://github.com/org/repo/pull/432\n'),
+                               dict(exit_code=0, output='https://github.com/org/repo/pull/9\n')),
+    ]
+    value = history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')
+    assert [pr['number'] for pr in value['prs']] == [432]
+
+
+@pytest.mark.parametrize('mode', ['dirty', 'clean', 'open', 'new-sid', 'live-owner', 'stale-generation',
+                                  'new-branch', 'commits', 'published', 'published-pr'])
+def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history, git_repo, mode):
+    workspace = Path(app.cfg.worktree_root) / 'repo/repo-1'
+    repo = app.cfg.repos['repo']
+    history.run(['git', '-C', repo, 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
+    app.cfg.worktree_paths = lambda alias, slot: [str(workspace)]
+    app.discovery_identities['repo'] = 'org/repo'
+    row = saved_row(app, git_repo, workspace)
+    rows = [row]
+    live = {}
+    if mode in ('dirty', 'new-sid', 'live-owner', 'stale-generation', 'new-branch', 'commits', 'published', 'published-pr'):
+        (workspace / 'tracked').write_text('local change\n')
+    if mode == 'open':
+        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
+    if mode == 'new-sid':
+        rows.append(saved_row(app, git_repo, workspace, sid='later', observed=2))
+    if mode == 'live-owner':
+        live['later'] = {'cwd': str(workspace)}
+    if mode == 'stale-generation':
+        row['associations'][0]['generation'] = 'previous'
+    if mode == 'new-branch':
+        history.run(['git', '-C', str(workspace), 'switch', '-c', 'other'])
+    if mode in ('commits', 'published', 'published-pr'):
+        row['prs'] = [dict(repo='org/repo', number=7, state='MERGED')]
+        cache = Path(os.environ['XDG_CACHE_HOME']) / 'claude-sessions/pr/org#repo#7.head'
+        cache.parent.mkdir(parents=True)
+        cache.write_text(git_repo)
+        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Follow-up'])
+        if mode == 'published':
+            Path(repo, 'tracked').write_text('local change\n')
+            history.run(['git', '-C', repo, 'commit', '-am', 'Squashed follow-up'])
+        if mode == 'published-pr':
+            (cache.parent / 'org#repo#8').write_text('MERGED')
+            tip = history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD'])
+            (cache.parent / 'org#repo#8.head').write_text(tip)
+        history.run(['git', '-C', repo, 'update-ref', 'refs/remotes/origin/main', 'main'])
+    app.annotate_resume_work(rows, live)
+    fields = history.resume_candidate(row, 'repo', row['associations'][0], 'local').split('\t')
+    assert fields[14] == ('yes' if mode in ('dirty', 'commits') else '-')
+    if mode == 'new-sid':
+        assert rows[-1].get('work_in_progress') is True
+
+
 def test_real_shaped_async_create_and_exact_poll_backfill_across_cache_append(app, history, tmp_path):
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected') + [
@@ -1024,6 +1111,8 @@ def test_async_cell_wait_preserves_known_invocation_and_requires_success(app, hi
     '// tools.exec_command({cmd:"gh pr create"})\ntext("unrelated");',
     'text(await tools.exec_command({cmd: "printf unrelated", nested: {cmd:"gh pr create"}}));',
     'text(await tools.exec_command({cmd: "gh pr create"})); text(await tools.exec_command({cmd:"printf unrelated"}));',
+    'text(await tools.exec_command({cmd: "gh pr create" + " --dry-run"}));',
+    'if (false) text(await tools.exec_command({cmd:"gh pr create"}));',
 ])
 def test_custom_exec_pr_evidence_requires_actual_unambiguous_invocation(app, history, tmp_path, source):
     workspace = Path(app.cfg.worktree_root) / 'repo/1'

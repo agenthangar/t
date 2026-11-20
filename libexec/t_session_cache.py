@@ -427,13 +427,21 @@ class _Memory:
                     entry['last_used'] = now
                     retry = failure.get('retry_at', 0)
                     missing = any(field not in entry.get('value', {}) for field in payload.get('fields', []) if field in ('rows', 'resume', 'catalog', 'mcp', 'scopes'))
+                    force = payload.get('refresh') is True and spec['target'] not in self.active_targets and not entry.get('pending')
                     stale = bool(entry.get('dirty')) or not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
-                    if ((stale or missing) and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets
-                            and now >= retry and now >= entry.get('next_poll', 0)):
+                    if (not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets
+                            and (force or ((stale or missing or entry.get('pending')) and now >= retry
+                                           and now >= entry.get('next_poll', 0)))):
                         entry['refreshing'] = True
+                        if force:
+                            entry['requested'] = True
                         self.active_targets.add(spec['target'])
                         generation = self.generations.get(spec['target'], 0)
                         self.submit(self.refresh, key, generation, self.reset_epochs.get(spec['target'], 0))
+                    auth_failed = 'resume' in payload.get('fields', []) and any(
+                        item.get('code') == 'github_auth_failed' for item in
+                        entry.get('value', {}).get('catalog', {}).get('diagnostics', [])
+                        if isinstance(item, dict))
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
                                       checked=entry['checked'], stale=stale,
                                       refreshing=entry['refreshing'] or (missing and not failure) or entry.get('pending', False) or (stale and now >= retry
@@ -441,6 +449,7 @@ class _Memory:
                                       error=failure.get('error', entry.get('error', '')), retry_at=retry,
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
                                       observed=entry.get('observed', entry['checked']),
+                                      resume_pr_auth_failed=auth_failed,
                                       timings=entry.get('timings', {}),
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
@@ -469,7 +478,8 @@ class _Memory:
         """Versioned host-local metadata only. No imported evidence or prompts."""
         if payload.get('spec', {}).get('target') != 'local':
             raise ValueError('only local discovery may be exported')
-        view = self.handle('discover', {'hosts': [payload['spec']], 'fields': ['rows', 'catalog', 'scopes']})
+        view = self.handle('discover', {'hosts': [payload['spec']], 'fields': ['rows', 'catalog', 'scopes'],
+                                        'refresh': payload.get('refresh') is True})
         host = view['hosts'][0]
         value = host.get('value')
         health = {k: host.get(k) for k in ('checked', 'observed', 'refreshing', 'error', 'error_kind')}
@@ -507,6 +517,8 @@ class _Memory:
         with self.lock:
             entry = self.entries[key]
             spec = dict(entry['spec'], reconcile=not entry.get('reconciled') or self.clock() - entry['reconciled'] >= TTL)
+            if entry.pop('requested', False):
+                spec.update(refresh=True, reconcile=True)
             if spec['target'] == 'local':
                 spec['live_only'] = not entry.get('value')
             if spec['target'] != 'local' and entry.get('value'):

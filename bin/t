@@ -597,6 +597,67 @@ def _resume_discovery_wait(refresh):
         ui.restore()
 
 
+def _resume_picker_refresh(directory, aliases, slot, shell_args):
+    """Refresh the retained snapshot and reapply the existing resume row rules."""
+    cache, cfg = _session_discovery(), Config()
+    fields = ['rows', 'resume']
+    deadline = time.monotonic() + 30
+    view, requested = None, False
+
+    def refresh():
+        nonlocal view, requested
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            view = dict(view or {}, wait_timed_out=True)
+            return True
+        latest = cache['discover'](cfg, fields=fields, refresh=not requested,
+                                   deadline=time.monotonic() + min(remaining, 1))
+        if latest.get('unavailable'):
+            view = dict(view or {}, wait_unavailable=True)
+            return False
+        view = latest
+        requested = not view.get('loading')
+        return requested and not any(host.get('refreshing') for host in view.get('hosts', []))
+
+    status_file = directory / 'discovery-status'
+    try:
+        cancelled = _resume_discovery_wait(refresh) == 'skip'
+    except KeyboardInterrupt:
+        cancelled = True
+    with tempfile.TemporaryDirectory(prefix='refresh-', dir=directory) as temporary:
+        snapshot = Path(temporary)
+        if cancelled or not view or view.get('wait_unavailable'):
+            status = json.loads(status_file.read_text()) if status_file.stat().st_size else {}
+            status['cancelled' if cancelled else 'failed'] = True
+        else:
+            status = cache['resume_health'](view)
+            (snapshot / 'live').write_text(''.join('\t'.join(row.split('\t')[:8]) + '\n'
+                                                   for row in cache['rows'](view).splitlines()))
+            (snapshot / 'history').write_text(''.join(row + '\n' for row in cache['candidates'](view, aliases, slot)))
+            source = Path(_t_source_root())
+            snippet = (ZSH_PRELUDE + 'export PATH=' + shlex.quote(str(source / 'bin')) + ':"$PATH"; source ' +
+                       shlex.quote(str(source / 't.plugin.zsh')) + ' && _T_RESUME_PICKER_SNAPSHOT=' +
+                       shlex.quote(temporary) + ' _t_resume ' + shlex.join(shell_args))
+            env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
+            env.update(T_NO_AUTORELOAD='1', T_NO_UPDATE_CHECK='1')
+            try:
+                rebuilt = subprocess.run(['zsh', '-lic', snippet], env=env, start_new_session=True,
+                                         stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+                if rebuilt.returncode:
+                    raise ValueError('could not rebuild picker snapshot')
+                text = (snapshot / 'source').read_text()
+                (directory / 'all').write_text(text)
+                (directory / 'rows-1').write_text(text)
+                (snapshot / 'source').replace(directory / 'source')
+                (snapshot / 'rows-0').replace(directory / 'rows-0')
+                (snapshot / 'columns').replace(directory / 'columns')
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                status = json.loads(status_file.read_text()) if status_file.stat().st_size else {}
+                status['failed'] = True
+        status_file.write_text(json.dumps(status))
+    return 0
+
+
 def cmd_ls(cfg, args):
     try:
         scope, wt_scope = _ls_scope(cfg, args.repo, args.all, os.getcwd())
@@ -13802,24 +13863,19 @@ REMOTE SESSIONS
   With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
-  The picker MULTI-SELECTS: Tab marks rows with a ✓.
-  PRS lists associated pull request numbers and their cached states.
-  LAST TURN shows the local date and time. ↶ marks the latest verified close.
-  Repository and host columns appear when applicable.
+  Tab marks rows with ✓. Ctrl-U refreshes this picker and reports host status.
+  Ctrl-/ shows details for the focused row.
+  PRS lists associated pull requests and their cached states. WORK uses ↻ for
+  verified work in progress. LAST TURN shows the local date and time.
+  Run from outside a registered repo to browse all repos with a REPO column.
+
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.
-  Ctrl-G/O/R matches the highlighted row's agent/host/repo; repeat to clear.
-  Filtering keeps your search. No filter pop-ups.
+  Ctrl-G/O/R matches the focused row's agent, host, or repo; repeat to clear.
+  Ctrl-D hides or shows histories whose associated PRs are all merged.
 
-  Leading PR badges show cached state. Ctrl-D hides/shows merged PR sessions;
-  unknown, no-PR and mixed-state histories stay visible. Merged is not completion.
-
-  Ctrl-Y cycles last closed, last turn, repository, agent,
-  host/origin, and session. Arrow keys still move through rows.
-
-  ↶ identifies the latest recorded close in this scope, independently of sort.
-  Verified t close events sort newest first by default; without close evidence,
-  last user turn is the default. An app exit or transcript mtime is not a close.
-  Incomplete discovery or tied close times never claim a unique last session.
+  Ctrl-Y cycles last closed, last turn, repo, agent, host, and session.
+  ↶ marks the latest verified close in the available results. A tie produces
+  no marker. When there is no verified close, the picker defaults to last turn.
 
   Ctrl-S toggles sorting, retaining the chosen sort while off.
   Text sorts ascend, with newest turn breaking ties. Filters, reset and
@@ -15022,6 +15078,21 @@ def _main(argv):
             text = ''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in text.splitlines())
         sys.stdout.write(text)
         return 1 if view.get('unavailable') else 0
+    if argv and argv[0] == '__resume-picker-refresh' and len(argv) >= 3:
+        directory = Path(argv[1])
+        if (argv[1] != os.environ.get('T_PICKER_VIEWS') or not directory.is_absolute()
+                or not all((directory / name).is_file() for name in
+                           ('source', 'columns', 'rows-0', 'discovery-status'))
+                or '--' not in argv[2:]):
+            return 2
+        split = argv.index('--', 2)
+        aliases, shell_args = argv[2:split], argv[split + 1:]
+        slot = None
+        if '--slot' in aliases:
+            if len(aliases) < 2 or aliases[-2] != '--slot' or not aliases[-1].isdigit():
+                return 2
+            slot, aliases = aliases[-1], aliases[:-2]
+        return _resume_picker_refresh(directory, aliases, slot, shell_args)
     if argv and argv[0] == '__resume-candidates' and os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
         aliases, slot = argv[1:], None
         if aliases[:1] == ['--diagnostics-file']:
@@ -15033,14 +15104,19 @@ def _main(argv):
                 return 2
             slot, aliases = aliases[-1], aliases[:at]
         cache = _session_discovery()
+        status_file = os.environ.get('T_RESUME_STATUS_FILE')
         if os.environ.get('T_RESUME_WAIT') == '1' and sys.stdin.isatty() and sys.stderr.isatty():
             with redirect_stdout(sys.stderr):
-                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait, choose=_open_discovery_choice)
+                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait,
+                                                       choose=_open_discovery_choice)
             if os.environ.get('T_RESUME_NOTICE_FILE'):
                 Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
         else:
             view = cache['discover'](Config())
-        cache['announce'](view)
+        if status_file:
+            Path(status_file).write_text(json.dumps(cache['resume_health'](view)))
+        else:
+            cache['announce'](view)
         for row in cache['candidates'](view, aliases, slot):
             print(row)
         return 1 if view.get('unavailable') else 0

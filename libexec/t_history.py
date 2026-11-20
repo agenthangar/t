@@ -28,7 +28,7 @@ _codex_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))[
 _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
 
 VERSION = 1
-PARSER_VERSION = 7
+PARSER_VERSION = 8
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
 _CACHE_REQUEST = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))['request']
 _RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
@@ -114,6 +114,8 @@ def validate(record):
         raise HistoryError('invalid history timestamp')
     if 'last_turn' in record:
         record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
+    if 'work_in_progress' in record and type(record['work_in_progress']) is not bool:
+        raise HistoryError('invalid work status')
     for field in ('model', 'model_source', 'summary', 'summary_source', 'interface'):
         if field in record and not isinstance(record[field], str):
             raise HistoryError('invalid recorded display metadata')
@@ -144,13 +146,13 @@ def validate(record):
     return record
 
 
-def generation(workspace):
+def generation(workspace, *, timeout=30):
     gitfile = Path(workspace) / '.git'
     try:
         info = gitfile.stat()
     except OSError:
         return ''
-    gitdir = run(['git', '-C', str(workspace), 'rev-parse', '--absolute-git-dir'], optional=True).strip()
+    gitdir = run(['git', '-C', str(workspace), 'rev-parse', '--absolute-git-dir'], timeout=timeout, optional=True).strip()
     return hashlib.sha256(json.dumps([gitdir, info.st_dev, info.st_ino, info.st_ctime_ns]).encode()).hexdigest() if gitdir else ''
 
 
@@ -318,21 +320,22 @@ def literal_commands(source):
     if len(objects) != 1:
         return []
     start, end, masked = objects[0]
-    commands = []
-    pattern = r"\b(?:cmd|command)\s*:\s*(" + JS_STRING + ')'
-    for match in re.finditer(pattern, source[start + 1:end], re.S):
-        position = start + 1 + match.start()
-        if not masked[position:position + 3].strip():
-            continue
-        if masked[start:position].count('{') - masked[start:position].count('}') != 1:
-            continue
-        try:
-            value = ast.literal_eval(match[1])
-            if isinstance(value, str):
-                commands.append(value)
-        except (ValueError, SyntaxError):
-            pass
-    return commands
+    if not (re.fullmatch(r'\s*text\s*\(\s*await\s+tools\.exec_command\s*\(\s*', masked[:start])
+            and re.fullmatch(r'\s*\)\s*\)\s*;?\s*', masked[end + 1:])):
+        return []
+    obj = masked[start + 1:end]
+    properties = [match for match in re.finditer(r'\bcmd\s*:', obj)
+                  if obj[:match.start()].count('{') == obj[:match.start()].count('}')]
+    if len(properties) != 1:
+        return []
+    value_start = start + 1 + properties[0].end()
+    value = re.match(r'\s*(' + JS_STRING + ')', source[value_start:end], re.S)
+    if not value or not re.match(r'\s*(?:,|$)', masked[value_start + value.end():end]):
+        return []
+    try:
+        return [ast.literal_eval(value[1])]
+    except (ValueError, SyntaxError):
+        return []
 
 
 def shell_source(command):
@@ -350,31 +353,91 @@ def shell_source(command):
 
 def poll_key(call, args):
     if call.get('type') == 'custom_tool_call' and isinstance(args, str):
-        # Only a literal session id on the execution API is lineage evidence.
-        match = re.search(r'\btools\.write_stdin\s*\(\s*\{[^}]*\bsession_id\s*:\s*([0-9]+)', js_structure(args), re.S)
+        # Match one literal poll and, for a known sequential two-result wrapper,
+        # consume only its first structured process result.
+        masked = js_structure(args)
+        match = re.fullmatch(
+            r'\s*text\(await tools\.write_stdin\(\s*\{([^{}]*)\}\s*\)\s*\)\s*;?'
+            r'(\s*text\(await tools\.exec_command\(\s*\{[^{}]*\}\s*\)\s*\)\s*;?)?\s*', masked)
         if match:
-            return 'session:' + match[1]
+            obj = match[1]
+            session = re.search(r'\bsession_id\s*:\s*([0-9]+)\s*(?=,|$)', obj)
+            chars = re.search(r'\bchars\s*:', obj)
+            if session and (not chars or re.match(r'''\s*(?:""|'')\s*(?=,|$)''', args[
+                    match.start(1) + chars.end():match.end(1)])):
+                return 'session:' + session[1], bool(match[2])
     if isinstance(args, dict):
         name = str(call.get('name') or '').split('.')[-1]
-        if name == 'write_stdin' and type(args.get('session_id')) is int:
-            return 'session:' + str(args['session_id'])
+        if name == 'write_stdin' and type(args.get('session_id')) is int and args.get('chars', '') == '':
+            return 'session:' + str(args['session_id']), False
         if name == 'wait' and isinstance(args.get('cell_id'), str):
-            return 'cell:' + args['cell_id']
-    return None
+            return 'cell:' + args['cell_id'], False
+    return None, False
 
 
 def running_keys(output):
-    sessions = ['session:' + value for value in re.findall(r'"session_id"\s*:\s*([0-9]+)', output)]
-    cells = ['cell:' + value for value in re.findall(r'Script running with cell ID ([A-Za-z0-9_-]+)', output)]
-    return sessions + cells
+    return ['cell:' + value for value in re.findall(r'^Script running with cell ID ([A-Za-z0-9_-]+)', output, re.M)]
+
+
+def process_output(value, first_only=False):
+    """Extract tool status and stdout without matching against repr() or PR prose."""
+    if isinstance(value, list):
+        value = '\n'.join(block.get('text', '') for block in value
+                          if isinstance(block, dict) and block.get('type') in ('input_text', 'text')
+                          and isinstance(block.get('text'), str))
+    if not isinstance(value, str):
+        return '', [], []
+    stdout, statuses, running, results = [], [], running_keys(value), []
+    for line in value.splitlines():
+        if line.lstrip().startswith('{'):
+            try:
+                result = json.loads(line)
+            except ValueError:
+                result = None
+            if isinstance(result, dict) and isinstance(result.get('output'), str) and (
+                    'exit_code' in result or 'session_id' in result):
+                results.append(result)
+                continue
+        status = re.fullmatch(r'(?:Exit code:\s*|Process exited with code\s+)(-?[0-9]+)', line)
+        if status:
+            statuses.append(int(status[1]))
+        elif not re.match(r'^(?:Script completed|Script running with cell ID |Wall time |Output:)', line):
+            stdout.append(line)
+    if first_only:
+        if len(results) != 2 or any(line.strip() for line in stdout) or statuses:
+            return '', [], []
+        results = results[:1]
+    elif len(results) > 1:
+        return '', [], []
+    if results:
+        stdout = []
+    for result in results:
+        stdout.append(result['output'])
+        if type(result.get('exit_code')) is int:
+            statuses.append(result['exit_code'])
+        elif type(result.get('session_id')) is int:
+            running.append('session:' + str(result['session_id']))
+    return '\n'.join(stdout).strip(), statuses, running
 
 
 def tool_pr_command(command):
     """Extract actual gh invocations, excluding quoted prose/printf and PR bodies."""
     if not isinstance(command, str):
         return []
+    first, separator, rest = command.partition('\n')
+    # A Python heredoc is used to write a PR body before the final create.
+    # Only the final create can determine the shell's exit, and explicit
+    # process success and its terminal URL are required for that shape.
+    preparation = separator and re.fullmatch(
+        r'''python[23]?[ \t]+-[ \t]+<<[ \t]*(['"]?)([A-Za-z0-9_]+)\1[ \t]*''', first)
+    if preparation:
+        _, delimiter, source = ('\n' + rest).partition('\n' + preparation[2] + '\n')
+        if not delimiter or not source.strip():
+            return []
+    else:
+        source = shell_source(command)
     try:
-        lexer = shlex.shlex(shell_source(command), posix=True, punctuation_chars=';&|()\n')
+        lexer = shlex.shlex(source, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
         lexer.whitespace_split = True
         tokens = list(lexer)
@@ -390,13 +453,19 @@ def tool_pr_command(command):
             statement.append(token)
     # One successful shell result proves an unbranched sole gh invocation.
     # Mixed/control-flow commands cannot safely attribute arbitrary stdout URLs.
-    if len(statements) != 1 or any(token in ('&&', '||') for token in tokens):
+    if len(statements) != 1 or any(re.fullmatch(r'[;&|()\n]*[&|()][;&|()\n]*', token) for token in tokens):
         return []
     out = []
     for words in statements:
         while words and (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]) or words[0] in ('command', 'env')):
             words = words[1:]
-        if len(words) < 3 or Path(words[0]).name != 'gh' or words[1] != 'pr' or words[2] not in ('create', 'checkout', 'edit'):
+        if len(words) < 3 or Path(words[0]).name != 'gh' or words[1] != 'pr' or words[2] not in ('create', 'checkout', 'edit', 'merge'):
+            continue
+        if preparation and words[2] != 'create':
+            continue
+        if words[2] == 'create' and any(
+                re.fullmatch(r'[<>]+', word) or word in ('--dry-run', '--web', '-w')
+                or word.startswith(('--dry-run=', '--web=')) for word in words[3:]):
             continue
         repo = None
         for index, word in enumerate(words):
@@ -410,7 +479,7 @@ def tool_pr_command(command):
             refs = pr_refs(target) if PR_URL.fullmatch(target) else []
             if re.fullmatch(r'[1-9][0-9]*', target):
                 numbers = [dict(number=int(target), repo=repo)]
-        out.append(dict(refs=refs, numbers=numbers, action=words[2]))
+        out.append(dict(refs=refs, numbers=numbers, action=words[2], repo=repo, explicit_exit=preparation))
     return out
 
 
@@ -499,46 +568,47 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                                 args = json.loads(args)
                             except ValueError:
                                 args = {}
-                        key = poll_key(call, args)
+                        key, first_only = poll_key(call, args)
                         call_id = call.get('call_id') or call.get('id') or 'unknown'
                         if key and key in pending:
-                            polls[call_id] = key
+                            polls[call_id] = (key, first_only)
                         if call.get('type') == 'custom_tool_call' and isinstance(args, str):
                             executions[call_id] = bool(execution_objects(args)) or str(call.get('name') or '').split('.')[-1] == 'exec'
                             commands = literal_commands(args)
                         else:
-                            executions[call_id] = str(call.get('name') or '').split('.')[-1] in ('exec_command', 'shell_command', 'Bash')
-                            commands = [args.get('command') or args.get('cmd') or ''] if isinstance(args, dict) else []
+                            name = str(call.get('name') or '').split('.')[-1]
+                            executions[call_id] = name in ('', 'exec_command', 'shell_command', 'Bash')
+                            commands = [args.get('command') or args.get('cmd') or ''] if executions[call_id] and isinstance(args, dict) else []
                         evidence = [item for command in commands for item in tool_pr_command(command)]
                         if evidence:
                             tools[call_id] = evidence
                     elif call.get('type') in ('function_call_output', 'custom_tool_call_output', 'tool_result'):
                         call_id = call.get('call_id') or call.get('tool_use_id')
-                        key = polls.get(call_id)
-                        inherited = pending.get(key, {})
-                        evidence = tools.get(call_id) or inherited.get('evidence')
-                        output = str(call.get('output') or call.get('content') or '')
-                        statuses = [int(status) for status in re.findall(r'(?:"exit_code"\s*:\s*|Exit code:\s*|Process exited with code\s+)(-?[0-9]+)', output)]
+                        key, first_only = polls.pop(call_id, (None, False))
+                        inherited = pending.pop(key, {})
+                        evidence = tools.pop(call_id, None) or inherited.get('evidence')
+                        output, statuses, running = process_output(call.get('output') or call.get('content') or '', first_only)
                         failed = call.get('is_error') or any(status != 0 for status in statuses)
-                        running = running_keys(output)
-                        if executions.get(call_id):
+                        if executions.pop(call_id, False):
                             for identifier in running:
                                 pending.pop(identifier, None)
-                        if evidence and failed:
-                            if key:
-                                pending.pop(key, None)
-                        elif evidence and running:
-                            item = dict(evidence=evidence, refs=inherited.get('refs', []) + pr_refs(output))
+                        if not evidence or failed:
+                            continue
+                        if running:
+                            item = dict(evidence=evidence, last_line=output.splitlines()[-1] if output else inherited.get('last_line', ''))
                             for identifier in running:
                                 pending[identifier] = item
-                        elif evidence and (not key or statuses and all(status == 0 for status in statuses)):
+                        else:
                             for item in evidence:
+                                if (key or item['explicit_exit']) and not statuses:
+                                    continue
                                 record['prs'].extend(item['refs'])
                                 record.setdefault('pr_numbers', []).extend(item['numbers'])
                                 if item['action'] == 'create':
-                                    record['prs'].extend(inherited.get('refs', []) + pr_refs(output))
-                            if key:
-                                pending.pop(key, None)
+                                    last_line = output.splitlines()[-1].strip() if output else inherited.get('last_line', '').strip()
+                                    if PR_URL.fullmatch(last_line):
+                                        refs = pr_refs(last_line)
+                                        record['prs'].extend(ref for ref in refs if not item['repo'] or item['repo'] == ref['repo'])
     except OSError:
         return record
     if not record['sid'] and agent == 'claude':
@@ -647,7 +717,57 @@ def resume_candidate(row, alias, association, host):
     return '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
                               association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
                               clean(row['title']), host, row['agent'], row.get('last_turn', '-'), row['repo'],
-                              state, _SORT['closed_time'](row), refs or '-']))
+                              state, _SORT['closed_time'](row), refs or '-',
+                              'yes' if row.get('work_in_progress') else '-']))
+
+
+def worktree_has_pending_work(workspace, branch, merged_heads, published_heads, deadline):
+    def git(*args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HistoryError('work status deadline exceeded')
+        return run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', workspace, *args],
+                   timeout=min(1, remaining)).strip()
+
+    try:
+        if not branch or git('symbolic-ref', '--quiet', '--short', 'HEAD') != branch:
+            return False
+        if git('status', '--porcelain'):
+            return True
+        if not merged_heads:
+            return False
+        head = git('rev-parse', 'HEAD')
+        if head in merged_heads or head in published_heads:
+            return False
+        if not any(git('merge-base', head, merged) == merged for merged in sorted(merged_heads)):
+            return False
+        default_refs = ('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master')
+        refs = git('for-each-ref', '--format=%(refname)', *default_refs).splitlines()
+        base = next((ref for ref in default_refs if ref in refs), '')
+        if not base:
+            return False
+        common = git('merge-base', head, base)
+        if common == head:
+            return False
+        tree = git('rev-parse', 'HEAD^{tree}')
+        # A squash merge changes the commit ID but can publish the same tree.
+        return tree not in git('log', '--first-parent', '--format=%T', common + '..' + base).splitlines()
+    except HistoryError:
+        return False
+
+
+def cached_merged_heads(directory, repo, deadline):
+    """Read the same repo-wide merged-head sidecars used by the live status."""
+    heads = set()
+    for path in directory.glob(repo.replace('/', '#') + '#*.head'):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            if path.with_suffix('').read_text().strip() == 'MERGED':
+                heads.add(path.read_text().strip().lower())
+        except (OSError, UnicodeError):
+            continue
+    return heads
 
 
 def compact_model(model, width):
@@ -1111,6 +1231,7 @@ class HistoryCommand:
             row['repo'] = allowed[row['repo']]
             row.pop('owners', None)
             row.pop('display', None)
+            row.pop('work_in_progress', None)
             for field in ('associations', 'sources'):
                 if any(value.get('host') != 'local' for value in row.get(field, [])):
                     raise HistoryError('remote catalog contains imported evidence')
@@ -1482,6 +1603,59 @@ class HistoryCommand:
                     pass
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
+
+    def annotate_resume_work(self, rows, live=None):
+        """Check the latest captured worktree association once per local path."""
+        by_workspace = {}
+        for row in rows:
+            row.pop('work_in_progress', None)
+            for association in row.get('associations', []):
+                if association.get('host') == 'local' and association.get('generation') and association.get('slot'):
+                    by_workspace.setdefault(association['workspace'], []).append((row, association))
+        deadline = time.monotonic() + 3
+        live = live or {}
+        aliases = {**self.local_identities, **self.discovery_identities}
+        legacy = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
+        published = {}
+        for workspace, entries in by_workspace.items():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if not (Path(workspace) / '.git').is_file():
+                continue
+            row, captured = max(entries, key=lambda entry: entry[1].get('observed', 0))
+            observed = captured.get('observed', 0)
+            if any((other['agent'], other['sid']) != (row['agent'], row['sid']) and evidence.get('observed', 0) == observed
+                   for other, evidence in entries):
+                continue
+            latest = max(row['associations'], key=lambda entry: entry.get('observed', 0))
+            if latest['workspace'] != workspace or latest.get('host') != 'local':
+                continue
+            if not any(repo == row['repo'] and workspace in self.cfg.worktree_paths(alias, captured['slot'])
+                       for alias, repo in aliases.items() if alias in self.cfg.repos):
+                continue
+            if any(sid != row['sid'] and (info.get('cwd') == workspace or
+                   (info.get('cwd') or '').startswith(workspace.rstrip('/') + '/')) for sid, info in live.items()):
+                continue
+            if generation(workspace, timeout=min(1, remaining)) != captured['generation']:
+                continue
+            merged_heads = set()
+            for pr in row.get('prs', []):
+                if pr.get('state') != 'MERGED' or pr['repo'] != row['repo']:
+                    continue
+                try:
+                    head = (legacy / f'{pr["repo"].replace("/", "#")}#{pr["number"]}.head').read_text().strip()
+                except (OSError, UnicodeError):
+                    continue
+                if re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', head):
+                    merged_heads.add(head.lower())
+            repo = row['repo']
+            if merged_heads and repo not in published:
+                published[repo] = cached_merged_heads(legacy, repo, deadline)
+            if worktree_has_pending_work(workspace, captured.get('branch'), merged_heads, published.get(repo, ()), deadline):
+                remaining = deadline - time.monotonic()
+                if remaining > 0 and generation(workspace, timeout=min(1, remaining)) == captured['generation']:
+                    row['work_in_progress'] = True
 
     def pick(self, rows, alias, limit=50, page=1, query='', multi=False):
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
@@ -1976,6 +2150,7 @@ class HistoryCommand:
             alias = local_alias or identity
             records = self.records(alias)
             self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
+            self.annotate_resume_work(records)
             for row in records:
                 key = (identity, row['agent'], row['sid'])
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
@@ -1986,6 +2161,9 @@ class HistoryCommand:
                     continue
                 association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
+                latest = max(row['associations'], key=lambda a: a.get('observed', 0))
+                if association != latest or source.get('host') != 'local':
+                    row = {**row, 'work_in_progress': False}
                 yield resume_candidate(row, alias, association, source.get('host') or '-')
 
     def execute(self, args):

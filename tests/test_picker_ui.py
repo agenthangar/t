@@ -1,5 +1,6 @@
 """Exercise filter keys in real fzf without touching the user's terminal/server."""
 import os
+import json
 from pathlib import Path
 import re
 import shlex
@@ -72,6 +73,15 @@ def picker(t_mod):
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
+        def saved_resume_row(number, title):
+            repo = root / 'repo'
+            folder = root / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(repo.resolve()))
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f'sid{number}.jsonl').write_text(json.dumps(
+                dict(type='user', sessionId=f'sid{number}', cwd=str(repo.resolve()),
+                     timestamp=f'2026-11-{number + 10}T10:00:00Z',
+                     message=dict(role='user', content=title))) + '\n')
+
         def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False):
             env['T_HOME'] = str(ROOT)
             if slow_update:
@@ -113,7 +123,7 @@ def picker(t_mod):
                 if profile == 'resume-merged':
                     rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
                 if profile == 'resume-closed':
-                    rows = rows.replace('\tNewest web', '\torg/web\tOPEN\t2026-10-23T10:00:00Z\t  Newest web').replace('\tOlder api', '\torg/api\tOPEN\t2026-10-24T10:00:00Z\t↶ Older api')
+                    rows = rows.replace('\tNewest web', '\torg/web\tOPEN\t2026-10-23T10:00:00Z\tNewest web').replace('\tOlder api', '\torg/api\tOPEN\t2026-10-24T10:00:00Z\tOlder api')
                 default = rows
                 env['T_HOME'] = str(ROOT)
             if profile == 'list-rich':
@@ -152,6 +162,25 @@ def picker(t_mod):
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
             redirect = ' > "$HOME/selected"'
+            if profile == 'public-resume-refresh':
+                shell = 'zsh -f'
+                env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1', XDG_RUNTIME_DIR=directory,
+                           T_LOCAL_RC=str(root / 'local.zsh'), CLAUDE_CONFIG_DIR=str(root / '.claude'),
+                           CODEX_HOME=str(root / '.codex'), T_DISCOVERY_COLLECTOR='0')
+                (root / 'repo').mkdir()
+                config = f'DEV_REPOS[repo]={shlex.quote(str((root / "repo").resolve()))}\n'
+                (root / 'local.zsh').write_text(config)
+                (root / 't').mkdir()
+                (root / 't/config.sh').write_text(config)
+                if not empty:
+                    saved_resume_row(1, 'First Task')
+                    saved_resume_row(2, 'Second Task')
+                prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
+                          'cd "$HOME"\n'
+                          '_t_resume_history_launch() { print -r -- "LAUNCHED $*" >> "$HOME/selected"; return 99; }\n'
+                          ': > "$HOME/selected"\n')
+                picker_cmd = 't session resume --days all'
+                redirect = ''
             if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
@@ -234,8 +263,40 @@ def picker(t_mod):
         def keys(*values):
             return tmux('send-keys', *values)
         keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
+        keys.saved_resume_row = saved_resume_row
         yield start, wait, keys, finish
         tmux('kill-server', check=False)
+
+
+@pytest.mark.fzf_compat
+def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-resume-refresh', mode='resume', width=105, height=24)
+    screen = wait('Second Task', focused='Second Task')
+    assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
+    keys('-l', 'Task')
+    keys('Tab')
+    wait('(1)', focused='First Task')
+    keys.saved_resume_row(3, 'New Task')
+    keys('C-u')
+    stable_ids = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
+    screen = wait('3/3 (1)' if stable_ids else '3/3 (0)', focused='First Task' if stable_ids else None)
+    assert 'New Task' in screen
+    assert '> Task' in screen and 'local current' in screen
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+def test_empty_public_resume_can_refresh_in_a_short_terminal(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-resume-refresh', mode='resume', empty=True, width=32, height=12)
+    screen = wait('No matching conversations')
+    assert 'Ctrl-U' in screen
+    keys.saved_resume_row(1, 'First Task')
+    keys('C-u')
+    screen = wait('1/1 (0)', absent=['No matching conversations'])
+    assert '▸' in screen and 'REPO' in screen
+    assert finish('Escape', status=130) == []
 
 
 @pytest.mark.fzf_compat

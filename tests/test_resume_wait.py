@@ -246,3 +246,61 @@ def test_resume_discovery_notice_survives_auth_and_filter_changes(filters, tmp_p
         header = (tmp_path / 'current-header').read_text()
         assert header.startswith('GitHub auth failed:')
         assert 'Older or incomplete results' in header
+
+
+@pytest.mark.parametrize('outcome', ['cancel', 'unavailable', 'timeout', 'complete'])
+def test_explicit_resume_refresh_preserves_snapshot_on_failure(t_mod, monkeypatch, tmp_path, outcome):
+    (tmp_path / 'discovery-status').write_text(json.dumps(dict(hosts=[dict(host='local', status='current')])))
+    for name in ('source', 'rows-0', 'columns'):
+        (tmp_path / name).write_text(f'old {name}')
+    running = view()
+    running['hosts'][0]['refreshing'] = True
+    finished = view()
+    replies = {'cancel': [running], 'unavailable': [{'unavailable': True}],
+               'timeout': [running], 'complete': [running, finished]}
+    sequence, calls, clock = iter(replies[outcome]), [], [100]
+
+    def discover(cfg, **kwargs):
+        calls.append(kwargs['refresh'])
+        return next(sequence)
+
+    def wait(refresh):
+        assert not refresh()
+        if outcome == 'cancel':
+            raise KeyboardInterrupt
+        if outcome in ('unavailable', 'timeout'):
+            clock[0] += 31
+        assert refresh()
+        return '__done__'
+
+    def rebuild(command, **kwargs):
+        # The spawner receives original flags and operates without input or a
+        # controlling terminal. It writes solely to the private staging directory.
+        import shlex
+        from pathlib import Path
+        options = shlex.split(command[-1])
+        destination = Path(next(part.partition('=')[2] for part in options if part.startswith('_T_RESUME_PICKER_SNAPSHOT=')))
+        assert options[-5:] == ['_t_resume', 'api', '4', '--days', 'all']
+        assert kwargs['stdin'] == t_mod.subprocess.DEVNULL and kwargs['start_new_session']
+        assert (destination / 'history').read_text() == 'new history\n'
+        for name in ('source', 'rows-0', 'columns'):
+            (destination / name).write_text(f'new {name}')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(t_mod, 'Config', lambda: None)
+    monkeypatch.setattr(t_mod, '_resume_discovery_wait', wait)
+    monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(t_mod.subprocess, 'run', rebuild)
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
+        discover=discover, resume_health=lambda v: dict(hosts=[], timed_out=v.get('wait_timed_out', False)),
+        rows=lambda _: 'local\tlive\n',
+        candidates=lambda v, aliases, slot: ['new history'] if aliases == ['api'] and slot == '4' else []))
+    assert t_mod._resume_picker_refresh(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == 0
+    status = json.loads((tmp_path / 'discovery-status').read_text())
+    if outcome in ('cancel', 'unavailable'):
+        assert (tmp_path / 'source').read_text() == 'old source'
+        assert status['cancelled' if outcome == 'cancel' else 'failed']
+    else:
+        assert (tmp_path / 'source').read_text() == 'new source'
+        assert status['timed_out'] == (outcome == 'timeout')
+    assert calls == ([True, False] if outcome == 'complete' else [True])

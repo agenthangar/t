@@ -115,6 +115,34 @@ def discover(engine, *hosts):
     return engine.handle('discover', {'hosts': list(hosts) or [spec()]})
 
 
+def test_explicit_refresh_coalesces_without_evicting_retained_rows(engine, cache):
+    memory, now, jobs, _ = engine
+    host = spec('mini')
+    discover(memory, host)
+    drain(jobs)
+    old = discover(memory, host)['hosts'][0]['value']
+    assert old
+    memory.failures['mini'] = dict(retry_at=now[0] + 60, error='unreachable', kind='transport')
+    outcomes = iter([{'_pending': True}, {'rows': 'New rows', 'resume': []}])
+    requests = []
+    def collect(target):
+        requests.append(target.get('refresh', False))
+        return next(outcomes)
+    memory.collect = collect
+    for _ in range(3):
+        latest = memory.handle('discover', {'hosts': [host], 'refresh': True})['hosts'][0]
+        assert latest['refreshing'] and latest['value'] == old
+        assert len(jobs) == 1
+    drain(jobs)
+    assert requests == [True] and discover(memory, host)['hosts'][0]['value'] == old
+    now[0] += 1
+    discover(memory, host)
+    drain(jobs)
+    assert requests == [True, False]
+    refreshed = discover(memory, host)['hosts'][0]
+    assert not refreshed['refreshing'] and refreshed['value']['rows'] == 'New rows'
+
+
 def drain(jobs):
     callback, *args = jobs.pop(0)
     callback(*args)

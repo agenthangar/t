@@ -395,7 +395,7 @@ def test_header_color_clips_before_ansi_and_plain_has_explicit_state(filters, mo
         colored = filters.header('resume', 0, {'agent': '界' * 40}, 3, '', 28, enabled=enabled, color=True)
         assert re.sub(r'\x1b\[[0-9;]*m', '', colored) == plain
         assert '\x1b' in colored
-        assert ('\x1b[1;4;96mFilters' in colored) == enabled
+        assert ('\x1b[1;4;97;48;5;23mFilters' in colored) == enabled
         assert 'Filters ' + ('ON' if enabled else 'OFF') in plain
         assert all(filters.display_width(line) <= 28 for line in plain.splitlines())
 
@@ -440,7 +440,7 @@ def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_p
 def test_resume_turns_preserve_explicit_pr_and_repository_identity(filters, tmp_path):
     row = 'api\t2\tsid\t/wt\tdate\ttitle merged\t-\thistory\tmini\tcodex\t-\t-\torg/api\tMERGED'
     result = filters.resume_turns(row, str(tmp_path), str(tmp_path))[0].split('\t')
-    assert result[11:] == ['org/api', 'MERGED', '-', '-']
+    assert result[11:] == ['org/api', 'MERGED', '-', '-', '-']
     assert filters.resume_turns(row.replace('MERGED', 'invalid'), str(tmp_path), str(tmp_path))[0].split('\t')[12] == 'UNKNOWN'
 
 
@@ -462,10 +462,11 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     text = filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True)
     active = re.findall(r'\x1b\[1;4;96m(.*?)\x1b\[0m', text)
-    assert ('Filters ON' in active) == enabled
+    filled = re.findall(r'\x1b\[1;4;97;48;5;23m(.*?)\x1b\[0m', text)
+    assert ('Filters ON' in filled) == enabled
     state_key = theme.key_labels('Ctrl-T', compact=compact)
     assert any(item.startswith(state_key) for item in active) == enabled
-    assert any(item.startswith('Sort:') for item in active)
+    assert any(item.startswith('Sort:') for item in filled)
     assert any(theme.key_labels('Ctrl-D', compact=compact) in item for item in active) == (enabled and hide_merged)
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())

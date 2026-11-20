@@ -204,7 +204,9 @@ def test_catalog_projection_filters_and_preserves_repository_identity(adapter, m
     row, = adapter._catalog_candidates(data, history, 'mini')
     fields = row.split('\t')
     assert fields[1:4] == ['api', '2', 'saved']
-    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-']
+    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-', 'org/api#1:OPEN', '-']
+    record['work_in_progress'] = True
+    assert next(adapter._catalog_candidates(data, history, 'mini')).split('\t')[14] == 'yes'
     history.worktree_enabled = lambda alias: False
     assert not list(adapter._catalog_candidates(data, history, 'mini'))
     history.worktree_enabled = lambda alias: True
@@ -254,11 +256,11 @@ def test_local_snapshot_includes_unindexed_live_sessions_and_repo_scopes(adapter
     assert row['title'] == '(no transcript yet)' and row['url'].endswith(':5201')
 
 
-@pytest.mark.parametrize('fields_count', [12, 13])
+@pytest.mark.parametrize('fields_count', [12, 13, 14, 15])
 def test_remote_delta_retains_unchanged_closed_resume_rows(adapter, collector, monkeypatch, fields_count):
     def candidate(sid):
         fields = ['api', 'local', '1', sid, '/sample', 'date', 'Title', 'mini',
-                  'codex', '-', 'org/repo', 'OPEN', '2026-11-16T10:00:00Z']
+                  'codex', '-', 'org/repo', 'OPEN', '2026-11-16T10:00:00Z', 'org/repo#1:OPEN', 'yes']
         return '\t'.join(fields[:fields_count])
     records = [dict(repo='org/repo', agent='codex', sid=sid) for sid in ('keep', 'remove')]
     previous = dict(rows='', catalog={'conversations': records}, _remote_generation='before',
