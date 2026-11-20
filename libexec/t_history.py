@@ -57,6 +57,15 @@ class HistoryCancelled(HistoryError):
     """The user left a history selection without choosing work."""
 
 
+class UnknownWorkspaceWriter(HistoryError):
+    """Ownership of a sibling writer could not be resolved at this workspace."""
+
+    def __init__(self, error, workspace):
+        super().__init__(str(error))
+        self.workspace = workspace
+        self.fingerprint = error.fingerprint
+
+
 def clean(value):
     return ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value or '')).split())
 
@@ -771,6 +780,7 @@ class HistoryCommand:
         self.host = socket.gethostname().split('.')[0]
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
+        self.repair_writer = None
         self.discovery_identities = dict(getattr(self.store, 'identities', {}))
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
@@ -1729,12 +1739,19 @@ class HistoryCommand:
             # This probe returns no stdout data. Let its shared wait spinner
             # use the terminal while the shell captures the eventual owner.
             with redirect_stdout(sys.stderr) if terminal else nullcontext():
-                helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                creation = value['associations'][0]['workspace']
+                probe_cwd = workspace or creation
+                previous = self.repair_writer
+                options = ({'unresolved_fingerprint': previous.fingerprint}
+                           if previous and previous.workspace == probe_cwd else {})
+                helper['assert_released']('Codex', row['sid'], creation, self.api['_run'],
                     ownership_cwd=workspace,
                     codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                     rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                    retry='Retry: t session resume, then select the conversation again.')
+                    retry='Retry: t session resume, then select the conversation again.', **options)
         except ValueError as error:
+            if isinstance(error, helper.get('UnresolvedWriterError', ())):
+                raise UnknownWorkspaceWriter(error, probe_cwd) from error
             raise HistoryError(str(error)) from error
 
     def codex_target(self, row, default):
@@ -1846,6 +1863,7 @@ class HistoryCommand:
 
     def resume_with_repair(self, alias, row, **options):
         """Repair retries the selected conversation, never a slot's latest one."""
+        previous = None
         try:
             return self.resume(alias, row, **options)
         except HistoryCancelled:
@@ -1858,6 +1876,8 @@ class HistoryCommand:
                            (sys.stdout.isatty() or os.environ.get('T_RESUME_REPAIR') == '1'))
             if not interactive:
                 raise
+            if isinstance(error, UnknownWorkspaceWriter):
+                previous = error
             print('t resume: ' + str(error), file=sys.stderr)
             ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
             with redirect_stdout(sys.stderr):
@@ -1867,7 +1887,11 @@ class HistoryCommand:
         _CACHE_REQUEST('event', {'targets': ['local']})
         # The failed resume has released its reservations and claims. Repeat
         # every live ownership/source check once; do not loop or force a launch.
-        return self.resume(alias, row, **options)
+        self.repair_writer = previous
+        try:
+            return self.resume(alias, row, **options)
+        finally:
+            self.repair_writer = None
 
     def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
         owners = self.owners(True)
