@@ -331,8 +331,8 @@ _t_resume() {
   local -a sidlive
   local _p _mr _mrest
   local n wt sid busy rhost _rdir _rbase _rhost _rn _ralias _rsum _rag _rst _ok _stale stale_path agent _ag
-  local txf title when ep org orgf hf skipped=0 hidden_live=0
-  local reopened opf opep REPLY
+  local txf title ep org orgf hf skipped=0 hidden_live=0
+  local opf opep REPLY legacy_pr
   local _rwtr=${DEV_WORKTREE_ROOT:-}
   # The two picker signals shared with _claude_session_rows/tfind (see the
   # t-session-start notes): opened/ = the last-opened stamps (recency =
@@ -464,10 +464,10 @@ _t_resume() {
           # writes nothing to the .jsonl, so without the stamp a just-reopened
           # conversation sorts — and --days-gates — as days old. Stamp newer →
           # the row is dated by the stamp and marked ↻.
-          reopened=; opf="$opdir/$(_dev_transcript_sid "$txf")"
+          opf="$opdir/$(_dev_transcript_sid "$txf")"
           if [[ -f $opf ]]; then
             opep=$(zstat +mtime "$opf" 2>/dev/null || echo 0)
-            (( opep > ep )) && { ep=$opep; reopened=1; }
+            (( opep > ep )) && ep=$opep
           fi
           if (( cutoff && ep < cutoff )); then
             (( skipped++ )); continue        # outside the --days window
@@ -477,9 +477,9 @@ _t_resume() {
           # plus a whole-file `grep -ao` per candidate — 135MB read twice for ff's
           # 43 in-window conversations. Collect the survivors instead and read them
           # all in ONE batched, incrementally-cached pass below. Every field is
-          # non-empty (reopened is 1/0, never blank) so the `ps:\t:` split back
+          # non-empty so the `ps:\t:` split back
           # cannot collapse a column.
-          pending+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$wt"$'\t'"$txf"$'\t'"${reopened:-0}")
+          pending+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$wt"$'\t'"$txf")
         done
       done
     done
@@ -493,7 +493,7 @@ _t_resume() {
   # conversation may have moved, or several selections may share it.
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_emitted history_pr_state
+  local -A history_seen history_emitted
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
@@ -526,15 +526,10 @@ _t_resume() {
   (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 13 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 14 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
-    # Retained local transcript rows need the full associated-PR aggregate too;
-    # their last-mentioned PR alone cannot prove all work's PRs have merged.
-    if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
-      history_pr_state[$history_fields[2]/$history_fields[9]/$history_fields[4]]=$history_fields[12]
-    fi
     # Keep reopened-stamp eligibility when history takes over, without scanning
     # every pending transcript again for each history row.
     (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
@@ -547,7 +542,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}"$'\t'"${history_fields[14]:--}")
   done
   # One linear pass removes every local layout/alias copy handled by history.
   for _p in "${(@)pending}"; do
@@ -598,20 +593,11 @@ _t_resume() {
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     ep=$_mf[1]; repo=$_mf[2]; n=$_mf[3]; wt=$_mf[4]; txf=$_mf[5]
-    [[ $_mf[6] == 1 ]] && reopened=1 || reopened=
     title=${meta_title[$txf]:-}
     [[ -n $title ]] || continue        # conversationless stub — nothing to resume
-    # ep already reflects the reopened stamp (ep=opep above), so one
-    # strftime covers both branches; ↻ marks the stamp-dated rows.
-    when=; (( ep )) && when=$(strftime '%b %d %H:%M' "$ep" 2>/dev/null)
-    [[ -n $reopened && -n $when ]] && when+=" ↻"
-    # PR-in-session tag: the LAST github.com …/pull/N URL in the transcript
-    # (a `gh pr create` lands its URL in the tool output) names the
-    # session's PR; append " · #N <state>" to the title. State is read from
-    # the pr/ cache ONLY — never a blocking gh call — with the freshness policy in
-    # _pr_state_stale and the (detached, per-repo batched) refetch fired once for
-    # the whole scan below, so a new state shows on the next invocation.
-    _pr_state_tag "${meta_pr[$txf]:-}"; title+=$REPLY
+    # Legacy local transcripts supply a PR URL from the structured metadata scan.
+    legacy_pr=${meta_pr[$txf]#github.com/}
+    legacy_pr=${legacy_pr/\/pull\//#}
     # Origin: which machine the conversation LAST RAN on — the <sid>.origin
     # stamp t-session-start writes next to the transcript (syncs with it).
     # Blank for this machine / unstamped (pre-feature) transcripts; a raw
@@ -627,14 +613,8 @@ _t_resume() {
     # (field 11 here, 10 once the sort key is stripped) gets its own display column
     # AND picks the binary a pick spawns
     _ag=$(_dev_transcript_agent "$txf")
-    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf"$'\t'-$'\t'-$'\t'"${history_pr_state[$repo/$_ag/$(_dev_transcript_sid "$txf")]:-$REPLY_PR_STATE}")
+    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'-$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf"$'\t'-$'\t'-$'\t'"${${legacy_pr:+UNKNOWN}:-NONE}"$'\t'-$'\t'"${${legacy_pr:+$legacy_pr:UNKNOWN}:--}")
   done
-  # ONE detached refresh for the whole scan, instead of a `gh pr view` child per
-  # stale row: _pr_state_refresh batches the refs by repo, so a scan that turned up
-  # six unknown PRs in one repo costs a single gh call rather than six. Still
-  # strictly fire-and-forget — the render above already used the cache and is done.
-  _pr_state_flush
-
   (( skipped )) && echo "(${skipped} older conversation(s) outside the last ${days}d hidden — t session resume --days all shows them)" >&2
   (( hidden_live )) && [[ ! -t 0 || ! -t 1 ]] && \
     echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
@@ -670,23 +650,58 @@ _t_resume() {
     return 1
   fi
 
-  # Preserve repo, slot, conversation ID, workspace, activity, label, location,
-  # remote alias, origin, agent, turn, repository identity, PR state, and close
-  # time. Add one display field for fzf's --with-nth=-1.
-  # Measure the full snapshot so filtering does not move the columns.
-  local pick c fprompt columns row_format
-  local -a f cells
-  local rw=4 sw=4 ow=0 aw=5 tw=8 i=1
+  # Measure display widths from the full snapshot so filtering cannot move a
+  # column. Keep the verified merged aggregate in the private selection fields.
+  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_text pr_count pr_aggregate slot_label
+  local -a f cells pr_cells host_cells slot_cells
+  local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
+    pr_text= pr_count=0 pr_aggregate=
+    for pr_ref in ${=f[15]}; do
+      [[ $pr_ref =~ '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*:(OPEN|MERGED|CLOSED|UNKNOWN)$' ]] || continue
+      pr_key=${pr_ref%:*}
+      pr_number=${pr_key##*#}
+      pr_state=${pr_ref##*:}
+      _pr_state_tag "github.com/${pr_key%#*}/pull/$pr_number"
+      [[ $REPLY_PR_STATE == UNKNOWN ]] || pr_state=$REPLY_PR_STATE
+      if [[ -z $pr_aggregate ]]; then
+        pr_aggregate=$pr_state
+      elif [[ $pr_aggregate != "$pr_state" ]]; then
+        pr_aggregate=MIXED
+      fi
+      (( ++pr_count <= 2 )) && pr_text+="${pr_text:+  }#$pr_number ${(L)pr_state}"
+    done
+    (( pr_count > 2 )) && pr_text+=" +$(( pr_count - 2 ))"
+    if [[ -z $pr_text && $f[13] != NONE && $f[13] != UNKNOWN ]]; then
+      pr_text=${(L)f[13]}
+    fi
+    pr_cells+=("${pr_text:--}")
+    if [[ -n $pr_aggregate ]]; then
+      f[13]=$pr_aggregate
+      cands[$i]="${(pj:\t:)f}"
+    fi
+
+    org=${f[9]:-}
+    slot_label=$f[2]
+    if [[ $f[7] != - ]]; then
+      slot_label+=" ●"
+      org=${${f[7]#app:}#fg:}
+      [[ $org == here ]] && org=-
+    fi
+    host_cells+=("${org:#-}")
+    slot_cells+=("$slot_label")
     (( ${#f[1]} > rw )) && rw=${#f[1]}
-    (( ${#f[2]} > sw )) && sw=${#f[2]}
+    (( ${#slot_label} > sw )) && sw=${#slot_label}
     (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))
     (( ${#f[5]} > tw )) && tw=${#f[5]}
-    [[ ${f[9]:-} != - ]] && (( ${#f[9]} > ow )) && ow=${#f[9]}
+    (( ${#host_cells[-1]} > ow )) && ow=${#host_cells[-1]}
+    (( ${#pr_cells[-1]} > pw )) && pw=${#pr_cells[-1]}
+    (( i++ ))
   done
-  row_format='%-9s  '
-  cells=(PR)
+  _pr_state_flush
+  row_format="%-${pw}s  "
+  cells=(PRS)
   if [[ -n $all_mode ]]; then
     fprompt="resume (${days}d)> "
     row_format+="%-${rw}s  "
@@ -702,18 +717,18 @@ _t_resume() {
     cells+=(HOST)
   fi
   row_format+="%-${tw}s  %s"
-  cells+=(ACTIVITY 'WORKING ON')
+  cells+=('LAST TURN' 'WORKING ON')
   columns=$(printf "$row_format" "${cells[@]}")
 
   local legend; legend=$(_dev_agent_legend)
+  i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
-    org=${f[9]:-}; [[ $org == - ]] && org=
     agent="${_DEV_AGENT_GLYPH[${f[10]:-claude}]:-?} ${f[10]:-claude}"
-    cells=("$(printf '[%-7s]' "${f[13]:-UNKNOWN}")")
+    cells=("$pr_cells[$i]")
     [[ -n $all_mode ]] && cells+=("$f[1]")
-    cells+=("$f[2]" "$agent")
-    (( ow )) && cells+=("$org")
+    cells+=("$slot_cells[$i]" "$agent")
+    (( ow )) && cells+=("$host_cells[$i]")
     cells+=("$f[5]" "$f[6]")
     cands[$i]+=$'\t'"$(printf "$row_format" "${cells[@]}")"
     (( i++ ))

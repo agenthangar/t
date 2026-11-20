@@ -79,7 +79,7 @@ def test_close_to_discovery_and_exact_resume(history, monkeypatch, tmp_path, zsh
     protocol = list(discovery['_catalog_candidates']({'conversations': saved}, adapter, 'local'))
     view = {'hosts': [{'host': 'local', 'value': {'resume': protocol}}]}
     protocol = list(discovery['candidates'](view, ['api']))
-    assert len(protocol) == 3 and len(protocol[0].split('\t')) == 13
+    assert len(protocol) == 3 and len(protocol[0].split('\t')) == 14
     shell = ('_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(protocol)) + '; }; '
              '_t_fzf_filtered() { print -u2 -- "$1"; print -r -- "${${(f)1}[1]}"; }; '
              '_t_resume_history_launch() { print -u2 -- "EXACT $2 $3"; print dev-api-99; }; '
@@ -118,7 +118,7 @@ def test_marker_survives_sort_and_filter(history, filters, tmp_path):
     assert 'session-2' in (tmp_path / 'current').read_text().splitlines()[0]
     assert '↶ last closed' in (tmp_path / 'current-header').read_text()
     filters.render(tmp_path, 'resume', 'next-sort', 68, 'WORKING ON')
-    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == '  WORKING ON'
+    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == '↶ WORKING ON'
     assert (tmp_path / 'sort').read_text() == 'turn'
     output = (tmp_path / 'current').read_text().splitlines()
     assert output[0].split('\t')[2] == 'session-0'

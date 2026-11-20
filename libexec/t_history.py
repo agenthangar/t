@@ -28,7 +28,7 @@ _codex_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))[
 _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
 
 VERSION = 1
-PARSER_VERSION = 6
+PARSER_VERSION = 7
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
 _CACHE_REQUEST = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))['request']
 _RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
@@ -484,9 +484,7 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                     record['title'] = clean(text)[:200]
                 if role == 'user' and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
                     record.update(summary=record['title'] or clean(text), summary_source='transcript', summary_updated=record['updated'])
-                if metadata_only:
-                    continue
-                if role in ('user', 'assistant'):
+                if not metadata_only and role in ('user', 'assistant'):
                     record['mentions'].extend(pr_refs(text))
                 # Structured tool invocations establish association; conversational
                 # links remain explicitly incidental. Pair command output by tool id.
@@ -635,6 +633,21 @@ def picker_columns(width, last_turn=True):
     if width >= 32:
         return [('ST', 2), ('#', 3), ('LAST TURN', 11)]
     return [('S', 1), ('#', 2), ('TURN', 5)]
+
+
+def resume_candidate(row, alias, association, host):
+    """Keep PR references and states separate from the conversation title."""
+    updated = int(row.get('updated', 0))
+    prs = row.get('prs', [])
+    states = [state if state in ('OPEN', 'MERGED', 'CLOSED') else 'UNKNOWN'
+              for state in (pr.get('state') for pr in prs)]
+    unique = set(states)
+    state = next(iter(unique)) if len(unique) == 1 else 'MIXED' if unique else 'NONE'
+    refs = ' '.join(f'{pr["repo"]}#{pr["number"]}:{status}' for pr, status in zip(prs, states))
+    return '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
+                              association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
+                              clean(row['title']), host, row['agent'], row.get('last_turn', '-'), row['repo'],
+                              state, _SORT['closed_time'](row), refs or '-']))
 
 
 def compact_model(model, width):
@@ -1973,15 +1986,7 @@ class HistoryCommand:
                     continue
                 association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
-                updated = int(row.get('updated', 0))
-                when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')
-                states = {pr.get('state') or 'UNKNOWN' for pr in row['prs']}
-                pr_state = next(iter(states)) if len(states) == 1 else 'MIXED' if states else 'NONE'
-                title = clean(row['title'])
-                if row['prs']:
-                    title += ' · ' + pr_summary(row['prs'])
-                yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state, _SORT['closed_time'](row)]))
+                yield resume_candidate(row, alias, association, source.get('host') or '-')
 
     def execute(self, args):
         alias, slot = self.scope(args.target)

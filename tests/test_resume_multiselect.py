@@ -56,7 +56,7 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     assert "claude -r c1" in zsh.log.read_text()
     assert "codex resume" not in zsh.log.read_text()  # the live row keeps its owner
     rows = log.read_text().splitlines()
-    assert any("4" in row and "⬡ codex" in row and "● active" in row and "Live work" in row for row in rows)
+    assert any("4" in row and "⬡ codex" in row and "4 ●" in row and "Live work" in row for row in rows)
     assert any("3" in row and "✱ claude" in row and "Fix login" in row for row in rows)
     assert "--with-nth=-1" in (tmp_path / "fzf.log.args").read_text()
 
@@ -302,12 +302,12 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
         assert pathlib.Path(f'{log}.step{index}').read_text().splitlines() == initial
         header = semantic_chrome(pathlib.Path(f'{log}.header{index}').read_text()).splitlines()[-1]
         assert header.index('WORKING ON') == initial[0].split('\t')[-1].index('Task 2')
-        assert header.split() == ['PR', 'SLOT', 'AGENT', 'ACTIVITY', 'WORKING', 'ON']
+        assert header.split() == ['PRS', 'SLOT', 'AGENT', 'LAST', 'TURN', 'WORKING', 'ON']
     arguments = pathlib.Path(f'{log}.args').read_text()
     assert '--no-sort' in arguments
     for letter in ('t', 'r', 'g', 'o', 'v'):
         assert 'alt-' + letter + ':' in arguments
-    assert 'Last:' in log.read_text()
+    assert re.search(r'2026-10-22 \d{2}:\d{2}  Task 2', log.read_text())
     # Noninteractive explicit-slot fallback also picks the actual latest turn.
     # Move both transcripts under the same slot, retaining their opposed mtimes.
     project2 = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(zsh.home / 'code/.worktrees/api/2'))
@@ -359,15 +359,18 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
              'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; ')
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
-                            'date', 'Associated open and merged PRs · #42 merged', 'local', 'claude', '-', 'org/api', aggregate])
+                            'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api',
+                            aggregate, '-', 'org/api#42:MERGED org/api#43:OPEN'])
         shell += f"_t_resume_history_candidates() {{ print -r -- '{record}'; }}; "
     result = zsh(shell + '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log),
                  PICK_ACTIONS='merged,merged', PICK_CANCEL='1')
     assert 'rc=1' in result.stdout, result.stdout
     initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
     merged = next(row for row in initial if '\tc2\t' in row)
-    assert merged.split('\t')[-1].startswith('[MIXED ' if aggregate else '[MERGED ')
-    assert '#42 merged' in merged
+    pr_column, _, working_on = merged.split('\t')[-1].partition('  2')
+    assert pr_column.startswith('#42 merged')
+    assert ('#43 open' in pr_column) == bool(aggregate)
+    assert '#42' not in working_on
     hidden = pathlib.Path(f'{log}.step0').read_text()
     assert ('\tc2\t' in hidden) == bool(aggregate)
     assert '\tc3\t' in hidden

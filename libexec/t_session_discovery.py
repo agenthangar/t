@@ -1,5 +1,4 @@
 """Adapters and collectors for the single session-cache API; no cache policy/I/O."""
-import datetime
 import errno
 import json
 import math
@@ -230,7 +229,7 @@ def candidates(view, aliases, slot=None):
     for host in view.get('hosts', []):
         for raw in (host.get('value') or {}).get('resume', []):
             fields = raw.split('\t')
-            if len(fields) not in (12, 13) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
+            if len(fields) not in (12, 13, 14) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
                 continue
             if slot is not None and fields[2] != slot:
                 continue
@@ -254,15 +253,7 @@ def _catalog_candidates(catalog, history, host):
             continue
         history.pr_states([row])
         association = max(row['associations'], key=lambda a: a.get('observed', 0))
-        updated = int(row.get('updated', 0))
-        states = {p.get('state') or 'UNKNOWN' for p in row.get('prs', [])}
-        state = next(iter(states)) if len(states) == 1 else 'MIXED' if states else 'NONE'
-        title = helper['clean'](row['title'])
-        if row.get('prs'):
-            title += ' · ' + helper['pr_summary'](row['prs'])
-        yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                                   association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
-                                   title, host, row['agent'], row.get('last_turn', '-'), row['repo'], state, helper['_SORT']['closed_time'](row)]))
+        yield helper['resume_candidate'](row, alias, association, host)
 
 
 def export_local(cfg, payload):
@@ -318,7 +309,7 @@ def collect(spec, api):
             catalog = history.local_catalog()
             timings['history_seconds'] = round(time.monotonic() - stage, 4)
             stage = time.monotonic()
-            cache_key = 'display-v3:' + _CACHE['_digest'](spec.get('context', {}))
+            cache_key = 'display-v4:' + _CACHE['_digest'](spec.get('context', {}))
             previous = request('artifact', {'key': cache_key}).get('value') or {}
             state = {}
             old_context = previous.get('mcp', {})
@@ -445,7 +436,7 @@ def collect(spec, api):
             kept = []
             for candidate in previous.get('resume', []):
                 f = candidate.split('\t')
-                if len(f) in (12, 13) and _CACHE['record_key']({'repo': f[10], 'agent': f[8], 'sid': f[3]}) not in removed:
+                if len(f) in (12, 13, 14) and _CACHE['record_key']({'repo': f[10], 'agent': f[8], 'sid': f[3]}) not in removed:
                     kept.append(candidate)
             value['resume'] = kept + list(_catalog_candidates({**catalog, 'conversations': changed}, history, spec['target']))
         timings['import_seconds'] = round(time.monotonic() - stage, 4)

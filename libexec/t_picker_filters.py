@@ -89,10 +89,10 @@ def resume_turns(source, home, codex_home, owners=''):
         turn = detail.split('\t')[-1]
         if row[7] == 'history' and len(row) > 11 and turn_epoch(row[11]) != float('-inf'):
             turn = row[11]
-        when = format_last_turn(turn)
-        row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
+        row[4] = format_last_turn(turn, '%Y-%m-%d %H:%M')
         pr = row[13] if len(row) > 13 and row[13] in PR_STATES else 'UNKNOWN'
-        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-']) + [pr, row[14] if len(row) > 14 and row[6] == '-' else '-']))
+        result.append('\t'.join(row[:10] + [turn, row[12] if len(row) > 12 else '-', pr,
+            row[14] if len(row) > 14 and row[6] == '-' else '-', row[15] if len(row) > 15 else '-']))
     records = metadata('\n'.join(row + '\t' for row in result), 'resume')
     return sort_resume(result, records, 'closed' if any(r['closed'] != '-' for r in records.values()) else 'turn')
 
@@ -390,7 +390,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             warning = clip_columns(summary, width) + '\n' + warning
     legend = closure_legend(records, bool(warning)) if profile == 'resume' else ''
     if legend and columns:
-        columns = '  ' + columns
+        columns = '↶ ' + columns
     controls = header(profile, mask, filters, total - len(selected), columns, width,
                       sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled, legend)
     (directory / 'current-header').write_text(warning + controls)
