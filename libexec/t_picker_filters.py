@@ -460,6 +460,9 @@ def resume_action_rows(width, compact, color):
     details = key_labels('Ctrl-/', compact=compact)
     actions = [enter, 'Esc', 'Tab', details] if compact else [
         f'{enter} resume', 'Esc cancel', 'Tab mark', f'{details} details']
+    if os.environ.get('T_PICKER_RESUME_LAST') == '1':
+        shortcut = key_labels('Ctrl-B', compact=compact)
+        actions.append(f'{shortcut} ↶' if compact else f'{shortcut} resume last closed')
     lines = pack(actions, width, '  ')
     if not color:
         return lines

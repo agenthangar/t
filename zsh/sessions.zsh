@@ -1927,6 +1927,7 @@ _dev_kill_safe_labels() {
 # its state, model, UI, and title columns; only the first three hidden fields are
 # used to route the selected row to the existing kill implementation.
 _dev_kill_pick() {
+  setopt local_options pipe_fail
   local repo="$1" force="$2" remote_only="$3"
   local _repo_selector _repo_selector_rc
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
@@ -1936,7 +1937,7 @@ _dev_kill_pick() {
   if [[ -n $remote_only ]]; then
     rows=$(_t_discovery_rows --details) || return $?
   else
-    rows=$(_t_discovery_rows --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return 1
+    rows=$(_t_discovery_rows --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return $?
   fi
   if [[ -n $remote_only ]]; then
     rows=$(print -r -- "$rows" | awk -F'\t' '$1 != "local"')

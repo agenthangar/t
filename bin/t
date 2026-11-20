@@ -1379,6 +1379,8 @@ def cmd_kill(cfg, args):
         parts.append(shlex.quote(args.slot))
     if args.yes:
         parts.append("-y")
+    if getattr(args, 'wait', False):
+        parts.insert(0, 'T_DISCOVERY_EXPLICIT_WAIT=1')
     _delegate(" ".join(parts))
 
 
@@ -8430,6 +8432,7 @@ def _t_offer_update(installation=None):
 
 def _plain_slot_resume(words):
     """Match the public shell shim's option-free slot history shortcut."""
+    words = [word for word in words if word != "--wait"]
     return (len(words) in (2, 3) and words[0] == "resume" and
             re.fullmatch(r"[0-9]+", words[-1]) is not None and
             not words[1].startswith("-"))
@@ -12498,7 +12501,9 @@ def cmd_history(cfg, args):
         cache = _session_discovery()
         if getattr(args, 'refresh', False):
             cache['event'](['local', *cfg.hosts.values()])
-        if not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
+        if getattr(args, 'wait', False) or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
+            view, notice = cache['bounded_snapshot'](cfg, fields=['catalog'])
+        elif not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
             view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'], choose=_open_discovery_choice)
         else:
             view, notice = cache['discover'](cfg, fields=['catalog']), ''
@@ -12617,6 +12622,8 @@ def cmd_remote(cfg, args):
             rest = ['session', 'close', *[v for v in (args.repo, args.slot, getattr(args, 'kill_slot', None)) if v]]
             if args.yes:
                 rest.append('--yes')
+            if getattr(args, 'wait', False):
+                rest.append('--wait')
             return _REMOTE['execute'](cfg, argparse.Namespace(rest=rest), globals())
         return cmd_kill(cfg, args)
     args._verb = 'remote'
@@ -13520,6 +13527,7 @@ TARGETS
   Legacy repository-only targets that could be mistaken for hosts require --host.
   Selection requires a terminal and fzf; scripts must provide explicit targets.
   Cancellation returns 130.""")
+        leaf.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery")
         if action != "move":
             leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
@@ -13528,6 +13536,7 @@ TARGETS
         if action == "open":
             leaf.add_argument("--new", action="store_true", help="start a fresh session on the chosen host")
         elif action == "resume":
+            leaf.add_argument("--last", action="store_true", help="resume the unique last closed conversation")
             leaf.add_argument("--days", default="30", help="saved-history age in days, or all (default: 30)")
             leaf.add_argument("-a", "--all", action="store_true", help="browse all repositories on the selected host")
         else:
@@ -13561,6 +13570,7 @@ EXAMPLES
     remote_kill.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session")
     remote_kill.add_argument("slot", nargs="?", help="slot number or all; a lone slot uses the current repository")
     remote_kill.add_argument("kill_slot", nargs="?", help=argparse.SUPPRESS)
+    remote_kill.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery")
     remote_kill.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     remote_kill.set_defaults(remote=True)
 
@@ -13721,6 +13731,8 @@ REMOTE SESSIONS
     location.add_argument("-r", "--remote", action="store_true", help="attach remotely; --new starts a session")
     location.add_argument("--host", help="open or attach on this host")
 
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List cached live sessions across repositories and registered hosts without prompting. '
             'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
@@ -13810,6 +13822,8 @@ REMOTE SESSIONS
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
+
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
         description='Restart a stuck local CLI in the same conversation, pane, and worktree. Infer the current '
@@ -13908,6 +13922,8 @@ REMOTE SESSIONS
     sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
             'Infer the current repository, or browse local and remote repositories outside a checkout. '
@@ -13917,12 +13933,21 @@ REMOTE SESSIONS
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Open conversation history for api slot 2
-  %(prog)s --all --days all   Browse all saved history
+  %(prog)s --last --wait     Resume the most recently closed conversation
   In the repository resume picker, Ctrl-D hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
 
   Choose saved work associated with a repository or slot. A live selection
   attaches to its existing owner; an inactive selection resumes saved history.
+
+  --last resumes one exact most recently verified close in the selected scope,
+  across all saved history regardless of age. --all widens repository scope.
+  Missing, tied or incomplete close evidence refuses without launching.
+  --last cannot be combined with --live or an explicit --days.
+
+  --wait observes discovery for up to 30 seconds, then uses the retained snapshot;
+  --last refuses if it is still incomplete. Ctrl-C returns 130 and leaves refresh
+  running. Redirected waits show no spinner and never prompt.
 
   Pending saved discovery keeps waiting automatically in a terminal. Return
   skips the wait and uses available cached results; Esc/Ctrl-C cancels without
@@ -13964,6 +13989,7 @@ REMOTE SESSIONS
 
 PICKER CONTROLS
   Return (Enter) resumes. Esc cancels. Tab marks rows with ✓.
+  Ctrl-B resumes the last verified close within the command scope.
   Ctrl-U refreshes this picker and reports host status.
   Ctrl-/ shows details for the focused row.
   PRS shows ↴ merged, ○ open, ◌ draft, ! conflict, × closed, or ? unknown.
@@ -14053,6 +14079,10 @@ REQUIREMENTS AND DISCOVERY
         help="recency window for conversations (default 30; 'all' for everything)")
     sp.add_argument("--host", metavar="H",
         help="send selected local history and worktree edits to host H, resume there, and attach")
+
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+
+    sp.add_argument("--last", action="store_true", help="resume the unique most recently closed saved conversation without a picker")
 
     sp = sub.add_parser("cd", help="cd this shell into a dev slot's worktree",
         description='Enter an existing worktree without creating one or changing tmux. A lone slot uses the current '
@@ -14150,6 +14180,8 @@ EXAMPLES
     sp.add_argument("-p", "--pick", action="store_true", help="pick a current local session, including when inside an agent")
     sp.add_argument("-a", "--all", action="store_true", help="picker across every project")
     sp.add_argument("-s", "--session", help="target a session by id or unique prefix")
+
+    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("read", help="read a dev slot's scrollable tmux log",
         description='Read a slot’s captured tmux output with less. Infer the current repository; read remote slots on '
@@ -15162,7 +15194,17 @@ def _main(argv):
         repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
         options = dict(local='--local' in argv, host=selected_host,
                        fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
-        if '--open' in argv:
+        if '--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
+            try:
+                if '--open' in argv:
+                    cache['require_open_network'](Config(), local=options['local'], host=selected_host)
+                view, notice = cache['bounded_snapshot'](Config(), **options)
+            except (OSError, ValueError) as error:
+                print(f't: {error}', file=sys.stderr)
+                return 1
+            if '--notice-file' in argv:
+                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
+        elif '--open' in argv:
             if not sys.stdin.isatty() or not sys.stderr.isatty():
                 print('t open: interactive discovery requires a terminal', file=sys.stderr)
                 return 1
@@ -15215,20 +15257,33 @@ def _main(argv):
             slot, aliases = aliases[-1], aliases[:at]
         cache = _session_discovery()
         status_file = os.environ.get('T_RESUME_STATUS_FILE')
-        if os.environ.get('T_RESUME_WAIT') == '1' and sys.stdin.isatty() and sys.stderr.isatty():
+        notice = ''
+        last = os.environ.get('T_RESUME_LAST') == '1'
+        if os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
+            view, notice = cache['bounded_snapshot'](Config())
+        elif os.environ.get('T_RESUME_WAIT') == '1' and not last and sys.stdin.isatty() and sys.stderr.isatty():
             with redirect_stdout(sys.stderr):
                 view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait,
                                                        choose=_open_discovery_choice)
-            if os.environ.get('T_RESUME_NOTICE_FILE'):
-                Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
         else:
             view = cache['discover'](Config())
         if status_file:
             Path(status_file).write_text(json.dumps(cache['resume_health'](view)))
         else:
             cache['announce'](view)
-        for row in cache['candidates'](view, aliases, slot):
-            print(row)
+        if os.environ.get('T_RESUME_ROWS_FILE'):
+            Path(os.environ['T_RESUME_ROWS_FILE']).write_text(''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in cache['rows'](view).splitlines()))
+        if os.environ.get('T_RESUME_NOTICE_FILE'):
+            Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
+        if last:
+            try:
+                print(cache['last_closed_candidate'](view, aliases, slot))
+            except ValueError as error:
+                print('t resume: ' + str(error), file=sys.stderr)
+                return 1
+        else:
+            for row in cache['candidates'](view, aliases, slot):
+                print(row)
         return 1 if view.get('unavailable') else 0
     if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))

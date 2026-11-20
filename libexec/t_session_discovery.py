@@ -59,6 +59,33 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
     return view
 
 
+def bounded_snapshot(cfg, **options):
+    """One bounded refresh observation; never enter the interactive retry rail."""
+    options.setdefault('fields', ['rows', 'resume'])
+    view = wait_for_refresh(cfg, discover(cfg, **options), **options)
+    return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
+
+
+def last_closed_candidate(view, aliases, slot=None):
+    """Select a unique verified close across the entire scoped saved snapshot."""
+    if _partial(view):
+        raise ValueError('discovery is incomplete; no last closed conversation was resumed. Retry with --wait')
+    sort = runpy.run_path(str(ROOT / 'libexec/t_session_sort.py'))
+    records = {}
+    for host in view.get('hosts', []):
+        for raw in candidates({'hosts': [host]}, aliases, slot):
+            fields = raw.split('\t')
+            key = (fields[10], fields[8], fields[3])
+            closed = fields[12] if len(fields) >= 13 else '-'
+            if key in records and records[key]['closed'] != closed:
+                raise ValueError('conflicting close evidence across hosts; no conversation was resumed')
+            records.setdefault(key, dict(closed=closed, raw=raw))
+    selected = sort['latest_closed'](records)
+    if selected is None:
+        raise ValueError('no unique verified last closed conversation in this scope; browse saved history to select one')
+    return records[selected]['raw']
+
+
 def _usable(view, fields=None):
     for host in view.get('hosts', []):
         value = host.get('value') or {}

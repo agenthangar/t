@@ -300,6 +300,14 @@ another slot. Even one conversation waits for selection. Ctrl-F shows inactive
 work; Ctrl-A shows all, and Escape cancels without attaching or resuming.
 Without a terminal, an explicit slot retains newest-saved selection.
 
+Press Ctrl-B in the filtered resume picker to resume the most recently verified
+closed conversation, or run `t session resume --last --wait` directly.
+Use `t session resume api 3 --last` to scope the search to one slot, or
+`--all` to search every repository. Exact selection requires a unique verified
+close and complete discovery. Session open, close, resume, move and list accept
+`--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves the
+refresh running. Redirected waits stay silent and prompt-free.
+
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
 changed, removed, or replaced rollouts and index/WAL changes. One discovery snapshot

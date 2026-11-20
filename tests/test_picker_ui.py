@@ -162,7 +162,7 @@ def picker(t_mod):
                 picker_cmd = '_t_fzf_multi open "Saved sessions" --delimiter="$(printf "\\t")" --with-nth=-1 --prompt="multi > " < "$HOME/default"'
             prefix = f'. {shlex.quote(str(ROOT / "ui/fzf.sh"))}\n'
             redirect = ' > "$HOME/selected"'
-            if profile == 'public-resume-refresh':
+            if profile in ('public-resume-refresh', 'public-resume-last'):
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1', XDG_RUNTIME_DIR=directory,
                            T_LOCAL_RC=str(root / 'local.zsh'), CLAUDE_CONFIG_DIR=str(root / '.claude'),
@@ -212,6 +212,22 @@ exec /bin/zsh "$@"
                           ': > "$HOME/selected"\n')
                 picker_cmd = 't session resume --days all'
                 redirect = ''
+                if profile == 'public-resume-last':
+                    from test_resume_last import candidate
+                    last = candidate(sid='sid-last', repo='repo', slot='3') + '\t-\tyes\trecorded'
+                    newer_turn = candidate(sid='sid-focused', repo='repo', slot='5', closed='-').split('\t')
+                    newer_turn[0] = '9999999999'
+                    newer_turn[6] = 'Focused work'
+                    newer_turn[9] = '2026-11-20T11:00:00Z'
+                    prefix += ('_t_resume_history_candidates() {\n'
+                               '  if [[ $T_RESUME_LAST == 1 ]]; then\n'
+                               '    [[ $T_DISCOVERY_EXPLICIT_WAIT == 1 && $* == repo ]] || return 2\n'
+                               f'    print -r -- {shlex.quote(last)}\n'
+                               '  else\n'
+                               f'    print -rl -- {shlex.quote(last)} {shlex.quote(chr(9).join(newer_turn))}\n'
+                               '  fi\n'
+                               '}\n')
+                    picker_cmd = 't session resume repo --days all'
             if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
@@ -302,6 +318,21 @@ exec /bin/zsh "$@"
 
 
 @pytest.mark.fzf_compat
+@pytest.mark.parametrize('query', ['missing', 'Focused'])
+def test_public_resume_ctrl_b_resumes_exact_last_closed(picker, query):
+    start, wait, keys, finish = picker
+    start(profile='public-resume-last', mode='resume', width=115, height=24)
+    wait('Ctrl-B resume last closed', focused='Saved work')
+    if query == 'Focused':
+        keys('Down', 'Tab')
+        wait('(1)', focused='Focused work')
+    keys('-l', query)
+    wait('0/2' if query == 'missing' else '1/2')
+    selected = finish('C-b', status=99)
+    assert len(selected) == 1 and selected[0].startswith('LAUNCHED repo sid-last codex launch')
+
+
+@pytest.mark.fzf_compat
 def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', width=105, height=24)
@@ -335,7 +366,7 @@ def test_empty_public_resume_can_refresh_in_a_short_terminal(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', empty=True, width=32, height=12)
     screen = wait('No matching conversations')
-    assert 'Ctrl-U' in screen
+    assert 'Ctrl-U' in screen and 'Ctrl-B ↶' in screen
     keys.saved_resume_row(1, 'First Task')
     keys('C-u')
     screen = wait('1/1 (0)', absent=['No matching conversations'])

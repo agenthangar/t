@@ -39,6 +39,24 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+## Explicit discovery wait and last closed resume
+
+`t session resume [REPO [SLOT]] --last [--wait]` resumes the unique most
+recently verified t close in scope, across all saved history regardless of age.
+`--all` widens scope. Missing, tied, invalidated or incomplete close evidence
+refuses without launching or substituting another conversation. `--live` and
+explicit `--days` cannot be combined with `--last`. Existing `--cli`, `--fg`
+and `--host` destinations retain exact source and live ownership checks.
+
+`--wait` is available on session open, close, resume, move, list and slot history,
+including compatibility and remote routes. It observes the shared refresh for at
+most 30 seconds, returning immediately for settled results. Timeout retains the
+final available snapshot for manual selection, with its incomplete notice; direct
+`--last` refuses it. Live rows and saved candidates use the same post-wait
+snapshot. Ctrl-C returns 130 and leaves the background refresh running. Redirected
+waits have no spinner or prompt. Timeout never enters another waiting rail.
+Lists remain static and explicit targets never become selection requests.
+
 ## Session-open recovery
 
 Remote-inclusive browsing fails before discovery when the OS denies outbound
@@ -2069,7 +2087,11 @@ sharing editor are unchanged.
 verified close events from its available snapshot. Sorting and filtering never
 reassign the mark to another conversation. Hiding that conversation leaves no
 marked row.
-Use `t resume`, then Return to resume the initially focused last-closed conversation;
+Press Ctrl-B in the filtered `t resume` picker to resume the most recent
+verified close within the command's repository or slot scope. Ctrl-B uses
+the same bounded discovery and guarded launch as `t session resume --last --wait`.
+The shortcut considers all saved history in scope, independent of the date
+window, search, filters, and marks. Return accepts the focused or marked rows.
 Ctrl-Y switches to last turn and the existing sort choices.
 
 Closure evidence comes from successful `t close` lifecycle records after writer

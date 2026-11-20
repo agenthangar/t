@@ -125,6 +125,12 @@ _t_dispatch() {
   elif [[ $verb == profile || $verb == policy || $verb == cursor ]]; then
     shell_verb=
   fi
+  # Discovery waits are invocation scoped, including aliases and remote workers.
+  local -x T_DISCOVERY_EXPLICIT_WAIT=${T_DISCOVERY_EXPLICIT_WAIT:-0}
+  if [[ $shell_verb == (open|resume|move|beam|remote) && ${(M)shell_args:#--wait} != '' ]]; then
+    T_DISCOVERY_EXPLICIT_WAIT=1
+    shell_args=("${(@)shell_args:#--wait}")
+  fi
   # A plain slot resume selects an immutable conversation from that slot's
   # history. Never substitute a generic live slot (which may be an empty shell).
   # Explicit resume options and internal _t_resume callers keep their modes.
@@ -146,7 +152,9 @@ _t_dispatch() {
       if (( recovery_rc == 0 )); then eval "$recovery"; return $?
       elif (( recovery_rc != 3 )); then return $recovery_rc; fi
     fi
-    command t session history "${shell_args[@]}"
+    local -a history_wait
+    [[ $T_DISCOVERY_EXPLICIT_WAIT == 1 ]] && history_wait+=(--wait)
+    command t session history "${shell_args[@]}" "${history_wait[@]}"
     return $?
   fi
   # Forward bin-owned groups and their help. Bare config keeps its settings menu.
@@ -901,7 +909,7 @@ _t() {
   case "$group/$action" in
     remote/kill)
       if [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
-        _values 'flag' -y --yes -h --help
+        _values 'flag' -y --yes --wait -h --help
       elif (( CURRENT == first )); then _values 'repo or slot' "${(@f)$(_dev_repo_selectors)}" 1 2 3 4 all
       else _values 'slot' 1 2 3 4 all; fi ;;
     remote/open|remote/move|remote/resume)
@@ -925,7 +933,7 @@ _t() {
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
             local -a remote_flags=(-h --help)
-            case $action in open) remote_flags+=(--new) ;; move) remote_flags+=(--to --from --session --all --detach --fg) ;; resume) remote_flags+=(--days --all) ;; esac
+            case $action in open) remote_flags+=(--new --wait) ;; move) remote_flags+=(--to --from --session --all --detach --fg --wait) ;; resume) remote_flags+=(--days --all --last --wait) ;; esac
             _values 'flag' $remote_flags
           elif [[ $action != move && -z $remote_legacy ]] && (( remote_count == 0 )); then
             _values 'host' ${(k)REMOTE_HOSTS}
@@ -952,7 +960,7 @@ _t() {
       if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -h --help; fi ;;
     session/history)
-      local -a history_flags=(--limit --page --refresh --json -h --help)
+      local -a history_flags=(--limit --page --refresh --json --wait -h --help)
       if [[ ${words[CURRENT-1]} == --limit || ${words[CURRENT-1]} == --page ]]; then
         _message 'positive integer'
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )) \
@@ -990,13 +998,13 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
         case $action in
-          open) flags+=(--new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
-          close) flags+=(-y --yes -r --remote) ;;
+          open) flags+=(--wait --new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
+          close) flags+=(-y --yes -r --remote --wait) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
-          move) flags+=(-r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
-          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host) ;;
+          move) flags+=(--wait -r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
+          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host --last --wait) ;;
         esac
         _values 'flag' "${flags[@]}"
       elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"

@@ -1309,6 +1309,7 @@ _t_remote() {
     for kill_arg in "$@"; do
       case $kill_arg in
         -y|--yes) force=1 ;;
+        --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
         -*) print -u2 "t remote kill: unknown flag $kill_arg"; return 2 ;;
         *) kill_targets+=("$kill_arg") ;;
       esac
@@ -1321,6 +1322,7 @@ _t_remote() {
       fi
       local -a close_args=("${(@)kill_targets[2,-1]}")
       [[ -n $force ]] && close_args+=(--yes)
+      [[ ${T_DISCOVERY_EXPLICIT_WAIT:-0} == 1 ]] && close_args+=(--wait)
       command t remote --host "$kill_targets[1]" session close "${close_args[@]}"
       return $?
     fi
@@ -1359,6 +1361,8 @@ _t_remote() {
       -a|--all) [[ $action == (move|resume) ]] || return 2; all=1 ;;
       -r|--remote) [[ $action == move ]] || return 2; remote=1 ;;
       -p|--pick) [[ $action == move ]] || return 2; pick=1 ;;
+      --last) [[ $action == resume ]] || return 2; flags+=(--last) ;;
+      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       --new) [[ $action == open ]] || return 2; flags+=(--new) ;;
       -d|--detach|-f|--fg) [[ $action == move ]] || return 2; flags+=("$arg") ;;
       -*) print -u2 "t remote $action: unknown flag $arg"; return 2 ;;
@@ -1426,15 +1430,16 @@ _t_remote() {
     [[ -n $repo ]] && worker_args+=("$repo")
     [[ -n $slot ]] && worker_args+=("$slot")
     worker_args+=("${flags[@]}")
+    [[ ${T_DISCOVERY_EXPLICIT_WAIT:-0} == 1 ]] && worker_args+=(--wait)
     [[ -n $all ]] && worker_args+=(--all)
     local worker
     if [[ $action == open ]]; then
       worker_args=("$repo")
       [[ -n $slot ]] && worker_args+=("$slot")
       worker_args+=("${flags[@]}")
-      worker="T_NO_UPDATE_CHECK=1 _t_remote_open_local ${(j: :)${(@q)worker_args}}"
+      worker="T_DISCOVERY_EXPLICIT_WAIT=${T_DISCOVERY_EXPLICIT_WAIT:-0} T_NO_UPDATE_CHECK=1 _t_remote_open_local ${(j: :)${(@q)worker_args}}"
     else
-      [[ -n $slot || ( -t 0 && -t 1 ) ]] || { print -u2 't remote resume: history selection requires a terminal; name a repo and slot'; return 1; }
+      [[ -n $slot || ${(M)flags:#--last} != '' || ( -t 0 && -t 1 ) ]] || { print -u2 't remote resume: history selection requires a terminal; name a repo and slot'; return 1; }
       local repository_identity= identity_alias= identity_rc=1
       if [[ -n $repo ]]; then
         identity_alias=$(_dev_resolve_repo "$repo"); identity_rc=$?

@@ -1301,7 +1301,9 @@ class HistoryCommand:
                     output = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3', target,
                                   'zsh -lic ' + shlex.quote(command)], timeout=20)
                 self.import_catalog(json.loads(output), host)
-            except (HistoryError, ValueError, TypeError, AttributeError):
+            except (HistoryError, ValueError, TypeError, AttributeError) as error:
+                if os.environ.get('T_RESUME_LAST_CLOSED'):
+                    raise HistoryError(f'{host} metadata unavailable; last close cannot be verified') from error
                 # Older hosts retain the scoped protocol for locally known repos.
                 for alias in self.cfg.repos:
                     self.refresh(alias, hosts={host: target})
@@ -1543,11 +1545,14 @@ class HistoryCommand:
                     for field in ('associations', 'sources'):
                         row[field] = [{**value, 'host': host} for value in row.get(field, [])]
                     self.store.merge(row)
-            except (HistoryError, ValueError, TypeError, AttributeError):
+            except (HistoryError, ValueError, TypeError, AttributeError) as error:
+                if os.environ.get('T_RESUME_LAST_CLOSED'):
+                    raise HistoryError(f'{host} metadata unavailable; last close cannot be verified') from error
                 print(f't resume: {host} unavailable; retained cached history', file=sys.stderr)
 
     def owners(self, all_hosts=False):
-        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + ('_dev_rows_all --best-effort --ownership' if all_hosts else "_dev_session_rows --ownership | awk 'NF {print \"local\\t\" $0}'")
+        all_rows = '_dev_rows_all --ownership' if os.environ.get('T_RESUME_LAST_CLOSED') else '_dev_rows_all --best-effort --ownership'
+        snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + (all_rows if all_hosts else "_dev_session_rows --ownership | awk 'NF {print \"local\\t\" $0}'")
         text = run(self.shell(snippet))
         return self.api['_parse_rows'](text, host_prefixed=True)
 
@@ -2127,6 +2132,22 @@ class HistoryCommand:
         return self.resume(alias, row, **options)
 
     def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
+        expected_close = os.environ.get('T_RESUME_LAST_CLOSED')
+        if expected_close:
+            if expected_close == '-':
+                raise HistoryError('selected conversation has no verified close')
+            if alias in self.cfg.repos:
+                self.discover(alias, metadata_only=True)
+                self.refresh(alias)
+            else:
+                self.discover_catalog()
+            # Re-read lifecycle evidence for the exact identity on every attempt,
+            # including Repair. A changed selection is never replaced.
+            current = [value for value in self.records(row['repo'])
+                       if value['sid'] == row['sid'] and value['agent'] == row['agent']]
+            if len(current) != 1 or _SORT['closed_time'](current[0]) != expected_close:
+                raise HistoryError('selected last close changed; no conversation was resumed')
+            row = current[0]
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:

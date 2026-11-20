@@ -131,25 +131,32 @@ _t_resume() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual
-  local a no_tmux= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
+  local -x T_RESUME_LAST=0 T_RESUME_LAST_CLOSED=
+  local a days_set= no_tmux= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
   for a in "$@"; do
     if [[ -n $_expect_days ]]; then days=$a; _expect_days=; continue; fi
     if [[ -n $_expect_host ]]; then on_host=$a; _expect_host=; continue; fi
     case "$a" in
+      --last) T_RESUME_LAST=1 ;;
+      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       -f|--fg)     no_tmux=1 ;;
       --app) print -u2 -- "t: Codex Desktop support has been removed; use t session resume --cli"; return 2 ;;
       --cli)      cli=1 ;;
       -a|--all)    all_flag=1 ;;
       -r|--remote) remote_flag=1 ;;
       -l|--live)   live_flag=1 ;;
-      --days)      _expect_days=1 ;;
-      --days=*)    days=${a#--days=} ;;
+      --days)      days_set=1; _expect_days=1 ;;
+      --days=*)    days_set=1; days=${a#--days=} ;;
       --host)      _expect_host=1 ;;
       --host=*)    on_host=${a#--host=} ;;
       -*)          echo "t resume: unknown flag: $a (t session resume -h for flags)" >&2; return 1 ;;
       *)           pos+=("$a") ;;
     esac
   done
+  if [[ $T_RESUME_LAST == 1 ]]; then
+    [[ -z $live_flag && -z $days_set ]] || { print -u2 't resume: --last cannot be combined with --live or --days'; return 2; }
+    days=all
+  fi
   if [[ $days != all && $days != <-> ]]; then
     echo "t resume: --days takes a number of days or 'all' (got: ${days:-nothing})." >&2; return 1
   fi
@@ -185,7 +192,7 @@ _t_resume() {
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  if [[ -z ${_T_RESUME_PICKER_SNAPSHOT:-} && -n $repo && $slot == <-> ]]; then
+  if [[ $T_RESUME_LAST != 1 && -z ${_T_RESUME_PICKER_SNAPSHOT:-} && -n $repo && $slot == <-> ]]; then
     local recovery recovery_rc=0
     recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$repo" "$slot") || recovery_rc=$?
     if (( recovery_rc == 0 )); then
@@ -224,6 +231,56 @@ _t_resume() {
     repos=($repo)
   fi
 
+  if [[ -n $remote_flag && ${#REMOTE_HOSTS} == 0 ]]; then
+    echo "t resume -r: no REMOTE_HOSTS configured (set them in ${T_LOCAL_RC})." >&2
+    return 1
+  fi
+
+  local history_rows history_rc=0 history_row history_key
+  local -a history_fields history_keep
+  local -A history_seen history_emitted live_titles live_work
+  local live_identity live_host
+  local -a history_scope=("${(@)repos}")
+  [[ -n $all_mode ]] && history_scope=(--all)
+  [[ -n $identity_scope ]] && history_scope=("$identity_scope")
+  [[ -n $slot ]] && history_scope+=(--slot "$slot")
+  local auth_file auth_hosts auth_host discovery_notice= discovery_status= snapshot
+  local -x T_RESUME_NOTICE_FILE= T_RESUME_ROWS_FILE= T_RESUME_STATUS_FILE=
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    history_rows=$(<"$_T_RESUME_PICKER_SNAPSHOT/history") || return $?
+  else
+    snapshot=$(mktemp -d "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || return 1
+    auth_file=$snapshot/auth
+    : > "$auth_file"
+    if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+      T_RESUME_ROWS_FILE=$snapshot/live
+      : > "$T_RESUME_ROWS_FILE"
+      if [[ $T_RESUME_WAIT == 1 && $T_RESUME_LAST != 1 ]]; then
+        T_RESUME_STATUS_FILE=$snapshot/status
+        T_RESUME_NOTICE_FILE=$snapshot/notice
+        : > "$T_RESUME_STATUS_FILE"
+        : > "$T_RESUME_NOTICE_FILE"
+      fi
+      # The shared wait owns stderr and terminal input.
+      history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+      if [[ -n $T_RESUME_STATUS_FILE ]]; then
+        discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
+        discovery_status=$(<"$T_RESUME_STATUS_FILE")
+      fi
+    else
+      history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+    fi
+    auth_hosts=$(<"$auth_file")
+    for auth_host in "${(@f)auth_hosts}"; do
+      [[ -n $auth_host ]] || continue
+      _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
+    done
+    if (( history_rc )); then
+      rm -rf -- "$snapshot"
+      return $history_rc
+    fi
+  fi
+
   # Live dev sessions by ROOTED PATH (any alias — dev-dot-2 and dev-dotfiles-2 can
   # key one worktree), so a live slot is recognised however it was named.
   local -A live; local s p
@@ -232,14 +289,6 @@ _t_resume() {
     p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
     [[ -n $p ]] && live[${p:A}]=$s
   done
-  fi
-
-  # Saved discovery uses the repository identity on each configured host. The
-  # metadata adapter below refreshes by default and fetches only a selected
-  # transcript, so aliases, home directories and worktree roots may differ.
-  if [[ -n $remote_flag && ${#REMOTE_HOSTS} == 0 ]]; then
-    echo "t resume -r: no REMOTE_HOSTS configured (set them in ${T_LOCAL_RC})." >&2
-    return 1
   fi
 
   # ONE live-slot scan (one-live-owner invariant): a synced transcript here does
@@ -259,13 +308,14 @@ _t_resume() {
   if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
     live_all=$(<"$_T_RESUME_PICKER_SNAPSHOT/live") || return $?
   elif [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    live_all=$(python3 "$T_HOME/bin/t" __cache-rows --basic) || return $?
+    live_all=$(<"$T_RESUME_ROWS_FILE") || live_scan_rc=$?
   elif (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
   else
     live_all=$(_dev_session_rows 2>/dev/null) || live_scan_rc=$?
     live_all=$(print -r -- "$live_all" | awk -F'\t' 'NF {print "local\t" $0}')
   fi
+  [[ -z $snapshot ]] || rm -rf -- "$snapshot"
   (( live_scan_rc == 130 )) && return 130
   # Issue starts explicitly tolerate unavailable hosts. Revalidate local rows
   # separately so a local scanner failure cannot be mistaken for an offline host.
@@ -363,7 +413,7 @@ _t_resume() {
   # Dynamically scoped locals disappear on return; later commands validate again.
   local -A _T_CODEX_CANDIDATES
   local _T_CODEX_CANDIDATES_READY=0
-  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
+  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 && $T_RESUME_LAST != 1 ]]; then
   for repo in $repos; do
     _rdir=${DEV_REPOS[$repo]}; _rbase=${_rdir:t}
     remote_live_host=(); remote_live_alias=(); remote_live_sum=(); remote_live_agent=(); remote_live_state=()
@@ -497,46 +547,11 @@ _t_resume() {
   # Retained history is authoritative even when a transcript was also found by
   # its original slot. That slot is provenance, not a launch destination: the
   # conversation may have moved, or several selections may share it.
-  local history_rows history_rc=0 history_row history_key
-  local -a history_fields history_keep
-  local -A history_seen history_emitted live_titles live_work
-  local live_identity live_host
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
     (( _mf[1] > ${history_seen[$history_key]:-0} )) && history_seen[$history_key]=$_mf[1]
   done
-  local -a history_scope=("${(@)repos}")
-  [[ -n $all_mode ]] && history_scope=(--all)
-  [[ -n $identity_scope ]] && history_scope=("$identity_scope")
-  [[ -n $slot ]] && history_scope+=(--slot "$slot")
-  local auth_file auth_hosts auth_host discovery_notice=
-  local -x T_RESUME_NOTICE_FILE=
-  local -x T_RESUME_STATUS_FILE=
-  local discovery_status=
-  auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
-  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
-    history_rows=$(<"$_T_RESUME_PICKER_SNAPSHOT/history") || history_rc=$?
-  elif [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    T_RESUME_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || { rm -f -- "$auth_file"; return 1; }
-    T_RESUME_STATUS_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-status.XXXXXX") || { rm -f -- "$auth_file" "$T_RESUME_NOTICE_FILE"; return 1; }
-    # The shared rail owns stderr and terminal input during this wait. A shell
-    # spinner would capture its controls and hide the skip/cancel action.
-    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
-    discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
-    discovery_status=$(<"$T_RESUME_STATUS_FILE")
-    rm -f -- "$T_RESUME_NOTICE_FILE" "$T_RESUME_STATUS_FILE"
-  else
-    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
-  fi
-  auth_hosts=$(<"$auth_file")
-  rm -f -- "$auth_file"
-  for auth_host in "${(@f)auth_hosts}"; do
-    [[ -n $auth_host ]] || continue
-    _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
-  done
-  (( history_rc == 130 )) && return 130
-  (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
     (( $#history_fields >= 9 && $#history_fields <= 16 )) || continue
@@ -552,7 +567,7 @@ _t_resume() {
       prompt) title="Prompt: $title" ;;
       unknown) title="Saved label: $title" ;;
     esac
-    if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
+    if [[ $T_RESUME_LAST != 1 && -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
       live_identity="$history_fields[9]/$history_fields[4]"
       live_titles[$live_identity]=$title
       if [[ ${history_fields[15]:--} == yes ]]; then
@@ -840,7 +855,15 @@ _t_resume() {
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if [[ -z $discovery_notice && ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
+  if [[ $T_RESUME_LAST == 1 ]]; then
+    if (( $#visible != 1 )); then
+      print -u2 't resume: last closed selection changed; no conversation was resumed'
+      return 1
+    fi
+    pick=${visible[1]}
+    f=("${(@ps:\t:)pick}")
+    [[ $f[8] == history && ${f[14]:--} != - ]] || { print -u2 't resume: no verified last close; no conversation was resumed'; return 1; }
+  elif [[ -z $discovery_notice && ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
@@ -849,11 +872,23 @@ _t_resume() {
     if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
       refresh_callback="${(q)T_HOME}/bin/t __resume-picker-refresh \"\$T_PICKER_VIEWS\" ${(j: :)${(@q)history_scope}} -- ${(j: :)${(@q)@}}"
     fi
-    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_DISCOVERY_STATUS="$discovery_status" T_PICKER_REFRESH_CALLBACK="$refresh_callback" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    pick=$(T_PICKER_RESUME_LAST=1 T_PICKER_NOTICE="$discovery_notice" T_PICKER_DISCOVERY_STATUS="$discovery_status" T_PICKER_REFRESH_CALLBACK="$refresh_callback" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?
     [[ -n $pick ]] || return 130
+    if [[ $pick == last-closed ]]; then
+      # The shortcut inherits command scope and destination, not picker filters
+      # or marks. Exact selection and writer validation run through --last.
+      local -a last_args=("${(@)pos}" --last --wait)
+      [[ -z $all_flag ]] || last_args+=(--all)
+      [[ -z $cli ]] || last_args+=(--cli)
+      [[ -z $no_tmux ]] || last_args+=(--fg)
+      [[ -z $remote_flag ]] || last_args+=(--remote)
+      [[ -z $on_host ]] || last_args+=(--host "$on_host")
+      _t_resume "${(@)last_args}"
+      return $?
+    fi
   elif [[ -n $slot && -t 0 && -t 1 ]]; then
     print -u2 -- 't resume: selecting a conversation requires fzf; install fzf and retry.'
     return 1
@@ -1081,6 +1116,7 @@ _t_resume() {
   f=("${(@ps:\t:)pick}")
   repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; agent="${f[10]:-claude}"
   local loc="${f[7]:-}" lalias="${f[8]:-}"
+  [[ $T_RESUME_LAST == 1 ]] && T_RESUME_LAST_CLOSED=${f[14]:--}
 
   if [[ $lalias == history && ( -n $no_tmux || -n $on_host ) ]]; then
     local prepared

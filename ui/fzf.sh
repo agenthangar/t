@@ -478,6 +478,11 @@ SH
     set -- --no-sort "$@"
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
       _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      if [ "${T_PICKER_RESUME_LAST:-}" = 1 ]; then
+        # Unlike accepting a row, this action also works with no search matches.
+        # shellcheck disable=SC2016
+        _t_picker_bind="${_t_picker_bind},"'ctrl-b:execute-silent(touch "$T_PICKER_VIEWS/last-closed")+abort'
+      fi
       if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
         _t_picker_track=
         case $_t_picker_fzf_help:$T_PICKER_CLEAR_MARKS in *--track*:) _t_picker_track='track-current+' ;; esac
@@ -523,6 +528,10 @@ SH
     --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
     --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"
   _t_picker_rc=$?
+  if [ -f "$_t_picker_dir/last-closed" ]; then
+    printf '%s\n' last-closed
+    return 0
+  fi
   if [ "$_t_picker_rc" = 0 ]; then
     cat "$_t_picker_dir/result"
   fi
