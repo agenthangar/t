@@ -130,9 +130,13 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
     def keys(parts, selected=()):
-        return control_rows(parts, width, selected, compact, color)
+        return control_rows(parts, width, selected, compact, color, 'selected' if profile == 'open' else 'active')
     lines = [] if compact else [style('HOTKEYS', 'heading')]
-    lines += keys(['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓', 'Ctrl-K kill' if profile == 'open' else 'Ctrl-/'])
+    actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab ✓',
+               'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
+    if profile == 'open' and os.environ.get('T_PICKER_NEW_SESSION') == '1':
+        actions.append('Ctrl-N new')
+    lines += keys(actions)
     if not compact:
         lines += ['']
     lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle', 'Ctrl-X reset'], ['Filters ON'] if enabled else [])
@@ -157,8 +161,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
-        lines += [style('Match highlighted row; repeat key to clear'), '']
-    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'), include_closed=profile == 'resume')
+        lines += [''] if profile == 'open' else [style('Match highlighted row; repeat key to clear'), '']
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'), include_closed=profile == 'resume', selected_role='selected' if profile == 'open' else 'active')
     if not compact:
         lines += ['']
     if legend:
@@ -389,7 +393,16 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
             warning = clip_columns(summary, width) + '\n' + warning
     legend = closure_legend(records, bool(warning)) if profile == 'resume' else ''
-    if legend and columns:
+    if profile == 'open':
+        legend = '● attached · ○ unattached · ✓ context · ↻ work in progress'
+        if not selected:
+            warning += 'No matching sessions' + (' · Ctrl-N new' if os.environ.get('T_PICKER_NEW_SESSION') == '1' else '') + '\n'
+        if os.environ.get('T_PICKER_NATIVE_FOOTER') == '1' and int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') > 14:
+            (directory / 'footer').write_text('\n'.join(pack(legend.split(' · '), width)) + '\n')
+            legend = ''
+        elif int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
+            legend = ''
+    if profile == 'resume' and legend and columns:
         columns = '  ' + columns
     controls = header(profile, mask, filters, total - len(selected), columns, width,
                       sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled, legend)
