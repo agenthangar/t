@@ -1044,7 +1044,9 @@ _t_remote_host_pick() {
 _t_remote_move_rows() {
   local source=$1 repo=$2 rows
   if [[ ${3:-} == browse && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    local -a cache_args
+    local -a cache_args=(--move-only)
+    [[ -n $4 ]] && cache_args+=(--slot "$4")
+    [[ -n $5 ]] && cache_args+=(--session "$5")
     [[ -n $source ]] && cache_args+=(--host "$source")
     [[ -n $repo ]] && cache_args+=(--repo "$repo")
     _t_discovery_rows "${cache_args[@]}"
@@ -1370,7 +1372,8 @@ _t_remote() {
       (( _repo_selector_rc == 2 )) && return 2
       (( _repo_selector_rc == 0 )) && repo=$_repo_selector
     fi
-    rows=$(_t_remote_move_rows "$source" "$repo" browse); local source_rc=$?
+    rows=$(_t_remote_move_rows "$source" "$repo" browse "$slot" "$sid"); local source_rc=$?
+    (( source_rc == 130 )) && return 130
     (( source_rc == 2 )) && return 2
     (( source_rc == 0 )) || { print -u2 't session move: ownership scan failed; no conversation was moved'; return 1; }
     if [[ -z $source || $source == local ]]; then

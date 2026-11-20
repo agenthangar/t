@@ -49,8 +49,11 @@ explicit `--days` cannot be combined with `--last`. Existing `--cli`, `--fg`
 and `--host` destinations retain exact source and live ownership checks.
 
 `--wait` is available on session open, close, resume, move, list and slot history,
-including compatibility and remote routes. It observes the shared refresh for at
-most 30 seconds, returning immediately for settled results. Timeout retains the
+including compatibility and remote routes. When the requested discovery scope has
+no eligible results and refresh is pending, the same wait turns on automatically,
+including static lists, redirected output and history JSON. Available scoped results
+and settled empty/failure results return immediately. Explicit --wait also observes
+a pending refresh when results exist. Every wait is bounded to 30 seconds. Timeout retains the
 final available snapshot for manual selection, with its incomplete notice; direct
 `--last` refuses it. Live rows and saved candidates use the same post-wait
 snapshot. Ctrl-C returns 130 and leaves the background refresh running. Redirected
@@ -923,13 +926,15 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
-The open picker shows retained sessions immediately and freezes that snapshot.
-Background refresh never reorders an active selection. With no usable results,
-open and resume use the shared wait rail: Return skips; Esc/Ctrl-C cancels only
-observation. Completed discovery opens selection. A settled failure offers
-**Retry / Browse retained results / Cancel**; omit Browse when unavailable.
-Skipping without results says **No sessions available yet**. Incomplete empty
-results never start a fresh session. Cancel returns 130.
+The open picker shows retained scoped sessions immediately and freezes that
+snapshot. Background refresh never reorders an active selection. When no eligible
+results exist in the requested repository/host/slot/session scope, pending discovery
+automatically observes one bounded refresh for up to 30 seconds. Settled empty or
+failed discovery returns immediately. Timeout keeps the available snapshot and its
+incomplete notice; it never enters a second waiting or retry rail. Incomplete empty
+results never start a fresh session. Ctrl-C returns 130 without stopping refresh.
+Presentation-only filters and search operate on the displayed snapshot and never
+trigger another scan; rows revealable through picker controls count as available.
 
 Inventory reconciliation has a 24-hour TTL and never discards retained results.
 Recently used namespaces receive lightweight local activity checks every five
@@ -942,8 +947,9 @@ available rows. Old peers retain the hourly full-collector fallback.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
-Ordinary lists return immediately. `t session list --wait` (also `t ls --wait`)
-explicitly observes a pending cache refresh for up to 30 seconds before printing
+Lists with available scoped results return immediately; empty pending lists
+automatically observe refresh for up to 30 seconds. `t session list --wait`
+(also `t ls --wait`) observes refresh even when scoped results exist, then prints
 the same table and freshness notices. It uses the shared delayed spinner only in
 capable terminals; redirected waits are silent and never prompt. Completion,
 failure or timeout ends observation; Ctrl-C returns 130 without cancelling the
@@ -987,14 +993,15 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
-Interactive resume, including plain slot history, displays retained results
-immediately. Cold discovery and service recovery use the same wait/recovery rail
-as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
-no overall timeout for an advancing cold refresh; repeated service connection
-failures return to Retry / Cancel. Incomplete results retain a warning through
-filtering, sorting and history paging, and require explicit selection. For example,
-run `t session resume`; retained conversations appear while refresh continues.
-Nonterminal, JSON and private collector output never enter this rail.
+Resume, including plain slot history, displays retained eligible scoped results
+immediately. With no results, pending discovery automatically waits for up to 30
+seconds before retaining the final snapshot. This applies to redirected and JSON
+history too; collectors never wait recursively. --days eligibility uses the same
+cutoff before and after observation. --last waits while pending discovery prevents
+a safe unique closure selection, then retains its strict incomplete/tied refusal.
+Timeout never retries or prompts. Incomplete results retain a warning through
+filtering, sorting and history paging. Ctrl-C cancels observation with 130 while
+the shared refresh continues.
 
 After a saved selection, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,

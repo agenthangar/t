@@ -1892,8 +1892,11 @@ macOS discovery permission setup, and hotspot passwords. Its live dashboard show
 the selected network's availability even when fallback is disabled.
 
 Session discovery is served from a shared in-memory cache with hourly expiry
-and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
-refresh before building its picker; fresh cached results open immediately. Failed
+and asynchronous disk persistence. Session open, close, resume, move, list and
+slot history wait up to 30 seconds when the requested scope is empty and refresh
+is pending; available scoped results and settled empty scans return immediately.
+Explicit `--wait` also observes refresh when results exist. Redirected and JSON
+results follow the same bound without prompting. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
 

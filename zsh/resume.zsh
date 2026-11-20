@@ -231,6 +231,8 @@ _t_resume() {
     repos=($repo)
   fi
 
+  local -x T_RESUME_CUTOFF=0
+  [[ $days != all ]] && T_RESUME_CUTOFF=$(( EPOCHSECONDS - days * 86400 ))
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
   local -A history_seen history_emitted history_pr_state
@@ -386,8 +388,7 @@ _t_resume() {
   local -A _PR_SPAWNED
   # Recency window (--days, default 30; 'all' disables) + this machine's short
   # hostname, to blank the origin column for locally-run conversations.
-  local cutoff=0 selfhost=$(hostname -s 2>/dev/null)
-  [[ $days != all ]] && cutoff=$(( EPOCHSECONDS - days * 86400 ))
+  local cutoff=$T_RESUME_CUTOFF selfhost=$(hostname -s 2>/dev/null)
   # origin → friendly $REMOTE_HOSTS key, via the hostname cache the -r pull
   # populates (~/.cache/t/hostnames/<alias> = that host's `hostname -s`).
   local -A host_alias; local _hcf
@@ -2332,7 +2333,10 @@ _t_move_pick() {
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   scope=${DEV_REPOS[$repo]:-}
   local -a fields candidates format_args chosen
-  rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
+  local -a cache_scope=(--move-only)
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
+  [[ -n $slot ]] && cache_scope+=(--slot "$slot")
+  rows=$(_t_discovery_rows "${cache_scope[@]}" --local --unprefixed --details) || return $?
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue

@@ -192,10 +192,10 @@ def test_private_wait_uses_same_post_snapshot_for_candidates_and_owners(adapter,
     data = snapshot(candidate('after'))
     data['hosts'][0]['value']['rows'] = 'after-owner\t/after\tapi-3\tdetached\tactive\tAfter\tcodex\n'
     calls = []
-    def bounded(cfg):
+    def bounded(cfg, **kwargs):
         calls.append('bounded')
         return data, ''
-    cache = {name: getattr(adapter, name) for name in ('announce', 'rows', 'candidates', '_partial', 'last_closed_candidate')}
+    cache = {name: getattr(adapter, name) for name in ('announce', 'rows', 'candidates', '_partial', 'last_closed_candidate', 'resume_usable')}
     cache['bounded_snapshot'] = bounded
     cache['resume_snapshot'] = lambda *a, **kw: pytest.fail('bounded wait entered interactive rail')
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: cache)
