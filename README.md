@@ -1911,3 +1911,10 @@ missing app. Installation requires a published, verified Nightr release.
 Usage inspection: `t system usage show` selects a record with named columns and a compact
 session summary like `t ls`. Missing local/cloud token counts leave the percentage
 unavailable; `t system usage list --json` retains null measurements.
+
+Resume the most recently verified closed conversation with
+`t session resume --last --wait`, or scope it with `t session resume api 3 --last`.
+`--all` searches every repository; `--last` considers all saved history and refuses
+missing, tied or incomplete close evidence. Session open, close, resume, move and
+list accept `--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves
+refresh running; redirected waits stay silent and never prompt.

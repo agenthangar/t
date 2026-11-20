@@ -131,25 +131,32 @@ _t_resume() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options null_glob bare_glob_qual
-  local a no_tmux= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
+  local -x T_RESUME_LAST=0 T_RESUME_LAST_CLOSED=
+  local a days_set= no_tmux= cli= all_flag= remote_flag= live_flag= days=30 _expect_days= on_host= _expect_host=; local -a pos
   for a in "$@"; do
     if [[ -n $_expect_days ]]; then days=$a; _expect_days=; continue; fi
     if [[ -n $_expect_host ]]; then on_host=$a; _expect_host=; continue; fi
     case "$a" in
+      --last) T_RESUME_LAST=1 ;;
+      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       -f|--fg)     no_tmux=1 ;;
       --app) print -u2 -- "t: Codex Desktop support has been removed; use t session resume --cli"; return 2 ;;
       --cli)      cli=1 ;;
       -a|--all)    all_flag=1 ;;
       -r|--remote) remote_flag=1 ;;
       -l|--live)   live_flag=1 ;;
-      --days)      _expect_days=1 ;;
-      --days=*)    days=${a#--days=} ;;
+      --days)      days_set=1; _expect_days=1 ;;
+      --days=*)    days_set=1; days=${a#--days=} ;;
       --host)      _expect_host=1 ;;
       --host=*)    on_host=${a#--host=} ;;
       -*)          echo "t resume: unknown flag: $a (t session resume -h for flags)" >&2; return 1 ;;
       *)           pos+=("$a") ;;
     esac
   done
+  if [[ $T_RESUME_LAST == 1 ]]; then
+    [[ -z $live_flag && -z $days_set ]] || { print -u2 't resume: --last cannot be combined with --live or --days'; return 2; }
+    days=all
+  fi
   if [[ $days != all && $days != <-> ]]; then
     echo "t resume: --days takes a number of days or 'all' (got: ${days:-nothing})." >&2; return 1
   fi
@@ -185,7 +192,7 @@ _t_resume() {
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  if [[ -n $repo && $slot == <-> ]]; then
+  if [[ $T_RESUME_LAST != 1 && -n $repo && $slot == <-> ]]; then
     local recovery recovery_rc=0
     recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$repo" "$slot") || recovery_rc=$?
     if (( recovery_rc == 0 )); then
@@ -224,6 +231,41 @@ _t_resume() {
     repos=($repo)
   fi
 
+  local history_rows history_rc=0 history_row history_key
+  local -a history_fields history_keep
+  local -A history_seen history_emitted history_pr_state
+  local -a history_scope=("${(@)repos}")
+  [[ -n $all_mode ]] && history_scope=(--all)
+  [[ -n $identity_scope ]] && history_scope=("$identity_scope")
+  [[ -n $slot ]] && history_scope+=(--slot "$slot")
+  local auth_file auth_hosts auth_host discovery_notice=
+  local -x T_RESUME_NOTICE_FILE= T_RESUME_ROWS_FILE=
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    T_RESUME_ROWS_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-rows.XXXXXX") || return 1
+  fi
+  auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
+  if [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    T_RESUME_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || { rm -f -- "$auth_file"; return 1; }
+    # The shared rail owns stderr and terminal input during this wait. A shell
+    # spinner would capture its controls and hide the skip/cancel action.
+    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+    discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
+    rm -f -- "$T_RESUME_NOTICE_FILE"
+  else
+    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+  fi
+  auth_hosts=$(<"$auth_file")
+  rm -f -- "$auth_file"
+  for auth_host in "${(@f)auth_hosts}"; do
+    [[ -n $auth_host ]] || continue
+    _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
+  done
+  if (( history_rc )); then
+    [[ -n $T_RESUME_ROWS_FILE ]] && rm -f -- "$T_RESUME_ROWS_FILE"
+  fi
+  (( history_rc == 130 )) && return 130
+  (( history_rc == 0 )) || return $history_rc
+
   # Live dev sessions by ROOTED PATH (any alias — dev-dot-2 and dev-dotfiles-2 can
   # key one worktree), so a live slot is recognised however it was named.
   local -A live; local s p
@@ -257,7 +299,8 @@ _t_resume() {
   # needs no second scan.
   local all_rows= remote_rows= live_all= live_scan_rc=0
   if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    live_all=$(python3 "$T_HOME/bin/t" __cache-rows --basic) || return $?
+    live_all=$(<"$T_RESUME_ROWS_FILE")
+    rm -f -- "$T_RESUME_ROWS_FILE"
   elif (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
   else
@@ -357,7 +400,7 @@ _t_resume() {
   # Dynamically scoped locals disappear on return; later commands validate again.
   local -A _T_CODEX_CANDIDATES
   local _T_CODEX_CANDIDATES_READY=0
-  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
+  if [[ ${T_DISCOVERY_COLLECTOR:-} == 1 && $T_RESUME_LAST != 1 ]]; then
   for repo in $repos; do
     _rdir=${DEV_REPOS[$repo]}; _rbase=${_rdir:t}
     remote_live_host=(); remote_live_alias=(); remote_live_sum=(); remote_live_agent=(); remote_live_state=()
@@ -491,39 +534,11 @@ _t_resume() {
   # Retained history is authoritative even when a transcript was also found by
   # its original slot. That slot is provenance, not a launch destination: the
   # conversation may have moved, or several selections may share it.
-  local history_rows history_rc=0 history_row history_key
-  local -a history_fields history_keep
-  local -A history_seen history_emitted history_pr_state
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     history_key=${DEV_REPOS[$_mf[2]]:-$_mf[2]}/$(_dev_transcript_agent "$_mf[5]")/$(_dev_transcript_sid "$_mf[5]")
     (( _mf[1] > ${history_seen[$history_key]:-0} )) && history_seen[$history_key]=$_mf[1]
   done
-  local -a history_scope=("${(@)repos}")
-  [[ -n $all_mode ]] && history_scope=(--all)
-  [[ -n $identity_scope ]] && history_scope=("$identity_scope")
-  [[ -n $slot ]] && history_scope+=(--slot "$slot")
-  local auth_file auth_hosts auth_host discovery_notice=
-  local -x T_RESUME_NOTICE_FILE=
-  auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
-  if [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    T_RESUME_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || { rm -f -- "$auth_file"; return 1; }
-    # The shared rail owns stderr and terminal input during this wait. A shell
-    # spinner would capture its controls and hide the skip/cancel action.
-    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
-    discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
-    rm -f -- "$T_RESUME_NOTICE_FILE"
-  else
-    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
-  fi
-  auth_hosts=$(<"$auth_file")
-  rm -f -- "$auth_file"
-  for auth_host in "${(@f)auth_hosts}"; do
-    [[ -n $auth_host ]] || continue
-    _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
-  done
-  (( history_rc == 130 )) && return 130
-  (( history_rc == 0 )) || return $history_rc
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
     (( $#history_fields >= 9 && $#history_fields <= 13 )) || continue
@@ -539,7 +554,7 @@ _t_resume() {
     # every pending transcript again for each history row.
     (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
     [[ -z $slot || $history_fields[3] == $slot ]] || continue
-    if [[ -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
+    if [[ $T_RESUME_LAST != 1 && -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
@@ -737,13 +752,24 @@ _t_resume() {
     visible=("${(@)inactive}")
   fi
 
+  if [[ $T_RESUME_LAST == 1 ]]; then
+    if (( $#visible != 1 )); then
+      print -u2 't resume: last closed selection changed; no conversation was resumed'
+      return 1
+    fi
+    f=("${(@ps:	:)visible[1]}")
+    [[ $f[8] == history && ${f[14]:--} != - ]] || { print -u2 't resume: no verified last close; no conversation was resumed'; return 1; }
+  fi
+
   # Interactive explicit slots always pick. Otherwise a sole candidate can
   # auto-pick only when there are no excluded rows to reveal.
   # A sole LIVE row without a TTY would hit
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if [[ -z $discovery_notice && ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
+  if [[ $T_RESUME_LAST == 1 ]] && (( $#visible == 1 )); then
+    pick=${visible[1]}
+  elif [[ -z $discovery_notice && ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
@@ -980,6 +1006,7 @@ _t_resume() {
   f=("${(@ps:\t:)pick}")
   repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; agent="${f[10]:-claude}"
   local loc="${f[7]:-}" lalias="${f[8]:-}"
+  [[ $T_RESUME_LAST == 1 ]] && T_RESUME_LAST_CLOSED=${f[14]:--}
 
   if [[ $lalias == history && ( -n $no_tmux || -n $on_host ) ]]; then
     local prepared
