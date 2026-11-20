@@ -54,10 +54,14 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
     return view
 
 
-def bounded_snapshot(cfg, **options):
-    """One bounded refresh observation; never enter the interactive retry rail."""
+def bounded_snapshot(cfg, *, initial=None, explicit=True, usable=None, **options):
+    """Observe one refresh when requested or when its scoped results are empty."""
     options.setdefault('fields', ['rows', 'resume'])
-    view = wait_for_refresh(cfg, discover(cfg, **options), **options)
+    view = initial if initial is not None else discover(cfg, **options)
+    usable = usable or (lambda value: _usable(value, options['fields']))
+    pending = view.get('loading') or any(host.get('refreshing') for host in view.get('hosts', []))
+    if explicit or (pending and not view.get('unavailable') and not usable(view)):
+        view = wait_for_refresh(cfg, view, **options)
     return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
 
 
@@ -79,6 +83,25 @@ def last_closed_candidate(view, aliases, slot=None):
     if selected is None:
         raise ValueError('no unique verified last closed conversation in this scope; browse saved history to select one')
     return records[selected]['raw']
+
+
+def resume_usable(view, aliases, slot=None, *, cutoff=0, last=False):
+    if last:
+        try:
+            last_closed_candidate(view, aliases, slot)
+            return True
+        except ValueError:
+            return False
+    owners = {(fields[1], fields[7]) for line in rows(view).splitlines()
+              if len(fields := line.split('\t')) >= 8 and fields[1] != '-'}
+    for raw in candidates(view, aliases, slot):
+        fields = raw.split('\t')
+        live = (fields[3], fields[8]) in owners
+        # Picker visibility toggles can reveal live rows without another scan.
+        # Only the fixed age window removes inactive candidates from this scope.
+        if live or int(fields[0]) >= cutoff:
+            return True
+    return False
 
 
 def _usable(view, fields=None):
@@ -124,55 +147,11 @@ def _partial(view):
 
 
 def _browse_snapshot(cfg, choose, wait, options, *, preflight=None):
+    # Keep the private browsing adapters, but never enter a second retry/wait
+    # screen after the single bounded observation. Shared refresh owns recovery.
     if preflight:
         preflight()
-    view = discover(cfg, **options)
-    while True:
-        # Retained results are useful immediately, even when a different host
-        # is cold or broken. Selection still performs live ownership checks.
-        if _usable(view, options.get('fields')) or not _partial(view):
-            return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
-        first, failures = True, 0
-
-        def refresh():
-            nonlocal view, first, failures
-            if first:
-                first = False
-                return False
-            latest = discover(cfg, deadline=time.monotonic() + 1, **options)
-            if latest.get('unavailable'):
-                failures += 1
-                view = dict(view, unavailable=True, wait_unavailable=True)
-            else:
-                failures = 0
-                view = latest
-            pending = view.get('loading') or any(h.get('refreshing') for h in view.get('hosts', []))
-            return _usable(view, options.get('fields')) or failures >= 5 or (not view.get('unavailable') and not pending)
-
-        pending = view.get('unavailable') or view.get('loading') or any(h.get('refreshing') for h in view.get('hosts', []))
-        if pending:
-            if wait is not None:
-                if wait(refresh) == 'skip':
-                    view = dict(view, wait_skipped=True)
-            else:
-                view = wait_for_refresh(cfg, view, **options)
-        if _usable(view, options.get('fields')) or not _partial(view):
-            return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
-        if choose is None:
-            return view, 'Older or incomplete results · new sessions may be missing'
-        action = choose('No sessions available yet' if view.get('wait_skipped') else 'Could not refresh sessions', _usable(view, options.get('fields')))
-        if action == 'cached' and _usable(view, options.get('fields')):
-            return view, 'Older or incomplete results · new sessions may be missing'
-        if action != 'retry':
-            raise KeyboardInterrupt
-        if preflight:
-            preflight()
-        # Explicit retry is scoped to failed targets, not a global reset. It
-        # never touches agents, held ownership locks or saved conversations.
-        for host in view.get('hosts', []):
-            if host.get('error'):
-                request('reset-host', {'target': host['target']})
-        view = discover(cfg, **options)
+    return bounded_snapshot(cfg, explicit=False, **options)
 
 
 def open_snapshot(cfg, choose, *, local=False, host=None, fields=None, wait=None):
@@ -230,20 +209,47 @@ def announce(view):
             print(f't: Cached {host["host"]} sessions · {status}', file=sys.stderr)
 
 
-def rows(view, *, prefixed=True, repo=None, cli_only=False):
+def rows(view, *, prefixed=True, repo=None, cli_only=False, remote_only=False,
+         move_only=False, slot=None, session=None, local_roots=()):
     result = []
+    identities = {repo} if repo else set()
+    resolved_local = False
     for host in view.get('hosts', []):
+        if host['host'] == 'local':
+            matched = {r['repo'] for r in (host.get('value') or {}).get('catalog', {}).get('repositories', [])
+                       if repo in (r['alias'], r['repo']) or local_roots and r.get('path') and
+                       os.path.realpath(r['path']) == os.path.realpath(local_roots[0])}
+            if matched:
+                identities = matched
+                resolved_local = True
+    for host in view.get('hosts', []):
+        if remote_only and host['host'] == 'local':
+            continue
+        # A local registered selector must first acquire its immutable identity.
+        # A cold local catalog cannot authorize another host's colliding alias.
+        # Host-only views intentionally resolve selectors in that host's registry.
+        if repo and local_roots and not resolved_local and host['host'] != 'local' and any(
+                item['host'] == 'local' for item in view.get('hosts', [])):
+            continue
         value = host.get('value') or {}
-        roots = value.get('scopes', {}).get(repo, []) if repo else []
+        roots = [root for identity in identities for root in value.get('scopes', {}).get(identity, [])] if repo else []
         if repo and not roots:
             catalog = value.get('catalog', {})
-            identities = {r['repo'] for r in catalog.get('repositories', []) if repo in (r['alias'], r['repo'])}
-            roots = [r['path'] for r in catalog.get('repositories', []) if r['repo'] in identities and r.get('path')]
-            roots += [a['workspace'] for r in catalog.get('conversations', []) if r['repo'] in identities for a in r.get('associations', [])]
+            host_identities = identities if resolved_local else identities | {r['repo'] for r in catalog.get('repositories', []) if repo in (r['alias'], r['repo'])}
+            roots = [r['path'] for r in catalog.get('repositories', []) if r['repo'] in host_identities and r.get('path')]
+            roots += [a['workspace'] for r in catalog.get('conversations', []) if r['repo'] in host_identities for a in r.get('associations', [])]
+        if repo and not roots and host['host'] == 'local':
+            roots = [root for root in local_roots if root]
         for row in value.get('rows', '').splitlines():
             fields = row.split('\t')
             if len(fields) >= 7:
                 if cli_only and fields[3] == 'app':
+                    continue
+                if move_only and (fields[0] in ('', '-') or fields[3] not in ('attached', 'detached') or fields[6] not in ('codex', 'claude')):
+                    continue
+                if slot is not None and not fields[2].endswith('-' + slot):
+                    continue
+                if session is not None and not fields[0].startswith(session):
                     continue
                 if repo and not any(fields[1] == root or fields[1].startswith(root.rstrip('/') + '/') for root in roots):
                     continue

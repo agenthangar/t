@@ -31,40 +31,30 @@ def test_resume_waits_beyond_thirty_seconds_until_settled(adapter, monkeypatch, 
     if outcome == 'empty':
         done['hosts'][0]['value'] = {'rows': '', 'resume': []}
     elif outcome == 'failed':
-        done['hosts'][0].update(error='offline', value=None, retry_at=99999)
+        done['hosts'][0].update(error='offline', value=None, refreshing=False)
     elif outcome == 'unavailable':
         done = {'unavailable': True}
-    sequence = iter([initial, *[initial for _ in range(35)], *([done] * 5 if outcome == 'unavailable' else [done])])
-    calls, clock = [], [0]
-    monkeypatch.setattr(adapter.time, 'monotonic', lambda: clock[0])
+    calls, now = [], [0]
+    monkeypatch.setattr(adapter.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(adapter.time, 'sleep', lambda seconds: now.__setitem__(0, now[0] + seconds))
     def discover(cfg, **kwargs):
-        calls.append((cfg, kwargs))
-        return next(sequence)
+        calls.append(kwargs)
+        return initial if len(calls) == 1 else done
     monkeypatch.setattr(adapter, 'discover', discover)
-    monkeypatch.setattr(adapter, 'request', lambda *a, **k: pytest.fail('reset or cancel'))
-    def wait(refresh):
-        while not refresh():
-            clock[0] += 1
-        return '__done__'
-    result, notice = adapter.resume_snapshot('cfg', wait, fields=['catalog'])
-    assert clock[0] > 30
-    assert all(call[1]['fields'] == ['catalog'] for call in calls)
-    assert all(call[1]['deadline'] == i + 1 for i, call in enumerate(calls[1:], 1))
+    result, notice = adapter.resume_snapshot(None, lambda *a: pytest.fail('unbounded rail entered'), fields=['catalog'])
+    assert now[0] == .25
+    assert all(call['fields'] == ['catalog'] for call in calls)
+    assert result.get('wait_unavailable') if outcome == 'unavailable' else result is done
     assert bool(notice) == (outcome in ('failed', 'unavailable'))
-    if outcome == 'unavailable':
-        assert result == dict(initial, unavailable=True, wait_unavailable=True)
-    else:
-        assert result == done
 
 
 @pytest.mark.parametrize('cold', [True])
 def test_resume_skip_retains_available_snapshot(adapter, monkeypatch, cold):
     data = pending(cold)
     monkeypatch.setattr(adapter, 'discover', lambda *a, **kw: data)
-    result, notice = adapter.resume_snapshot(None, lambda refresh: 'skip')
-    assert result == dict(data, wait_skipped=True)
-    assert 'incomplete' in notice
-    assert list(adapter.candidates(result, ['api'])) == list(adapter.candidates(data, ['api']))
+    monkeypatch.setattr(adapter, 'wait_for_refresh', lambda *a, **kw: dict(data, wait_timed_out=True))
+    result, notice = adapter.resume_snapshot(None, lambda *a: pytest.fail('timeout entered skip rail'))
+    assert result == dict(data, wait_timed_out=True) and 'incomplete' in notice
 
 
 @pytest.mark.parametrize('state', ['fresh', 'failed'])
@@ -84,11 +74,10 @@ def test_resume_cancel_does_not_mutate_shared_refresh(adapter, monkeypatch):
     data = pending(cold=True)
     before = copy.deepcopy(data)
     monkeypatch.setattr(adapter, 'discover', lambda *a, **kw: data)
-    def cancel(refresh):
-        assert not refresh()
-        raise KeyboardInterrupt
+    monkeypatch.setattr(adapter.time, 'sleep', lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(adapter, 'request', lambda *a, **kw: pytest.fail('cancel mutated refresh'))
     with pytest.raises(KeyboardInterrupt):
-        adapter.resume_snapshot(None, cancel)
+        adapter.resume_snapshot(None, lambda *a: pytest.fail('cancel entered rail'))
     assert data == before
 
 
@@ -131,36 +120,26 @@ except KeyboardInterrupt:
 
 
 @pytest.mark.parametrize('interactive', [False, True])
-def test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows(t_mod, monkeypatch, tmp_path, capsys, interactive):
+def test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows(t_mod, adapter, monkeypatch, tmp_path, capsys, interactive):
     monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
     monkeypatch.setenv('T_RESUME_WAIT', '1' if interactive else '0')
-    notice_file = tmp_path / 'notice'
-    monkeypatch.setenv('T_RESUME_NOTICE_FILE', str(notice_file))
-    monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
-    monkeypatch.setattr(sys.stderr, 'isatty', lambda: True)
+    monkeypatch.setenv('T_RESUME_NOTICE_FILE', str(tmp_path / 'notice'))
     calls = []
-    def snapshot(cfg, wait, *, choose):
-        calls.append('wait')
-        print('WAIT UI')
-        return view(), 'Older results'
-    def discover(cfg):
-        calls.append('discover')
-        return view()
-    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
-        resume_snapshot=snapshot, discover=discover, announce=lambda v: None,
-        candidates=lambda v, aliases, slot: ['candidate-row']))
+    def bounded(cfg, **kwargs):
+        calls.append(kwargs)
+        assert kwargs['usable'](view())
+        return view(), ''
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(bounded_snapshot=bounded,
+        announce=lambda v: None, candidates=adapter.candidates, _partial=adapter._partial, resume_usable=adapter.resume_usable))
     monkeypatch.setattr(t_mod, 'Config', lambda: None)
     assert t_mod.main(['__resume-candidates', 'api']) == 0
     output = capsys.readouterr()
-    assert output.out == 'candidate-row\n'
-    assert ('WAIT UI' in output.err) == interactive
-    assert calls == ['wait' if interactive else 'discover']
-    if interactive:
-        assert notice_file.read_text() == 'Older results'
+    assert output.out.startswith('10000\tapi') and not output.err
+    assert len(calls) == 1 and not calls[0]['explicit']
 
 
 @pytest.mark.parametrize('terminal,json_mode', [(False, False), (True, True), (True, False)])
-def test_slot_history_wait_gates_and_snapshot(t_mod, monkeypatch, terminal, json_mode):
+def test_slot_history_wait_gates_and_snapshot(t_mod, adapter, monkeypatch, terminal, json_mode):
     monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         monkeypatch.setattr(stream, 'isatty', lambda: terminal)
@@ -169,18 +148,16 @@ def test_slot_history_wait_gates_and_snapshot(t_mod, monkeypatch, terminal, json
         def __init__(self, cfg, api, store): self.store = store
         def execute(self, args):
             assert self.discovery_view == {'hosts': []}
-            assert self.discovery_notice == ('incomplete' if terminal and not json_mode else '')
+            assert self.discovery_notice == 'incomplete'
             return 0
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda *a, **kw: {'HistoryCommand': History})
-    def snapshot(cfg, wait, **kwargs):
-        calls.append('wait')
-        assert kwargs == {'fields': ['catalog'], 'choose': t_mod._open_discovery_choice}
+    def snapshot(cfg, **kwargs):
+        calls.append(kwargs)
         return {'hosts': []}, 'incomplete'
-    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
-        resume_snapshot=snapshot, discover=lambda *a, **kw: {'hosts': []},
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(bounded_snapshot=snapshot,
         announce=lambda v: None, SnapshotStore=lambda v: SimpleNamespace(close=lambda: None)))
     assert t_mod.cmd_history(SimpleNamespace(), SimpleNamespace(json=json_mode, refresh=False)) == 0
-    assert calls == (['wait'] if terminal and not json_mode else [])
+    assert len(calls) == 1 and calls[0]['fields'] == ['catalog'] and not calls[0]['explicit']
 
 
 def test_history_notice_survives_sort_and_page(history, tmp_path):

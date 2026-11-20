@@ -543,6 +543,8 @@ _t_open_picker_impl() {
   fi
   local -a fields candidates format_args
   local include_attached="$5" filtered
+  local -a cache_scope
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
   local scope_rel wt_rel cwd_rel
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
@@ -552,16 +554,16 @@ _t_open_picker_impl() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" "${cache_scope[@]}" --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --local --unprefixed --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" "${cache_scope[@]}" --local --unprefixed --details) || return $?
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue
-    if [[ -n $scope ]]; then
+    if [[ -n $scope && ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
       cwd_rel=$(_dev_homerel "$fields[3]")
       [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
          ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
