@@ -76,11 +76,120 @@ def _private(path):
 
 
 def _runtime():
+    return _identity_runtime(_identity())
+
+
+def _identity_runtime(identity):
     # Short enough for macOS sockaddr_un, even with a long HOME/XDG path.
     base = os.environ.get('XDG_RUNTIME_DIR') or '/tmp'
     if not os.path.isabs(base) or len(os.fsencode(base)) > 40:
         base = '/tmp'
-    return Path(base) / ('t-sessions-' + str(os.getuid()) + '-' + _digest(_identity())[:16])
+    return Path(base) / ('t-sessions-' + str(os.getuid()) + '-' + _digest(identity)[:16])
+
+
+def linked_source(link):
+    """Snapshot an installed executable's source before replacing its link."""
+    link = Path(link)
+    if not link.is_symlink():
+        return ''
+    target = link.resolve()
+    return str(target.parents[1]) if target.name == 't' and target.parent.name == 'bin' else ''
+
+
+def _retirement_identities(source):
+    yield from _compatible_identities(source)
+    identity = _identity()
+    # Unlike snapshot adoption, retiring an obsolete listener needs no cache
+    # data. An empty old RC key belongs to the implicit configuration; include
+    # it only when that is still the selected configuration.
+    if identity[7] == os.path.realpath(_local_rc(explicit=False)):
+        identity[0], identity[7] = str(source), ''
+        yield identity
+
+
+def _same_installation(previous):
+    """Recognize exact sources and package relocations, never Git worktrees."""
+    previous = Path(previous)
+    if (SOURCE / '.git').is_file() or (previous / '.git').is_file():
+        return False
+    if previous == SOURCE:
+        return True
+    try:
+        # Homebrew moves the physical source while retaining the opt identity.
+        old = json.loads((previous / '.t-homebrew').read_text())
+        new = json.loads((SOURCE / '.t-homebrew').read_text())
+        if (old.get('formula') == new.get('formula') == 'agenthangar/tap/t'
+                and old.get('opt_libexec') == new.get('opt_libexec')
+                and os.path.isabs(new.get('opt_libexec', ''))):
+            return True
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    # Release installer destinations are versioned siblings in one release store.
+    return (previous.parent == SOURCE.parent and SOURCE.parent.name == 'releases'
+            and (previous / '.t-release-version').is_file()
+            and (SOURCE / '.t-release-version').is_file())
+
+
+def _existing_status(root, revision, deadline):
+    """Handshake only with an existing private endpoint; never start or unlink."""
+    directory = root.lstat()
+    address = root / 'service.sock'
+    endpoint = address.lstat()
+    if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid()
+            or directory.st_mode & 0o077 or not stat.S_ISSOCK(endpoint.st_mode)
+            or endpoint.st_uid != os.getuid() or endpoint.st_mode & 0o077):
+        return
+    with socket.socket(socket.AF_UNIX) as connection:
+        def budget():
+            remaining = min(.1, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError('session cache retirement deadline reached')
+            connection.settimeout(remaining)
+        budget()
+        connection.connect(str(address))
+        budget()
+        connection.sendall(json.dumps(dict(operation='status', payload={}, revision=revision)).encode() + b'\n')
+        budget()
+        # Both status and the expected revision-mismatch response are tiny. No
+        # parsing, retries or service startup are needed to request retirement.
+        connection.recv(4096)
+
+
+def retire_obsolete(previous_sources=()):
+    """Best-effort update reconciliation, with a half-second total I/O budget.
+
+    A current normalized endpoint receives its actual revision; obsolete raw-RC
+    namespaces and previous package sources receive a guaranteed mismatch. Old
+    identities that cannot prove the same effective config are left alone.
+    """
+    try:
+        if (SOURCE / '.git').is_file():
+            return
+        revision = _revision()
+        current = _identity()
+        sources = [SOURCE]
+        # Callers snapshot only the validated source they are updating. Its
+        # files may already have been removed by the package manager.
+        for source in previous_sources:
+            previous = Path(source).resolve()
+            if previous not in sources and not (previous / '.git').is_file():
+                sources.append(previous)
+        deadline = time.monotonic() + .5
+        seen = set()
+        for source in sources:
+            for identity in _retirement_identities(source):
+                root = _identity_runtime(identity)
+                if root in seen:
+                    continue
+                seen.add(root)
+                if time.monotonic() >= deadline:
+                    return
+                try:
+                    _existing_status(root, revision if identity == current else [], deadline)
+                except (OSError, ValueError):
+                    pass
+    except (OSError, ValueError, TypeError):
+        pass  # Optional maintenance must not change an update's result.
 
 
 def _database():
@@ -830,3 +939,8 @@ if __name__ == '__main__':
         _serve()
     elif len(sys.argv) == 3 and sys.argv[1] == 'invalidate':
         request('event', {'targets': json.loads(sys.argv[2])})
+    elif len(sys.argv) == 3 and sys.argv[1] == 'linked-source':
+        print(linked_source(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] == 'retire':
+        previous = sys.argv[2]
+        retire_obsolete([previous] if previous and _same_installation(previous) else [])

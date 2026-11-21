@@ -362,6 +362,11 @@ Git checks use the shared terminal spinner; redirected output stays static.
 Already-current installations skip setup; failed setup is retried. `--relink`
 explicitly repairs links/integrations and reviews deferred instruction migration.
 `--local` still switches sources when another source is installed.
+Successful updates also reconcile obsolete discovery helpers, including an
+already-current result: use bounded revision handshakes only at existing private
+endpoints attributable to the updated installation. Preserve current helpers,
+development worktrees and live sessions; do not start a service. `--check` never
+performs this maintenance. Cleanup is best-effort and adds no terminal output.
 Continue after failures, including unreachable
 hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
 hosts means a local-only update. Remote updates never fan out recursively.
@@ -1366,6 +1371,18 @@ example, opening a fresh slot and closing its untouched terminal releases the
 live slot; closing a terminal with an open PR leaves its agent available to
 reattach with `t open`. Termination retains saved conversations, branches, and
 worktrees. This is a one-time check on terminal loss, not a periodic idle sweep.
+A narrowly verified Python `-m http.server` preview directly owned by the agent
+can be stopped when it has an explicit loopback bind (`127.0.0.1`, `::1`, or
+`localhost`) and only supported static-server arguments. Its serving directory
+may be outside the worktree, including `/tmp`. Unknown launchers, scripts,
+transfers, backups, preview descendants and mixed background work preserve the
+session without signals. Completion requires a clean worktree and code already
+published and merged into the target branch, including verified squash merges;
+an idle turn alone is insufficient. Before cleanup, t rechecks the owner, task,
+Git and every process identity, sends TERM only to individually verified preview
+PIDs and waits at most five seconds for each to exit. A refusal or surviving
+preview preserves the session, with partial cleanup recorded privately. No
+process-group sweep or forced kill is used. All guards run again before closure.
 Hooks are installed on launch/resume and managed attachment, on the owning host;
 list/status never install hooks or initiate cleanup. Desktop and unmanaged
 foreground sessions retain their existing behavior.

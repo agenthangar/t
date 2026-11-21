@@ -1655,6 +1655,16 @@ office: updated
 build: up to date
 ```
 
+Successful updates also reconcile existing private session-discovery helpers,
+including when t is already current. Obsolete helpers for the updated installation
+retire through a bounded revision handshake; current helpers, development
+worktrees and live sessions are preserved. No helper is started by this cleanup.
+`--check` remains read-only. The updater captures previous release and Homebrew
+source paths before relocation; the links-only installer also recognizes a prior
+sibling release when upgrading from an older client. An older Homebrew client
+cannot recover a previous Cellar path once its opt link has moved, and helpers
+whose configuration identity cannot be attributed safely are left alone.
+
 SSH authentication must already work without a password prompt. Unreachable
 hosts and failed updates are reported while the remaining hosts continue; any
 failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining

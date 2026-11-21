@@ -120,6 +120,26 @@ int main(int argc, char **argv) {
     f = fopen(registry, "w");
     if (f) { fprintf(f, "%s\t%s\n", sid, cwd); fclose(f); }
   }
+  const char *preview = getenv("T_TEST_STATIC_PREVIEW");
+  if (preview && *preview) {
+    pid_t child = fork();
+    if (!child) {
+      int null = open("/dev/null", O_RDWR);
+      if (null < 0) _exit(7);
+      dup2(null, 0); dup2(null, 1); dup2(null, 2); close(null);
+      if (chdir(preview)) _exit(4);
+      execlp("python3", "python3", "-m", "http.server", "0", "--bind", "localhost", (char *)NULL);
+      _exit(5);
+    }
+    char receipt[4096];
+    snprintf(receipt, sizeof receipt, "%s/preview.pid", preview);
+    f = fopen(receipt, "w");
+    if (f) { fprintf(f, "%d", child); fclose(f); }
+    if (getenv("T_TEST_EXTRA_WORK") && !fork()) {
+      execlp("sleep", "sleep", "180", (char *)NULL);
+      _exit(6);
+    }
+  }
   const char *seconds = getenv("T_TEST_AGENT_SECONDS");
   const char *screen = getenv("T_TEST_AGENT_SCREEN");
   if (screen) { fputs(screen, stdout); fflush(stdout); }

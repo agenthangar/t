@@ -8524,8 +8524,14 @@ def _t_refs_refresh(repository):
         pass  # Ref freshness never changes a successful update/push result.
 
 
-def _t_update_result(args, status):
+def _t_update_result(args, status, source=None, previous_sources=()):
     args._update_status = status
+    if source:
+        try:
+            helper = runpy.run_path(os.path.join(source, "libexec", "t_session_cache.py"))
+            helper["retire_obsolete"](previous_sources)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # Discovery maintenance never changes successful update output.
     if status == "updated":
         _t_refs_refresh(_t_source_root())
     if not getattr(args, "_update_batch", False):
@@ -8654,6 +8660,7 @@ def _cmd_update_t(cfg, args):
         if args.relink:
             return _t_relink(opt)
         previous = _t_release_version(opt)
+        previous_source = os.path.realpath(opt)
         pending = _t_update_pending(opt)
         retry_setup = pending.exists()
         try:
@@ -8663,7 +8670,7 @@ def _cmd_update_t(cfg, args):
                              "current": previous, "brew": brew["brew"], "formula": brew["formula"]}, force=True))
             if (state.get("checked") and not state.get("error") and
                     not state.get("available") and not retry_setup):
-                return _t_update_result(args, "up to date")
+                return _t_update_result(args, "up to date", opt)
             if integrated:
                 pending.parent.mkdir(parents=True, exist_ok=True)
                 pending.touch()
@@ -8675,13 +8682,13 @@ def _cmd_update_t(cfg, args):
             return upgraded.returncode
         if previous and _t_release_version(opt) == previous and not retry_setup:
             pending.unlink(missing_ok=True)
-            return _t_update_result(args, "up to date")
+            return _t_update_result(args, "up to date", opt, [previous_source])
         if integrated:
             result = _t_relink(opt, quiet=True)
             if result:
                 return result
             pending.unlink(missing_ok=True)
-        return _t_update_result(args, "updated")
+        return _t_update_result(args, "updated", opt, [previous_source])
     release = _t_release_version(active)
     if release:
         if args.dev:
@@ -8699,12 +8706,21 @@ def _cmd_update_t(cfg, args):
                          _t_updates()["check"]({"kind": "release", "source": active,
                                                 "current": release}, force=True))
             if state.get("checked") and not state.get("error") and not state.get("available"):
-                return _t_update_result(args, "up to date")
+                return _t_update_result(args, "up to date", active)
             linked_before = _t_update_linked(active)
+            link_before = os.path.realpath(os.path.join(HOME, "bin/t"))
             result = subprocess.run([sys.executable, updater],
                                     env={**os.environ, "T_UPDATE_QUIET": "1"}).returncode
             status = "up to date" if linked_before and _t_update_linked(active) else "updated"
-            return result if result else _t_update_result(args, status)
+            if result:
+                return result
+            link = Path(HOME) / "bin/t"
+            installed = active
+            if link.is_symlink() and str(link.resolve()) != link_before:
+                candidate = str(link.resolve().parents[1])
+                if _t_release_version(candidate):
+                    installed = candidate
+            return _t_update_result(args, status, installed, [active])
         except OSError as exc:
             print(f"t update: could not start release updater: {exc}", file=sys.stderr)
             return 1
@@ -8741,7 +8757,7 @@ def _cmd_update_t(cfg, args):
     latest = _t_git(canonical, "rev-parse", "origin/main")
     pending = _t_update_pending(canonical)
     if before and before == latest and _t_update_linked(canonical) and not pending.exists():
-        return _t_update_result(args, "up to date")
+        return _t_update_result(args, "up to date", canonical)
     # A failed/interrupted reconciliation must be retried even after HEAD moved.
     try:
         pending.parent.mkdir(parents=True, exist_ok=True)
@@ -8756,7 +8772,7 @@ def _cmd_update_t(cfg, args):
     result = _t_relink(canonical, quiet=True)
     if result == 0:
         pending.unlink(missing_ok=True)
-        _t_update_result(args, "updated")
+        _t_update_result(args, "updated", canonical)
     if result == 0 and local is not None:
         print(f"t now uses local checkout {canonical}; future t update calls update its main branch.")
     return result

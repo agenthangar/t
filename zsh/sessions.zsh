@@ -2224,8 +2224,8 @@ _t_terminal_close_event() {
 }
 
 _t_terminal_close_guard() {
-  local session=$1 dir=$2 socket=$3 identity=$4 pane=$5 pane_pid=$6
-  local agent sid tx fresh clean=0 clear=0
+  local session=$1 dir=$2 socket=$3 identity=$4 pane=$5 pane_pid=$6 mode=${7:-check}
+  local agent sid tx fresh clean=0 clear=0 pid
   _DEV_PS_AT=0
   [[ $(tmux display-message -p -t "=$session:" '#{session_id}') == "$identity" ]] || return 1
   agent=$(_dev_agent_of_session "$session")
@@ -2235,39 +2235,28 @@ _t_terminal_close_guard() {
   [[ $agent == codex && -n $sid ]] && fresh=0
   _dev_kill_no_pending_work "$dir" && clean=1
   _t_terminal_processes_clear "$session" "$dir" && clear=1
-  python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
-    "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" >/dev/null
+  if [[ $mode == stop-previews ]]; then
+    pid=$(_dev_session_claude_pid "$session")
+    [[ -n $pid ]] || return 1
+    python3 "$T_HOME/libexec/t_terminal_close.py" stop-previews "$socket" "$identity" "$pane" "$pane_pid" \
+      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" "$pid" "$$" >/dev/null
+  else
+    python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
+      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" >/dev/null
+  fi
 }
 
 _t_terminal_processes_clear() {
-  local pending pid children child up
-  local -A allowed
+  local pid mode=processes
   _DEV_PS_AT=0
   _dev_ps_snapshot
   _dev_snap_ok || return 1
-  # Rooted detached work and agent children are both vetoes. Unknown process
-  # snapshots preserve the session. Auto-close never sweeps rooted processes.
   pid=$(_dev_session_claude_pid "$1")
   [[ -n $pid ]] || return 1
-  pending=$(_dev_cwd_pids "$2") || return 1
-  children=$(ps -A -o ppid= 2>/dev/null) || return 1
-  # The generic reaper protects all agent descendants from signals, but those
-  # descendants are precisely work that automatic closure must retain. Only
-  # this agent and its launcher ancestors are exempt here.
-  for up in "$pid" $$; do
-    while [[ $up == <-> ]] && (( up > 1 )); do
-      [[ -n ${allowed[$up]} ]] && break
-      allowed[$up]=1
-      up=${_DEV_PS_PPID[$up]:-}
-    done
-  done
-  for child in ${(f)pending}; do
-    [[ -n ${allowed[$child]} ]] || return 1
-  done
-  for child in ${(f)children}; do
-    [[ ${child//[[:space:]]/} == "$pid" ]] && return 1
-  done
-  return 0
+  [[ $3 != strict ]] || mode=processes-empty
+  # Read-only classification permits only exact static loopback Python previews
+  # directly owned by this agent. Rooted or descendant unknown work is a veto.
+  python3 "$T_HOME/libexec/t_terminal_close.py" "$mode" "$pid" "$2" "$$" >/dev/null
 }
 
 # _dev_new_session <session> <dir> [branch] [skip_prepare] — create a detached tmux
