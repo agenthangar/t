@@ -307,7 +307,9 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     start(profile='public-resume-refresh', mode='resume', width=105, height=24)
     screen = wait('Second Task', focused='Second Task')
     assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
-    assert screen.index('HOTKEYS') < screen.index('↴ merged') < screen.index('PRS') < screen.index('Second Task')
+    refresh_line = next(line for line in screen.splitlines() if 'Last refresh' in line)
+    assert 'Ctrl-U refresh now' in refresh_line
+    assert screen.index('↴ merged') < screen.index('HOTKEYS') < screen.index('Tab ✓') < screen.index('PRS') < screen.index('Second Task')
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')
@@ -337,7 +339,8 @@ def test_empty_public_resume_can_refresh_in_a_short_terminal(picker):
 def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', warm_resume=True, width=105, height=24)
-    wait('Refreshing local', focused='Second Task')
+    screen = wait('Refreshing local', focused='Second Task')
+    assert 'Ctrl-U refresh now' in next(line for line in screen.splitlines() if 'Refreshing local' in line)
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')

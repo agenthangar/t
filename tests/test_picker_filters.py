@@ -308,6 +308,18 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
         assert len(text.splitlines()) <= 10
 
 
+def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    healthy = {'hosts': [{'host': 'local', 'status': 'current', 'checked': 1700000000}]}
+    pending = {'hosts': [{'host': 'local', 'status': 'refreshing', 'checked': 1700000000}]}
+    shortcut = filters.key_labels('Ctrl-U refresh now')
+    for status, prefix in ((healthy, 'Last refresh '), (pending, 'Refreshing local  ')):
+        line = filters.resume_health(status, 120, True, True)[0]
+        assert line.startswith(prefix)
+        assert f'  \x1b[92m{shortcut}\x1b[0m' in line
+
+
 def test_resume_pr_badges_color_only_the_leading_labels(filters, monkeypatch):
     monkeypatch.delenv('NO_COLOR', raising=False)
     monkeypatch.setenv('TERM', 'xterm-256color')
@@ -483,7 +495,7 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     if not compact:
-        assert plain.startswith('HOTKEYS\n') and 'Filters ' in plain
+        assert plain.startswith('Filters ') and plain.index('HOTKEYS\n') < plain.index('SESSION TASK')
     monkeypatch.setenv('NO_COLOR', '1')
     assert filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True) == plain

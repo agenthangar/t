@@ -259,7 +259,8 @@ showing the next action and keys. Focus and marks must remain distinguishable
 without color. Headings are cyan, hints muted, and focused text light on dark cyan.
 Keep the green checkmark in its own gutter beside the pointer, with spaces between
 status icons inside rows. Give controls and results a blank separating row when
-height permits. Session pickers list HOTKEYS above FILTERS, with readable shortcuts
+height permits. Session pickers list HOTKEYS above FILTERS, except filtered resume
+places result hotkeys beside the rows. Use readable shortcuts
 and bright underlined labels for the current filter On/Off state, resume sort, and
 merged-session toggle when enabled. Session lists highlight selected column filters
 and the current sort key. Plain output retains explicit state text.
@@ -1008,10 +1009,12 @@ an opening prompt used as a fallback. `Saved label:` identifies older display
 text whose source cannot be verified.
 A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
-LAST TURN shows the local date and time to the minute. The legend directly above
-the column headings explains the latest verified close (↶), verified work in
-progress (↻), live ownership (●),
-and no recorded PR (—). The work-in-progress icon appears in the left gutter
+LAST TURN shows the local date and time to the minute. Green Ctrl-U sits next
+to the refresh status. Filters and sort come before the legends. The PR legend
+occupies its own row immediately above the result hotkeys, followed by the column
+headings and results. Space separates legend entries, including work in progress
+(↻), live ownership (●), and no recorded PR (—). The close marker carries no
+legend label. The work-in-progress icon appears in the left gutter
 independently of PR state. The gutter reserves space only when a row has evidence.
 Columns stay aligned when filtering or sorting. Timeouts use amber, active
 filtering and sort use highlighted labels, and column headings use high contrast.
@@ -2058,9 +2061,10 @@ sharing editor are unchanged.
 ### Last closed session
 
 `t session resume` and plain slot history mark the latest verified closure with
-**↶**, in its own fixed-width cell beside the row. The filtered picker uses the
-latest verified close in its available snapshot. The legend above the results explains the icon. Sorting and filtering never reassign the mark to another conversation;
-hiding the marked conversation leaves no marked row.
+**↶**, in its own fixed-width cell beside the row. The filtered picker uses
+verified close events from its available snapshot. Sorting and filtering never
+reassign the mark to another conversation. Hiding that conversation leaves no
+marked row.
 Use `t resume`, then Return to resume the initially focused last-closed conversation;
 Ctrl-Y switches to last turn and the existing sort choices.
 

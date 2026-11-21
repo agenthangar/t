@@ -108,12 +108,12 @@ def choose(rows, records, filters):
             for name, value in filters.items())]
 
 
-def pack(parts, width):
+def pack(parts, width, separator=' · '):
     lines = []
     for part in parts:
         part = clip_columns(part, width)
-        if lines and display_width(lines[-1] + ' · ' + part) <= width:
-            lines[-1] += ' · ' + part
+        if lines and display_width(lines[-1] + separator + part) <= width:
+            lines[-1] += separator + part
         else:
             lines.append(part)
     return lines
@@ -129,7 +129,7 @@ def state_label(profile, mask):
 
 
 def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False,
-           hide_merged=False, sort_enabled=True, legend='', refresh=False, status=()):
+           hide_merged=False, sort_enabled=True, legend='', status=()):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
     short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
@@ -141,23 +141,19 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         return control_rows(parts, width, selected, compact, color, 'selected' if filled else 'active')
     resume = profile == 'resume'
     lines = list(status[:2] if tight_resume else status)
-    if not compact:
-        if resume and lines:
-            lines.append('')
-        lines.append(style('HOTKEYS', 'heading'))
     if resume:
         actions = ['Enter/Esc' if compact else 'Enter resume', 'Tab ✓',
                    'Ctrl-/' if compact else 'Ctrl-/ details']
         if not compact:
             actions.insert(1, 'Esc cancel')
-        if refresh:
-            actions.append('Ctrl-U' if tight_resume else 'Ctrl-U refresh')
     else:
         actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓',
                    'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
-    lines += keys(actions)
-    if not compact:
-        lines += ['']
+        if not compact:
+            lines.append(style('HOTKEYS', 'heading'))
+        lines += keys(actions)
+    if not compact and lines:
+        lines.append('')
     lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle',
                    'Ctrl-X' if tight_resume else 'Ctrl-X reset'], ['Filters ON'] if enabled else [], filled=resume)
     controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for name, (shortcut, label) in FACETS.items()
@@ -197,11 +193,15 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         lines += ['']
     if legend:
         if short:
-            legend = '↴ merged · ↶ last · ↻ WIP'
+            legend = '↴ merged  ○ open'
         for line in legend.splitlines():
             line = clip_columns(line, width)
             lines.append(re.sub(r'[↴○◌!×↗?] [a-z]+',
                                 lambda match: pr_color(match[0], match[0][0]), line) if color else line)
+    if resume:
+        if not compact:
+            lines.append(style('HOTKEYS', 'heading'))
+        lines += keys(actions)
     if columns:
         lines.append(style(clip_columns(columns, width), 'action' if resume else 'hint'))
     return '\n'.join(lines) + '\n'
@@ -424,8 +424,9 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     color = os.environ.get('T_PICKER_COLOR') == '1'
     health = directory / 'discovery-status'
     freshness = json.loads(health.read_text()) if health.exists() and health.stat().st_size else None
-    if profile == 'resume' and freshness is not None:
-        status = resume_health(freshness, width, color)
+    refresh = bool(os.environ.get('T_PICKER_REFRESH_CALLBACK'))
+    if profile == 'resume' and (freshness is not None or refresh):
+        status = resume_health(freshness or {}, width, color, refresh)
     elif notice.exists() and notice.read_text().strip():
         status.append(clip_columns(notice.read_text().strip(), width))
     legend = ''
@@ -455,7 +456,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         legend = resume_legend(width)
     controls = header(profile, mask, filters, total - len(selected), columns, width,
                       sort, enabled, color, hide_merged, sort_enabled, legend,
-                      bool(os.environ.get('T_PICKER_REFRESH_CALLBACK')), status if profile == 'resume' else ())
+                      status if profile == 'resume' else ())
     (directory / 'current-header').write_text(('\n'.join(status) + '\n' if status and profile != 'resume' else '') + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
@@ -463,12 +464,9 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
 
 
 def resume_legend(width):
-    close = '↶ latest verified close in these results' if width >= 108 else '↶ latest verified close'
-    if width < 38:
-        close = '↶ last close'
-    return '\n'.join(pack([close, '↻ WIP' if width < 64 else '↻ work in progress', '● live',
-                           '— no PR', '↴ merged', '○ open', '◌ draft', '! conflict', '× closed',
-                           '↗ preview', '? unknown'], width))
+    marks = '↻ WIP' if width < 64 else '↻ work in progress'
+    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '↗ preview', '? unknown']
+    return '\n'.join([marks + '  ● live  — no PR', *pack(prs, width, '  ')])
 
 
 def pr_color(text, symbol):
@@ -487,7 +485,7 @@ def color_resume_prs(display):
                   lambda match: re.sub(r'#\d+ ([↴○◌!×?])(?: ↗)?', chip, match[0]), display)
 
 
-def resume_health(health, width, color):
+def resume_health(health, width, color, refresh=False):
     hosts = health.get('hosts', [])
     stamp = max((host.get('observed') or host.get('checked') or 0 for host in hosts), default=0)
     last = datetime.fromtimestamp(stamp) if stamp else None
@@ -512,15 +510,23 @@ def resume_health(health, width, color):
             healthy = [time_label] + ([', '.join(current) + ' current'] if current else [])
         else:
             healthy = healthy[:1]
+    if refresh:
+        shortcut = key_labels('Ctrl-U' if width <= 28 else 'Ctrl-U refresh now', compact=width <= 40)
+        healthy[0] = clip_columns(healthy[0], width - display_width(shortcut) - 2) + '  ' + shortcut
     if warnings:
         line = ' · '.join([*healthy, *warnings])
         if display_width(line) <= width:
             normal = ' · '.join(healthy) + ' · '
             warn = ' · '.join(warnings)
-            return [normal + (paint(warn, 'warning') if color else warn)]
-        return [clip_columns(' · '.join(healthy), width),
-                *(paint(part, 'warning') if color else part for part in pack(warnings, width))]
-    return pack(healthy, width)
+            lines = [normal + (paint(warn, 'warning') if color else warn)]
+        else:
+            lines = [clip_columns(' · '.join(healthy), width),
+                     *(paint(part, 'warning') if color else part for part in pack(warnings, width))]
+    else:
+        lines = pack(healthy, width)
+    if refresh and color:
+        lines[0] = lines[0].replace(shortcut, paint(shortcut, 'primary'), 1)
+    return lines
 
 
 def resume_gutters(records):
