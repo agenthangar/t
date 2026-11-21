@@ -18,34 +18,30 @@ def test_inventory_reconciles_after_twenty_four_hours_and_keeps_rows(engine, cac
     before = discover(memory)['hosts'][0]['value']
     now[0] += 86399
     assert not discover(memory)['hosts'][0]['stale']
-    assert not jobs
+    assert len(jobs) == 1
     now[0] += 1
     host = discover(memory)['hosts'][0]
     assert host['stale'] and host['value'] == before and len(jobs) == 1
     assert cache.TTL == 86400 and cache.FAILURE_TTL == 3600
 
 
-def test_activity_does_not_expire_history_and_background_observation_is_leased(engine):
+def test_local_activity_observes_once_without_periodic_refresh(engine):
     memory, now, jobs, _ = engine
     discover(memory); drain(jobs)
-    before = discover(memory)['hosts'][0]['checked']
+    before = next(iter(memory.entries.values()))['checked']
     memory.handle('activity', {'targets': ['local']})
-    assert discover(memory)['hosts'][0]['checked'] == before
-    assert not jobs
+    assert next(iter(memory.entries.values()))['checked'] == before
     memory.tick()
     assert len(jobs) == 1
     memory.tick()
     assert len(jobs) == 1
     drain(jobs)
-    now[0] += 4
-    memory.tick(); assert not jobs
-    now[0] += 1
-    memory.tick(); assert len(jobs) == 1
-    drain(jobs)
-    now[0] += 3600
-    memory.tick(); assert not jobs
+    for _ in range(12):
+        now[0] += 5
+        memory.tick()
+        assert not jobs
     discover(memory)
-    memory.tick(); assert len(jobs) == 1
+    assert len(jobs) == 1
 
 
 def test_collector_bug_has_short_retry_and_cannot_stick_worker(engine, cache):
@@ -132,6 +128,7 @@ def test_remote_export_unchanged_and_one_record_delta(engine, adapter):
     assert len(json.dumps(unchanged)) < 400 and 'mcp' not in first['full']
     catalog['conversations'][42]['title'] = 'new turn'
     memory.handle('event', {'targets': ['local']})
+    discover(memory)
     memory.tick(); drain(jobs)
     delta = memory.handle('export', payload)
     assert len(delta['delta']['changed']) == 1 and not delta['delta']['removed']
@@ -148,7 +145,7 @@ def test_deleted_remote_record_is_removed_from_snapshot(engine, adapter):
     memory.handle('export', payload); drain(jobs)
     first = memory.handle('export', payload)
     catalog['conversations'] = []
-    memory.handle('event', {'targets': ['local']}); memory.tick(); drain(jobs)
+    memory.handle('event', {'targets': ['local']}); discover(memory); memory.tick(); drain(jobs)
     result = memory.handle('export', dict(payload, generation=first['generation']))
     merged, _ = adapter.apply_remote(result, {**first['full'], '_remote_generation': first['generation']})
     assert merged['catalog']['conversations'] == []
@@ -353,3 +350,85 @@ def test_live_rows_do_not_settle_cold_saved_discovery(engine, adapter):
     assert not adapter._usable(first, ['rows', 'resume'])
     memory.tick(); drain(jobs)
     assert adapter._usable(discover(memory), ['rows', 'resume'])
+
+
+def test_local_demand_is_due_after_five_seconds_and_observers_never_renew(engine):
+    memory, now, jobs, _ = engine
+    discover(memory); drain(jobs)
+    now[0] += 5
+    discover(memory)
+    assert not jobs
+    now[0] += .01
+    first = discover(memory)['hosts'][0]
+    assert first['value'] and first['refreshing'] and len(jobs) == 1
+    discover(memory); assert len(jobs) == 1
+    drain(jobs)
+    now[0] += 100
+    for _ in range(3):
+        host = memory.handle('discover', {'hosts': [spec()], 'fields': ['rows'], 'observe': True})['hosts'][0]
+        memory.tick()
+        assert host['value'] and not host['refreshing'] and not jobs
+
+
+def test_cold_live_first_finishes_catalog_without_another_request(engine):
+    memory, now, jobs, _ = engine
+    calls = []
+    def collect(spec):
+        calls.append(spec['live_only'])
+        return dict(rows='live', resume=[]) if spec['live_only'] else dict(rows='live', resume=['saved'], catalog={})
+    memory.collect = collect
+    discover(memory); drain(jobs)
+    memory.tick(); assert len(jobs) == 1
+    drain(jobs)
+    now[0] += 60
+    memory.tick()
+    assert calls == [True, False] and not jobs
+
+
+def test_local_pending_and_invalidated_workers_finish_original_demand(engine):
+    memory, now, jobs, _ = engine
+    memory.collect = lambda _: {'_pending': True}
+    discover(memory); drain(jobs)
+    now[0] += 1
+    memory.tick(); assert len(jobs) == 1
+    memory.handle('event', {'targets': ['local']})
+    memory.collect = lambda _: dict(rows='current', resume=[], catalog={})
+    drain(jobs)  # Superseded generation cannot publish or consume demand.
+    assert next(iter(memory.entries.values())).get('value') is None
+    memory.tick(); drain(jobs)
+    assert next(iter(memory.entries.values()))['value']['rows'] == 'current'
+    now[0] += 60
+    memory.tick(); assert not jobs
+
+
+def test_local_failure_settles_until_new_demand_and_observers_do_not_retry(engine):
+    memory, now, jobs, _ = engine
+    memory.collect = lambda _: (_ for _ in ()).throw(RuntimeError('broken'))
+    discover(memory); drain(jobs)
+    now[0] += 6
+    memory.handle('discover', {'hosts': [spec()], 'observe': True})
+    memory.tick(); assert not jobs
+    discover(memory); assert len(jobs) == 1
+
+
+def test_local_invalidation_and_activity_do_not_resurrect_unused_contexts(engine):
+    memory, now, jobs, _ = engine
+    discover(memory, spec(context={'repos': {'old': '/old'}})); drain(jobs)
+    now[0] += 3601
+    discover(memory, spec(context={'repos': {'new': '/new'}})); drain(jobs)
+    memory.handle('event', {'targets': ['local']})
+    memory.tick(); assert not jobs
+    memory.handle('activity', {'targets': ['local']})
+    memory.tick(); assert len(jobs) == 1
+    drain(jobs)
+    assert all(not entry.get('requested') for entry in memory.entries.values())
+
+
+def test_remote_observation_lease_remains_periodic(engine):
+    memory, now, jobs, _ = engine
+    discover(memory, spec('remote')); drain(jobs)
+    now[0] += 29
+    memory.tick(); assert not jobs
+    now[0] += 1
+    memory.tick(); assert len(jobs) == 1
+    drain(jobs)

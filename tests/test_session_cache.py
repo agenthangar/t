@@ -761,3 +761,86 @@ def test_real_client_replaces_unlinked_daemon_and_retains_snapshot(tmp_path, mon
             if child.poll() is None: child.terminate()
             child.wait(timeout=5)
         shutil.rmtree(module._runtime(), ignore_errors=True)
+
+
+@pytest.mark.parametrize('selection', ['default', 'legacy', 'bridge'])
+def test_identity_uses_effective_local_config(cache, monkeypatch, tmp_path, selection):
+    monkeypatch.delenv('T_LOCAL_RC', raising=False)
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    root = tmp_path / 'config/t'
+    root.mkdir(parents=True)
+    local = root / 'local.zsh'
+    if selection == 'legacy':
+        local = tmp_path / '.zshrc.local'
+    if selection == 'bridge':
+        local = tmp_path / 'custom local.zsh'
+        (root / 'config.sh').write_text('T_LOCAL_RC=' + __import__('shlex').quote(str(local)) + '\n')
+    local.touch()
+    implicit = cache._identity()
+    monkeypatch.setenv('T_LOCAL_RC', str(local))
+    assert cache._identity() == implicit
+    alias = tmp_path / 'alias'; alias.symlink_to(local)
+    monkeypatch.setenv('T_LOCAL_RC', str(alias))
+    assert cache._identity() == implicit
+    assert str(alias) in [identity[7] for identity in cache._compatible_identities()]
+    assert '' not in [identity[7] for identity in cache._compatible_identities()]
+    monkeypatch.setenv('T_LOCAL_RC', str(tmp_path / 'different'))
+    assert cache._identity() != implicit
+    assert '' not in [identity[7] for identity in cache._compatible_identities()]
+    monkeypatch.setattr(cache, 'SOURCE', tmp_path / 'other-source')
+    assert cache._identity()[0] != implicit[0]
+
+
+def test_detached_workers_pin_relative_config_and_safe_legacy_identity(cache, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('T_LOCAL_RC', 'relative.zsh')
+    identity = cache._identity()
+    env = cache._service_env()
+    assert env['T_LOCAL_RC'] == str(tmp_path / 'relative.zsh')
+    legacy = list(identity); legacy[7] = 'relative.zsh'
+    monkeypatch.setenv('T_LOCAL_RC', env['T_LOCAL_RC'])
+    monkeypatch.chdir('/')
+    assert cache._identity() == identity
+    assert legacy not in list(cache._compatible_identities())
+
+
+@pytest.mark.parametrize('target', ['local', 'mini'])
+def test_demand_and_explicit_refresh_have_separate_collector_semantics(engine, cache, target):
+    memory, now, jobs, _ = engine
+    host = spec(target)
+    discover(memory, host); drain(jobs)
+    requests = []
+    value = next(iter(memory.entries.values()))['value']
+    memory.collect = lambda request: (requests.append(request.copy()), value.copy())[1]
+    now[0] += cache.TTL + 1
+    discover(memory, host); drain(jobs)
+    assert not requests[-1].get('refresh')
+    memory.failures[target] = dict(retry_at=now[0] + 60, error='unreachable', kind='transport')
+    memory.handle('discover', {'hosts': [host], 'refresh': True, 'observe': True})
+    assert not jobs
+    memory.handle('discover', {'hosts': [host], 'refresh': True})
+    assert len(jobs) == 1
+    drain(jobs)
+    assert requests[-1]['refresh'] and requests[-1]['reconcile']
+    now[0] += cache.REMOTE_INTERVAL
+    memory.tick()
+    if target == 'local':
+        assert not jobs
+    else:
+        assert len(jobs) == 1
+        drain(jobs)
+        assert not requests[-1].get('refresh')
+
+
+def test_refresh_requested_while_loading_is_retained_separately_from_demand(engine, cache):
+    memory, now, jobs, _ = engine
+    discover(memory); drain(jobs)
+    requests = []
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *job: jobs.append(job),
+                             collect=lambda request: (requests.append(request), dict(rows='new', resume=[], catalog={}))[1])
+    restored.handle('discover', {'hosts': [spec()], 'fields': ['rows'], 'refresh': True})
+    restored.handle('discover', {'hosts': [spec()], 'fields': ['catalog']})
+    restored.restore(memory.snapshot())
+    assert len(jobs) == 1
+    drain(jobs)
+    assert requests[0]['refresh'] and requests[0]['reconcile']

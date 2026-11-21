@@ -23,6 +23,10 @@ def test_local_collector_reuses_unchanged_projection_and_removes_missing_source(
     class History:
         def __init__(self, cfg, api):
             self.cfg, self.store = cfg, SimpleNamespace(close=lambda: None)
+        def pr_states(self, records):
+            return {}
+        def annotate_resume_work(self, records, owners):
+            pass
         def local_catalog(self):
             self.catalog_paths = set(records)
             self.catalog_changed_paths = set(changed)
@@ -85,7 +89,7 @@ def test_remote_delta_preserves_unchanged_candidates_and_replaces_only_changed(a
 
 
 @pytest.mark.parametrize('response,kind', [
-    ('pending', None), ('pending-error', 'collector'), ('invalid-json', 'protocol'), ('timeout', 'collector')])
+    ('pending', None), ('pending-error', 'collector'), ('invalid-json', 'protocol'), ('timeout', 'timeout')])
 def test_remote_cold_and_malformed_responses_have_distinct_outcomes(adapter, collector, monkeypatch, response, kind):
     def remote(*a, **k):
         if response == 'timeout':
@@ -221,3 +225,67 @@ def test_open_retry_rechecks_network_before_resetting_shared_host(adapter, monke
         return 'retry'
     with pytest.raises(OSError, match='network unavailable'):
         adapter.open_snapshot(SimpleNamespace(hosts={'mini': 'mini'}), choose)
+
+
+@pytest.mark.parametrize('old_key', ['absolute', 'empty', 'relative', 'different', 'other-source'])
+def test_legacy_identity_import_requires_proven_config_and_source(cache, engine, tmp_path, monkeypatch, old_key):
+    memory, now, jobs, _ = engine
+    discover(memory); drain(jobs)
+    local = tmp_path / 'config.zsh'; local.touch()
+    alias = tmp_path / 'alias.zsh'; alias.symlink_to(local)
+    monkeypatch.setenv('T_LOCAL_RC', str(alias))
+    monkeypatch.setattr(cache, '_canonical_source', lambda: None)
+    disk = cache._Persistence(memory)
+    identity = cache._identity()
+    identity[7] = {'absolute': str(alias), 'empty': '', 'relative': './alias.zsh',
+                   'different': str(tmp_path / 'different.zsh'), 'other-source': str(alias)}[old_key]
+    if old_key == 'other-source':
+        identity[0] = str(tmp_path / 'other-source')
+    snapshot = memory.snapshot()
+    snapshot['failures']['mini'] = dict(error='offline', retry_at=now[0] + 100, kind='transport')
+    with closing(disk._open()) as db, db:
+        db.execute('insert into snapshots values (?,?,?)', (cache._digest(identity), 1, json.dumps(snapshot)))
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *a: pytest.fail('Restoration scheduled collection'))
+    reader = cache._Persistence(restored)
+    reader.stop.set()
+    reader.run()
+    assert not restored.loading and not restored.persistence_error
+    assert bool(restored.entries) == (old_key == 'absolute')
+    if old_key == 'absolute':
+        assert next(iter(restored.entries.values()))['checked'] == now[0]
+        assert restored.failures['mini']['retry_at'] == now[0] + 100
+
+
+def test_loading_demand_retains_requested_missing_fields(cache, engine):
+    memory, now, jobs, _ = engine
+    discover(memory); drain(jobs)
+    snapshot = memory.snapshot()
+    entry = next(iter(snapshot['entries'].values()))
+    entry['value'] = dict(rows='live', resume=[])
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *job: jobs.append(job))
+    restored.handle('discover', {'hosts': [spec()], 'fields': ['rows', 'catalog']})
+    restored.restore(snapshot)
+    assert next(iter(restored.entries.values()))['requested']
+    now[0] += 5
+    restored.tick()
+    assert len(jobs) == 1
+
+
+def test_observer_after_service_replacement_does_not_invent_missing_work(cache):
+    jobs = []
+    memory = cache._Memory(submit=lambda *job: jobs.append(job))
+    memory.handle('discover', {'hosts': [spec()], 'fields': ['catalog'], 'observe': True})
+    memory.restore({})
+    host = memory.handle('discover', {'hosts': [spec()], 'fields': ['catalog'], 'observe': True})['hosts'][0]
+    assert not host['refreshing'] and not jobs and host['stale']
+
+
+def test_browse_resumes_restored_live_only_stage_without_idle_restart(cache, engine):
+    memory, now, jobs, _ = engine
+    memory.collect = lambda _: dict(rows='live', resume=[])
+    discover(memory); drain(jobs)
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *job: jobs.append(job))
+    restored.restore(memory.snapshot())
+    restored.tick(); assert not jobs
+    host = restored.handle('discover', {'hosts': [spec()], 'fields': ['rows', 'resume']})['hosts'][0]
+    assert host['refreshing'] and len(jobs) == 1

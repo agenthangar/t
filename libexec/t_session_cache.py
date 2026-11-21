@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import runpy
 from pathlib import Path
 import socket
 import signal
@@ -30,6 +31,7 @@ LOCAL_INTERVAL = 5
 REMOTE_INTERVAL = 30
 LIMIT = 64 * 1024 * 1024
 SOURCE = Path(__file__).resolve().parents[1]
+_local_rc = runpy.run_path(str(SOURCE / 'libexec/t_config_path.py'))['local_rc']
 
 
 def _identity():
@@ -37,7 +39,27 @@ def _identity():
             os.environ.get('XDG_CACHE_HOME', ''), os.environ.get('XDG_STATE_HOME', ''),
             os.environ.get('XDG_CONFIG_HOME', ''),
             os.environ.get('CODEX_HOME', ''), os.environ.get('CLAUDE_CONFIG_DIR', ''),
-            os.environ.get('T_LOCAL_RC', ''), os.environ.get('TMUX_TMPDIR', '')]
+            os.path.realpath(_local_rc()), os.environ.get('TMUX_TMPDIR', '')]
+
+
+def _compatible_identities(source=None):
+    """Known old raw-RC namespaces, only when they resolve to this config."""
+    identity = _identity()
+    if source is not None:
+        identity[0] = str(source)
+    yield identity
+    effective = identity[7]
+    # Empty and relative old keys omitted effective selection/caller cwd and
+    # cannot prove isolation after a bridge change. Recover only absolute keys.
+    candidates = [os.environ.get('T_LOCAL_RC', ''), _local_rc(), _local_rc(explicit=False)]
+    for candidate in dict.fromkeys(candidates):
+        expanded = os.path.expanduser(candidate)
+        if not os.path.isabs(expanded) or os.path.realpath(expanded) != effective:
+            continue
+        legacy = list(identity)
+        legacy[7] = candidate
+        if legacy != identity:
+            yield legacy
 
 
 def _digest(value):
@@ -86,7 +108,7 @@ def _canonical_source():
 
 def _revision():
     return [int((SOURCE / name).stat().st_mtime_ns) for name in
-            ('bin/t', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py', 'libexec/t_history.py')]
+            ('bin/t', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py', 'libexec/t_history.py', 'libexec/t_config_path.py')]
 
 
 class DiscoveryError(ValueError):
@@ -103,6 +125,14 @@ def _diagnostic(spec, detail):
     with os.fdopen(fd, 'w') as stream:
         stream.write(detail[-65536:])
     return str(path)
+
+
+def _service_env():
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    # Detached workers start at /. Pin selection before changing cwd, including
+    # implicit bridge/legacy paths and relative or symlinked explicit overrides.
+    env['T_LOCAL_RC'] = os.path.abspath(_local_rc())
+    return env
 
 
 def _start_candidate(*, ready=False):
@@ -125,7 +155,7 @@ def _start_candidate(*, ready=False):
         now = time.monotonic()
         if last and 0 <= now - last < 4:
             return
-        env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+        env = _service_env()
         subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'serve'],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True, cwd='/', env=env)
@@ -206,8 +236,7 @@ def invalidate(targets=None):
                           json.dumps(list(dict.fromkeys(targets or ['local'])))],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True,
-                         cwd='/', env={k: v for k, v in os.environ.items()
-                                       if not k.startswith('COV_CORE_')})
+                         cwd='/', env=_service_env())
     except OSError:
         pass  # Discovery expiry remains a fallback; never fail an agent launch.
 
@@ -292,6 +321,8 @@ class _Memory:
                 entry['refreshing'] = False
                 entry['pending'] = False
                 entry.pop('last_used', None)
+                entry.pop('requested', None)
+                entry.pop('force_refresh', None)
                 if entry['checked'] > self.clock() or entry['retry'] > self.clock() + TTL:
                     entry['checked'] = entry['retry'] = 0
                 self.entries[key] = entry
@@ -303,8 +334,8 @@ class _Memory:
             self.loading = False
             waiting = list(self.waiting.values())
             self.waiting.clear()
-        if waiting:
-            self.handle('discover', {'hosts': waiting, 'fields': []})
+        for payload in waiting:
+            self.handle('discover', payload)
 
     def snapshot(self):
         with self.lock:
@@ -324,10 +355,16 @@ class _Memory:
             if operation == 'export':
                 return self.export(payload)
             if operation == 'activity':
+                if 'local' in payload.get('targets', ['local']):
+                    self.generations['local'] = self.generations.get('local', 0) + 1
                 for entry in self.entries.values():
                     if entry['spec']['target'] in payload.get('targets', ['local']):
                         entry['next_poll'] = 0
-                        entry['last_used'] = self.clock()
+                        if (entry['spec']['target'] == 'local' and 'last_used' in entry
+                                and self.clock() - entry['last_used'] < ACTIVE_TTL):
+                            entry['requested'] = True
+                        if entry['spec']['target'] != 'local':
+                            entry['last_used'] = self.clock()
                 return {'scheduled': True}
             if operation == 'reset-host':
                 target = payload.get('target')
@@ -341,6 +378,8 @@ class _Memory:
                 for entry in self.entries.values():
                     if entry['spec']['target'] == target:
                         entry['checked'] = entry['retry'] = 0
+                        if target == 'local':
+                            entry['requested'] = True
                         entry['next_poll'] = 0
                         entry['error'] = ''
                 self.persist()
@@ -368,6 +407,9 @@ class _Memory:
                     if entry['spec']['target'] != target:
                         continue
                     entry['checked'] = entry['retry'] = 0
+                    entry['next_poll'] = 0
+                    if target == 'local':
+                        entry['requested'] = True
                     value = entry.get('value', {})
                     rows = value.get('rows', '').splitlines()
                     kept = [row for row in rows if not matches(row)]
@@ -398,6 +440,8 @@ class _Memory:
                         if entry['spec']['target'] == target:
                             entry['dirty'] = True
                             entry['next_poll'] = 0
+                            if target == 'local' and entry['refreshing']:
+                                entry['requested'] = True
                             # Keep the in-flight marker until its worker exits:
                             # no duplicate collector while old generation drains.
                     row = payload.get('row', '')
@@ -419,7 +463,9 @@ class _Memory:
                 # Friendly aliases do not create a second host cache.
                 key = _digest({k: v for k, v in spec.items() if k != 'host'})
                 if self.loading and not observe:
-                    self.waiting[key] = spec
+                    self.waiting[key] = {'hosts': [spec], 'fields': list(dict.fromkeys(
+                        self.waiting.get(key, {}).get('fields', []) + payload.get('fields', []))),
+                                         'refresh': payload.get('refresh') is True or self.waiting.get(key, {}).get('refresh', False)}
                 entry = self.entries.get(key)
                 if entry is None and not self.loading and not observe:
                     entry = self.entries.setdefault(key, dict(spec=spec, checked=0, retry=0, refreshing=False))
@@ -433,22 +479,27 @@ class _Memory:
                     missing = any(field not in entry.get('value', {}) for field in payload.get('fields', []) if field in ('rows', 'resume', 'catalog', 'mcp', 'scopes'))
                     force = payload.get('refresh') is True and spec['target'] not in self.active_targets and not entry.get('pending')
                     stale = bool(entry.get('dirty')) or not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
-                    if (not observe and not self.loading and not entry['refreshing'] and spec['target'] not in self.active_targets
-                            and (force or ((stale or missing or entry.get('pending')) and now >= retry
-                                           and now >= entry.get('next_poll', 0)))):
-                        entry['refreshing'] = True
-                        if force:
-                            entry['requested'] = True
-                        self.active_targets.add(spec['target'])
-                        generation = self.generations.get(spec['target'], 0)
-                        self.submit(self.refresh, key, generation, self.reset_epochs.get(spec['target'], 0))
+                    if not observe:
+                        if spec['target'] == 'local':
+                            due = stale or missing or entry.get('pending') or 'catalog' not in entry.get('value', {}) or now - entry['checked'] > LOCAL_INTERVAL
+                            if due or force:
+                                entry['requested'] = True
+                        if force and not self.loading and not entry['refreshing']:
+                            entry['force_refresh'] = True
+                            self._start(key, entry)
+                        elif spec['target'] == 'local':
+                            self._schedule(key, entry)
+                        elif ((stale or missing or entry.get('pending')) and not self.loading
+                              and not entry['refreshing'] and spec['target'] not in self.active_targets
+                              and now >= retry and now >= entry.get('next_poll', 0)):
+                            self._start(key, entry)
                     auth_failed = 'resume' in payload.get('fields', []) and any(
                         item.get('code') == 'github_auth_failed' for item in
                         entry.get('value', {}).get('catalog', {}).get('diagnostics', [])
                         if isinstance(item, dict))
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
                                       checked=entry['checked'], stale=stale,
-                                      refreshing=entry['refreshing'] or (missing and not failure) or entry.get('pending', False) or (stale and now >= retry
+                                      refreshing=entry['refreshing'] or (entry.get('requested', False) and not failure) or (missing and not failure and spec['target'] != 'local') or entry.get('pending', False) or (stale and now >= retry
                                           and spec['target'] in self.active_targets),
                                       error=failure.get('error', entry.get('error', '')), retry_at=retry,
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
@@ -462,21 +513,35 @@ class _Memory:
                                       checked=0, stale=True, refreshing=False, error='', retry_at=0, value=None))
             return dict(hosts=hosts, loading=self.loading, persistence_error=self.persistence_error)
 
+    def _start(self, key, entry):
+        target = entry['spec']['target']
+        entry['refreshing'] = True
+        self.active_targets.add(target)
+        self.submit(self.refresh, key, self.generations.get(target, 0), self.reset_epochs.get(target, 0))
+
+    def _schedule(self, key, entry):
+        target = entry['spec']['target']
+        if (not self.loading and entry.get('requested') and not entry['refreshing']
+                and target not in self.active_targets and self.clock() >= entry.get('next_poll', 0)
+                and self.clock() >= self.failures.get(target, {}).get('retry_at', 0)):
+            self._start(key, entry)
+
     def tick(self):
-        """Background observation leases; never do I/O on the serving thread."""
+        """Drain requested local work; retain existing remote observation leases."""
         with self.lock:
             if self.loading:
                 return
             now = self.clock()
             for key, entry in self.entries.items():
                 target = entry['spec']['target']
+                if target == 'local':
+                    self._schedule(key, entry)
+                    continue
                 if ('last_used' not in entry or now - entry['last_used'] >= ACTIVE_TTL or target in self.active_targets
                         or now < entry.get('next_poll', 0)
                         or now < self.failures.get(target, {}).get('retry_at', 0)):
                     continue
-                entry['refreshing'] = True
-                self.active_targets.add(target)
-                self.submit(self.refresh, key, self.generations.get(target, 0), self.reset_epochs.get(target, 0))
+                self._start(key, entry)
 
     def export(self, payload):
         """Versioned host-local metadata only. No imported evidence or prompts."""
@@ -521,7 +586,8 @@ class _Memory:
         with self.lock:
             entry = self.entries[key]
             spec = dict(entry['spec'], reconcile=not entry.get('reconciled') or self.clock() - entry['reconciled'] >= TTL)
-            if entry.pop('requested', False):
+            # Demand drives scheduling; only an explicit refresh forces reconciliation.
+            if entry.pop('force_refresh', False):
                 spec.update(refresh=True, reconcile=True)
             if spec['target'] == 'local':
                 spec['live_only'] = not entry.get('value')
@@ -555,6 +621,8 @@ class _Memory:
             # Ordinary row invalidation must not erase evidence that a host is
             # unreachable. Only an explicit reset can supersede this failure.
             if error:
+                if generation == self.generations.get(target, 0):
+                    entry['requested'] = False
                 entry['pending'] = False
                 attempts = self.failures.get(target, {}).get('attempts', 0) + 1
                 delay = FAILURE_TTL if kind in ('transport', 'authentication') else (5, 15, 60, 300)[min(attempts - 1, 3)]
@@ -577,17 +645,20 @@ class _Memory:
                 if value.pop('_pending', False):
                     entry['next_poll'] = self.clock() + 1
                     entry['pending'] = True
+                    entry['requested'] = target == 'local'
                 else:
                     health = value.get('_remote_health') or {}
                     entry['value'], entry['checked'] = value, health.get('checked') or self.clock()
                     entry['observed'] = health.get('observed') or entry['checked']
                     entry['pending'] = False
                     entry['dirty'] = False
+                    entry['requested'] = False
                     if spec['reconcile']:
                         entry['reconciled'] = self.clock()
                     if spec.get('live_only') and 'catalog' not in value:
                         entry['next_poll'] = self.clock()
                         entry['pending'] = True
+                        entry['requested'] = True
                     if value.get('_legacy_remote'):
                         entry['next_poll'] = self.clock() + FAILURE_TTL
                     self.overlays.pop(spec['target'], None)
@@ -640,16 +711,18 @@ class _Persistence:
         db = None
         try:
             db = self._open()
-            row = db.execute('select payload from snapshots where namespace=? and version in (1,?)', (self.namespace, VERSION)).fetchone()
-            if row is None:
-                # A worktree may seed from canonical, never the reverse or from
-                # a sibling development namespace. Collector code stays local.
-                canonical = _canonical_source()
-                if canonical is not None:
-                    identity = _identity()
-                    identity[0] = str(canonical)
+            row = None
+            # Prefer this source's normalized namespace, then its compatible raw
+            # identities. Only a cold worktree may seed from canonical.
+            canonical = _canonical_source()
+            for source in ([None, canonical] if canonical is not None else [None]):
+                for identity in _compatible_identities(source):
                     row = db.execute('select payload from snapshots where namespace=? and version in (1,?)',
                                      (_digest(identity), VERSION)).fetchone()
+                    if row is not None:
+                        break
+                if row is not None:
+                    break
             saved = json.loads(row[0]) if row else {'artifacts': _legacy_artifacts()}
             if not isinstance(saved, dict):
                 raise ValueError('invalid cache snapshot')

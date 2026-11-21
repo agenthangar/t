@@ -80,10 +80,17 @@ Inventory reconciliation has a **24-hour TTL**. Expiry schedules background work
 it never discards a successful snapshot. A failed refresh retains the original
 observation times. No TTL is accepted as proof that a conversation has no owner.
 
-A namespace used within the last hour receives background checks every five
-seconds locally and thirty seconds per updated remote host. These intervals run
-from completion, with one collector per target. Polling stops after an hour with
-no requests and resumes on use. Aliases share target failure state and workers.
+Local browsing returns the retained snapshot immediately and coalesces one refresh
+when its observation is more than five seconds old, missing requested fields or
+dirty. Bounded wait observations do not request another refresh. Cold live-first
+collection completes its catalog in the background without another request.
+Pending work and invalidated in-flight observations drain once; settled local
+views do not poll while idle. A failed local request retains its cooldown and
+waits for new demand. Attach activity observes recently used local contexts once.
+
+Updated remote hosts used within the last hour retain background checks every
+thirty seconds from completion. Their polling stops after an hour without
+requests and resumes on use. Aliases share target failure state and workers.
 The daemon starts on demand without launchd, shell hooks or personal configuration.
 
 Attach events schedule a live-status observation without invalidating saved
@@ -137,18 +144,28 @@ Version 2 imports version 1 snapshots without deleting durable conversation
 history in `$XDG_STATE_HOME/t/history/v1/history.sqlite3`. Original timestamps and
 host cooldowns survive restoration; in-flight markers do not.
 
+Equivalent implicit, explicit and symlinked local configuration paths share one
+service and snapshot namespace. Configuration selection uses the same generated
+bridge, default and legacy fallback as the CLI; distinct configurations remain
+isolated. Compatible old absolute-path snapshot identities are imported without
+changing observation times or cooldowns. Old empty or relative-path identities
+cannot prove configuration isolation and start cold. Detached workers pin the selected path
+before changing working directory.
+
 Development sources retain their own service and snapshot namespace. A cold Git
 worktree may seed from its canonical checkout's compatible persisted namespace,
 with matching user/agent-store/environment identity. Repository context remains
 part of each entry key. Canonical never imports from a development worktree, and
 no client selects another source's executable. Old worktrees must integrate the
 fix before they can run its new recovery behavior; installing main does not
-silently rewrite another session's branch.
+silently rewrite another session's branch. After an upgrade, an older daemon in
+a separate namespace can finish its existing one-hour polling lease and remain
+resident afterward.
 
 ## Validation
 
 Tests use synthetic conversations, isolated HOME/XDG directories and private tmux
-sockets. They cover daily reconciliation, active leases, one-record updates,
+sockets. They cover daily reconciliation, local demand coalescing, remote leases, one-record updates,
 generation deltas, mixed versions, error categories, restart recovery, socket loss,
 concurrent callers, terminal restoration and live ownership safeguards. Native
 macOS UI tests remain opt-in. Required Linux design and coverage gates remain intact.

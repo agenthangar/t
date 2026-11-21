@@ -51,7 +51,7 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
             if time.monotonic() >= deadline:
                 return dict(view, wait_timed_out=True)
             options = {'host': host} if host is not None else {}
-            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=deadline, **options)
+            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=deadline, observe=True, **options)
             if latest.get('unavailable'):
                 return dict(view, wait_timed_out=True) if time.monotonic() >= deadline else dict(
                     view, wait_unavailable=True)

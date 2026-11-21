@@ -106,20 +106,13 @@ _CFG_LINE = re.compile(
     r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|T_AUTO_TRUST|T_LOCAL_RC)=(.*)$")
 
 
+_resolve_local_rc = runpy.run_path(str(Path(__file__).resolve().parent.parent /
+                                       "libexec/t_config_path.py"))["local_rc"]
+
+
 def _current_local_rc():
     """Resolve the shell's selected local config, including a cached bridge path."""
-    if os.environ.get("T_LOCAL_RC"):
-        return os.path.expanduser(os.environ["T_LOCAL_RC"])
-    try:
-        with open(CONFIG, encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("T_LOCAL_RC="):
-                    path = _unquote(line.partition("=")[2])
-                    if path:
-                        return os.path.expanduser(path)
-    except OSError:
-        pass
-    return ZSHRC_LOCAL
+    return _resolve_local_rc(config=CONFIG, fallback=ZSHRC_LOCAL)
 
 AGENTS = ("claude", "codex")   # the closed set a dev slot can run (the zsh _dev_agent_valid twin)
 
