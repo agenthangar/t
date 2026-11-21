@@ -714,3 +714,44 @@ def test_real_client_replaces_unlinked_daemon_and_retains_snapshot(tmp_path, mon
             if child.poll() is None: child.terminate()
             child.wait(timeout=5)
         shutil.rmtree(module._runtime(), ignore_errors=True)
+
+
+@pytest.mark.parametrize('selection', ['default', 'legacy', 'bridge'])
+def test_identity_uses_effective_local_config(cache, monkeypatch, tmp_path, selection):
+    monkeypatch.delenv('T_LOCAL_RC', raising=False)
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    root = tmp_path / 'config/t'
+    root.mkdir(parents=True)
+    local = root / 'local.zsh'
+    if selection == 'legacy':
+        local = tmp_path / '.zshrc.local'
+    if selection == 'bridge':
+        local = tmp_path / 'custom local.zsh'
+        (root / 'config.sh').write_text('T_LOCAL_RC=' + __import__('shlex').quote(str(local)) + '\n')
+    local.touch()
+    implicit = cache._identity()
+    monkeypatch.setenv('T_LOCAL_RC', str(local))
+    assert cache._identity() == implicit
+    alias = tmp_path / 'alias'; alias.symlink_to(local)
+    monkeypatch.setenv('T_LOCAL_RC', str(alias))
+    assert cache._identity() == implicit
+    assert str(alias) in [identity[7] for identity in cache._compatible_identities()]
+    assert '' not in [identity[7] for identity in cache._compatible_identities()]
+    monkeypatch.setenv('T_LOCAL_RC', str(tmp_path / 'different'))
+    assert cache._identity() != implicit
+    assert '' not in [identity[7] for identity in cache._compatible_identities()]
+    monkeypatch.setattr(cache, 'SOURCE', tmp_path / 'other-source')
+    assert cache._identity()[0] != implicit[0]
+
+
+def test_detached_workers_pin_relative_config_and_safe_legacy_identity(cache, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('T_LOCAL_RC', 'relative.zsh')
+    identity = cache._identity()
+    env = cache._service_env()
+    assert env['T_LOCAL_RC'] == str(tmp_path / 'relative.zsh')
+    legacy = list(identity); legacy[7] = 'relative.zsh'
+    monkeypatch.setenv('T_LOCAL_RC', env['T_LOCAL_RC'])
+    monkeypatch.chdir('/')
+    assert cache._identity() == identity
+    assert legacy not in list(cache._compatible_identities())
