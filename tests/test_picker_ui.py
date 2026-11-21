@@ -110,9 +110,13 @@ def picker(t_mod):
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
-            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
+                if profile == 'resume-pan':
+                    rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\t[OPEN]    10   codex   mini   Last: 2h    Newest web task END-OF-TITLE\n'
+                            'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\t[OPEN]    2    claude  local  Last: 3h    Older api task FAR-RIGHT\n')
+                    env['T_PICKER_COLUMNS'] = 'PR        SLOT AGENT   HOST   ACTIVITY    WORKING ON'
                 if profile == 'resume-merged':
                     rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
                 if profile == 'resume-closed':
@@ -130,7 +134,7 @@ def picker(t_mod):
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if profile == 'resume-closed':
                 mode_env += 'T_PICKER_COLUMNS="WORKING ON" '
@@ -236,6 +240,7 @@ def picker(t_mod):
 
         def keys(*values):
             return tmux('send-keys', *values)
+        keys.capture = lambda: tmux('capture-pane', '-p').stdout
         keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
         yield start, wait, keys, finish
         tmux('kill-server', check=False)
@@ -622,7 +627,9 @@ def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, widt
     wait('2/2 (0)')
     keys('C-d')
     wait('1/1 (0)', focused='[OPEN]')
-    assert finish()[0].split('\t')[2] == 'sid2'
+    selected = finish()
+    assert len(selected[0].split('\t')) >= 3, selected
+    assert selected[0].split('\t')[2] == 'sid2'
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
@@ -842,3 +849,128 @@ def test_open_enter_accepts_multiple_exact_marked_rows(picker):
     keys('Tab', 'Tab')
     wait('2/2 (2)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2', 'web-4']
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('width,height', [(80, 24), (71, 37), (44, 20), (32, 12)])
+@pytest.mark.parametrize('monochrome', [False, True])
+def test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks(picker, width, height, monochrome):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=width, height=height, monochrome=monochrome)
+    screen = wait('[OPEN]', focused='[OPEN]')
+    assert '>' in next(line for line in screen.splitlines() if '▸' in line)
+    capture_dir = os.environ.get('T_PICKER_CAPTURE_DIR')
+    def capture(state):
+        if capture_dir:
+            target = Path(capture_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / f'resume-{width}x{height}-mono{int(monochrome)}-{state}.txt').write_text(keys.capture())
+    capture('left')
+    keys('Tab')
+    screen = wait('(1)', focused='[OPEN]')
+    def wheel(code):
+        frame = wait('resume >')
+        row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line)
+        keys('-l', f'\x1b[<{code};12;{row}M')
+    for _ in range(10): wheel(65)
+    screen = wait('FAR-RIGHT', focused='FAR-RIGHT')
+    assert any('<' in line for line in screen.splitlines() if '▸' in line)
+    assert 'Filters' in screen and 'Sort' in screen
+    assert '(1)' in screen
+    capture('right')
+    for _ in range(10): wheel(64)
+    wait('[OPEN]', focused='[OPEN]')
+    keys('-l', 'end-of-title')
+    screen = wait('1/1 (0)')
+    # The match is in the hidden right-hand part of the canonical row.
+    wait('[OPEN]', focused='[OPEN]')
+    selected = finish()
+    assert len(selected) == 1
+    assert len(selected[0].split('\t')) >= 3, selected
+    assert selected[0].split('\t')[2] == 'sid1'
+    assert selected[0].endswith('END-OF-TITLE')
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_serializes_query_mark_wheel_and_accept_in_one_burst(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=44, height=20)
+    screen = wait('[OPEN]')
+    row = next(i for i, line in enumerate(screen.splitlines(), 1) if '▸' in line)
+    # No polling between these events: query, mark and pan must keep input order.
+    keys('-l', 'Older api\t' + f'\x1b[<65;12;{row}M' * 4)
+    wait('1/1 (1)', focused='api task')
+    selected = finish()
+    assert len(selected) == 1 and selected[0].split('\t')[2] == 'sid2'
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_keeps_query_cursor_and_handles_horizontal_wheel(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=44, height=20)
+    wait('[OPEN]')
+    keys('-l', 'Older api')
+    wait('1/1 (0)')
+    keys('Left', 'Left', 'Left')
+    frame = wait('resume > Older api')
+    row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line)
+    keys('-l', f'\x1b[<67;12;{row}M' * 4)
+    wait('api task', focused='api task')
+    keys('-l', 't')
+    wait('resume > Older tapi')
+    keys('BSpace')
+    wait('1/1 (0)')
+    selected = finish()
+    assert len(selected[0].split('\t')) >= 3, selected
+    assert selected[0].split('\t')[2] == 'sid2'
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_excludes_details_preview_and_survives_resize_cancel(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=71, height=37)
+    wait('[OPEN]')
+    # Toggle and mouse arrive together: use the post-toggle preview hitbox.
+    keys('-l', '\x1f' + '\x1b[<65;12;33M' * 3)
+    frame = wait('ND-OF-TITLE')
+    # A wheel event in the details pane is still handled by native fzf.
+    frame = wait('[OPEN]', focused='[OPEN]')
+    assert '<' not in next(line for line in frame.splitlines() if '▸' in line)
+    keys('C-_')
+    keys.resize(32, 12)
+    frame = wait('Sort', focused='[OPEN]', columns=32)
+    focus = next(line for line in frame.splitlines() if '▸' in line)
+    ending = 'FAR-RIGHT' if 'cla' in focus else 'END-OF-TITLE'
+    row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line)
+    keys('-l', f'\x1b[<65;12;{row}M' * 10)
+    wait(ending, focused=ending, columns=32)
+    assert finish('Escape', 130) == []
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_suspension_and_bracketed_paste_restore_terminal(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=44, height=20)
+    wait('[OPEN]')
+    keys('C-z')
+    # This detached non-job-control fixture may ignore TSTP. It must still
+    # resume the owned fzf process and leave its terminal usable.
+    keys('-l', '\x1b[200~Older api\x1b[201~')
+    wait('1/1 (0)')
+    assert finish('C-c', 130) == []
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_defers_resize_repaint_until_fragmented_paste_ends(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=71, height=37)
+    wait('[OPEN]')
+    keys('-l', '\x1b[200~Older ')
+    # Keep the real terminal paste open across a resize and separate reads.
+    time.sleep(.1)
+    keys.resize(44, 20)
+    time.sleep(.1)
+    keys('-l', 'api\x1b[201~')
+    wait('1/1 (0)', columns=44)
+    selected = finish()
+    assert selected[0].split('\t')[2] == 'sid2'

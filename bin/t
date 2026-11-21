@@ -13873,6 +13873,8 @@ PICKER CONTROLS
   The picker MULTI-SELECTS: Tab marks rows with a ✓.
   Column headers identify PR state, slot, agent, activity, and working-on text.
   Repository and host columns appear when applicable.
+  Over the table, wheel up pans left and wheel down pans right, without Shift.
+  Up/Down moves focus; Left/Right edits the search. Search includes hidden text.
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.
   Ctrl-G/O/R matches the highlighted row's agent/host/repo; repeat to clear.
   Filtering keeps your search. No filter pop-ups.

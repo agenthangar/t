@@ -1043,6 +1043,17 @@ The resume picker labels the PR, slot, agent, activity, and working-on columns.
 All-repository views include REPO, and HOST appears when an origin is recorded.
 ACTIVITY shows the last user turn and, for live rows, the current owner status.
 Columns use the full snapshot to stay aligned when filtering or sorting.
+The table scrolls horizontally under its fixed query, controls and selection
+gutter. Move the ordinary wheel over the table: up pans left, down pans right;
+a horizontal wheel follows its direction. Shift is unnecessary. Headings and
+rows move together. `<` appears only with hidden text to the left and `>` only
+with hidden text to the right. Search still matches every complete column.
+Panning retains the query cursor, focused conversation, marks, filters and sort.
+Wheel events in the controls or details pane retain native fzf behavior.
+For example, run `t session resume --all`, hover the rows, and wheel down to
+read WORKING ON. Up/Down still moves focus, and Left/Right edits the query.
+On a tall-to-short resize, legacy fzf keeps its original frame; the header
+prioritizes action, filter state, sort and column labels to keep focus visible.
 Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
 recorded), UNKNOWN, or MIXED. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
