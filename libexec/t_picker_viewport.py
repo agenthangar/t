@@ -333,7 +333,7 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
                     if isinstance(event, int): direction += event
                     else:
                         if direction: update(direction); direction = 0
-                        if (to_child and not pasted and event
+                        if (not pasted and event and event not in (b'\x03', b'\x1a')
                                 and any(c < 32 or c == 127 for c in event)):
                             if not barrier(): break
                         if event == b'\x1b[200~': pasted = True

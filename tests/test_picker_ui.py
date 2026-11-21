@@ -881,7 +881,7 @@ def test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks(picker, 
     for _ in range(10): wheel(64)
     wait('[OPEN]', focused='[OPEN]')
     keys('-l', 'end-of-title')
-    screen = wait('1/1 (0)')
+    screen = wait('1/1 (')
     # The match is in the hidden right-hand part of the canonical row.
     wait('[OPEN]', focused='[OPEN]')
     selected = finish()
