@@ -171,7 +171,9 @@ def test_homebrew_update_coordinates_relinquishes_and_keeps_owner(sandbox, monke
     monkeypatch.setattr(installer, "verify_app", lambda *a, **k: "0.1.0")
     monkeypatch.setattr(installer, "homebrew_receipt", lambda *a, **k: True)
     monkeypatch.setattr(installer, "verified_homebrew_contract", lambda *a, **k: "/opt/homebrew/bin/brew")
-    monkeypatch.setattr(installer, "verify_installed_receipt", lambda team: "0.1.1")
+    installed_versions = iter(["0.1.0", "0.1.1"])
+    monkeypatch.setattr(installer, "verify_installed_receipt", lambda team: next(installed_versions))
+    monkeypatch.setattr(installer, "verify_homebrew_receipt", lambda *args: None)
     monkeypatch.setattr(installer, "global_installation_lock", lambda **kwargs: contextlib.nullcontext(True))
     monkeypatch.setattr(installer, "verify_installed_root", lambda: None)
     monkeypatch.setattr(installer, "assert_no_marker", lambda: events.append("no marker"))
@@ -245,8 +247,6 @@ def test_direct_update_refuses_detected_homebrew_owner(sandbox, mocked_update, m
     with pytest.raises(installer.InstallError, match="Homebrew receipt"):
         installer.perform("update", manifest("0.1.1"), sandbox.root)
     assert ("coordinate", "prepare-update") not in mocked_update
-
-
 
 
 def test_machine_lock_excludes_independent_descriptors_without_root_mutation(tmp_path, monkeypatch):
@@ -330,6 +330,224 @@ def test_unknown_homebrew_contract_falls_back_only_for_fresh_install(monkeypatch
         installer.verified_homebrew_contract(manifest())
 
 
+@pytest.fixture
+def brew_test_state(sandbox, monkeypatch):
+    brew = sandbox.root / "brew"
+    link = sandbox.root / "brew-link"
+    link.symlink_to(brew)
+    caskroom = sandbox.root / "Caskroom"
+    monkeypatch.setattr(installer.shutil, "which", lambda _: str(link))
+    monkeypatch.setattr(installer, "ROOT_MARKER", sandbox.root / "package-transaction.json")
+    monkeypatch.setattr(installer, "installation_lock", lambda: contextlib.nullcontext(False))
+    monkeypatch.setattr(installer, "global_installation_lock", lambda **kwargs: contextlib.nullcontext(True))
+    monkeypatch.setattr(installer, "check_owned_link", lambda: None)
+    monkeypatch.setattr(installer, "download_verified_package", lambda *args: pytest.fail("must not choose the direct package"))
+    return SimpleNamespace(brew=str(brew), caskroom=caskroom)
+
+
+def cask_receipt(caskroom, version, tap="agenthangar/tap"):
+    metadata = caskroom / "nightr" / ".metadata"
+    metadata.mkdir(parents=True)
+    path = metadata / "INSTALL_RECEIPT.json"
+    path.write_text(json.dumps({"source": {"tap": tap, "version": version}}))
+    return path
+
+
+@pytest.mark.parametrize("variant,tap_added,installed", [
+    ("missing tap", True, True),
+    ("already tapped", False, True),
+    ("tap failed", False, False),
+    ("bad cask", True, False),
+    ("app appeared", True, False),
+    ("existing receipt", False, False),
+    ("existing record", False, False),
+    ("existing app symlink", False, False),
+    ("unrelated link", False, False),
+    ("pending marker", False, False),
+    ("missing Homebrew", False, False),
+])
+def test_strict_homebrew_install_checks_before_mutating(sandbox, brew_test_state, monkeypatch, capsys, variant, tap_added, installed):
+    brew, caskroom = brew_test_state.brew, brew_test_state.caskroom
+    data = manifest()
+    source = installer.AUDITED_CASK_TEMPLATE.replace("{{VERSION}}", data["version"]).replace("{{SHA256}}", data["asset"]["sha256"])
+    events = []
+
+    def release(directory):
+        events.append("release checked")
+        return data
+
+    def query(arguments, *, env_updates, stdout_only):
+        assert arguments[0] == brew and stdout_only
+        assert env_updates["HOMEBREW_NO_AUTO_UPDATE"] == env_updates["HOMEBREW_NO_INSTALL_FROM_API"] == "1"
+        action = arguments[1:]
+        if action == ["--caskroom"]:
+            return str(caskroom)
+        if action == ["tap"]:
+            return "agenthangar/tap\n" if variant == "already tapped" else "different/tap\n"
+        assert action == ["cat", "--cask", "agenthangar/tap/nightr"]
+        assert env_updates["HOMEBREW_BAT"] == "0" and env_updates["HOMEBREW_DEVELOPER"] == "1"
+        events.append("audit")
+        if variant == "bad cask":
+            return source.replace("  pkg", '  preflight do\n    system_command "/tmp/extra"\n  end\n  pkg')
+        return source
+
+    def mutate(arguments, *, env_updates, timeout):
+        assert arguments[0] == brew
+        assert env_updates["HOMEBREW_NO_AUTO_UPDATE"] == env_updates["HOMEBREW_NO_INSTALL_FROM_API"] == "1"
+        action = arguments[1:]
+        if action == ["tap", "agenthangar/tap"]:
+            if variant == "tap failed":
+                raise installer.InstallError("tap failed")
+            events.append("tap added")
+            if variant == "app appeared":
+                sandbox.app.mkdir(parents=True)
+            return
+        assert action == ["install", "--cask", "agenthangar/tap/nightr"]
+        assert env_updates["HOMEBREW_NO_INSTALL_CLEANUP"] == env_updates["HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK"] == "1"
+        events.append("cask installed")
+        cask_receipt(caskroom, "0.1.0")
+
+    def verified_package(team):
+        assert team == data["teamID"]
+        events.append("package verified")
+        return "0.1.0"
+
+    monkeypatch.setattr(installer, "latest_manifest", release)
+    monkeypatch.setattr(installer, "run", query)
+    monkeypatch.setattr(installer, "run_passthrough", mutate)
+    monkeypatch.setattr(installer, "verify_installed_receipt", verified_package)
+    if variant == "existing receipt":
+        cask_receipt(caskroom, "0.1.0", tap="another/tap")
+    elif variant == "existing record":
+        installer.write_record("direct", "0.1.0", data["teamID"])
+    elif variant == "existing app symlink":
+        sandbox.app.parent.mkdir()
+        sandbox.app.symlink_to(sandbox.root / "missing")
+    elif variant == "unrelated link":
+        def blocked_link():
+            raise installer.InstallError("Unrelated Nightr link")
+        monkeypatch.setattr(installer, "check_owned_link", blocked_link)
+    elif variant == "pending marker":
+        installer.ROOT_MARKER.touch()
+    elif variant == "missing Homebrew":
+        monkeypatch.setattr(installer.shutil, "which", lambda _: None)
+
+    status = installer.main(["install", "--homebrew-only", "--json"])
+    assert events[0] == "release checked"
+    assert ("tap added" in events) is tap_added
+    assert ("cask installed" in events) is installed
+    result = json.loads(capsys.readouterr().out)
+    if installed:
+        assert events[-3:] == ["audit", "cask installed", "package verified"]
+        assert status == 0 and result["owner"] == "homebrew"
+    else:
+        assert "package verified" not in events
+        assert status == 1 and "error" in result
+        assert installer.read_record() is None or installer.read_record()["owner"] == "direct"
+
+
+@pytest.mark.parametrize("status,expected", [(404, "No public signed Nightr release"), (503, "HTTP Error 503")])
+def test_guided_homebrew_unpublished_release_stops_before_brew(sandbox, brew_test_state, monkeypatch, capsys, status, expected):
+    def download(url, *args):
+        assert url == installer.API
+        raise installer.HTTPError(url, status, "request failed", None, None)
+    monkeypatch.setattr(installer, "download", download)
+    monkeypatch.setattr(installer, "run", lambda *args, **kwargs: pytest.fail("release must be checked first"))
+    assert installer.main(["install", "--homebrew-only", "--json"]) == 1
+    assert expected in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_homebrew_only_is_limited_to_fresh_install(sandbox, brew_test_state, monkeypatch, capsys):
+    monkeypatch.setattr(installer, "latest_manifest", lambda _: pytest.fail("invalid use should fail early"))
+    assert installer.main(["update", "--homebrew-only", "--json"]) == 1
+    assert "requires a fresh install" in json.loads(capsys.readouterr().out)["error"]
+
+
+@pytest.mark.parametrize("variant", ["valid", "missing", "wrong tap", "missing tap", "wrong version", "malformed", "metadata symlink", "receipt symlink", "oversized"])
+def test_qualified_homebrew_receipt_reads_only_the_real_installed_metadata(tmp_path, monkeypatch, variant):
+    caskroom = tmp_path / "Caskroom"
+    receipt = cask_receipt(caskroom, "0.1.0")
+    if variant == "missing":
+        receipt.unlink()
+    elif variant == "wrong tap":
+        receipt.write_text(json.dumps({"source": {"tap": "other/tap", "version": "0.1.0"}}))
+    elif variant == "missing tap":
+        receipt.write_text(json.dumps({"source": {"version": "0.1.0"}}))
+    elif variant == "wrong version":
+        receipt.write_text(json.dumps({"source": {"tap": "agenthangar/tap", "version": "0.1.1"}}))
+    elif variant == "malformed":
+        receipt.write_text("{")
+    elif variant == "metadata symlink":
+        metadata = receipt.parent
+        metadata.rename(tmp_path / "unrelated")
+        metadata.symlink_to(tmp_path / "unrelated")
+    elif variant == "receipt symlink":
+        receipt.rename(tmp_path / "unrelated")
+        receipt.symlink_to(tmp_path / "unrelated")
+    elif variant == "oversized":
+        receipt.write_bytes(b" " * (1024 * 1024 + 1))
+    def query(arguments, **kwargs):
+        assert arguments == ["/brew", "--caskroom"]
+        return str(caskroom)
+    monkeypatch.setattr(installer, "run", query)
+    if variant == "valid":
+        installer.verify_homebrew_receipt("/brew", "0.1.0")
+    else:
+        with pytest.raises(installer.InstallError, match="cask receipt"):
+            installer.verify_homebrew_receipt("/brew", "0.1.0")
+
+
+@pytest.mark.parametrize("version,action,tap,expected", [
+    ("0.1.0", "update", "agenthangar/tap", "upgrade"),
+    ("0.1.1", "update", "agenthangar/tap", "adopt"),
+    ("0.1.2", "update", "agenthangar/tap", "adopt"),
+    ("0.1.0", "update", "another/tap", "refuse"),
+    ("0.1.0", "check", "agenthangar/tap", "read"),
+])
+def test_existing_unrecorded_homebrew_update_checks_ownership(sandbox, brew_test_state, monkeypatch, capsys, version, action, tap, expected):
+    sandbox.app.mkdir(parents=True)
+    cask_receipt(brew_test_state.caskroom, version, tap=tap)
+    monkeypatch.setattr(installer, "latest_manifest", lambda _: manifest("0.1.1"))
+    events = []
+
+    def query(arguments, **kwargs):
+        assert expected != "read"
+        assert arguments[-1] == "--caskroom"
+        return str(brew_test_state.caskroom)
+
+    def contract(data):
+        events.append("audit")
+        return brew_test_state.brew
+
+    def signed_receipt(team):
+        assert team == "ABCDE12345"
+        events.append("signed receipt")
+        return version
+
+    def transaction(mode, data, handle, post, existing, *, brew):
+        assert mode == "update" and existing and brew == brew_test_state.brew
+        assert installer.read_record()["version"] == version
+        events.append("upgrade")
+        return installer.write_record("homebrew", data["version"], data["teamID"])
+
+    monkeypatch.setattr(installer, "run", query)
+    monkeypatch.setattr(installer, "verified_homebrew_contract", contract)
+    monkeypatch.setattr(installer, "verify_installed_receipt", signed_receipt)
+    monkeypatch.setattr(installer, "brew_transaction", transaction)
+    status = installer.main([action, "--json"])
+    result = json.loads(capsys.readouterr().out)
+    if expected == "read":
+        assert status == 0 and result["installed"] and result["owner"] is None
+        assert events == [] and installer.read_record() is None
+    elif expected == "refuse":
+        assert status == 1 and "AgentHangar tap" in result["error"]
+        assert installer.read_record() is None
+    else:
+        assert status == 0 and result["owner"] == "homebrew"
+        assert result["version"] == ("0.1.1" if expected == "upgrade" else version)
+        assert events == ["audit", "signed receipt"] + (["upgrade"] if expected == "upgrade" else [])
+
+
 def test_whole_file_posix_gate_excludes_another_process(tmp_path, monkeypatch):
     import subprocess
     import sys
@@ -378,13 +596,20 @@ def test_unknown_homebrew_query_never_adopts_or_replaces_existing_app(sandbox, m
         installer.perform("update", manifest("0.1.1"), sandbox.root)
 
 
-def test_successful_empty_receipt_list_is_authoritative_absence(monkeypatch):
+def test_caskroom_uses_token_entry_to_check_ownership(sandbox, monkeypatch):
     monkeypatch.setattr(installer.shutil, "which", lambda _: "/brew")
     calls = []
-    def query(arguments, **kwargs): calls.append(arguments); return "other-cask 1.0\n"
+    def query(arguments, **kwargs):
+        calls.append(arguments)
+        return str(sandbox.root)
     monkeypatch.setattr(installer, "run", query)
     assert installer.homebrew_receipt() is False
-    assert calls == [["/brew", "list", "--cask", "--versions"]]
+    (sandbox.root / "nightr").symlink_to(sandbox.root / "missing")
+    assert installer.homebrew_receipt() is True
+    assert calls == [["/brew", "--caskroom"]] * 2
+    monkeypatch.setattr(installer, "run", lambda *args, **kwargs: "relative/path\n")
+    with pytest.raises(installer.InstallError, match="ownership could not be checked"):
+        installer.homebrew_receipt()
 
 
 def test_missing_brew_requires_known_direct_owner_and_absent_standard_receipts(monkeypatch):
@@ -751,7 +976,9 @@ def test_brew_every_exit_reacquires_and_verifies_before_adoption(sandbox, monkey
     monkeypatch.setattr(installer, "run_passthrough", execute)
     monkeypatch.setattr(installer, "assert_no_marker", marker)
     monkeypatch.setattr(installer, "verify_installed_receipt", lambda team: "0.1.0" if outcome == "old version" else "0.1.1")
-    monkeypatch.setattr(installer, "homebrew_receipt", lambda *args: outcome != "receipt")
+    def verify_cask(*args):
+        if outcome == "receipt": raise installer.InstallError("invalid cask receipt")
+    monkeypatch.setattr(installer, "verify_homebrew_receipt", verify_cask)
     post = []
     with pytest.raises(installer.InstallError):
         installer.brew_transaction("update", manifest("0.1.1"), handle, post, True)
@@ -869,8 +1096,13 @@ def test_controller_coordination_invokes_only_fixed_installed_cli(sandbox, monke
 @pytest.mark.parametrize("action,variant", [("adopt-homebrew", "valid"), ("adopt-homebrew", "unavailable"), ("adopt-homebrew", "no receipt"), ("adopt-homebrew", "direct owner"), ("check", "not macOS"), ("install", "resume failure")])
 def test_cli_reports_ownership_and_recovery_errors_as_json(sandbox, monkeypatch, capsys, action, variant):
     monkeypatch.setattr(installer, "latest_manifest", lambda *args: manifest())
-    monkeypatch.setattr(installer, "verified_homebrew_contract", lambda *args: None if variant == "unavailable" else "/brew")
-    monkeypatch.setattr(installer, "run", lambda *args: "" if variant == "no receipt" else "nightr 0.1.0")
+    def contract(*args):
+        if variant == "unavailable": raise installer.InstallError("Homebrew unavailable")
+        return "/brew"
+    def receipt(*args):
+        if variant == "no receipt": raise installer.InstallError("No cask receipt")
+    monkeypatch.setattr(installer, "verified_homebrew_contract", contract)
+    monkeypatch.setattr(installer, "verify_homebrew_receipt", receipt)
     monkeypatch.setattr(installer, "verify_installed_receipt", lambda team: "0.1.0")
     if variant == "direct owner": installer.write_record("direct", "0.1.0", "ABCDE12345")
     if variant == "not macOS": monkeypatch.setattr(installer.sys, "platform", "linux")
@@ -938,8 +1170,8 @@ def test_state_uses_current_home_and_unrelated_public_command_is_preserved(tmp_p
 def test_fresh_install_delegates_to_brew_only_after_verified_contract(sandbox, monkeypatch):
     monkeypatch.setattr(installer, "verified_homebrew_contract", lambda *args, **kwargs: "/brew")
     calls = []
-    def brew(mode, data, handle, post, existing):
-        calls.append((mode, handle, existing)); return {"owner": "homebrew", "version": data["version"]}
+    def brew(mode, data, handle, post, existing, *, brew):
+        calls.append((mode, handle, existing, brew)); return {"owner": "homebrew", "version": data["version"]}
     monkeypatch.setattr(installer, "brew_transaction", brew)
     assert installer.perform("install", manifest(), sandbox.root, global_lock_held=False)["owner"] == "homebrew"
-    assert calls == [("install", False, False)]
+    assert calls == [("install", False, False, "/brew")]

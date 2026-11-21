@@ -3474,7 +3474,7 @@
         "review"
       ],
       "renderer": "rail",
-      "scope": "local installed agents and optional hosts",
+      "scope": "local installed agents, optional macOS desktop app, and optional agent installation hosts",
       "confirmation": "enter",
       "tests": [
         "tests/test_install.py::test_install_plan_full_matrix",
@@ -3494,9 +3494,29 @@
             "tests/test_tui.py::test_install_review_defaults_to_enter",
             "tests/test_shell_setup.py::test_interactive_install_reviews_shell_repair_when_agents_present",
             "tests/test_agent_executable.py::test_install_walk_executes_detected_native_agent_outside_path",
-            "tests/test_agent_executable.py::test_install_walk_finds_binary_created_after_review"
+            "tests/test_agent_executable.py::test_install_walk_finds_binary_created_after_review",
+            "tests/test_nightr.py::test_guided_nightr_review_runs_only_the_confirmed_action"
           ],
-          "notes": "Resolve native agent executables outside PATH immediately before reviewed login/update steps; unavailable executables fail with a repair hint.",
+          "notes": "Resolve native agent executables outside PATH immediately before reviewed login/update steps; unavailable executables fail with a repair hint. An unnamed interactive macOS run offers an unchecked Nightr row under Desktop Apps.",
+          "layout": "inherit"
+        },
+        "desktop_apps": {
+          "argv": [
+            "agent",
+            "install"
+          ],
+          "patterns": [
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_nightr.py::test_guided_nightr_review_runs_only_the_confirmed_action",
+            "tests/test_nightr.py::test_guided_nightr_stays_out_of_agent_only_modes",
+            "tests/test_nightr.py::test_guided_fresh_install_requires_verified_homebrew",
+            "tests/test_nightr.py::test_guided_existing_update_verifies_before_native_execution"
+          ],
+          "notes": "Mac only. The fresh review displays brew tap agenthangar/tap if needed, followed by brew install --cask agenthangar/tap/nightr. Confirming runs the strictly Homebrew acquisition with a verified release and cask. Existing signed packages use nightr update with verified package ownership. Enrollment in t system update follows verified success. No app action on deselection, cancel, named agents, unattended/--yes, dry-run or remote runs.",
           "layout": "inherit"
         },
         "dry_run": {

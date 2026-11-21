@@ -22,6 +22,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from urllib.error import HTTPError
 import urllib.request
 import uuid
 
@@ -63,13 +64,13 @@ def download(url, target, maximum):
 def phase(message):
     print(message, file=sys.stderr, flush=True)
 
-def run(arguments, *, timeout=30, env_updates=None):
+def run(arguments, *, timeout=30, env_updates=None, stdout_only=False):
     try:
         result = subprocess.run([str(x) for x in arguments], check=True, capture_output=True, text=True,
                                 timeout=timeout, env={**os.environ, "LC_ALL": "C", **(env_updates or {})})
     except (subprocess.SubprocessError, OSError) as error:
         raise InstallError(f"Command failed: {arguments[0]}: {error}") from error
-    return result.stdout + result.stderr
+    return result.stdout if stdout_only else result.stdout + result.stderr
 
 def run_passthrough(arguments, *, timeout, env_updates=None):
     try:
@@ -195,11 +196,15 @@ def validate_manifest(data):
 
 def latest_manifest(directory):
     release_file = directory / "release.json"
-    download(API, release_file, 1024 * 1024)
+    try:
+        download(API, release_file, 1024 * 1024)
+    except HTTPError as error:
+        if error.code != 404: raise
+        raise InstallError("No public signed Nightr release is available yet") from error
     release = json.loads(release_file.read_text())
     asset = next((a for a in release.get("assets", []) if a.get("name") == "nightr-release.json"), None)
     if release.get("draft") or release.get("prerelease") or not asset:
-        raise InstallError("A signed Nightr release is not available yet")
+        raise InstallError("No public signed Nightr release is available yet")
     expected = f"https://github.com/{REPOSITORY}/releases/download/{release.get('tag_name')}/nightr-release.json"
     if asset.get("browser_download_url") != expected:
         raise InstallError("Unexpected release manifest URL")
@@ -336,7 +341,17 @@ def coordinate(action):
 
 # Becomes true only after the reviewed PKG-only template is accepted.
 HOMEBREW_CONTRACT_VERIFIED = True
+HOMEBREW_TAP = "agenthangar/tap"
+HOMEBREW_CASK = f"{HOMEBREW_TAP}/nightr"
+HOMEBREW_POLICY = {"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_INSTALL_FROM_API": "1"}
 AUDITED_CASK_TEMPLATE = 'cask "nightr" do\n  version "{{VERSION}}"\n  sha256 "{{SHA256}}"\n\n  url "https://github.com/agenthangar/nightr/releases/download/v#{version}/Nightr-#{version}-universal.dmg"\n  name "Nightr"\n  desc "Keep a Mac awake for coding-agent work"\n  homepage "https://nightr.ai"\n  depends_on macos: ">= :ventura"\n\n  pkg "Nightr.pkg"\nend\n'
+
+def homebrew_cask_directory(brew):
+    lines = run([brew, "--caskroom"], env_updates=HOMEBREW_POLICY, stdout_only=True).splitlines()
+    if len(lines) != 1 or not Path(lines[0]).is_absolute():
+        raise InstallError("Homebrew returned an invalid Caskroom path")
+    return Path(lines[0]) / "nightr"
+
 
 def homebrew_receipt(brew=None, *, known_direct=False):
     brew = brew or shutil.which("brew")
@@ -349,29 +364,36 @@ def homebrew_receipt(brew=None, *, known_direct=False):
             except OSError as error: raise InstallError("Homebrew receipt locations could not be checked; installation ownership remains unknown") from error
             else: return True
         return False
-    # Listing all receipts succeeds with an empty result when no casks exist.
-    # Querying one missing cask can itself fail, which is not absence evidence.
     try:
-        output = run([brew, "list", "--cask", "--versions"], env_updates={"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_INSTALL_FROM_API": "1"})
-    except InstallError as error:
+        directory = homebrew_cask_directory(brew)
+        # Any entry for the token, even an incomplete receipt or dangling link,
+        # blocks a direct ownership claim.
+        try: directory.lstat()
+        except FileNotFoundError: return False
+    except (InstallError, OSError) as error:
         raise InstallError("Homebrew ownership could not be checked; repair Homebrew before adopting or replacing the installed app") from error
-    for line in output.splitlines():
-        fields = line.split()
-        if fields and fields[0].split("/")[-1] == "nightr": return True
-    return False
+    return True
 
 
-def verified_homebrew_contract(manifest, *, required=True):
+def verified_homebrew_contract(manifest, *, required=True, allow_tap=False):
     brew = shutil.which("brew")
     if brew: brew = str(Path(brew).resolve())
     if not HOMEBREW_CONTRACT_VERIFIED or not brew:
+        if allow_tap and not brew: raise InstallError("Homebrew is unavailable; install Homebrew first or choose the signed Nightr package")
         if required: raise InstallError("This release has no approved Homebrew upgrade contract; use or repair the signed direct package")
         return None
     try:
-        policy = {"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_INSTALL_FROM_API": "1"}
-        taps = run([brew, "tap"], env_updates=policy).splitlines()
-        if "agenthangar/tap" not in taps: raise InstallError("The reviewed Nightr tap is not installed; use the verified direct package")
-        source = run([brew, "cat", "--cask", "agenthangar/tap/nightr"], env_updates=policy)
+        if allow_tap and homebrew_receipt(brew):
+            raise InstallError("A Nightr cask receipt already exists; repair the existing installation in Homebrew")
+        taps = run([brew, "tap"], env_updates=HOMEBREW_POLICY, stdout_only=True).splitlines()
+        if HOMEBREW_TAP not in taps:
+            if not allow_tap: raise InstallError("The reviewed Nightr tap is not installed; use the verified direct package")
+            phase("Adding the AgentHangar Homebrew tap...")
+            run_passthrough([brew, "tap", HOMEBREW_TAP], timeout=180, env_updates=HOMEBREW_POLICY)
+        # Read the qualified source without evaluating it. Suppress the optional
+        # pager installer and keep developer mode local to this subprocess.
+        source_policy = {**HOMEBREW_POLICY, "HOMEBREW_BAT": "0", "HOMEBREW_DEVELOPER": "1"}
+        source = run([brew, "cat", "--cask", HOMEBREW_CASK], env_updates=source_policy, stdout_only=True)
         version = re.search(r'^  version "(0\.[0-9]+\.[0-9]+)"$', source, re.MULTILINE)
         digest = re.search(r'^  sha256 "([0-9a-f]{64})"$', source, re.MULTILINE)
         if not version or not digest or version.group(1) != manifest["version"] or digest.group(1) != manifest["asset"]["sha256"]:
@@ -381,19 +403,58 @@ def verified_homebrew_contract(manifest, *, required=True):
         if normalized.rstrip() != AUDITED_CASK_TEMPLATE.rstrip(): raise InstallError("Homebrew cask contains unreviewed actions; package ownership was preserved")
         return brew
     except InstallError:
-        if required: raise
+        if required or allow_tap: raise
         return None
+
+
+def verify_homebrew_receipt(brew, version):
+    directory = homebrew_cask_directory(brew)
+    metadata = directory / ".metadata"
+    # Use Homebrew's recorded source rather than current cask resolution,
+    # which can infer a tap when the installed receipt is missing one.
+    maximum = 1024 * 1024
+    try:
+        if any(not stat.S_ISDIR(path.lstat().st_mode) for path in (directory, metadata)):
+            raise InstallError("Unsafe Homebrew cask metadata")
+        descriptor = os.open(metadata / "INSTALL_RECEIPT.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as receipt:
+            info = os.fstat(receipt.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
+                raise InstallError("Unsafe Homebrew cask receipt")
+            data = receipt.read(maximum + 1)
+        if len(data) > maximum:
+            raise InstallError("Homebrew cask receipt exceeds its size limit")
+        source = json.loads(data)["source"]
+        if not isinstance(source, dict) or source.get("tap") != HOMEBREW_TAP:
+            raise InstallError("The Nightr cask receipt does not identify the AgentHangar tap")
+    except (InstallError, OSError, ValueError, TypeError, KeyError) as error:
+        raise InstallError(f"The AgentHangar Nightr cask receipt could not be verified; repair ownership in Homebrew. {error}") from error
+    if source.get("version") != version:
+        raise InstallError("The Homebrew cask receipt version differs from the signed Nightr package")
+
 
 def verify_installed_receipt(team):
     actual = verify_app(APP, team); verify_installed_root()
+    version_key(actual)
     requirement = f'anchor apple generic and identifier "ai.nightr.installguard" and certificate leaf[subject.OU] = "{team}"'
     run(["/usr/bin/codesign", "--verify", "--strict", "--all-architectures", "-R=" + requirement, INSTALL_GUARD])
     receipt = plistlib.loads(run(["/usr/sbin/pkgutil", "--pkg-info-plist", "ai.nightr.package"]).encode())
     if receipt.get("pkg-version") != actual: raise InstallError("Installed package receipt differs from the signed app")
     return actual
 
-def brew_transaction(mode, manifest, global_handle, post, existing):
-    brew = verified_homebrew_contract(manifest)
+def adopt_homebrew(manifest, existing, brew):
+    if existing and existing["owner"] != "homebrew":
+        raise InstallError("Direct installation ownership was preserved")
+    if existing and existing["teamID"] != manifest["teamID"]:
+        raise InstallError("Release signing team changed; installation was preserved")
+    version = verify_installed_receipt(manifest["teamID"])
+    verify_homebrew_receipt(brew, version)
+    if existing and existing["version"] == version: return existing
+    return write_record("homebrew", version, manifest["teamID"])
+
+
+def brew_transaction(mode, manifest, global_handle, post, existing, *, brew=None):
+    brew = brew or verified_homebrew_contract(manifest)
     if existing:
         coordinate("prepare-update"); post.append("finish-update")
         with global_installation_lock(required=True, path=CONTROLLER_LOCK): pass
@@ -403,7 +464,8 @@ def brew_transaction(mode, manifest, global_handle, post, existing):
     failure = None
     try:
         phase("Installing Nightr with Homebrew...")
-        run_passthrough([brew, "upgrade" if existing else "install", "--cask", "agenthangar/tap/nightr"], timeout=600, env_updates={"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_INSTALL_FROM_API": "1"})
+        install_policy = {**HOMEBREW_POLICY, "HOMEBREW_NO_INSTALL_CLEANUP": "1", "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK": "1"}
+        run_passthrough([brew, "upgrade" if existing else "install", "--cask", HOMEBREW_CASK], timeout=600, env_updates=install_policy)
     except BaseException as error: failure = error
     # The audited cask mutates payload only through its guarded PKG. Every exit
     # reacquires the machine gate; no Python rollback or foreign marker clearing.
@@ -413,7 +475,7 @@ def brew_transaction(mode, manifest, global_handle, post, existing):
         with reacquire:
             assert_no_marker()
             actual = verify_installed_receipt(manifest["teamID"])
-            if not homebrew_receipt(brew): raise InstallError("The Homebrew receipt is missing; repair ownership with Homebrew")
+            verify_homebrew_receipt(brew, actual)
             result = write_record("homebrew", actual, manifest["teamID"])
     except BaseException:
         post.clear()
@@ -507,20 +569,34 @@ def finish_install_transaction(transaction, team, *, operation="finish"):
         with contextlib.suppress(FileNotFoundError): (state_directory() / "install-request.json").unlink()
 
 
-def perform(mode, manifest, directory, *, global_lock_held=True, resume_after_unlock=None):
+def perform(mode, manifest, directory, *, global_lock_held=True, resume_after_unlock=None, homebrew_only=False):
     post = resume_after_unlock if resume_after_unlock is not None else []
     record = read_record()
     exists = APP.exists() or APP.is_symlink()
+    if homebrew_only and (exists or record):
+        raise InstallError("A Nightr installation or ownership record already exists; use nightr update or repair the existing installation")
     if mode == "update" and not exists:
         raise InstallError("Nightr is not installed; update never installs a missing app")
-    if record and record["owner"] == "homebrew":
+    if ((record and record["owner"] == "homebrew") or
+            (mode == "update" and exists and not record and homebrew_receipt())):
         if not exists: raise InstallError("The Homebrew-owned app is missing; repair it with Homebrew")
-        record = refreshed_record(record, manifest, directory)
-        if mode == "install": return record
-        if not homebrew_receipt(): raise InstallError("The Homebrew receipt is missing; repair ownership")
-        return brew_transaction(mode, manifest, global_lock_held, post, True)
-    if not exists and not record and mode == "install" and verified_homebrew_contract(manifest, required=False):
-        return brew_transaction(mode, manifest, global_lock_held, post, False)
+        if mode == "install": return refreshed_record(record, manifest, directory)
+        brew = verified_homebrew_contract(manifest)
+        record = adopt_homebrew(manifest, record, brew)
+        if version_key(record["version"]) >= version_key(manifest["version"]): return record
+        return brew_transaction(mode, manifest, global_lock_held, post, True, brew=brew)
+    if not exists and not record and mode == "install":
+        if homebrew_only:
+            assert_no_marker()
+            check_owned_link()
+        brew = verified_homebrew_contract(manifest, required=homebrew_only, allow_tap=homebrew_only)
+        if brew:
+            if homebrew_only:
+                assert_no_marker()
+                if APP.exists() or APP.is_symlink():
+                    raise InstallError("A Nightr installation appeared while checking Homebrew; use nightr update or repair the existing installation")
+                check_owned_link()
+            return brew_transaction(mode, manifest, global_lock_held, post, False, brew=brew)
     if exists and not record: record = adopt_direct(manifest, directory)
     if record and exists:
         if homebrew_receipt(known_direct=True): raise InstallError("The machine now has a Homebrew receipt; direct ownership was not transferred")
@@ -602,9 +678,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["install", "update", "check", "adopt-homebrew", "adopt-direct"])
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--homebrew-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     post = []
     try:
+        if args.homebrew_only and args.action != "install":
+            raise InstallError("--homebrew-only requires a fresh install")
         if sys.platform != "darwin": raise InstallError("Nightr packages support macOS 13 or later")
         lock = contextlib.nullcontext(False) if args.action == "check" else installation_lock()
         with lock as global_locked, tempfile.TemporaryDirectory(prefix="nightr-package-") as temporary:
@@ -620,13 +699,10 @@ def main(argv=None):
                 result = adopt_direct(manifest, directory, explicit_claim=True)
             elif args.action == "adopt-homebrew":
                 brew = verified_homebrew_contract(manifest)
-                if not brew: raise InstallError("Homebrew is unavailable")
-                receipt = run([brew, "list", "--cask", "--versions", "agenthangar/tap/nightr"])
-                if not receipt.strip(): raise InstallError("The Nightr cask is not installed")
-                if record and record["owner"] != "homebrew": raise InstallError("Direct installation ownership was preserved")
-                version = verify_installed_receipt(manifest["teamID"])
-                result = write_record("homebrew", version, manifest["teamID"])
-            else: result = perform(args.action, manifest, directory, global_lock_held=global_locked, resume_after_unlock=post)
+                result = adopt_homebrew(manifest, record, brew)
+            else:
+                result = perform(args.action, manifest, directory, global_lock_held=global_locked,
+                                 resume_after_unlock=post, homebrew_only=args.homebrew_only)
         if post:
             post.clear()
             try: coordinate("finish-update")
