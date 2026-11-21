@@ -23,13 +23,13 @@ def request(operation, payload=None, *, deadline=None):
     return _CACHE['request'](operation, payload)
 
 
-def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None):
+def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, observe=False):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
     if host is not None:
         targets = {host: 'local' if host == 'local' else cfg.hosts.get(host, host)}
     options = {'deadline': deadline} if deadline is not None else {}
-    return request('discover', {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
+    return request('discover', {'fields': list(fields), **({'observe': True} if observe else {}), 'hosts': [dict(host=host, target=target, context=context)
                                          for host, target in targets.items()]}, **options)
 
 
@@ -46,7 +46,7 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
             if time.monotonic() >= deadline:
                 return dict(view, wait_timed_out=True)
             options = {'host': host} if host is not None else {}
-            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=deadline, **options)
+            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=deadline, observe=True, **options)
             if latest.get('unavailable'):
                 return dict(view, wait_timed_out=True) if time.monotonic() >= deadline else dict(
                     view, wait_unavailable=True)
