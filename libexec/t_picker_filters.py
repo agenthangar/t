@@ -194,14 +194,16 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if legend:
         if short:
             legend = '↴ merged  ○ open'
+        if not compact:
+            lines.append(style('LEGEND', 'heading'))
         for line in legend.splitlines():
             line = clip_columns(line, width)
             lines.append(re.sub(r'[↴○◌!×↗?] [a-z]+',
                                 lambda match: pr_color(match[0], match[0][0]), line) if color else line)
     if resume:
-        if not compact:
-            lines.append(style('HOTKEYS', 'heading'))
         lines += keys(actions)
+        if columns and not compact:
+            lines.append('')
     if columns:
         lines.append(style(clip_columns(columns, width), 'action' if resume else 'hint'))
     return '\n'.join(lines) + '\n'

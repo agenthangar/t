@@ -25,9 +25,10 @@ Match `t open` visually: reuse its shared sort block, blank rows between header
 sections, and two-space table gutters when space permits. Compact layouts may
 remove those gaps to keep the focused result visible.
 In the resume picker, place the green Ctrl-U refresh action beside the refresh
-status. Put filters and sort above the legends. Give the PR legend its own row
-immediately above the result hotkeys, then show column headings and rows.
-Separate legend entries with spaces. The close marker has no legend label.
+status. Put filters and sort above the LEGEND heading. Give the PR legend its
+own row immediately above the result hotkeys. Show those hotkeys without a
+heading and leave a blank line before the columns when height permits. Separate
+legend entries with spaces. The close marker has no legend label.
 Do not interpret requests to improve picker filtering or sorting as requests for
 new CLI flags unless the user explicitly asks for flags or noninteractive control.
 

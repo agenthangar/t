@@ -495,7 +495,8 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     if not compact:
-        assert plain.startswith('Filters ') and plain.index('HOTKEYS\n') < plain.index('SESSION TASK')
+        assert plain.startswith('Filters ') and 'HOTKEYS' not in plain
+        assert plain.splitlines()[-2:] == ['', 'SESSION TASK']
     monkeypatch.setenv('NO_COLOR', '1')
     assert filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True) == plain

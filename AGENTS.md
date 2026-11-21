@@ -22,8 +22,9 @@ in that design system and the shared picker before proposing an interaction.
 Extend the hotkey controls and preserve existing filter/sort choices. Add CLI
 flags only when the user explicitly requests flags or noninteractive control.
 In the resume picker, color Ctrl-U beside refresh status. Put the PR legend on
-its own row above the result hotkeys, then the column headings and rows. Separate
-legend labels with spaces. Keep the close marker without a close legend label.
+its own row under LEGEND, then show result hotkeys without a heading. Leave a
+blank line before the columns when height permits. Separate legend labels with
+spaces. Keep the close marker without a close legend label.
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use

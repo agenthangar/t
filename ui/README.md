@@ -260,7 +260,7 @@ without color. Headings are cyan, hints muted, and focused text light on dark cy
 Keep the green checkmark in its own gutter beside the pointer, with spaces between
 status icons inside rows. Give controls and results a blank separating row when
 height permits. Session pickers list HOTKEYS above FILTERS, except filtered resume
-places result hotkeys beside the rows. Use readable shortcuts
+places unheaded result hotkeys beside the rows. Use readable shortcuts
 and bright underlined labels for the current filter On/Off state, resume sort, and
 merged-session toggle when enabled. Session lists highlight selected column filters
 and the current sort key. Plain output retains explicit state text.
@@ -1010,9 +1010,9 @@ text whose source cannot be verified.
 A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
 LAST TURN shows the local date and time to the minute. Green Ctrl-U sits next
-to the refresh status. Filters and sort come before the legends. The PR legend
-occupies its own row immediately above the result hotkeys, followed by the column
-headings and results. Space separates legend entries, including work in progress
+to the refresh status. Filters and sort come before the LEGEND heading. The PR
+legend occupies its own row above the unheaded result hotkeys. Leave a blank
+line before the column headings when height permits. Space separates legend entries, including work in progress
 (↻), live ownership (●), and no recorded PR (—). The close marker carries no
 legend label. The work-in-progress icon appears in the left gutter
 independently of PR state. The gutter reserves space only when a row has evidence.

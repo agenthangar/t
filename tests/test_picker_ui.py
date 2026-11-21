@@ -309,7 +309,11 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
     refresh_line = next(line for line in screen.splitlines() if 'Last refresh' in line)
     assert 'Ctrl-U refresh now' in refresh_line
-    assert screen.index('↴ merged') < screen.index('HOTKEYS') < screen.index('Tab ✓') < screen.index('PRS') < screen.index('Second Task')
+    assert 'HOTKEYS' not in screen
+    assert screen.index('LEGEND') < screen.index('↴ merged') < screen.index('Tab ✓') < screen.index('PRS') < screen.index('Second Task')
+    lines = screen.splitlines()
+    columns = next(i for i, line in enumerate(lines) if 'PRS' in line and 'REPO' in line)
+    assert not lines[columns - 1].strip(' │')
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')
