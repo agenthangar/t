@@ -150,6 +150,12 @@ link_all() {
     link "$T_LINK_SRC/codex/prompts/tpush.md" "$HOME/.codex/prompts/tpush.md"
     link "$T_LINK_SRC/codex/prompts/tpop.md" "$HOME/.codex/prompts/tpop.md"
 }
+# Snapshot the old package path before links move. This also covers an update
+# launched by an older client that did not yet reconcile discovery helpers.
+T_DISCOVERY_PREVIOUS=""
+if [[ -n "${T_LINKS_ONLY:-}" ]]; then
+    T_DISCOVERY_PREVIOUS="$(python3 "$T_LINK_SRC/libexec/t_session_cache.py" linked-source "$HOME/bin/t" 2>/dev/null || true)"
+fi
 link_all
 
 # Agent instructions apply to new tasks in both terminal and desktop sessions.
@@ -374,6 +380,7 @@ if [[ "${T_AUTO_TRUST:-}" == 1 && -z "${T_NO_TRUST:-}" ]]; then
 fi
 
 if [[ -n "${T_LINKS_ONLY:-}" ]]; then
+    python3 "$T_LINK_SRC/libexec/t_session_cache.py" retire "$T_DISCOVERY_PREVIOUS" 2>/dev/null || true
     exit 0
 fi
 

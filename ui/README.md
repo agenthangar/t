@@ -362,6 +362,11 @@ Git checks use the shared terminal spinner; redirected output stays static.
 Already-current installations skip setup; failed setup is retried. `--relink`
 explicitly repairs links/integrations and reviews deferred instruction migration.
 `--local` still switches sources when another source is installed.
+Successful updates also reconcile obsolete discovery helpers, including an
+already-current result: use bounded revision handshakes only at existing private
+endpoints attributable to the updated installation. Preserve current helpers,
+development worktrees and live sessions; do not start a service. `--check` never
+performs this maintenance. Cleanup is best-effort and adds no terminal output.
 Continue after failures, including unreachable
 hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
 hosts means a local-only update. Remote updates never fan out recursively.
