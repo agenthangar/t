@@ -3698,7 +3698,9 @@
         "tests/test_dev_isolation.py::test_interrupted_initial_load_keeps_retryable_shell_function",
         "tests/test_dev_isolation.py::test_ctrl_c_during_startup_recovers_in_same_interactive_shell",
         "tests/test_dev_isolation.py::test_interrupted_reload_does_not_dispatch_stale_source",
-        "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
+        "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files",
+        "tests/test_discovery_update.py::test_update_retires_obsolete_namespace_and_preserves_current",
+        "tests/test_update.py::test_update_check_never_retires_helpers"
       ],
       "modes": {
         "default": {
@@ -3766,7 +3768,7 @@
           "layout": "inherit"
         }
       },
-      "notes": "Current installations skip setup; --relink remains explicit repair. Routine Git/setup output is quiet; --all reports concise per-host results while preserving prompts, diagnostics, cancellation and failure status. Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative.",
+      "notes": "Current installations skip setup; --relink remains explicit repair. Routine Git/setup output is quiet; --all reports concise per-host results while preserving prompts, diagnostics, cancellation and failure status. Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative. Successful updates, including already-current reconciliation, retire obsolete discovery helpers only at existing private endpoints for this installation with bounded revision handshakes; current helpers and worktrees remain intact. --check never reconciles helpers.",
       "layout": "plain"
     },
     "system diagnose": {
