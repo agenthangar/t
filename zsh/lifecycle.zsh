@@ -164,8 +164,13 @@ _t_lifecycle_effect() {
       pid=$(_dev_session_claude_pid "$1")
       [[ -z $pid ]] || { _dev_agent_is_service "$pid" && return 1; }
       if [[ -n $4 ]]; then
+        [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
+           $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
+        _t_terminal_close_guard "$1" "$2" "$4" "$immutable" "$5" "$6" stop-previews || return 1
+        # Cleanup never authorizes closing a changed task. Rescan all guards and
+        # refuse a newly launched preview as well as any other background work.
         _t_terminal_close_guard "$1" "$2" "$4" "$immutable" "$5" "$6" || return 1
-        _dev_kill_no_pending_work "$2" && _t_terminal_processes_clear "$1" "$2" || return 1
+        _dev_kill_no_pending_work "$2" && _t_terminal_processes_clear "$1" "$2" strict || return 1
         [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
            $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
       fi
