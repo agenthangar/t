@@ -116,7 +116,10 @@ def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
             assert len((base / 'agents.log').read_text().splitlines()) == 1
         else:
             assert target.is_dir() and not (target / edits.name).exists()
-            assert 'dev-repo-2' in attach_log.read_text()
+            tmux_id = _run([str(tmux), 'display-message', '-p', '-t', '=dev-repo-2:',
+                            '#{session_id}'], env=env, cwd=base)
+            assert tmux_id.returncode == 0 and tmux_id.stdout.strip()
+            assert attach_log.read_text().strip() == f'attach-session -t {tmux_id.stdout.strip()}:'
             owner = _shell(base, env, '_dev_session_sid dev-repo-2')
             assert owner.returncode == 0 and owner.stdout.strip() == SID
             commit = _run(['git', '-C', str(target), 'rev-parse', 'HEAD'], env=env, cwd=base)
