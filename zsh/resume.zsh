@@ -710,7 +710,7 @@ _t_resume() {
       fi
       if (( ++pr_count <= 2 )); then
         case $pr_state in
-          MERGED) pr_symbol=◆ ;;
+          MERGED) pr_symbol=↴ ;;
           OPEN) pr_symbol=○ ;;
           CLOSED) pr_symbol=× ;;
           *) pr_symbol='?' ;;

@@ -376,7 +376,7 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
     initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
     merged = next(row for row in initial if '\tc2\t' in row)
     pr_column, _, working_on = merged.split('\t')[-1].partition('  2')
-    assert pr_column.startswith('↻ #42◆' if aggregate else '#42◆')
+    assert pr_column.startswith('↻ #42↴' if aggregate else '#42↴')
     assert ('#43○' in pr_column) == bool(aggregate)
     assert '#42' not in working_on
     hidden = pathlib.Path(f'{log}.step0').read_text()

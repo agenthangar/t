@@ -355,7 +355,6 @@ Tab mark ✓"
       printf '%s\n' "$_t_picker_columns" > "$_t_picker_dir/columns"
       printf '%s' "${T_PICKER_DISCOVERY_STATUS:-}" > "$_t_picker_dir/discovery-status"
       printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
-      case $_t_picker_fzf_help in *--footer=*) export T_PICKER_NATIVE_FOOTER=1 ;; esac
       # The persistent warning needs another row; fzf 0.44 otherwise exhausts
       # its 60%-height window at 80x24 before rendering a focused session.
       [ -z "${T_PICKER_AUTH_HOSTS:-}" ] || set -- --height=100% "$@"
@@ -498,9 +497,6 @@ SH
           fi
           ;;
       esac
-      if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then
-        set -- --footer="$(cat "$_t_picker_dir/footer")" --footer-border=none "$@"
-      fi
     fi
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
       if [ "$_t_picker_spec" = alt-t:turn ]; then

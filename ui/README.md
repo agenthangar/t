@@ -1008,14 +1008,14 @@ an opening prompt used as a fallback. `Saved label:` identifies older display
 text whose source cannot be verified.
 A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
-LAST TURN shows the local date and time to the minute. The footer explains the
+LAST TURN shows the local date and time to the minute. The top legend explains the
 latest verified close (↶), verified work in progress (↻), live ownership (●),
 and no recorded PR (—). The work-in-progress icon appears in the left gutter
 independently of PR state. The gutter reserves space only when a row has evidence.
 Columns stay aligned when filtering or sorting. Timeouts use amber, active
 filtering and sort use highlighted labels, and column headings use high contrast.
 PRS shows up to two associated pull request numbers with compact state suffixes
-(◆ merged, ○ open, × closed, ? unknown) and a count of any additional PRs. A dash indicates no recorded PR, and
+(↴ merged, ○ open, × closed, ? unknown) and a count of any additional PRs. A dash indicates no recorded PR, and
 `?` indicates unavailable PR evidence.
 The picker refreshes stale states in the background. Ctrl-D toggles hiding MERGED rows and advertises the
 next action in the header. It uses explicit snapshot metadata, never title text.
@@ -2056,8 +2056,7 @@ sharing editor are unchanged.
 
 `t session resume` and plain slot history mark the latest verified closure with
 **↶**, in its own fixed-width cell beside the row. The filtered picker uses the
-latest verified close in its available snapshot. A bottom legend explains the
-icon. Sorting and filtering never reassign the mark to another conversation;
+latest verified close in its available snapshot. The top legend explains the icon. Sorting and filtering never reassign the mark to another conversation;
 hiding the marked conversation leaves no marked row.
 Use `t resume`, then Return to resume the initially focused last-closed conversation;
 Ctrl-Y switches to last turn and the existing sort choices.

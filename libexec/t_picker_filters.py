@@ -138,7 +138,11 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     def keys(parts, selected=(), filled=False):
         return control_rows(parts, width, selected, compact, color, 'selected' if filled else 'active')
     resume = profile == 'resume'
-    lines = list(status[:3] if tight_resume else status)
+    lines = list(status[:2] if tight_resume else status)
+    if legend:
+        if short:
+            legend = '↴ merged · ↶ last · ↻ WIP'
+        lines.extend(style(clip_columns(line, width), 'action') for line in legend.splitlines())
     if not compact:
         if resume and lines:
             lines.append('')
@@ -193,8 +197,6 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines += sort_lines
     if not compact:
         lines += ['']
-    if legend:
-        lines.append(style(clip_columns(legend, width)))
     if columns:
         lines.append(style(clip_columns(columns, width), 'action' if resume else 'hint'))
     return '\n'.join(lines) + '\n'
@@ -446,13 +448,6 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             if os.environ.get('T_PICKER_LEGACY_COLUMNS') == '1':
                 columns = '  ' + columns
         legend = resume_legend(width)
-        if os.environ.get('T_PICKER_NATIVE_FOOTER') == '1':
-            (directory / 'footer').write_text(legend + '\n')
-            legend = ''
-        elif int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
-            legend = ''
-        else:
-            legend = legend.splitlines()[0]
     controls = header(profile, mask, filters, total - len(selected), columns, width,
                       sort, enabled, color, hide_merged, sort_enabled, legend,
                       bool(os.environ.get('T_PICKER_REFRESH_CALLBACK')), status if profile == 'resume' else ())
@@ -465,15 +460,15 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
 def resume_legend(width):
     close = '↶ latest verified close in these results' if width >= 108 else '↶ latest verified close'
     markers = close + ' · ↻ work in progress · ● live · — no PR'
-    states = '◆ merged · ○ open · × closed · ? unknown'
+    states = '↴ merged · ○ open · × closed · ? unknown'
     if width >= display_width(markers + ' · ' + states):
         return markers + ' · ' + states
     if width >= 64:
         return markers + '\n' + states
     if width < 38:
-        return '↶ latest close · ↻ WIP\n● live · — no PR · ◆/○/×/?'
+        return '↶ latest close · ↻ WIP\n● live · — no PR · ↴/○/×/?'
     markers = '↶ latest close · ↻ WIP · ● live'
-    return '\n'.join(pack([markers, '— no PR', '◆ merged · ○ open', '× closed · ? unknown'], width))
+    return '\n'.join(pack([markers, '— no PR', '↴ merged · ○ open', '× closed · ? unknown'], width))
 
 
 def resume_health(health, width, color):

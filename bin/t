@@ -13972,7 +13972,7 @@ REMOTE SESSIONS
 PICKER CONTROLS
   Tab marks rows with ✓. Ctrl-U refreshes this picker and reports host status.
   Ctrl-/ shows details for the focused row.
-  PRS shows pull requests with ◆ merged, ○ open, × closed, or ? unknown.
+  PRS shows pull requests with ↴ merged, ○ open, × closed, or ? unknown.
   ↻ in the left gutter marks verified work in progress. LAST TURN shows the
   local date and time. TITLE uses the saved name when available.
   A Prompt: prefix identifies a fallback to the conversation’s opening prompt.
