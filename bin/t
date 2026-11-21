@@ -13761,6 +13761,9 @@ REMOTE SESSIONS
   report already-resumed conversations.
   Saved Codex resumes keep native cloud retries; automatic local continuation
   is unavailable. Startup failures retain the specific lifecycle diagnostic.
+  If Repair still can't verify the original worktree and the selected Codex
+  conversation is free, it can offer to open it in a fresh worktree at the
+  saved commit. Local edits stay in the original worktree.
 
   Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
@@ -13813,6 +13816,9 @@ REMOTE SESSIONS
   workspace. Another conversation in a reused original slot can keep running
   when the saved conversation resumes into a different workspace.
   Saved selections sharing an original slot get independent safe destinations.
+  If Repair still can't verify the original worktree and the selected Codex
+  conversation is free, it can offer to open it in a fresh worktree at the
+  saved commit. Local edits stay in the original worktree.
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global

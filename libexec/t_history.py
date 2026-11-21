@@ -1675,7 +1675,7 @@ class HistoryCommand:
                    (owner['slot'] in names or os.path.realpath(owner['cwd']) in paths)
                    for owner in owners)
 
-    def destination(self, alias, row, revision, owners):
+    def destination(self, alias, row, revision, owners, *, fresh_source=None):
         if not self.worktree_enabled(alias):
             raise HistoryError('repository opts out of worktree-per-session; no workspace was created')
         directory = self.cfg.repos[alias]
@@ -1691,14 +1691,14 @@ class HistoryCommand:
             historical_path = None
         busy = self.destination_busy(alias, historical_slot, candidates, owners)
         latest = []
-        if historical_path:
+        if historical_path and fresh_source is None:
             for conversation in self.store.records():
                 for a in conversation.get('associations', []):
                     if a.get('host') == 'local' and os.path.realpath(a['workspace']) == os.path.realpath(historical_path) and a.get('evidence') in ('launch', 'resume', 'close', 'handoff'):
                         latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
         current_identity = max(latest, default=(0, '', ''))[1:]
         # Reuse only when both revision and provenance match, never by branch name alone.
-        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and not busy:
+        if fresh_source is None and historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and not busy:
             head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
             actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
             if head == revision and actual == association.get('branch'):
@@ -1721,7 +1721,12 @@ class HistoryCommand:
             except FileExistsError:
                 continue
             self.reservation = marker
+            if fresh_source is not None:
+                _LIFECYCLE['begin_fresh_resume'](row['sid'], str(fresh_source), str(path),
+                                                 token=self.reservation_token)
             run(['git', '-C', directory, 'worktree', 'add', '-b', branch, str(path), revision])
+            if fresh_source is not None:
+                _LIFECYCLE['finish_fresh_resume'](self.reservation_token, row['sid'], str(path))
             return str(path), str(slot), True
         raise HistoryError('no free slot is available')
 
@@ -1905,10 +1910,42 @@ class HistoryCommand:
         self.repair_writer = previous
         try:
             return self.resume(alias, row, **options)
+        except UnknownWorkspaceWriter as error:
+            if options.get('prepare_only'):
+                raise
+            offer = self.fresh_resume_offer(alias, row, error.workspace)
+            if offer is None:
+                raise
+            revision, source = offer
+            print('t resume: ' + str(error), file=sys.stderr)
+            with redirect_stdout(sys.stderr):
+                if not ask(self.api, 'Resume in a fresh worktree?',
+                           f'Resume the selected conversation at saved commit {revision[:12]}. '
+                           f'Local edits stay in {error.workspace}.', 'Resume in fresh worktree'):
+                    raise HistoryCancelled('fresh worktree resume cancelled') from error
+            return self.resume(alias, row, fresh=(revision, source), **options)
         finally:
             self.repair_writer = None
 
-    def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
+    def fresh_resume_offer(self, alias, row, workspace):
+        if row.get('agent') != 'codex':
+            return None
+        directory = self.cfg.repos.get(alias)
+        association, revision = self.revision(row)
+        if (not directory or not revision or association.get('host') != 'local' or not Path(workspace).is_dir()
+                or os.path.realpath(association.get('workspace', '')) != os.path.realpath(workspace)):
+            return None
+        if run(['git', '-C', directory, 'rev-parse', '--verify', revision + '^{commit}'],
+               optional=True).strip() != revision:
+            return None
+        local = {**row, 'sources': [s for s in row['sources'] if s.get('host') == 'local']}
+        source = self.source(local, required=False)
+        if source is None:
+            return None
+        _LIFECYCLE['verify_fresh_resume_source'](row['sid'], str(source), workspace=workspace)
+        return revision, source
+
+    def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False, fresh=None):
         expected_close = os.environ.get('T_RESUME_LAST_CLOSED')
         if expected_close:
             if expected_close == '-':
@@ -1929,7 +1966,7 @@ class HistoryCommand:
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
             raise HistoryError('conversation has multiple reported owners; resolve ownership before resuming')
-        if matches and detached:
+        if matches and (detached or fresh is not None):
             raise HistoryError('conversation became live; select its current owner again')
         if matches:
             return matches[0] if return_owner else self.attach(matches[0])
@@ -1937,13 +1974,19 @@ class HistoryCommand:
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
         self.strict_identity = True
-        source = self.source(row)
+        source = self.source(row) if fresh is None else fresh[1]
         alias = self.materialize_repository(row['repo']) if alias not in self.cfg.repos else alias
         if not self.same_repository(self.identity(alias), row['repo']):
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
-        revision = self.reconcile_source(alias, row) or revision
+        if fresh is None:
+            revision = self.reconcile_source(alias, row) or revision
+        elif (prepare_only or row['agent'] != 'codex' or revision != fresh[0]
+              or not self.verify_source(transcript(source, 'codex'), row)):
+            raise HistoryError('saved conversation or revision changed; no fresh worktree created')
         if not revision or run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--verify', revision + '^{commit}'], optional=True).strip() != revision:
+            if fresh is not None:
+                raise HistoryError('saved revision is unavailable; no fresh worktree created')
             revision = self.fallback(alias)
         common = run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--git-common-dir']).strip()
         common = Path(self.cfg.repos[alias]) / common
@@ -1954,7 +1997,8 @@ class HistoryCommand:
             if matches:
                 raise HistoryError('conversation became live while selecting; rerun t resume to attach to its owner')
             try:
-                destination, slot, created = self.destination(alias, row, revision, owners)
+                allocation = {'fresh_source': source} if fresh is not None else {}
+                destination, slot, created = self.destination(alias, row, revision, owners, **allocation)
                 print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
@@ -1969,20 +2013,30 @@ class HistoryCommand:
                         raise HistoryError('repository identity changed before restore')
                     # The rollout retains its creation cwd even after that slot
                     # is reused. Check sibling writers in our claimed destination.
-                    self.codex_released(row, source, workspace=destination)
+                    launch_args = [f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history']
+                    if fresh is None:
+                        self.codex_released(row, source, workspace=destination)
+                    else:
+                        _LIFECYCLE['native_preflight']('codex', row['sid'], destination, rollout=str(source),
+                                                       fresh_resume=self.reservation_token)
+                        launch_args.append(self.reservation_token)
                     self.install_transcript(row, source, destination)
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.
-                    snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
+                    snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join(launch_args)
                     if not prepare_only:
                         # Allow the final ownership guard's startup settling
                         # window plus native readiness and shell startup.
                         run(self.shell(snippet), timeout=90, launch_diagnostics=True)
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
-                if self.reservation:
-                    self.reservation.unlink(missing_ok=True)
-                    self.reservation = None
+                try:
+                    if fresh is not None:
+                        _LIFECYCLE['discard_fresh_resume'](self.reservation_token)
+                finally:
+                    if self.reservation:
+                        self.reservation.unlink(missing_ok=True)
+                        self.reservation = None
         if prepare_only:
             return f'dev-{alias}-{slot}\t{destination}'
         if detached:

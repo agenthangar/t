@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import time
 
+import pytest
+
 from test_session_lifecycle import lifecycle, _run, _shell, ROOT, SID
 from test_lifecycle_transfer_e2e import saved_source
 
@@ -66,3 +68,59 @@ def test_numbered_resume_with_unindexed_fast_cli_in_another_workspace(lifecycle)
     finally:
         sibling.terminate()
         sibling.wait(timeout=5)
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
+    from test_session_lifecycle import _shell_tty, _unindexed_writers
+
+    base, env = lifecycle
+    workspace = saved_source(base, env, 'codex')
+    stopped = _shell(base, env, '_dev_kill_one dev-repo-1 1')
+    assert stopped.returncode == 0, stopped.stderr
+    saved = _shell(base, env, 'git -C "$T_TEST_WT" rev-parse HEAD').stdout.strip()
+    assert saved
+    edits = workspace / 'unfinished.txt'
+    edits.write_text('Keep these edits in the original worktree.\n')
+    picker = base / 'bin/fzf'
+    picker.write_text("#!/bin/sh\nprintf '\\nenter\\n'\nhead -n 1\n")
+    picker.chmod(0o755)
+    attach_log = base / 'attached.log'
+    tmux = base / 'bin/tmux'
+    tmux.write_text(tmux.read_text().replace('attach-session) shift;',
+        'attach-session) printf "%s\\n" "$*" > "$T_TEST_ATTACH_LOG"; shift;'))
+
+    responses = []
+    def respond(screen):
+        if not responses and b'Could not resume' in screen and b'Cancel' in screen:
+            responses.append('repair')
+            return b'\r'
+        if len(responses) == 1 and b'Resume in fresh worktree' in screen and saved[:12].encode() in screen:
+            responses.append('fresh')
+            return b'\x1b' if cancel else b'\r'
+        return None
+
+    with _unindexed_writers(base, env):
+        result = _shell_tty(base, {**env, 'TERM': 'xterm-256color', 'T_TEST_ATTACH_LOG': str(attach_log)},
+                            't resume repo 1',
+                            timeout=85, respond=respond)
+        assert responses == ['repair', 'fresh'], result.stdout
+        assert result.returncode == (130 if cancel else 0), result.stdout
+        assert 'Local edits stay' in result.stdout
+        assert edits.read_text() == 'Keep these edits in the original worktree.\n'
+        assert _shell(base, env, 'git -C "$T_TEST_WT" rev-parse HEAD').stdout.strip() == saved
+        target = workspace.with_name('repo-2')
+        if cancel:
+            assert not target.exists()
+            assert not attach_log.exists()
+            assert len((base / 'agents.log').read_text().splitlines()) == 1
+        else:
+            assert target.is_dir() and not (target / edits.name).exists()
+            assert 'dev-repo-2' in attach_log.read_text()
+            owner = _shell(base, env, '_dev_session_sid dev-repo-2')
+            assert owner.returncode == 0 and owner.stdout.strip() == SID
+            commit = _run(['git', '-C', str(target), 'rev-parse', 'HEAD'], env=env, cwd=base)
+            assert commit.stdout.strip() == saved
+            launches = (base / 'agents.log').read_text().splitlines()
+            assert len(launches) == 2 and str(target) in launches[-1] and SID in launches[-1]
+    assert not list(workspace.parent.glob('.*history-reservation'))
