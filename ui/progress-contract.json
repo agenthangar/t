@@ -13,6 +13,10 @@
       "kind": "background",
       "reason": "The detached observer waits for its exact client event and exits after detach or loss. It has no user-facing terminal and never waits for active work to become completed."
     },
+    "libexec/t_terminal_close.py:stop_previews:time.sleep": {
+      "kind": "background",
+      "reason": "The private terminal-loss lifecycle worker has no usable terminal. After all guards pass, it waits at most five seconds per individually verified preview for TERM to take effect; diagnostics and partial cleanup remain in private receipts rather than painting over the retained agent."
+    },
     "libexec/t_pane_identity.py:command:subprocess.run": {
       "kind": "protocol",
       "reason": "Read-only tmux and process probes each have a three-second timeout and return identity evidence to the shell scanner. The enclosing _dev_session_rows/_dev_rows_all seams own progress; this private protocol must not emit a competing spinner or contaminate identity output."
