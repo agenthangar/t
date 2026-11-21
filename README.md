@@ -1902,14 +1902,29 @@ early retry on the next browse. See [session cache behavior and storage](docs/se
 
 ### Nightr
 
-Install the optional macOS keep-awake app with `t system apps install nightr`
-(or `t install nightr`). Use `--dry-run` to review the acquisition path.
-After installation, `nightr setup` configures the helper and login behavior;
-`nightr config` edits preferences. `t config` includes a Nightr entry.
+Run `t install` on macOS and select the optional Nightr row under **Desktop Apps**.
+For a fresh install, the review shows the AgentHangar tap and the Nightr cask.
+When you confirm, `t` adds the tap if needed and installs the cask with Homebrew.
+For an existing verified installation, the review shows `nightr update`, which
+uses the existing package owner. Both paths opt in to `t system update` after
+success. The Homebrew path requires Homebrew and a published, verified Nightr
+release and cask.
+
+To install manually with Homebrew after the cask is published, run these commands.
+
+```sh
+brew tap agenthangar/tap
+brew install --cask agenthangar/tap/nightr
+```
+
+Use `t system apps install nightr` (or `t install nightr`) to invoke the individual
+installer or opt an existing installation into updates. Add `--dry-run` to review
+its acquisition path. After installation, `nightr setup` configures the helper and
+login behavior. Use `nightr config` or the Nightr entry in `t config` to edit preferences.
 
 `t system apps status nightr --json` is read-only. `t system update` includes
 Nightr only after opting in, preserves its package owner, and never installs a
-missing app. Installation requires a published, verified Nightr release.
+missing app.
 
 Usage inspection: `t system usage show` selects a record with named columns and a compact
 session summary like `t ls`. Missing local/cloud token counts leave the percentage
