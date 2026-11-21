@@ -361,7 +361,12 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
              'else print -r -- "$tx"$\'\\t\'"Task · #99 merged"$\'\\t\'; fi; done; }; '
              '_pr_state_flush() { :; }; '
              'mkdir -p "$HOME/.cache/claude-sessions/pr"; '
-             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; ')
+             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; '
+             'print -r -- OPEN > "$HOME/.cache/claude-sessions/pr/org#api#43"; '
+             'print -r -- "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd CONFLICT"'
+             ' > "$HOME/.cache/claude-sessions/pr/org#api#43.badge"; '
+             'print -r -- "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd 1"'
+             ' > "$HOME/.cache/claude-sessions/pr/org#api#43.preview"; ')
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
                             'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api',
@@ -376,8 +381,8 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
     initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
     merged = next(row for row in initial if '\tc2\t' in row)
     pr_column, _, working_on = merged.split('\t')[-1].partition('  2')
-    assert pr_column.startswith('↻ #42↴' if aggregate else '#42↴')
-    assert ('#43○' in pr_column) == bool(aggregate)
+    assert pr_column.startswith('↻ #42 ↴' if aggregate else '#42 ↴')
+    assert ('#43 ! ↗' in pr_column) == bool(aggregate)
     assert '#42' not in working_on
     hidden = pathlib.Path(f'{log}.step0').read_text()
     assert ('\tc2\t' in hidden) == bool(aggregate)

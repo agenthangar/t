@@ -308,6 +308,18 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
         assert len(text.splitlines()) <= 10
 
 
+def test_resume_pr_badges_color_only_the_leading_labels(filters, monkeypatch):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    display = '#42 ! ↗ #47 ◌  api  A title that mentions #23 ○'
+    assert filters.color_resume_prs(display) == (
+        '\x1b[33m#42 !\x1b[0m \x1b[96m↗\x1b[0m \x1b[37m#47 ◌\x1b[0m'
+        '  api  A title that mentions #23 ○'
+    )
+    monkeypatch.setenv('NO_COLOR', '1')
+    assert filters.color_resume_prs(display) == display
+
+
 def test_resume_remote_history_retains_exported_turn_without_local_transcript(filters, tmp_path):
     row = 'repo\t4\tsaved\t/other/home/tree\told date\tSaved task\t-\thistory\tremote\tcodex\t-\t2026-10-28T10:11:12Z'
     result = filters.resume_turns(row, str(tmp_path), str(tmp_path))

@@ -791,13 +791,63 @@ EOS
 # whole cost/staleness trade-off of the PR tag lives here and nowhere else.
 _pr_state_stale() {
   local st=$1; local -i age=$2
-  # MERGED/CLOSED are terminal — a merged PR never un-merges, so cache forever.
+  # Preserve the terminal-state cache policy for bare state readers.
   [[ $st == MERGED || $st == CLOSED ]] && return 1
   # TODO(policy): '' (never asked) and 'OPEN' both want the 300s recheck below,
   # but '?' is different — it means we ASKED and could not tell. Offline, that
   # retries every 300s forever, forking a gh child per scan that is guaranteed to
   # fail. Decide whether a failed lookup should back off (and how far).
   (( age > 300 ))
+}
+
+# _pr_preview_refresh <cache-dir> <owner/repo> <number> …
+# One bounded GraphQL request for the requested open PRs. Read deployments from
+# each live PR head, check the deployment commit again, and keep only the last
+# deployment per preview environment. A link in comments or a CI log is not a
+# deployment URL. Retain only the verified bit and the head, never the URL.
+_pr_preview_refresh() {
+  local prdir=$1 slug=$2
+  shift 2
+  local num filter query= output line f badge_info result tmp
+  local -a parts
+  local -A heads statuses
+  for num in "$@"; do
+    (( ${#heads} < 12 )) || break
+    f="$prdir/${slug//\//#}#$num"
+    [[ -f $f.badge ]] || continue
+    badge_info=$(<"$f.badge")
+    parts=(${=badge_info})
+    [[ ${parts[1]:-} =~ '^[a-fA-F0-9]{40}([a-fA-F0-9]{24})?$' ]] || continue
+    heads[$num]=$parts[1]
+    query+="p$num:pullRequest(number:$num){state headRefOid commits(last:1){nodes{commit{oid deployments(first:8,orderBy:{field:CREATED_AT,direction:DESC}){nodes{commitOid createdAt latestEnvironment latestStatus{state environmentUrl}}}}}}}"
+  done
+  [[ -n $query ]] || return 0
+  filter='
+    .data.repository | to_entries[] |
+    .key[1:] as $number | .value |
+    select(.state == "OPEN") | .headRefOid as $head |
+    .commits.nodes[-1].commit | select(.oid == $head) |
+    [ .deployments.nodes[]? | select(.commitOid == $head) |
+      select((.latestEnvironment // "" | ascii_downcase) |
+        test("^preview([/ ._: -]|$)") or test("^pr[-/ ._:]+" + $number + "([/ ._: -]|$)"))
+    ] | group_by(.latestEnvironment | ascii_downcase) | map(max_by(.createdAt)) |
+    any(.latestStatus.state == "SUCCESS" and
+      (.latestStatus.environmentUrl // "" | test("^https?://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?([/?#]|$)"))) |
+    [$number, $head, (if . then "1" else "0" end)] | @tsv'
+  if output=$(gh api graphql -f "query={repository(owner:\"${slug%/*}\",name:\"${slug#*/}\"){$query}}" --jq "$filter" 2>/dev/null); then
+    for line in ${(f)output}; do
+      parts=(${=line})
+      num=${parts[1]:-}
+      [[ -n $num && -n ${heads[$num]:-} && ${parts[2]:-} == $heads[$num] ]] || continue
+      [[ ${parts[3]:-} == (0|1) ]] && statuses[$num]=$parts[3]
+    done
+  fi
+  for num in ${(k)heads}; do
+    f="$prdir/${slug//\//#}#$num.preview"
+    result="${heads[$num]} ${statuses[$num]:-?}"
+    tmp="$f.$$.$RANDOM.tmp"
+    print -rn -- "$result" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null
+  done
 }
 
 # _pr_state_refresh <owner/repo#num> … — warm the pr/ state cache for these refs.
@@ -818,29 +868,33 @@ _pr_state_refresh() {
   # Every declaration is hoisted out of the loops below: an assignmentless
   # `local x` re-run on an already-local x does not redeclare, it PRINTS
   # `x=value` (the _ok=claw junk-output bug documented on _t_resume).
-  local ref slug num st line f hd
-  local -a parts
-  local -A want got head
+  local ref slug num st line f hd draft mergeable label tmp
+  local -a parts refs requested
+  local -A want got head drafts conflicts
   local -i fallbacks
   for ref in "$@"; do
     slug=${ref%\#*}; num=${ref##*\#}
-    [[ -n $slug && -n $num ]] || continue
+    [[ $slug =~ '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$' && $num =~ '^[1-9][0-9]{0,8}$' ]] || continue
     want[$slug]="${want[$slug]:-} $num"
   done
   for slug in ${(k)want}; do
-    got=(); head=(); fallbacks=0
+    got=(); head=(); drafts=(); conflicts=(); fallbacks=0
     for line in ${(f)"$(gh pr list --repo $slug --state all --limit 100 \
-                          --json number,state,headRefOid --jq '.[]|"\(.number) \(.state) \(.headRefOid)"' 2>/dev/null)"}; do
+                          --json number,state,headRefOid,isDraft,mergeable \
+                          --jq '.[]|"\(.number) \(.state) \(.headRefOid // "-") \(.isDraft) \(.mergeable)"' 2>/dev/null)"}; do
       [[ -n $line ]] || continue
       parts=(${=line})
+      [[ ${parts[1]:-} =~ '^[1-9][0-9]{0,8}$' ]] || continue
       got[$parts[1]]=$parts[2]; head[$parts[1]]=${parts[3]:-}
+      drafts[$parts[1]]=${parts[4]:-}; conflicts[$parts[1]]=${parts[5]:-}
     done
     # Persist every state that ONE call returned, not just the refs asked about:
     # the entries are 6 bytes and terminal ones are cached forever, so warming the
     # whole repo now is what makes the NEXT new PR resolve on first sight instead
     # of reading "?" for a round trip. Already-terminal entries are skipped —
     # rewriting them would only churn an mtime nothing reads.
-    for num in ${(k)got} ${=want[$slug]}; do
+    refs=(${(k)got} ${=want[$slug]})
+    for num in ${(u)refs}; do
       f="$prdir/${slug//\//#}#$num"
       # A MERGED entry is terminal only once its .head sidecar exists — entries
       # cached before the sidecar was introduced get it filled in once.
@@ -849,23 +903,46 @@ _pr_state_refresh() {
         [[ $st == CLOSED || ( $st == MERGED && -f $f.head ) ]] && continue
       fi
       st=${got[$num]:-}; hd=${head[$num]:-}
+      draft=${drafts[$num]:-}; mergeable=${conflicts[$num]:-}
       # Older than the list window — one direct lookup, bounded so a scan that
       # references many ancient PRs cannot fork-bomb gh.
       if [[ -z $st ]] && (( fallbacks < 8 )); then
         (( fallbacks++ ))
-        parts=(${=$(gh pr view "https://github.com/$slug/pull/$num" --json state,headRefOid \
-                     --jq '"\(.state) \(.headRefOid)"' 2>/dev/null)})
+        parts=(${=$(gh pr view "https://github.com/$slug/pull/$num" --json state,headRefOid,isDraft,mergeable \
+                     --jq '"\(.state) \(.headRefOid // "-") \(.isDraft) \(.mergeable)"' 2>/dev/null)})
         st=${parts[1]:-}; hd=${parts[2]:-}
+        draft=${parts[3]:-}; mergeable=${parts[4]:-}
       fi
       # The merged head sha, for _pr_state_tag's "work continued past the merge"
       # check. A sidecar rather than a second field, so every reader of the state
       # file (the bin/t and tfind Python twins) keeps reading a bare state.
-      [[ $st == MERGED && -n $hd ]] &&
-        print -rn -- "$hd" > "$f.head.$$.tmp" 2>/dev/null && mv -f "$f.head.$$.tmp" "$f.head" 2>/dev/null
+      if [[ $st == MERGED && -n $hd && $hd != (-|null) ]]; then
+        tmp="$f.head.$$.$RANDOM.tmp"
+        print -rn -- "$hd" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f.head" 2>/dev/null
+      elif [[ $st == OPEN ]]; then
+        label=OPEN
+        if [[ $mergeable == CONFLICTING ]]; then
+          label=CONFLICT
+        elif [[ $draft == true ]]; then
+          label=DRAFT
+        fi
+        tmp="$f.badge.$$.$RANDOM.tmp"
+        print -rn -- "${hd:--} $label" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f.badge" 2>/dev/null
+      fi
       # '?' records a lookup that FAILED, so _pr_state_stale can tell "never
       # asked" from "asked and could not tell".
-      print -rn -- "${st:-?}" > "$f.$$.tmp" 2>/dev/null && mv -f "$f.$$.tmp" "$f" 2>/dev/null
+      tmp="$f.$$.$RANDOM.tmp"
+      print -rn -- "${st:-?}" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null
     done
+    if [[ ${_PR_WITH_BADGES:-} == 1 ]]; then
+      requested=()
+      refs=(${=want[$slug]})
+      for num in ${(u)refs}; do
+        f="$prdir/${slug//\//#}#$num"
+        [[ -f $f && $(<"$f") == OPEN ]] && requested+=("$num")
+      done
+      (( ${#requested} )) && _pr_preview_refresh "$prdir" "$slug" "${requested[@]}"
+    fi
     # Also rate-limit refreshes for a live slot whose last-mentioned PR is already
     # merged: later PRs can complete its work without appearing in its transcript.
     touch "$prdir/${slug//\//#}.checked" 2>/dev/null
@@ -906,18 +983,47 @@ _pr_state_tag() {
   local pru=$1 wt=${2:-}
   REPLY=
   REPLY_PR_STATE=NONE
+  REPLY_PR_BADGE=NONE
+  REPLY_PR_PREVIEW=
   [[ -n $pru ]] || return 0
   local prdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr"
   local prp=${pru#github.com/}; prp=${prp/\/pull\//\/}
   local prkey=${prp//\//#} prnum=${pru##*/}
-  local prcf="$prdir/$prkey" prraw= prst= prlab= prmt checked
-  local -i wip=0 refresh=0
+  local prcf="$prdir/$prkey" prraw= prst= prlab= prmt checked metadata hd
+  local -a parts
+  local -i wip=0 refresh=0 have_badge=0 have_preview=0
   if [[ -f $prcf ]]; then
     prraw=$(<$prcf)
     [[ $prraw == MERGED || $prraw == CLOSED || $prraw == OPEN ]] && prst=$prraw
   fi
   prlab=${prst:+${(L)prst}}
   REPLY_PR_STATE=${prst:-UNKNOWN}
+  REPLY_PR_BADGE=$REPLY_PR_STATE
+  if [[ ${_PR_WITH_BADGES:-} == 1 && $prst == OPEN && -f $prcf.badge ]]; then
+    checked=$(zstat +mtime "$prcf.badge" 2>/dev/null || echo 0)
+    if ! _pr_state_stale OPEN $(( EPOCHSECONDS - checked )); then
+      metadata=$(<"$prcf.badge")
+      parts=(${=metadata})
+      if [[ ${parts[2]:-} == (OPEN|DRAFT|CONFLICT) ]]; then
+        REPLY_PR_BADGE=$parts[2]
+        have_badge=1
+        hd=${parts[1]:-}
+        if [[ ! $hd =~ '^[a-fA-F0-9]{40}([a-fA-F0-9]{24})?$' ]]; then
+          have_preview=1
+        elif [[ -f $prcf.preview ]]; then
+          checked=$(zstat +mtime "$prcf.preview" 2>/dev/null || echo 0)
+          if ! _pr_state_stale OPEN $(( EPOCHSECONDS - checked )); then
+            metadata=$(<"$prcf.preview")
+            parts=(${=metadata})
+            if [[ ${parts[1]:-} == "$hd" && ${parts[2]:-} == (0|1|'?') ]]; then
+              have_preview=1
+              [[ $parts[2] == 1 ]] && REPLY_PR_PREVIEW=1
+            fi
+          fi
+        fi
+      fi
+    fi
+  fi
   [[ -z $prlab ]] && command -v gh >/dev/null 2>&1 && prlab='?'
   if [[ $prst == MERGED && -n $wt ]] && _pr_work_continued "$wt" "$prcf.head"; then
     prlab='merged, still in progress'
@@ -928,6 +1034,8 @@ _pr_state_tag() {
     # a MERGED entry without its head sidecar predates it: fetch it once
     if _pr_state_stale "$prraw" $(( prmt ? EPOCHSECONDS - prmt : 999999999 )) ||
        { [[ $prraw == MERGED && ! -f $prcf.head ]] && command -v gh >/dev/null 2>&1; }; then
+      refresh=1
+    elif [[ ${_PR_WITH_BADGES:-} == 1 && $prst == OPEN ]] && (( ! have_badge || ! have_preview )); then
       refresh=1
     elif (( wip )); then
       checked=$(zstat +mtime "$prdir/${prkey%#*}.checked" 2>/dev/null || echo 0)

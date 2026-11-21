@@ -1399,6 +1399,81 @@ def test_zsh_pr_refresh_records_the_merged_head(zsh, tmp_path):
     assert (prdir / "o#r.checked").exists()
 
 
+def test_zsh_pr_badges_require_current_confirmed_preview(zsh, tmp_path):
+    jq = shutil.which("jq")
+    if jq is None:
+        pytest.skip("jq is needed to replay the GitHub CLI response filter")
+    heads = {n: char * 40 for n, char in enumerate("abcdefg", 5)}
+
+    def deployment(n, environment="Preview", state="SUCCESS", url="https://preview.example.invalid",
+                   created="2026-11-20T11:00:00Z"):
+        return dict(commitOid=heads[n], createdAt=created, latestEnvironment=environment,
+                    latestStatus=dict(state=state, environmentUrl=url))
+
+    records = {
+        5: [deployment(5)],
+        6: [deployment(6, environment="Production")],
+        7: [deployment(7), deployment(7, state="FAILURE", created="2026-11-20T12:00:00Z")],
+        8: [deployment(5)],
+        9: [deployment(9, url=None)],
+        10: [deployment(10)],
+    }
+    provider = {}
+    for number, deployments in records.items():
+        head = heads[number] if number != 10 else "1" * 40
+        provider[f"p{number}"] = dict(state="OPEN", headRefOid=head, commits={"nodes": [
+            {"commit": {"oid": head, "deployments": {"nodes": deployments}}},
+        ]})
+    body = tmp_path / "github.json"
+    body.write_text(json.dumps({"data": {"repository": provider}}))
+    queries = tmp_path / "queries"
+    stub = tmp_path / "stubbin" / "gh"
+    state_lines = "\n".join(f"{n} OPEN {head} {'true' if n in (5, 6) else 'false'} "
+                            f"{'CONFLICTING' if n == 5 else 'UNKNOWN'}" for n, head in heads.items())
+    stub.write_text(f"""#!/bin/sh
+if [ "$1" = api ]; then
+    printf '%s\n' "$4" >> {shlex.quote(str(queries))}
+    exec {shlex.quote(jq)} -r "$6" < {shlex.quote(str(body))}
+fi
+printf '%s\n' {shlex.quote(state_lines)}
+""")
+    stub.chmod(0o755)
+    refs = " ".join(f"'o/r#{number}'" for number in records)
+    tagged = " ".join(f"{number}" for number in records)
+    zsh("_pr_state_refresh 'o/r#5'")
+    assert not queries.exists()
+    out = zsh(f"""typeset -a _PR_STALE; typeset -A _PR_SPAWNED; typeset _PR_WITH_BADGES=1
+_pr_state_refresh {refs}
+for number in {tagged}; do
+  _pr_state_tag "github.com/o/r/pull/$number"
+  print -r -- "$number $REPLY_PR_STATE $REPLY_PR_BADGE ${{REPLY_PR_PREVIEW:-none}}"
+done
+print -r -- "queued=${{#_PR_STALE}}" """)
+    assert out.stderr == ""
+    assert out.stdout.splitlines() == [
+        "5 OPEN CONFLICT 1", "6 OPEN DRAFT none", "7 OPEN OPEN none",
+        "8 OPEN OPEN none", "9 OPEN OPEN none", "10 OPEN OPEN none", "queued=0",
+    ]
+    query, = queries.read_text().splitlines()
+    assert all(f"pullRequest(number:{n})" in query for n in records)
+    assert "pullRequest(number:11)" not in query
+    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    assert (prdir / "o#r#5").read_text() == "OPEN"
+    assert (prdir / "o#r#5.preview").read_text() == f"{heads[5]} 1"
+    assert (prdir / "o#r#10.preview").read_text() == f"{heads[10]} ?"
+    assert not (prdir / "o#r#11.preview").exists()
+
+    os.utime(prdir / "o#r#5.preview", (time.time() - 301, time.time() - 301))
+    (prdir / "o#r#6.preview").write_text(f"{heads[5]} 1")
+    retained = zsh("""typeset -a _PR_STALE; typeset -A _PR_SPAWNED; typeset _PR_WITH_BADGES=1
+for number in 5 6; do
+  _pr_state_tag "github.com/o/r/pull/$number"
+  print -r -- "$number $REPLY_PR_BADGE ${REPLY_PR_PREVIEW:-none}"
+done
+print -rl -- $_PR_STALE""").stdout.splitlines()
+    assert retained == ["5 CONFLICT none", "6 DRAFT none", "o/r#5", "o/r#6"]
+
+
 def test_zsh_codex_subagent_threads_are_not_conversations(zsh):
     """A thread the parent spawned (`source` = a subagent JSON, empty title, the same
     first prompt as the parent's brief) is codex's `<sid>/subagents/` — listed as a

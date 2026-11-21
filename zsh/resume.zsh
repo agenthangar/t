@@ -345,6 +345,8 @@ _t_resume() {
   # collects stale refs into _PR_STALE for the one batched _pr_state_flush below.
   local opdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/opened"
   local -A _PR_SPAWNED
+  local _PR_WITH_BADGES=0
+  [[ ( -t 0 && -t 1 ) || -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]] && _PR_WITH_BADGES=1
   # Recency window (--days, default 30; 'all' disables) + this machine's short
   # hostname, to blank the origin column for locally-run conversations.
   local cutoff=0 selfhost=$(hostname -s 2>/dev/null)
@@ -675,6 +677,7 @@ _t_resume() {
   # Measure display widths from the full snapshot so filtering cannot move a
   # column. Keep the verified merged aggregate in the private selection fields.
   local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_text pr_count pr_aggregate slot_label pr_display pr_width pr_extra slot_display agent_display slot_width
+  local REPLY_PR_BADGE REPLY_PR_PREVIEW
   local -a f cells pr_cells pr_widths host_cells slot_cells
   local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 i=1
   for c in "${(@)cands}"; do
@@ -701,6 +704,7 @@ _t_resume() {
       pr_key=${pr_ref%:*}
       pr_number=${pr_key##*#}
       pr_state=${pr_ref##*:}
+      REPLY_PR_BADGE= REPLY_PR_PREVIEW=
       _pr_state_tag "github.com/${pr_key%#*}/pull/$pr_number"
       [[ $REPLY_PR_STATE == UNKNOWN ]] || pr_state=$REPLY_PR_STATE
       if [[ -z $pr_aggregate ]]; then
@@ -709,15 +713,21 @@ _t_resume() {
         pr_aggregate=MIXED
       fi
       if (( ++pr_count <= 2 )); then
-        case $pr_state in
-          MERGED) pr_symbol=↴ ;;
-          OPEN) pr_symbol=○ ;;
-          CLOSED) pr_symbol=× ;;
+        case $pr_state/${REPLY_PR_BADGE:-} in
+          MERGED/*) pr_symbol=↴ ;;
+          OPEN/DRAFT) pr_symbol=◌ ;;
+          OPEN/CONFLICT) pr_symbol='!' ;;
+          OPEN/*) pr_symbol=○ ;;
+          CLOSED/*) pr_symbol=× ;;
           *) pr_symbol='?' ;;
         esac
         (( pr_count == 1 )) || (( pr_width++ ))
-        (( pr_width += ${#pr_number} + 2 ))
-        pr_text+="${pr_text:+ }#$pr_number$pr_symbol"
+        (( pr_width += ${#pr_number} + 3 ))
+        pr_text+="${pr_text:+ }#$pr_number $pr_symbol"
+        if [[ $pr_state == OPEN && ${REPLY_PR_PREVIEW:-} == 1 ]]; then
+          pr_text+=' ↗'
+          (( pr_width += 2 ))
+        fi
       fi
     done
     if (( pr_count > 2 )); then

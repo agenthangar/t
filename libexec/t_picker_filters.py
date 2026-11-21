@@ -21,6 +21,8 @@ OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
                'task': ('Ctrl-W', 'task')}
 
 PR_STATES = {'MERGED', 'OPEN', 'CLOSED', 'NONE', 'UNKNOWN', 'MIXED'}
+PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗': '96', '?': '37'}
+PR_CHIP = r'#\d+ [↴○◌!×?](?: ↗)?'
 
 
 def metadata(source, profile):
@@ -139,10 +141,6 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         return control_rows(parts, width, selected, compact, color, 'selected' if filled else 'active')
     resume = profile == 'resume'
     lines = list(status[:2] if tight_resume else status)
-    if legend:
-        if short:
-            legend = '↴ merged · ↶ last · ↻ WIP'
-        lines.extend(style(clip_columns(line, width), 'action') for line in legend.splitlines())
     if not compact:
         if resume and lines:
             lines.append('')
@@ -197,6 +195,13 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines += sort_lines
     if not compact:
         lines += ['']
+    if legend:
+        if short:
+            legend = '↴ merged · ↶ last · ↻ WIP'
+        for line in legend.splitlines():
+            line = clip_columns(line, width)
+            lines.append(re.sub(r'[↴○◌!×↗?] [a-z]+',
+                                lambda match: pr_color(match[0], match[0][0]), line) if color else line)
     if columns:
         lines.append(style(clip_columns(columns, width), 'action' if resume else 'hint'))
     return '\n'.join(lines) + '\n'
@@ -459,16 +464,27 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
 
 def resume_legend(width):
     close = '↶ latest verified close in these results' if width >= 108 else '↶ latest verified close'
-    markers = close + ' · ↻ work in progress · ● live · — no PR'
-    states = '↴ merged · ○ open · × closed · ? unknown'
-    if width >= display_width(markers + ' · ' + states):
-        return markers + ' · ' + states
-    if width >= 64:
-        return markers + '\n' + states
     if width < 38:
-        return '↶ latest close · ↻ WIP\n● live · — no PR · ↴/○/×/?'
-    markers = '↶ latest close · ↻ WIP · ● live'
-    return '\n'.join(pack([markers, '— no PR', '↴ merged · ○ open', '× closed · ? unknown'], width))
+        close = '↶ last close'
+    return '\n'.join(pack([close, '↻ WIP' if width < 64 else '↻ work in progress', '● live',
+                           '— no PR', '↴ merged', '○ open', '◌ draft', '! conflict', '× closed',
+                           '↗ preview', '? unknown'], width))
+
+
+def pr_color(text, symbol):
+    if 'NO_COLOR' in os.environ or os.environ.get('TERM') == 'dumb':
+        return text
+    return f'\033[{PR_COLORS[symbol]}m{text}\033[0m'
+
+
+def color_resume_prs(display):
+    def chip(match):
+        text, symbol = match[0], match[1]
+        if text.endswith(' ↗'):
+            return pr_color(text[:-2], symbol) + ' ' + pr_color('↗', '↗')
+        return pr_color(text, symbol)
+    return re.sub(rf'^(?:{PR_CHIP})(?: {PR_CHIP})?',
+                  lambda match: re.sub(r'#\d+ ([↴○◌!×?])(?: ↗)?', chip, match[0]), display)
 
 
 def resume_health(health, width, color):
@@ -515,9 +531,9 @@ def resume_gutters(records):
 def mark_resume(source, records=None):
     records = metadata(source, 'resume') if records is None else records
     latest, close_gutter, work_gutter = resume_gutters(records)
-    if not close_gutter and not work_gutter:
-        return source.rstrip('\n')
     color = os.environ.get('T_PICKER_COLOR') == '1'
+    if not close_gutter and not work_gutter and not color:
+        return source.rstrip('\n')
     result = []
     for line in source.splitlines():
         fields = line.split('\t')
@@ -527,7 +543,7 @@ def mark_resume(source, records=None):
         prefix = ((paint(close, 'heading') if color and close != ' ' else close) + ' ' if close_gutter else '')
         if work_gutter:
             prefix += (paint(work, 'warning') if color and work != ' ' else work) + ' '
-        fields[-1] = prefix + fields[-1]
+        fields[-1] = prefix + (color_resume_prs(fields[-1]) if color else fields[-1])
         result.append('\t'.join(fields))
     return '\n'.join(result)
 

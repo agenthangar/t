@@ -307,7 +307,7 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     start(profile='public-resume-refresh', mode='resume', width=105, height=24)
     screen = wait('Second Task', focused='Second Task')
     assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
-    assert screen.index('↴ merged') < screen.index('HOTKEYS') < screen.index('Second Task')
+    assert screen.index('HOTKEYS') < screen.index('↴ merged') < screen.index('PRS') < screen.index('Second Task')
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')
