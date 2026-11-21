@@ -154,7 +154,7 @@ def _shell(base, env, script, *, cwd=None):
     return _run(["zsh", "-lic", script], env=env, cwd=cwd or base, timeout=60)
 
 
-def _shell_tty(base, env, script, *, timeout=25):
+def _shell_tty(base, env, script, *, timeout=25, respond=None):
     argv = ["zsh", "-lic", script]
     master, slave = pty.openpty()
     try:
@@ -175,6 +175,10 @@ def _shell_tty(base, env, script, *, timeout=25):
                 if not chunk:
                     break
                 chunks.append(chunk)
+                if respond:
+                    answer = respond(b"".join(chunks))
+                    if answer:
+                        os.write(master, answer)
             if time.monotonic() >= deadline:
                 process.kill()
                 process.wait(timeout=5)

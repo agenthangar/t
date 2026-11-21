@@ -98,8 +98,13 @@ cause and identify which readiness field changed (session, workspace, agent or
 conversation). They never relax ownership checks. It never switches to the latest
 conversation in that slot or force-opens a fresh context. A second failure retains
 the diagnostic. When Repair finds the same unresolved lock and holder again, it
-reports the refusal after a fresh scan without a second settling wait. Cancel returns
-130 and stops the batch. Redirected and machine calls never prompt. When the shell captures an owner on stdout, render recovery
+reports it after a fresh scan without a second settling wait. If ownership of the
+original worktree is still unclear and the selected Codex writer is verified free,
+offer **Resume in fresh worktree / Cancel** when its saved commit and transcript
+are available locally. Show the saved commit and where local edits stay. On
+selection, allocate a fresh worktree, verify ownership again and open the exact
+conversation. Cancel returns 130 and stops the batch. Redirected and machine
+calls never prompt. When the shell captures an owner on stdout, render recovery
 on the original terminal stderr, keeping the owner protocol clean.
 
 Saved resume failures retain bounded, sanitized lifecycle diagnostics instead of
@@ -117,7 +122,7 @@ and ambiguous evidence remain blocked. These checks never delete a lock or stop 
 
 Development preview: `python3 scripts/preview_session_repair.py` exercises the
 shared repair rail with sample data. Use `open` for numbered-open recovery or
-`--blocked` for a persistent ownership refusal. No real sessions are changed.
+`resume --blocked` to try the fresh worktree choice. No real sessions are changed.
 
 `t session open api 3 --force` enters the force confirmation directly. `--yes`
 confirms only an explicit numeric force target; redirected commands never prompt.

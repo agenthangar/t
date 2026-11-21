@@ -1485,9 +1485,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
+            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection",
+            "tests/test_resume_performance.py::test_numbered_resume_repair_offers_fresh_worktree"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "discovery_wait": {
@@ -1714,9 +1715,10 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
+            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection",
+            "tests/test_resume_performance.py::test_numbered_resume_repair_offers_fresh_worktree"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "bounded_wait": {
