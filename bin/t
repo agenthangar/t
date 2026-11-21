@@ -7871,7 +7871,7 @@ def _install_result(items):
         elif it["kind"] == "shell":
             sel["shell"] = True
         elif it["kind"] == "app":
-            sel["nightr"] = True
+            sel["nightr"] = it["action"]
     return sel
 
 
@@ -7954,9 +7954,16 @@ def _install_plan(sel, probed, os_name, has_brew, headless, hosts):
             else:
                 rec(f"login:{a}", "error",
                     f"{a} login: not installed and not selected for install")
-    if sel.get("nightr"):
-        rec("app:nightr", "run", "install Nightr and include its updates in t system update",
-            [sys.executable, str(Path(__file__).resolve()), "system", "apps", "install", "nightr", "--yes"], interactive=True)
+    nightr = sel.get("nightr")
+    if nightr and os_name == "darwin":
+        action, _ = nightr
+        if action == "install":
+            rec("app:nightr", "run", "brew install --cask agenthangar/tap/nightr", nightr=nightr,
+                prerequisite="brew tap agenthangar/tap  # if needed")
+        elif action == "update":
+            rec("app:nightr", "run", "nightr update", nightr=nightr)
+        else:
+            rec("app:nightr", "error", "Nightr: repair the unrecognized installation before retrying")
     if any(s["do"] == "run" for s in steps):
         rec("sync", "run", "refresh t links, hooks, and selected agent integrations")
     if sel.get("shell"):
@@ -7982,6 +7989,8 @@ def _install_render(steps, st):
             hosts.append(s["host"])
             continue
         if s["do"] == "run":
+            if s.get("prerequisite"):
+                lines.append(f"{st.g}+{st.r} {s['prerequisite']}")
             lines.append(f"{st.g}+{st.r} {s['label']}")
         elif s["do"] == "skip":
             lines.append(f"{st.y}= {s['label']}{st.r}")
@@ -8779,6 +8788,14 @@ def _install_walk(steps, close=False):
             else:
                 print(f"✓ {s['label']}")
             continue
+        if kind == "app":
+            rc = _nightr_module()["guided_install"](*s["nightr"])
+            if rc:
+                failed += 1
+                print(f"{st.b}✗ {s['label']}{st.r} (rc {rc})")
+            else:
+                print(f"✓ {s['label']}")
+            continue
         cmd = s["cmd"]
         if kind in ("login", "update"):
             # A native installer may just have created ~/.local/bin/<agent>,
@@ -8991,18 +9008,25 @@ def cmd_install(cfg, args):
                   {"t": "header", "sec": "shell", "label": "SHELL SETUP"},
                   {"t": "toggle", "sec": "shell", "kind": "shell", "alias": "zsh integration",
                    "value": f"{shell_rc} · preserve existing settings", "checked": True}]
-    if sys.platform == "darwin" and not args.agents:
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if sys.platform == "darwin" and not (args.agents or args.dry_run or args.yes) and interactive:
+        action = _nightr_module()["guided_selection"]()
+        value = {"install": "Install via Homebrew", "update": "Update existing installation",
+                 "unknown": "Installation needs repair"}[action[0]]
         items += [{"t": "spacer", "sec": "apps"},
                   {"t": "header", "sec": "apps", "label": "DESKTOP APPS"},
                   {"t": "toggle", "sec": "apps", "kind": "app", "alias": "Nightr",
-                   "value": "Keep your Mac awake · optional", "checked": False}]
+                   "value": value, "action": action, "checked": False}]
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 
-    def plan():   # the review re-plans from the live marks
-        return _install_plan(_install_result(items), probed, os_name, has_brew, headless, hosts)
+    reviewed_steps = []
 
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    def plan():   # the review re-plans from the live marks
+        nonlocal reviewed_steps
+        reviewed_steps = _install_plan(_install_result(items), probed, os_name, has_brew, headless, hosts)
+        return reviewed_steps
+
     if args.dry_run or args.yes or not interactive:
         steps = plan()
         lines = _install_render(steps, st)
@@ -9036,7 +9060,7 @@ def cmd_install(cfg, args):
         if not wizard_ran:
             print("t install: aborted — nothing run")
         return 130
-    return _install_then_setup(cfg, args, _install_walk(plan(), close=wizard_ran))
+    return _install_then_setup(cfg, args, _install_walk(reviewed_steps, close=wizard_ran))
 
 
 def _install_then_setup(cfg, args, rc, chain=True):
@@ -12919,6 +12943,10 @@ SCOPE
   This Mac only; no repository argument or repository inference.
   Installation is optional and requires macOS and a published signed release.
   Homebrew owns its installations. Direct installs use verified Nightr releases.
+  Select Nightr in the interactive t install checklist to install it with Homebrew
+  or run nightr update for an existing installation.
+  To install manually with Homebrew, run brew tap agenthangar/tap followed by
+  brew install --cask agenthangar/tap/nightr after the cask is published.
   t system update includes opted-in apps; it never installs absent apps.
   Run nightr setup for explicit helper authorization and login preferences.
   t install nightr is a compatibility convenience.
@@ -14537,7 +14565,7 @@ EXAMPLES
         description='Install and log in agent CLIs using a checklist and command review. Missing agents start marked; '
             'installed, authenticated entries are locked. Enter runs reviewed commands; n edits; q aborts. '
             'Registered SSH hosts are offered next unless --no-hosts. --yes skips review. Installers preserve '
-            'existing settings; logins may open a browser.',
+            'existing settings; logins may open a browser. On macOS, the interactive checklist offers optional Nightr setup.',
         help_details="""DETAILS
 
   The `t config setup`-style checklist for the agent binaries themselves: probes
@@ -14548,6 +14576,16 @@ EXAMPLES
   runs, n goes back, q aborts).
 
   Logins are interactive (browser, or a device code over ssh / --headless).
+
+OPTIONAL DESKTOP APP
+  On macOS, run t install without named agents and select Nightr under Desktop
+  Apps. A fresh install adds the AgentHangar Homebrew tap if needed and installs
+  its Nightr cask. Selecting an existing installation runs nightr update.
+  The Homebrew path requires Homebrew and a published signed release and cask.
+
+  For manual Homebrew installation after the cask is published, run:
+    brew tap agenthangar/tap
+    brew install --cask agenthangar/tap/nightr
 
 REMOTE INSTALLATION
   Every REMOTE_HOSTS host is then offered the same run over ssh -t.
