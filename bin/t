@@ -611,9 +611,11 @@ def cmd_ls(cfg, args):
         text = zsh_capture(command)
     else:
         cache = _session_discovery()
-        view = cache['discover'](cfg, local=not args.remote, fields=['rows'])
-        if getattr(args, 'wait', False):
-            view = cache['wait_for_refresh'](cfg, view, local=not args.remote)
+        def usable(snapshot):
+            text = cache['rows'](snapshot, prefixed=args.remote)
+            return bool(_scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope))
+        view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False),
+                                           usable=usable, local=not args.remote, fields=['rows'])
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
@@ -12340,12 +12342,21 @@ def cmd_history(cfg, args):
         cache = _session_discovery()
         if getattr(args, 'refresh', False):
             cache['event'](['local', *cfg.hosts.values()])
-        if getattr(args, 'wait', False) or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
-            view, notice = cache['bounded_snapshot'](cfg, fields=['catalog'])
-        elif not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
-            view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'], choose=_open_discovery_choice)
-        else:
-            view, notice = cache['discover'](cfg, fields=['catalog']), ''
+        def usable(snapshot):
+            store = cache['SnapshotStore'](snapshot)
+            try:
+                scoped = helper['HistoryCommand'](cfg, globals(), store=store)
+                scoped.discovery_view = snapshot
+                alias, slot = scoped.scope(args.target)
+                return bool(scoped.records(alias, slot))
+            finally:
+                store.close()
+        try:
+            view, notice = cache['bounded_snapshot'](cfg, fields=['catalog'], usable=usable,
+                explicit=getattr(args, 'wait', False) or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1')
+        except (ValueError, OSError) as error:
+            print(f't resume: {error}', file=sys.stderr)
+            return 1
         if not getattr(args, 'json', False):
             cache['announce'](view)
         snapshot = cache['SnapshotStore'](view)
@@ -13492,10 +13503,14 @@ SELECTION
   UI, status, model, session and task details, including idle rows.
   Column headers stay visible; narrow rows prioritize host/session and task.
   Tab marks ✓ independently of focus; Enter opens marked rows.
-  Press k to kill only the focused row, ignoring marks, with close safety checks.
+  Press Ctrl-K to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
-  Use --new to start a new session. One selection opens here; multiple
+  Ctrl-N starts a new local session in this repository; an unscoped picker
+  first asks for a registered local repository. Empty lists stay open until
+  Ctrl-N or cancellation; Enter on an empty list does nothing.
+  Explicit remote browsing uses --new to start remotely.
+  Use --new to start directly. One selection opens here; multiple
   selections each open in a new window, including the first. Remote pickers
   add HOST. --fg opens one. Failed windows report exact attach commands.
   Commands target only newly created windows; the invoking terminal stays free.
@@ -13575,7 +13590,7 @@ REMOTE SESSIONS
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List cached live sessions across repositories and registered hosts without prompting. '
             'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
-            'Cold or expired entries refresh in the background; --wait observes refresh for up to 30 seconds. '
+            'Available scoped results return immediately; empty pending discovery waits up to 30 seconds. '
             'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
 
@@ -13590,10 +13605,10 @@ REMOTE SESSIONS
   Registered hosts are included by default with a HOST column; --local limits
   the view to this machine. -r retains the default.
 
-  Results return immediately by default. Use `t session list --wait` to wait up
-  to 30 seconds for the current refresh, then print available results with their
-  freshness. Ctrl-C cancels this wait; shared background refresh keeps running.
-  Redirected --wait is bounded and silent until results; it never prompts.
+  Available scoped results return immediately. Empty pending discovery waits up
+  to 30 seconds automatically, then prints the available snapshot. --wait also
+  observes refresh when results exist. Settled empty results return immediately.
+  Ctrl-C returns 130 and leaves refresh running. Redirected waits never prompt.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
   NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
@@ -13766,7 +13781,7 @@ REMOTE SESSIONS
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
             'Infer the current repository, or browse local and remote repositories outside a checkout. '
-            'Pending discovery waits in terminals; Return skips, Esc cancels. '
+            'Empty pending discovery waits up to 30 seconds; Ctrl-C cancels. '
             'Repositories are cloned only after selection. Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
@@ -13788,10 +13803,11 @@ REMOTE SESSIONS
   --last refuses if it is still incomplete. Ctrl-C returns 130 and leaves refresh
   running. Redirected waits show no spinner and never prompt.
 
-  Pending saved discovery keeps waiting automatically in a terminal. Return
-  skips the wait and uses available cached results; Esc/Ctrl-C cancels without
-  stopping the shared refresh. Empty or failed completed scans stop waiting.
-  Redirected commands and JSON return immediately without a wait or prompt.
+  Available scoped saved results return immediately. Empty pending discovery
+  waits automatically for up to 30 seconds, including redirected commands and
+  history JSON. Settled empty or failed scans return immediately. Timeout keeps
+  the last snapshot and never enters another wait/retry screen. Ctrl-C returns
+  130 without stopping shared refresh. Picker filters never rescan discovery.
 
   Codex checks the selected conversation's writer lock and the destination
   workspace. Another conversation in a reused original slot can keep running
@@ -15030,34 +15046,28 @@ def _main(argv):
         repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
         options = dict(local='--local' in argv, host=selected_host,
                        fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
-        if '--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
-            try:
-                if '--open' in argv:
-                    cache['require_open_network'](Config(), local=options['local'], host=selected_host)
-                view, notice = cache['bounded_snapshot'](Config(), **options)
-            except (OSError, ValueError) as error:
-                print(f't: {error}', file=sys.stderr)
-                return 1
-            if '--notice-file' in argv:
-                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
-        elif '--open' in argv:
-            if not sys.stdin.isatty() or not sys.stderr.isatty():
-                print('t open: interactive discovery requires a terminal', file=sys.stderr)
-                return 1
-            # The shell captures rows from stdout. Shared progress and RailUI
-            # stay on the terminal, never in the inventory stream.
-            try:
-                with redirect_stdout(sys.stderr):
-                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, wait=_resume_discovery_wait, **options)
-            except (OSError, ValueError) as error:
-                print(f't open: {error}', file=sys.stderr)
-                return 1
-            if '--notice-file' in argv:
-                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
-        else:
-            view = cache['discover'](Config(), **options)
+        cfg = Config()
+        projection = dict(prefixed='--unprefixed' not in argv, repo=repo,
+            cli_only='--cli-only' in argv, remote_only='--remote-only' in argv,
+            move_only='--move-only' in argv,
+            slot=argv[argv.index('--slot') + 1] if '--slot' in argv else None,
+            session=argv[argv.index('--session') + 1] if '--session' in argv else None)
+        if repo in cfg.repos:
+            root = cfg.repos[repo]
+            projection['local_roots'] = [root, os.path.join(cfg.worktree_root, os.path.basename(root))]
+        try:
+            if '--open' in argv:
+                cache['require_open_network'](cfg, local=options['local'], host=selected_host)
+            view, notice = cache['bounded_snapshot'](cfg, **options,
+                explicit='--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1',
+                usable=lambda snapshot: bool(cache['rows'](snapshot, **projection)))
+        except (OSError, ValueError) as error:
+            print(f't: {error}', file=sys.stderr)
+            return 1
+        if '--notice-file' in argv:
+            Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
         cache['announce'](view)
-        text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
+        text = cache['rows'](view, **projection)
         if '--basic' in argv:
             text = ''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in text.splitlines())
         sys.stdout.write(text)
@@ -15073,15 +15083,12 @@ def _main(argv):
                 return 2
             slot, aliases = aliases[-1], aliases[:at]
         cache = _session_discovery()
-        if os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
-            view, notice = cache['bounded_snapshot'](Config())
-        elif os.environ.get('T_RESUME_WAIT') == '1' and os.environ.get('T_RESUME_LAST') != '1' and sys.stdin.isatty() and sys.stderr.isatty():
-            with redirect_stdout(sys.stderr):
-                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait, choose=_open_discovery_choice)
-            if os.environ.get('T_RESUME_NOTICE_FILE'):
-                Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
-        else:
-            view = cache['discover'](Config())
+        def usable(snapshot):
+            return cache['resume_usable'](snapshot, aliases, slot,
+                cutoff=int(os.environ.get('T_RESUME_CUTOFF', '0')),
+                last=os.environ.get('T_RESUME_LAST') == '1')
+        view, notice = cache['bounded_snapshot'](Config(), usable=usable,
+            explicit=os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1')
         cache['announce'](view)
         if os.environ.get('T_RESUME_ROWS_FILE'):
             Path(os.environ['T_RESUME_ROWS_FILE']).write_text(''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in cache['rows'](view).splitlines()))

@@ -379,7 +379,7 @@ _t_open_impl() {
     esac
     rest+=("$arg")
     case "$arg" in
-      --new|new)         a+=(new); isnew=1 ;;
+      --new|new)         isnew=1 ;;
       --attached)        include_attached=1 ;;
       --app) print -u2 -- "t: Codex Desktop support has been removed; use t session open --cli"; return 2 ;;
       --cli)             cli=1 ;;
@@ -391,7 +391,12 @@ _t_open_impl() {
       *)                 a+=("$arg"); [[ $arg == -* ]] && cli_intent=1 ;;
     esac
   done
+  [[ -z $isnew ]] || a+=(new)
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
+  if [[ -n $local_only && ( -n $remote || -n $host ) ]]; then
+    print -u2 't open: --local/--here and --remote/--host are mutually exclusive'
+    return 2
+  fi
   if (( ${a[(Ie)--force]} )) && [[ -n $isnew ]]; then
     print -u2 't open: --force cannot be combined with --new'; return 2
   fi
@@ -425,9 +430,12 @@ _t_open_impl() {
         print -u2 -- 't open: --local/--here and -r/--remote are mutually exclusive'
         return 2
       fi
-      _t_open_picker "$picker_repo" "$picker_remote" "$app" "$cli" "$include_attached"; picker_rc=$?
-      (( picker_rc == 2 )) || return $picker_rc
-      # No existing rows: use the ordinary fresh-session/default-host path.
+      _t_open_picker "$picker_repo" "$picker_remote" "$app" "$cli" "$include_attached" "" "$remote"; picker_rc=$?
+      if (( picker_rc == 3 )); then
+        _t_open_new_local "$picker_repo"
+        return $?
+      fi
+      return $picker_rc
     fi
   fi
 
@@ -485,7 +493,28 @@ _t_open_impl() {
   _t_dev "${a[@]}"
 }
 
-# Complete current-session picker. Return 2 when there are no candidates, or 3
+# Ctrl-N chooses a fresh local destination explicitly, independently of the
+# highlighted session and the inclusive browsing scope.
+_t_open_new_local() {
+  local repo=$1 selected row
+  local -a choices
+  if [[ -z $repo ]]; then
+    for repo in ${(ok)DEV_REPOS}; do
+      [[ -d ${DEV_REPOS[$repo]} ]] || continue
+      choices+=("$repo"$'\t'"$(_dev_homerel "${DEV_REPOS[$repo]}")")
+    done
+    (( $#choices )) || { print -u2 't open: no registered local repositories'; return 1; }
+    selected=$(print -rl -- "${choices[@]}" | _t_fzf_single 'new local session' 'Registered local repositories' \
+      --delimiter=$'\t' --with-nth=1,2 --prompt='new session > ') || return $?
+    [[ -n $selected ]] || return 130
+    repo=${selected%%$'\t'*}
+  fi
+  [[ -n ${DEV_REPOS[$repo]:-} && -d ${DEV_REPOS[$repo]} ]] || return 1
+  local _T_OPEN_REPO_ARGUMENT=1
+  _t_dev "$repo" new --local
+}
+
+# Complete current-session picker. Remote callers return 2 with no candidates; 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
   local _T_OPEN_NOTICE_FILE picker_result
@@ -514,6 +543,8 @@ _t_open_picker_impl() {
   fi
   local -a fields candidates format_args
   local include_attached="$5" filtered
+  local -a cache_scope
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
   local scope_rel wt_rel cwd_rel
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
@@ -523,28 +554,35 @@ _t_open_picker_impl() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" "${cache_scope[@]}" --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --local --unprefixed --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" "${cache_scope[@]}" --local --unprefixed --details) || return $?
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue
-    if [[ -n $scope ]]; then
+    if [[ -n $scope && ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
       cwd_rel=$(_dev_homerel "$fields[3]")
       [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
          ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
     fi
     candidates+=("$row")
   done
-  (( $#candidates )) || return 2
+  if (( $#candidates == 0 )); then
+    [[ -z $6 ]] || return 2
+    if [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+      print -u2 't open: discovery is incomplete; no session was started'
+      return 1
+    fi
+  fi
   [[ -n $repo ]] && format_args+=(--repo)
   rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
-  [[ -n $rows ]] || return 1
+  [[ -n $rows || $#candidates == 0 ]] || return 1
   local columns=${rows%%$'\n'*}
   rows=${rows#*$'\n'}
+  [[ -n $columns ]] || columns='SESSION  WORKING ON  LAST TURN'
   # Filter from raw ownership fields, then match stable host/session identities.
   local -A hidden
   for row in "${candidates[@]}"; do
@@ -579,7 +617,11 @@ _t_open_picker_impl() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
+    local new_session=1
+    # Explicit remote callers have their own fresh-session routing. A remote
+    # browse must never turn Ctrl-N into a local launch on the calling machine.
+    [[ -z $6 && -z $7 ]] || new_session=
+    selected=$(T_PICKER_NEW_SESSION="$new_session" T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)

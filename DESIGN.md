@@ -49,3 +49,9 @@ command behavior tests and the full Linux coverage gate.
 
 Use [selective visual validation](docs/validation.md) to choose captures during
 iteration while retaining every project-required rendered check at delivery.
+
+Open picker actions include Ctrl-N for a fresh local session. Keep native key
+labels, `Tab ✓` spacing, the full HOTKEYS/filter/sort grouping, and a filled
+current Filters ON and Sort label. Do not add a selectable fake session row for
+New. Show the status legend in the bottom footer where supported; older fzf
+keeps a compact header legend and short terminals prioritize rows and controls.

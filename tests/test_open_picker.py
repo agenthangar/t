@@ -33,10 +33,14 @@ for index, action in enumerate(filter(None, os.environ.get('PICK_ACTIONS', '').s
     rows = Path(os.environ['T_PICKER_CURRENT']).read_text().splitlines()
     Path(os.environ['PICKER_LOG'] + f'.step{index}').write_text('\n'.join(rows))
 selected = os.environ.get('PICK_LABELS', '').split(',')
+if '--print-query' in sys.argv:
+    print('')
+found = False
 for row in rows:
     if row.split('\t')[1] in selected:
+        found = True
         print(row)
-if selected == ['']:
+if not found:
     sys.exit(130)
 """)
     stub.chmod(0o755)
@@ -504,3 +508,82 @@ def test_open_incomplete_empty_scope_never_starts_fresh(zsh):
     ''', _tty=True)
     assert 'rc=1' in result.stdout and 'UNEXPECTED' not in result.stdout
     assert 'discovery is incomplete' in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('command', ['_t_open', 't open', 't session open'])
+@pytest.mark.parametrize('args', ['api --local --new', '--new --local api', '--local --new'])
+def test_public_local_new_keeps_local_allocator(zsh, command, args):
+    (zsh.home / 'code/api').mkdir(parents=True)
+    result = zsh(r'''
+      REMOTE_HOSTS=(offline offline)
+      _t_infer_repo() { print api; }
+      _dev_remote_resolve() { print -u2 UNEXPECTED_REMOTE; return 91; }
+      _dev_rows_all() { print -u2 UNEXPECTED_SCAN; return 91; }
+      _dev_fresh_open() { print -r -- "LOCAL_FRESH $1"; _T_FRESH_SESSION=dev-api-43; }
+      _t_session_attach() { print -r -- "ATTACH $1"; }
+    ''' + command + ' ' + args)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'LOCAL_FRESH api' in result.stdout and 'ATTACH dev-api-43' in result.stdout
+    assert 'UNEXPECTED' not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('args', ['--local --host mini --new api', '--host mini --local api'])
+def test_local_and_explicit_host_rejected(zsh, args):
+    result = zsh('_dev_remote_open() { print UNEXPECTED; }; _t_open ' + args)
+    assert result.returncode == 2
+    assert 'mutually exclusive' in result.stderr and 'UNEXPECTED' not in result.stdout
+
+
+def test_unscoped_new_uses_registered_local_repository_picker(zsh):
+    (zsh.home / 'code/api').mkdir(parents=True)
+    result = zsh(r'''
+      _t_open_picker() { return 3; }
+      _t_fzf_single() { cat > "$HOME/repo-choices"; printf 'api\tlocal checkout\n'; }
+      _t_dev() { print -r -- "FRESH $*"; }
+      _t_open
+    ''', _tty=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'FRESH api new --local' in result.stdout
+    assert (zsh.home / 'repo-choices').read_text().startswith('api\t')
+
+
+def test_unscoped_new_repository_cancel_never_launches(zsh):
+    (zsh.home / 'code/api').mkdir(parents=True)
+    result = zsh(r'''
+      _t_open_picker() { return 3; }
+      _t_fzf_single() { return 130; }
+      _t_dev() { print UNEXPECTED; }
+      _t_open
+    ''', _tty=True)
+    assert result.returncode == 130 and 'UNEXPECTED' not in result.stdout
+
+
+def test_verified_empty_open_stays_in_picker_until_cancel(zsh, tmp_path):
+    env = picker_stub(tmp_path, '')
+    result = zsh(r'''
+      _t_discovery_rows() { return 0; }
+      _t_dev() { print UNEXPECTED_FRESH; }
+      _t_open api
+    ''', _tty=True, **env)
+    assert result.returncode == 130 and 'UNEXPECTED' not in result.stdout
+    assert (tmp_path / 'picker.log').read_text() == ''
+
+
+def test_explicit_remote_empty_picker_preserves_no_candidate_result(zsh):
+    result = zsh(r'''
+      _t_remote_open_inventory() { return 0; }
+      _t_fzf_filtered() { print UNEXPECTED; }
+      _t_open_picker api '' '' 1 '' mini
+    ''', _tty=True)
+    assert result.returncode == 2 and 'UNEXPECTED' not in result.stdout
+
+
+def test_explicit_remote_browse_disables_local_new_action(zsh):
+    result = zsh(r'''
+      _t_discovery_rows() { printf 'mini\tsid\t/code/api\tapi-2\tdetached\tactive\tTask\tcodex\n'; }
+      _t_fzf_filtered() { print -u2 -- "NEW=${T_PICKER_NEW_SESSION:-disabled}"; return 130; }
+      _t_dev() { print UNEXPECTED_LOCAL; }
+      _t_open --remote
+    ''', _tty=True)
+    assert result.returncode == 130 and 'UNEXPECTED' not in result.stdout
+    assert 'NEW=disabled' in result.stdout + result.stderr

@@ -20,7 +20,7 @@ _t_fzf_worker() {
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
       T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK T_PICKER_NOTICE \
-      T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
+      T_PICKER_NEW_SESSION T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
     # Keep large prefix-assigned inputs out of the environment of exec itself.
@@ -59,7 +59,7 @@ _t_fzf() {
   _t_fzf_rc=$?
   # fzf uses 1 for an empty selection and 130 for Esc/Ctrl-C. Both are an
   # abandoned interaction to the command that opened the picker.
-  [ "$_t_fzf_rc" -ne 1 ] || return 130
+  [ "$_t_fzf_rc" -ne 1 ] || [ "${T_PICKER_KEEP_EMPTY:-}" = 1 ] || return 130
   return "$_t_fzf_rc"
 }
 
@@ -243,8 +243,10 @@ _t_fzf_filtered() (
   [ -z "$_t_picker_all" ] || printf '%s\n' "$_t_picker_all" > "$T_PICKER_ALL"
   _t_picker_hidden=$(( $(wc -l < "$T_PICKER_ALL") - $(wc -l < "$T_PICKER_DEFAULT") ))
   _t_picker_controls="Enter $_t_picker_action · Esc · Tab mark ✓"
+  _t_picker_accept=accept
   _t_picker_preview_bind=,ctrl-/:toggle-preview
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+    _t_picker_accept=accept-non-empty
     _t_picker_preview_bind=,ctrl-/:ignore,alt-n:ignore,k:put
     _t_picker_controls="Enter open · Ctrl-K kill · Esc · Tab mark ✓"
     set -- --preview= "$@"
@@ -329,11 +331,16 @@ Tab mark ✓"
   # Older versions clear marks explicitly so a hidden target cannot be accepted.
   export T_PICKER_CLEAR_MARKS='deselect-all+'
   _t_picker_fzf_help=$(command fzf --help </dev/null 2>/dev/null)
+  unset T_PICKER_NATIVE_FOOTER
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+    case $_t_picker_fzf_help in *--footer=*) export T_PICKER_NATIVE_FOOTER=1 ;; esac
+  fi
   case $_t_picker_fzf_help in
     *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
   esac
-  if [ -n "$_t_picker_source" ]; then
-    printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
+  if [ -n "$_t_picker_source" ] || [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
+    : > "$_t_picker_dir/source"
+    [ -z "$_t_picker_source" ] || printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
     if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
       # fzf 0.58 added --header-border and began using the actual marker and
       # pointer widths for header indentation. Older versions assume two cells.
@@ -479,17 +486,49 @@ SH
     export FZF_API_KEY
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
-    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(ctrl-n)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+  fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
+    # No row placeholder is needed: this binding also works in an empty list
+    # and with a query matching nothing on fzf 0.44 and current fzf.
+    # shellcheck disable=SC2016
+    set -- --bind='ctrl-n:execute-silent(touch "$T_PICKER_VIEWS/new-session")+abort' "$@"
   fi
   if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
     case ${T_PICKER_SESSION_FILTERS:-} in open|resume|kill|list) set -- --info=inline "$@" ;; esac
   fi
-  _t_fzf --height=100% --multi --no-hscroll --exact --no-extended -i --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
-    --bind="enter:accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
-    --bind="$_t_picker_bind" \
-    --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
-    --header="$(cat "$_t_picker_header")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"
-  _t_picker_rc=$?
+  if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then
+    set -- --footer="$(cat "$_t_picker_dir/footer")" --footer-border=none "$@"
+  fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+    # accept-non-empty on legacy fzf still exits when its total input is empty.
+    # Retain that distinct status and query so Enter can reopen the same empty
+    # view; cancellation and explicit New keep their separate outcomes.
+    export T_PICKER_KEEP_EMPTY=1
+    set -- --print-query "$@"
+  fi
+  while :; do
+    _t_fzf --height=100% --multi --no-hscroll --exact --no-extended -i --margin="$_t_picker_margin" --delimiter="$(printf '\t')" --with-nth=-1 \
+      --bind="enter:$_t_picker_accept,esc:abort,ctrl-c:abort,space:put,tab:toggle+down,shift-tab:up${_t_picker_preview_bind}" \
+      --bind="$_t_picker_bind" \
+      --preview='printf "%s\n" {-1}' --preview-window='hidden:wrap:down:40%' \
+      --header="$(cat "$T_PICKER_CURRENT_HEADER")" "$@" < "$T_PICKER_CURRENT" > "$_t_picker_dir/result"
+    _t_picker_rc=$?
+    if [ "${T_PICKER_NEW_SESSION:-}" = 1 ] && [ -f "$_t_picker_dir/new-session" ]; then
+      return 3
+    fi
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
+      _t_picker_query=
+      IFS= read -r _t_picker_query < "$_t_picker_dir/result" || :
+      tail -n +2 "$_t_picker_dir/result" > "$_t_picker_dir/selected"
+      mv "$_t_picker_dir/selected" "$_t_picker_dir/result"
+      if [ "$_t_picker_rc" = 1 ] || { [ "$_t_picker_rc" = 0 ] && [ ! -s "$_t_picker_dir/result" ]; }; then
+        set -- "$@" --query="$_t_picker_query"
+        continue
+      fi
+    fi
+    break
+  done
   if [ "$_t_picker_rc" = 0 ]; then
     cat "$_t_picker_dir/result"
   fi

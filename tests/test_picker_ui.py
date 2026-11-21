@@ -72,8 +72,11 @@ def picker(t_mod):
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False, new_session=False):
             env['T_HOME'] = str(ROOT)
+            env.pop('T_PICKER_NEW_SESSION', None)
+            if new_session:
+                env['T_PICKER_NEW_SESSION'] = '1'
             if slow_update:
                 library = root / 'slow/libexec'
                 library.mkdir(parents=True)
@@ -435,15 +438,32 @@ def test_open_abort_does_not_start_or_attach_sessions(picker, key):
 
 
 @pytest.mark.fzf_compat
-def test_open_ctrl_n_still_navigates_and_enter_opens_selection(picker):
+def test_open_ctrl_n_explicitly_starts_new_local_session(picker):
     start, wait, keys, finish = picker
     start(profile='public-open-cli')
     wait('1/1 (0)')
-    keys('C-a')
-    wait('2/2 (0)')
-    keys('Up', 'C-n')
-    wait('2/2 (0)')
-    assert finish() == ['api 4 --local']
+    keys('Tab')
+    wait('1/1 (1)')
+    assert finish('C-n') == ['api new --local']
+
+
+@pytest.mark.parametrize('state', ['empty', 'query', 'killed'])
+@pytest.mark.fzf_compat
+def test_open_ctrl_n_works_without_a_selectable_row(picker, state):
+    start, wait, keys, finish = picker
+    start(profile='public-open-kill' if state == 'killed' else 'public-open', empty=state == 'empty')
+    wait('0/0 (0)' if state == 'empty' else '1/1 (0)')
+    if state == 'query':
+        keys('-l', 'no matching session')
+        wait('0/1 (0)')
+    elif state == 'killed':
+        keys('C-k')
+        wait('0/0 (0)')
+    keys('Enter')
+    wait('0/0 (0)' if state != 'query' else '0/1 (0)')
+    result = finish('C-n')
+    assert result[-1] == 'api new --local'
+    assert result[:-1] == (['KILL api 4 1'] if state == 'killed' else [])
 
 
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
@@ -800,3 +820,25 @@ def test_open_discovery_notice_keeps_focused_row_visible(picker, width, height):
     screen = wait('4/4 (0)')
     assert 'Older results' in screen and 'Filters OFF' in screen and '▸' in screen
     assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+def test_open_new_action_is_disabled_while_close_restores_rows(picker):
+    start, wait, keys, finish = picker
+    start(slow_update=True, new_session=True)
+    wait('2/2 (0)')
+    keys('C-k')
+    wait('1/1 (0)')
+    keys('C-n')
+    wait('Close: api-2 closed')
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+def test_open_enter_accepts_multiple_exact_marked_rows(picker):
+    start, wait, keys, finish = picker
+    start()
+    wait('2/2 (0)')
+    keys('Tab', 'Tab')
+    wait('2/2 (2)')
+    assert [row.split('\t')[1] for row in finish()] == ['api-2', 'web-4']

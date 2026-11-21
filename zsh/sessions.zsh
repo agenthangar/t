@@ -1934,15 +1934,18 @@ _dev_kill_pick() {
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   local rows
+  local -a cache_scope
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
+
   if [[ -n $remote_only ]]; then
-    rows=$(_t_discovery_rows --details) || return $?
+    rows=$(_t_discovery_rows --remote-only "${cache_scope[@]}" --details) || return $?
   else
-    rows=$(_t_discovery_rows --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return $?
+    rows=$(_t_discovery_rows "${cache_scope[@]}" --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return $?
   fi
   if [[ -n $remote_only ]]; then
     rows=$(print -r -- "$rows" | awk -F'\t' '$1 != "local"')
   fi
-  if [[ -n $repo ]]; then
+  if [[ -n $repo && ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
     local dir="${DEV_REPOS[$repo]:-}" root="${DEV_WORKTREE_ROOT:-}"
     if [[ -n $dir ]]; then
       rows=$(print -r -- "$rows" | awk -F'\t' \
@@ -2855,7 +2858,11 @@ _t_dev() {
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local open_rc
     _t_open_picker "$repo" "" "" 1; open_rc=$?
-    (( open_rc == 2 )) || return $open_rc
+    if (( open_rc == 3 )); then
+      _t_open_new_local "$repo"
+      return $?
+    fi
+    return $open_rc
   fi
 
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
