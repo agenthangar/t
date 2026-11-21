@@ -52,7 +52,7 @@ def test_wait_completion_failure_and_scope(adapter, monkeypatch, clock, cold, fa
         return done
     monkeypatch.setattr(adapter, 'discover', discover)
     assert adapter.wait_for_refresh('config', initial, local=True) == done
-    assert calls == [('config', dict(local=True, fields=['rows'], deadline=30))]
+    assert calls == [('config', dict(local=True, fields=['rows'], deadline=30, observe=True))]
     assert clock == [.25]
 
 
@@ -275,7 +275,7 @@ def test_open_wait_keeps_remote_scope_and_metadata(adapter, monkeypatch, clock):
     calls = []
     monkeypatch.setattr(adapter, 'discover', lambda cfg, **kw: calls.append(kw) or done)
     assert adapter.wait_for_refresh(None, initial, host='mini', fields=['rows', 'scopes']) is done
-    assert calls == [dict(local=False, host='mini', fields=['rows', 'scopes'], deadline=30)]
+    assert calls == [dict(local=False, host='mini', fields=['rows', 'scopes'], deadline=30, observe=True)]
 
 
 @pytest.mark.parametrize('available', [False, True])
