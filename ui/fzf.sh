@@ -41,6 +41,13 @@ _t_fzf_worker() {
   '
 }
 
+# Noninteractive matching for presentation viewports. Use the same fzf matcher
+# against complete canonical display fields, independently of visible slices.
+_t_fzf_match() {
+  FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE=/dev/null command fzf \
+    --delimiter="$(printf '\t')" --nth=-1 --ansi --exact --no-extended -i --no-sort --filter="$1"
+}
+
 _t_fzf() {
   if [ "${NO_COLOR+x}" = x ] || [ "${TERM:-}" = dumb ]; then set -- "$@" --color=bw; fi
   _t_air_size=$(stty size </dev/tty 2>/dev/null) || _t_air_size=
@@ -52,10 +59,17 @@ _t_fzf() {
   for _t_air_option do
     case $_t_air_option in --preview=*) set -- "$@" --height=100%; break ;; esac
   done
+  if [ "${T_PICKER_PAN:-}" = 1 ]; then
+    set -- python3 "$T_HOME/libexec/t_picker_viewport.py" relay fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
+      --pointer='▸ ' --marker='✓ ' \
+      --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:green,header:cyan,prompt:cyan,border:bright-black' "$@"
+    "$@"
+  else
   command fzf --height=60% --layout=reverse --border=rounded --margin=1,2 \
     --pointer='▸ ' --marker='✓ ' \
     --color='fg+:white,bg+:#005f5f,hl:cyan,hl+:white:underline,pointer:white,marker:green,header:cyan,prompt:cyan,border:bright-black' \
     "$@"
+  fi
   _t_fzf_rc=$?
   # fzf uses 1 for an empty selection and 130 for Esc/Ctrl-C. Both are an
   # abandoned interaction to the command that opened the picker.
@@ -331,7 +345,7 @@ Tab mark ✓"
   # Older versions clear marks explicitly so a hidden target cannot be accepted.
   export T_PICKER_CLEAR_MARKS='deselect-all+'
   _t_picker_fzf_help=$(command fzf --help </dev/null 2>/dev/null)
-  unset T_PICKER_NATIVE_FOOTER
+  unset T_PICKER_NATIVE_FOOTER T_PICKER_PAN
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
     case $_t_picker_fzf_help in *--footer=*) export T_PICKER_NATIVE_FOOTER=1 ;; esac
   fi
@@ -365,6 +379,21 @@ Tab mark ✓"
     fi
     export T_PICKER_HEADER_WIDTH
     export T_PICKER_FILTER_HELPER="$T_HOME/libexec/t_picker_filters.py"
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_columns" ] && [ -r "$T_HOME/libexec/t_picker_viewport.py" ]; then
+      export T_PICKER_PAN=1
+      export T_PICKER_COLUMNS="$_t_picker_columns" T_PICKER_PAN_HEADER_PAD=0
+      case $_t_picker_fzf_help in *--header-border*) ;; *) T_PICKER_PAN_HEADER_PAD=2 ;; esac
+      export T_PICKER_PAN_FRAME_ROWS=6
+      if [ "${_t_picker_size%% *}" -le 14 ]; then T_PICKER_PAN_FRAME_ROWS=1
+      elif [ "${_t_picker_size#* }" -le 60 ]; then T_PICKER_PAN_FRAME_ROWS=2; fi
+      printf 0 > "$_t_picker_dir/pan-offset"
+      # fzf starts a private authenticated loopback API. Its chosen ephemeral
+      # port is delivered back to the relay without reserving a racy port.
+      export FZF_API_KEY
+      FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+      # shellcheck disable=SC2016
+      set -- --disabled --listen=127.0.0.1:0 --bind='f11:execute-silent(cp "$T_PICKER_VIEWS/pan-sync-request" "$T_PICKER_VIEWS/pan-sync-ack")' --bind='start:execute-silent(printf "%s" "$FZF_PORT" > "$T_PICKER_VIEWS/pan-port")' --bind='change:execute-silent(sh "$T_PICKER_TOGGLE" search {q})+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")' --preview='printf "%s\n" {-2}' "$@"
+    fi
     T_PICKER_COLOR=0
     if [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ] && [ -t 2 ]; then
       T_PICKER_COLOR=1
@@ -530,7 +559,13 @@ SH
     break
   done
   if [ "$_t_picker_rc" = 0 ]; then
-    cat "$_t_picker_dir/result"
+    if [ "${T_PICKER_PAN:-}" = 1 ]; then
+      # The private final field is presentation only; command callers receive
+      # the original complete row and exact selection identity.
+      python3 -c 'import sys; sys.stdout.writelines(line.rsplit("\t", 1)[0] + "\n" for line in sys.stdin.read().splitlines())' < "$_t_picker_dir/result"
+    else
+      cat "$_t_picker_dir/result"
+    fi
   fi
   return "$_t_picker_rc"
 )

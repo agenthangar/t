@@ -27,6 +27,13 @@ remove those gaps to keep the focused result visible.
 Do not interpret requests to improve picker filtering or sorting as requests for
 new CLI flags unless the user explicitly asks for flags or noninteractive control.
 
+The resume table has a horizontal viewport. Over the table, ordinary wheel-up
+pans left and wheel-down pans right; horizontal wheels follow their direction.
+Keep the query, controls and selection gutter fixed while headings and data move
+together. Show `<` and `>` only at edges with hidden content. Panning preserves
+query editing, focused identity and marks, and search includes offscreen text.
+Wheel events over controls or details retain their native behavior.
+
 ## Required design adherence CI
 
 Every PR runs **Design adherence** on Linux with fzf 0.44.1 and 0.74.5, including
