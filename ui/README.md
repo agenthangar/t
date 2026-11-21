@@ -2107,8 +2107,18 @@ Reports read existing local evidence only: no model start, downloads or network.
 installation for updates. `t install nightr` is its compatibility convenience.
 `--yes` explicitly runs installation without review; `--dry-run` is read-only.
 `t system apps status nightr [--json]` never starts an app, prompts or downloads.
-These commands target this Mac and do not infer a repository. Nightr is optional
-in the installer and has its own `t config` entry, separate from coding agents.
+These commands target this Mac and do not infer a repository. Nightr also has its
+own `t config` entry.
+
+An unnamed, interactive `t agent install` (`t install`) on macOS offers Nightr in
+**Desktop Apps**, unchecked by default. The shared review shows `brew tap
+agenthangar/tap` if needed, then `brew install --cask agenthangar/tap/nightr`
+for a fresh install, or `nightr update` for an existing installation. Confirming
+runs the reviewed action. Fresh guided installs require the verified Homebrew
+cask. An existing installation keeps its package owner and must pass signature
+and receipt verification before its updater runs. Enroll Nightr in managed
+updates after successful verification. Named agents, unattended runs, dry runs,
+and remote installs retain their agent-only behavior.
 
 `t system update` includes opted-in Nightr installations, preserving Homebrew or
 direct ownership. It never installs an absent app. App setup and helper approval

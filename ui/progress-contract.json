@@ -645,6 +645,10 @@
       "kind": "phase",
       "reason": "The announced installation check resolves existing package ownership with a bounded read-only Homebrew query."
     },
+    "libexec/t_nightr.py:guided_update:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The verified Nightr CLI streams package update progress and keeps its terminal for administrator prompts."
+    },
     "libexec/nightr_install.py:run:subprocess.run": {
       "kind": "phase",
       "reason": "Announced package phases use bounded metadata, signature and receipt probes; interactive installers use the separate streamed path."
