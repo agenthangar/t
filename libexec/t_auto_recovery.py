@@ -101,10 +101,11 @@ def run(argv, **kwargs):
 
 def boot():
     if sys.platform == 'darwin':
-        result = run(['sysctl', '-n', 'kern.boottime'])
-        if result.returncode or not result.stdout.strip():
+        # kern.boottime is a wall-clock estimate and can change within one boot.
+        result = run(['sysctl', '-n', 'kern.bootsessionuuid'])
+        if result.returncode:
             raise ValueError('cannot determine boot identity')
-        return result.stdout.strip()
+        return str(uuid.UUID(result.stdout.strip()))
     return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 
 
@@ -165,8 +166,8 @@ def enroll(rows):
     for row in rows:
         identity = key(row['agent'], row['sid'])
         old = before.get(identity, {})
-        if old and (old.get('argv_verified') or old.get('supervisor_pid') or
-                    not old.get('open') or old.get('boot') != current_boot):
+        if old and (not old.get('open') or old.get('supervisor_pid') or
+                    (old.get('argv_verified') and old.get('boot') == current_boot)):
             continue
         spec = {'safe': False}
         try:
@@ -193,10 +194,11 @@ def enroll(rows):
             if old.get('generation') != generation:
                 continue
             if old:
-                old.update(**spec, argv_verified=True, workspace=location)
-                if spec['safe'] and old.get('phase') == 'attention' and not old.get('submission'):
+                old.update(row)
+                old.update(**spec, argv_verified=True, workspace=location, boot=current_boot)
+                if old.get('phase') == 'attention' and not old.get('submission'):
                     old.update(phase='unknown', failures=0, next_retry=0,
-                               reason='Launch settings verified; waiting for lifecycle events')
+                               outcome='', reason='Existing session: waiting for verified lifecycle events')
                 continue
             data['sessions'][identity] = {**row, 'workspace': location,
                 **spec, 'argv_verified': True,
