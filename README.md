@@ -1670,6 +1670,16 @@ without exiting. Saved snapshots migrate lazily into the stable namespace.
 Helpers whose configuration identity cannot be attributed safely are left alone;
 unmodified older clients can still recreate their legacy helper.
 
+Runtime reconciliation inventories each verified tmux server once, retaining
+historical socket aliases for existing hooks, terminal locks and recovery state.
+Reserved hook slots containing custom commands and development-pinned helpers
+are preserved during both updates and ordinary attachment. Actionable runtime
+results identify the server/session and explain the next step. Legacy observers
+retain their original PTY, lock and pending event; eligible normal attachments
+retry adoption after that owner finishes. Recovery watchers use their own safe
+lifecycle boundary. Pending migration clears only after a verified live helper
+acknowledges the installed fingerprint, never from package installation alone.
+
 SSH authentication must already work without a password prompt. Unreachable
 hosts and failed updates are reported while the remaining hosts continue; any
 failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining

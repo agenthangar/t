@@ -740,6 +740,10 @@
     "libexec/t_session_cache.py:_brew_process_sources:subprocess.run": {
       "kind": "protocol",
       "reason": "Read-only legacy Homebrew source discovery has a 200 ms deadline and bounded parsing. Update reconciliation owns progress; detached discovery startup has no terminal and must keep protocol output clean."
+    },
+    "libexec/t_terminal_close.py:attached:time.sleep": {
+      "kind": "background",
+      "reason": "Private attachment hooks wait at most two seconds for a scoped pending observer migration to publish its live fingerprint. They have no foreground terminal; verification must not paint over the attached agent."
     }
   },
   "shell": [
