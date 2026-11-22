@@ -389,9 +389,18 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
             elif mouse.pending and time.monotonic() - last_input > .06:
                 to_child.extend(mouse.flush())
             if process.poll() is not None and not ready: break
-        return process.wait()
+        try:
+            return process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            # The outer terminal can disappear while fzf is still alive.
+            # The cleanup below terminates the orphaned picker.
+            return 130
     finally:
-        termios.tcsetattr(terminal, termios.TCSADRAIN, saved)
+        try:
+            termios.tcsetattr(terminal, termios.TCSADRAIN, saved)
+        except termios.error as error:
+            if error.args[0] not in (errno.EIO, errno.ENXIO, errno.ENOTTY):
+                raise
         for signum, handler in old_handlers.items(): signal.signal(signum, handler)
         if process is not None and process.poll() is None:
             try: os.killpg(process.pid, signal.SIGTERM)

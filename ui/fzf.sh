@@ -375,7 +375,8 @@ Tab mark ✓"
     *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
   esac
   if [ -n "$_t_picker_source" ] || [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ] || [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
-    printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
+    : > "$_t_picker_dir/source"
+    [ -z "$_t_picker_source" ] || printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
     if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
       # fzf 0.58 added --header-border and began using the actual marker and
       # pointer widths for header indentation. Older versions assume two cells.
