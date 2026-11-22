@@ -244,7 +244,7 @@ def test_resume_discovery_notice_survives_auth_and_filter_changes(filters, tmp_p
     for action in ('current', 'agent', 'off', 'on', 'sort-repo', 'default'):
         filters.render(tmp_path, 'resume', action, 32)
         header = (tmp_path / 'current-header').read_text()
-        assert header.startswith('GitHub auth failed:')
+        assert header.splitlines()[1].startswith('GitHub auth failed:')
         assert 'Older or incomplete results' in header
 
 

@@ -109,6 +109,15 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
     facets = dict(agent='codex-long-界面', host='a-very-long-host-alias', repo='long-repository-name')
     text = filters.header(profile, 0, facets, 17, 'SESSION  WORKING ON', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
+    if profile == 'resume':
+        assert filters.key_labels('Alt-F', compact=width <= 40) + ' Edit filters' in text
+        assert 'Active filters' in text and '17 hidden' in text
+        assert all(value in text for value in facets.values())
+        assert all(filters.key_labels('Ctrl-' + letter, compact=width <= 40) in text for letter in 'SY')
+        expanded = filters.header(profile, 0, facets, 17, 'SESSION  WORKING ON', width,
+                                  filters_expanded=True)
+        assert all(filters.key_labels('Ctrl-' + letter, compact=width <= 40) in expanded for letter in 'FXGORDT')
+        return
     for letter in ('F', 'X', 'G'):
         assert ('^' if width <= 40 else 'Ctrl-') + letter in text
     assert '17 hidden' in text and text.count('Filters ON') == 1
@@ -244,13 +253,14 @@ def test_resume_sorts_preserve_snapshot_filters_and_reset_defaults(filters, tmp_
         (tmp_path / name).write_text('\n'.join(rows) + '\n')
     def render(action):
         filters.render(tmp_path, 'resume', action, 68)
-        return (tmp_path / 'current').read_text().splitlines()
+        return ['\t'.join(line.split('\t')[:-1] + [line.split('\t')[-1][filters.RESUME_STATUS_WIDTH:]])
+                for line in (tmp_path / 'current').read_text().splitlines()]
     assert render('current') == [rows[1], rows[2], rows[0], rows[3], rows[4]]
     expected = {'repo': [1, 2, 3, 4, 0], 'agent': [1, 2, 0, 3, 4],
                 'host': [1, 2, 3, 4, 0], 'session': [1, 3, 4, 2, 0]}
     for mode, indices in expected.items():
         assert render('sort-' + mode) == [rows[i] for i in indices]
-        assert 'Sort: ' + filters.RESUME_SORTS[mode][1] in (tmp_path / 'current-header').read_text()
+        assert filters.sort_label(mode).capitalize() in (tmp_path / 'current-header').read_text()
     render('agent')  # Claude facet remains active while sort changes.
     assert render('sort-repo') == [rows[1]]
     assert json.loads((tmp_path / 'facets.json').read_text())['agent'] == 'claude'
@@ -299,16 +309,101 @@ def test_resume_turn_enrichment_uses_exact_sources_and_never_remote_local_copy(f
 def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
-    assert 'Alt-' not in text and 'M-' not in text
-    for letter in ('F', 'X', 'G', 'S', 'Y', '/'):
+    assert filters.key_labels('Alt-F', compact=width <= 40) + ' Edit filters' in text
+    for letter in ('S', 'Y', '/'):
         assert ('^' if width <= 36 else 'Ctrl-') + letter in text
-    assert ('Sort: turn' if width <= 36 else 'Sort: last turn') in text
+    assert 'Active sort' in text and 'Last turn' in text
     if width <= 36:
         assert len(text.splitlines()) <= 10
     else:
-        sort_line = next(line for line in text.splitlines() if 'Sort:' in line)
-        assert 'Ctrl-S toggle' in sort_line and 'Ctrl-Y next' in sort_line
-        assert len([line for line in text.splitlines() if line]) <= 5
+        sort_line = next(line for line in text.splitlines() if 'Ctrl-S' in line)
+        assert 'Ctrl-S Pause sort' in sort_line and 'Ctrl-Y Next sort' in sort_line
+        assert len([line for line in text.splitlines() if line]) <= 7
+
+
+def test_resume_filter_editor_expansion_persists_without_changing_choices(filters, tmp_path, monkeypatch):
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '40')
+    row = '\t'.join(['api', '1', 'saved-id', '/wt', 'date', 'Recorded title', '-',
+                     'history', '-', 'codex', '-', 'org/api', 'OPEN', '-', '-', '-', '-', 'Display'])
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (tmp_path / name).write_text(row + '\n')
+    filters.render(tmp_path, 'resume', 'match-agent', 120, identity=('api', '1', 'saved-id'))
+    filters.render(tmp_path, 'resume', 'sort-repo', 120)
+    before = [(tmp_path / name).read_text() for name in ('current', 'facets.json', 'sort')]
+    assert 'Edit filters' in (tmp_path / 'current-header').read_text()
+    filters.render(tmp_path, 'resume', 'expand-filters', 120)
+    assert (tmp_path / 'filters-expanded').read_text() == '1'
+    expanded = (tmp_path / 'current-header').read_text()
+    assert 'Ctrl-G Agent: codex' in expanded and 'Ctrl-F pause filters' in expanded
+    assert all('Ctrl-' + key in expanded for key in 'FTGORDXSY')
+    assert [(tmp_path / name).read_text() for name in ('current', 'facets.json', 'sort')] == before
+    filters.render(tmp_path, 'resume', 'current', 120)
+    assert 'Hide filters' in (tmp_path / 'current-header').read_text()
+    filters.render(tmp_path, 'resume', 'edit-filters', 120)
+    assert (tmp_path / 'filters-expanded').read_text() == '0'
+    assert 'Ctrl-F pause filters' not in (tmp_path / 'current-header').read_text()
+
+
+@pytest.mark.parametrize('width,height', [(120, 36), (80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('expanded', [False, True])
+def test_resume_resize_budget_preserves_primary_actions(filters, monkeypatch, width, height, expanded):
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', str(height))
+    monkeypatch.setenv('T_PICKER_RESUME_LAST', '1')
+    frame = 2 if height <= 14 else 8
+    monkeypatch.setenv('T_PICKER_PAN_FRAME_ROWS', str(frame))
+    facets = {'agent': 'codex-long-界面', 'host': 'a-very-long-host-alias', 'repo': 'long-repository-name'}
+    text = filters.header('resume', 0, facets, 17, 'STATUS PRS REPO TITLE', width,
+                          sort='closed', hide_merged=True, show_legend=True,
+                          filters_expanded=expanded)
+    compact = width <= 40 or height <= 14
+    assert all(filters.display_width(line) <= width for line in text.splitlines())
+    assert len(text.splitlines()) + frame < height
+    assert all(label in text for label in ('Enter', 'Esc', 'Tab', 'STATUS'))
+    assert all(filters.key_labels('Ctrl-' + key, compact=compact) in text for key in 'BSY/')
+    assert filters.key_labels('Alt-F', compact=compact) in text
+    if expanded:
+        assert all(filters.key_labels('Ctrl-' + key, compact=compact) in text for key in 'FTGORDX')
+
+
+@pytest.mark.parametrize('hidden', [0, 3])
+def test_resume_hidden_badge_uses_native_counter_when_supported(filters, tmp_path, hidden):
+    legacy = filters.header('resume', 0, {}, hidden, '', 80)
+    modern = filters.header('resume', 0, {}, hidden, '', 80, hidden_info=True)
+    assert legacy.splitlines()[0] == f'[{hidden} hidden]'
+    assert 'hidden' not in modern
+    assert 'attached hidden' not in legacy
+
+
+@pytest.mark.parametrize('notice', ['No matching conversations', 'GitHub auth failed: mini'])
+@pytest.mark.parametrize('hidden_info', [False, True])
+def test_resume_compact_alerts_survive_header_budget(filters, monkeypatch, notice, hidden_info):
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '12')
+    monkeypatch.setenv('T_PICKER_PAN_FRAME_ROWS', '2')
+    monkeypatch.setenv('T_PICKER_RESUME_LAST', '1')
+    text = filters.header('resume', 0, {}, 0, 'STATUS PRS REPO TITLE', 32, sort='closed',
+                          status=['Last refresh 16:16  ^U', notice], hidden_info=hidden_info)
+    assert notice in text and '^U' in text and '^B ↶' in text
+    assert '^S' in text and '^Y' in text and 'Last closed' in text
+    assert len(text.splitlines()) + 2 < 12
+    assert all(filters.display_width(line) <= 32 for line in text.splitlines())
+
+
+def test_resume_attached_action_and_legend_follow_visible_rows(filters, tmp_path, monkeypatch):
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '40')
+    saved = '\t'.join(['api', '1', 'saved', '/wt', 'date', 'Title', '-', 'history', '-',
+                       'codex', '-', 'org/api', 'OPEN', '-', '-', '-', '-', 'Display'])
+    attached = saved.replace('\t1\tsaved\t', '\t2\tlive\t').replace('\t-\thistory\t', '\there\tlive\t')
+    for name in ('source', 'all', 'rows-1'):
+        (tmp_path / name).write_text(saved + '\n' + attached + '\n')
+    (tmp_path / 'rows-0').write_text(saved + '\n')
+    filters.render(tmp_path, 'resume', 'current', 120)
+    header = (tmp_path / 'current-header').read_text()
+    assert 'Enter resume' in header and 'resume/attach' not in header and '● attached' not in header
+    filters.render(tmp_path, 'resume', 'state', 120)
+    header = (tmp_path / 'current-header').read_text()
+    assert 'Enter resume/attach' in header and '● attached' in header
+    filters.render(tmp_path, 'resume', 'state', 120)
+    assert 'resume/attach' not in (tmp_path / 'current-header').read_text()
 
 
 def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
@@ -334,21 +429,23 @@ def test_resume_refresh_separates_progress_timing_and_host_warnings(filters, mon
     ]}
     lines = filters.resume_health(health, 80, True, True)
     assert lines[0].startswith('\x1b[1;96mRefreshing local\x1b[0m')
-    assert lines[1].startswith('\x1b[37mLast refresh ') and lines[1].endswith('  dev current\x1b[0m')
-    assert lines[2:] == ['\x1b[33mmini timed out  mac unreachable\x1b[0m']
+    assert lines[1].startswith('\x1b[37mLast refresh ')
+    assert '\x1b[92m✓\x1b[0m\x1b[37m dev' in lines[2]
+    assert '\x1b[91m×\x1b[0m\x1b[37m mini\x1b[0m\x1b[33m timed out' in lines[2]
+    assert '\x1b[33m unreachable\x1b[0m' in lines[2]
     monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '12')
     compact = filters.resume_health(health, 27, False, True)
     assert len(compact) == 2
     assert compact[0] == 'Refreshing local  ' + filters.key_labels('Ctrl-U', compact=True)
-    assert compact[1] == 'mini timed out'
+    assert compact[1] == '× mini timed out'
 
 
 def test_resume_pr_badges_color_only_the_leading_labels(filters, monkeypatch):
     monkeypatch.delenv('NO_COLOR', raising=False)
     monkeypatch.setenv('TERM', 'xterm-256color')
-    display = '#42 ! ↗ #47 ◌  api  A title that mentions #23 ○'
+    display = '! #42  ◌ #47  api  A title that mentions #23 ○'
     assert filters.color_resume_prs(display) == (
-        '\x1b[33m#42 !\x1b[0m \x1b[96m↗\x1b[0m \x1b[37m#47 ◌\x1b[0m'
+        '\x1b[33m! #42\x1b[0m  \x1b[37m◌ #47\x1b[0m'
         '  api  A title that mentions #23 ○'
     )
     monkeypatch.setenv('NO_COLOR', '1')
@@ -363,18 +460,22 @@ def test_resume_legend_matches_row_colors(filters, monkeypatch):
         return '\t'.join(['api', str(slot), f'sid{slot}', '/wt', 'date', 'title', location,
                           'history', '-', 'codex', '-', 'org/api', 'OPEN', closed, '-', work, '-', display])
 
-    saved = row(1, '-', '2026-11-21T10:00:00Z', 'yes', '#42 ! ↗ #43 ↴  api  1  ⬡ codex  Title')
-    attached = row(2, 'here', '-', '-', '—              api  2 ●  ⬡ codex  Title ●')
+    saved = row(1, '-', '2026-11-21T10:00:00Z', 'yes', '! #42  ↴ #43  api  1  >_     Title').split('\t')
+    saved[-2] = 'yes'
+    saved = '\t'.join(saved)
+    attached = row(2, 'here', '-', '-', '—              api  2  >_     Title ●')
     saved, attached = [line.split('\t')[-1] for line in filters.mark_resume(saved + '\n' + attached).splitlines()]
     legend = '\n'.join(filters.resume_legend(100, False, True))
     for symbol, label, code, display in [
         ('↶', 'last closed', '36', saved), ('↻', 'work in progress', '33', saved),
         ('●', 'attached', '92', attached), ('!', 'conflict', '33', saved),
-        ('↗', 'preview', '96', saved), ('↴', 'merged', '95', saved),
+        ('↗', 'preview', '1;96', saved), ('↴', 'merged', '95', saved),
         ('—', 'no PR', '37', attached),
     ]:
         assert f'\x1b[{code}m{symbol} {label}\x1b[0m' in legend
-        assert re.search(rf'\x1b\[{code}m(?:#\d+ )?{symbol}\x1b\[0m', display)
+        assert re.search(rf'\x1b\[{code}m{symbol}(?: #\d+)?\x1b\[0m', display)
+    assert '\x1b[94m>_ Codex\x1b[0m' in legend
+    assert '\x1b[94m>_\x1b[0m' in saved and '\x1b[94m>_\x1b[0m' in attached
     assert attached.endswith('Title ●')
 
 
@@ -386,7 +487,8 @@ def test_resume_action_labels_use_readable_text(filters, monkeypatch, platform, 
     monkeypatch.setenv('TERM', 'xterm-256color')
     lines = filters.resume_action_rows(width, compact, True)
     for label in (enter, 'Esc', 'Tab'):
-        assert f'\x1b[1;97m{label}\x1b[0m' in lines[0]
+        visible = label if compact or platform != 'darwin' else {'Return': '↩ Return', 'Esc': '⎋ Esc', 'Tab': '⇥ Tab'}[label]
+        assert f'\x1b[1;97m{visible}\x1b[0m' in lines[0]
     assert all(filters.display_width(re.sub(r'\x1b\[[0-9;]*m', '', line)) <= width for line in lines)
 
 
@@ -407,9 +509,12 @@ def test_filters_off_on_preserve_saved_choices_and_sort(filters, tmp_path, profi
     saved_rows = (root / 'current').read_text()
     saved = (root / 'facets.json').read_text()
     filters.render(root, profile, 'off', 68)
-    assert set((root / 'current').read_text().splitlines()) == set(ROWS)
+    current = (root / 'current').read_text().splitlines()
+    if profile == 'resume':
+        current = ['\t'.join(line.split('\t')[:-1] + [line.split('\t')[-1][filters.RESUME_STATUS_WIDTH:]]) for line in current]
+    assert set(current) == set(ROWS)
     assert (root / 'facets.json').read_text() == saved
-    assert 'Filters OFF' in (root / 'current-header').read_text()
+    assert ('Filters paused' if profile == 'resume' else 'Filters OFF') in (root / 'current-header').read_text()
     filters.render(root, profile, 'off', 68)
     filters.render(root, profile, 'on', 68)
     assert (root / 'current').read_text() == saved_rows
@@ -472,13 +577,14 @@ def test_header_color_clips_before_ansi_and_plain_has_explicit_state(filters, mo
     import re
     monkeypatch.delenv('NO_COLOR')
     monkeypatch.setenv('TERM', 'xterm-256color')
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '40')
     for enabled in (True, False):
         plain = filters.header('resume', 0, {'agent': '界' * 40}, 3, '', 28, enabled=enabled)
         colored = filters.header('resume', 0, {'agent': '界' * 40}, 3, '', 28, enabled=enabled, color=True)
         assert re.sub(r'\x1b\[[0-9;]*m', '', colored) == plain
         assert '\x1b' in colored
-        assert ('\x1b[1;4;97;48;5;23mFilters' in colored) == enabled
-        assert 'Filters ' + ('ON' if enabled else 'OFF') in plain
+        assert ('\x1b[1;4;97;48;5;23mActive filters' in colored) == enabled
+        assert ('Active filters' if enabled else 'Filters paused') in plain
         assert all(filters.display_width(line) <= 28 for line in plain.splitlines())
 
 
@@ -491,10 +597,11 @@ def test_resume_merged_toggle_uses_metadata_and_preserves_choices(filters, tmp_p
         (tmp_path / name).write_text('\n'.join(rows) + '\n')
     def render(action):
         filters.render(tmp_path, 'resume', action, 68)
-        return (tmp_path / 'current').read_text().splitlines()
+        return ['\t'.join(line.split('\t')[:-1] + [line.split('\t')[-1][filters.RESUME_STATUS_WIDTH:]])
+                for line in (tmp_path / 'current').read_text().splitlines()]
     assert render('current') == rows
     assert render('merged') == rows[1:]
-    assert 'Ctrl-D merged' in (tmp_path / 'current-header').read_text()
+    assert 'Ctrl-D Merged PRs hidden' in (tmp_path / 'current-header').read_text()
     assert render('sort-repo') == rows[1:]
     assert render('off') == rows
     assert render('on') == rows[1:]
@@ -543,17 +650,16 @@ def test_hotkeys_highlight_only_current_states(filters, monkeypatch, platform, w
     compact = height <= 14
     text = filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
                           sort=sort, enabled=enabled, hide_merged=hide_merged, color=True)
-    active = re.findall(r'\x1b\[1;4;96m(.*?)\x1b\[0m', text)
     filled = re.findall(r'\x1b\[1;4;97;48;5;23m(.*?)\x1b\[0m', text)
-    assert ('Filters ON' in filled) == enabled
-    state_key = theme.key_labels('Ctrl-T', compact=compact)
-    assert any(item.startswith(state_key) for item in active) == enabled
-    assert any(item.startswith('Sort:') for item in filled)
-    assert any(theme.key_labels('Ctrl-D', compact=compact) in item for item in active) == (enabled and hide_merged)
     plain = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    assert all(item in ('Active filter', 'Active filters', 'Active sort') for item in filled)
+    assert 'Active sort' in filled
+    if not compact:
+        assert any(item.startswith('Active filter') for item in filled) == enabled
+        assert (theme.key_labels('Ctrl-D', compact=compact) + ' Merged PRs hidden' in plain) == (enabled and hide_merged)
     assert all(filters.display_width(line) <= width for line in plain.splitlines())
     if not compact:
-        assert plain.startswith('Filters ') and 'HOTKEYS' not in plain
+        assert plain.startswith('[2 hidden]') and 'HOTKEYS' not in plain
         assert plain.splitlines()[-2:] == ['', 'SESSION TASK']
     monkeypatch.setenv('NO_COLOR', '1')
     assert filters.header('resume', 0, {}, 2, 'SESSION TASK', width,
@@ -637,8 +743,8 @@ def test_list_filter_hotkey_selects_then_clears_and_cancel_keeps_state(filters, 
 @pytest.mark.parametrize('width', [27, 68])
 def test_filter_and_sort_controls_have_separate_sections(filters, profile, width):
     text = filters.header(profile, 0, dict.fromkeys(filters.FACETS), 2, 'SESSION TASK', width)
-    filter_section, sort_section = text.split('SORT' if profile == 'list' else 'Sort:', 1)
-    assert ('FILTERS' if profile == 'list' else 'Filters ON') in filter_section and '2 hidden' in filter_section
+    filter_section, sort_section = text.split('SORT' if profile == 'list' else 'Active sort', 1)
+    assert ('FILTERS' if profile == 'list' else 'Active filter') in filter_section and '2 hidden' in filter_section
     assert 'hidden' not in sort_section
 
 

@@ -117,9 +117,13 @@ def picker(t_mod):
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
-            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
+                if profile == 'resume-pan':
+                    rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\t[OPEN]    10   ⊡       mini   Last: 2h    Newest web task END-OF-TITLE\n'
+                            'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\t[OPEN]    2    ✱       local  Last: 3h    Older api task FAR-RIGHT\n')
+                    env['T_PICKER_COLUMNS'] = 'PRS       SLOT AGENT   HOST   ACTIVITY    WORKING ON'
                 if profile == 'resume-merged':
                     rows = rows.replace('\tNewest web', '\torg/web\tMERGED\t[MERGED] Newest web').replace('\tOlder api', '\torg/api\tOPEN\t[OPEN] Older api')
                 if profile == 'resume-closed':
@@ -137,7 +141,7 @@ def picker(t_mod):
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile in ('resume-rich', 'resume-merged', 'resume-closed'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if profile == 'resume-closed':
                 mode_env += 'T_PICKER_COLUMNS="WORKING ON" '
@@ -309,6 +313,8 @@ exec /bin/zsh "$@"
 
         def keys(*values):
             return tmux('send-keys', *values)
+        keys.capture = lambda: tmux('capture-pane', '-p').stdout
+        keys.has_pan_barrier = lambda: any(root.glob('t-picker.*/pan-sync-request'))
         keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
         keys.saved_resume_row = saved_resume_row
         keys.release_collector = lambda: (root / 'hold-collector').unlink(missing_ok=True)
@@ -327,7 +333,7 @@ def test_public_resume_ctrl_b_resumes_exact_last_closed(picker, query):
         keys('Down', 'Tab')
         wait('(1)', focused='Focused work')
     keys('-l', query)
-    wait('0/2' if query == 'missing' else '1/2')
+    wait('0/0' if query == 'missing' else '1/1')
     selected = finish('C-b', status=99)
     assert len(selected) == 1 and selected[0].startswith('LAUNCHED repo sid-last codex launch')
 
@@ -343,13 +349,10 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     assert 'HOTKEYS' not in screen
     assert screen.index('LEGEND') < screen.index('↶ last closed') < screen.index('↴ merged') < screen.index('Tab mark') < screen.index('PRS') < screen.index('Second Task')
     action_line = next(line for line in screen.splitlines() if 'Tab mark' in line)
-    assert ('Return resume' if sys.platform == 'darwin' else 'Enter resume') in action_line
+    assert 'Enter resume' in action_line
     assert 'Esc cancel' in action_line
-    assert '● attached' in screen and '● live' not in screen
+    assert 'STATUS' in screen and '● live' not in screen
     lines = screen.splitlines()
-    for heading in ('Filters ON', 'Sort:', 'LEGEND', 'PRS'):
-        section = next(i for i, line in enumerate(lines) if heading in line)
-        assert not lines[section - 1].strip(' │'), heading
     legend = next(i for i, line in enumerate(lines) if 'LEGEND' in line)
     assert lines[legend].strip(' │') == 'LEGEND'
     assert '↶ last closed' in lines[legend + 1]
@@ -361,7 +364,7 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     stable_ids = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     screen = wait('3/3 (1)' if stable_ids else '3/3 (0)', focused='First Task' if stable_ids else None)
     assert 'New Task' in screen
-    assert '> Task' in screen and 'local current' in screen
+    assert '> Task' in screen and '✓ local' in screen
     assert finish('Escape', status=130) == []
 
 
@@ -394,7 +397,7 @@ def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
     stable_ids = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     screen = wait('3/3 (1)' if stable_ids else '3/3 (0)', focused='First Task' if stable_ids else None,
                   absent=['Refreshing local'])
-    assert 'New Task' in screen and 'local current' in screen and '> Task' in screen
+    assert 'New Task' in screen and '✓ local' in screen and '> Task' in screen
     assert finish('Escape', status=130) == []
 
 
@@ -709,30 +712,30 @@ def test_resume_sort_controls_keep_focused_row_and_change_order(picker, width, h
     start, wait, keys, finish = picker
     start(profile='resume-rich', mode='resume', width=width, height=height, auth_warning=auth_warning)
     screen = wait('2/2 (0)', focused='Newest web')
-    assert ('Sort: turn' if width <= 48 else 'Sort: last turn') in screen and 'Newest web' in screen
+    assert 'Last turn ↓' in screen and 'Newest web' in screen
     if auth_warning:
         assert 'GitHub auth failed:' in screen
     assert '▸' in screen
-    assert 'Alt-' not in screen and 'M-' not in screen
+    assert 'Alt-F Edit filters' in screen
     assert 'Ctrl-Y' in screen and 'Ctrl-S' in screen
     keys('C-y')
     # Headers can repaint before reload-sync applies the new rows. Wait for
     # the actual order before moving focus, then verify its rendered identity.
     loading = tuple('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
     if height > 12:
-        wait('Sort: repo', absent=loading, ordered=('Older api', 'Newest web'))
+        wait('Repo ↑', absent=loading, ordered=('Older api', 'Newest web'))
     else:
-        wait('Sort: repo', absent=loading, focused='Older api')
+        wait('Repo ↑', absent=loading, focused='Older api')
     keys('Up', 'Up')
     screen = wait('Older api', focused='Older api')
     assert 'Older api' in screen and '▸' in screen
     keys('C-y', 'C-y', 'C-y', 'C-y')
-    wait('Sort: last closed', absent=loading, focused='Newest web')
+    wait('Last closed ↓', absent=loading, focused='Newest web')
     keys('C-y')
     if height > 12:
-        wait('Sort: turn' if width <= 48 else 'Sort: last turn', absent=loading, ordered=('Newest web', 'Older api'))
+        wait('Last turn ↓', absent=loading, ordered=('Newest web', 'Older api'))
     else:
-        wait('Sort: turn', absent=loading, focused='Newest web')
+        wait('Last turn ↓', absent=loading, focused='Newest web')
     keys('Up', 'Up')
     wait('Newest web', focused='Newest web')
     assert finish()[0].split('\t')[2] == 'sid1'
@@ -746,7 +749,7 @@ def test_resume_merged_key_preserves_query_and_removes_hidden_marks(picker, widt
     start(profile='resume-merged', mode='resume', width=width, height=height,
           auth_warning=True, monochrome=monochrome)
     screen = wait('2/2 (0)', focused='[MERGED]')
-    assert 'Ctrl-D' in screen
+    assert 'Edit filters' in screen
     keys('Tab')
     wait('2/2 (1)')
     keys('-l', 'e')  # Both titles match; the query must survive each reload.
@@ -921,19 +924,19 @@ def test_full_phrase_search_accepts_spaces_and_k_without_marking_or_closing(pick
 def test_sort_control_keys_never_enter_the_search_query(picker):
     start, wait, keys, finish = picker
     start(profile='resume-rich', mode='resume')
-    wait('Sort: last turn')
+    wait('Last turn ↓')
     keys('-l', 'Newest web')
     wait('1/2 (0)')
     keys('C-s')
-    screen = wait('Sort: OFF')
+    screen = wait('Sort paused')
     assert 'resume > Newest web' in screen
     keys('C-y')
-    screen = wait('Sort: repo')
+    screen = wait('Repo ↑')
     assert 'resume > Newest web' in screen
     keys('C-s')
-    wait('Sort: OFF')
+    wait('Sort paused')
     keys('C-s')
-    screen = wait('Sort: repo')
+    screen = wait('Repo ↑')
     assert 'resume > Newest web' in screen
     assert finish()[0].split('\t')[2] == 'sid1'
 
@@ -959,4 +962,172 @@ def test_open_discovery_notice_keeps_focused_row_visible(picker, width, height):
     keys('C-f')
     screen = wait('4/4 (0)')
     assert 'Older results' in screen and 'Filters OFF' in screen and '▸' in screen
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('width,height', [(80, 24), (71, 37), (44, 20), (32, 12)])
+@pytest.mark.parametrize('monochrome', [False, True])
+def test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks(picker, width, height, monochrome):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=width, height=height, monochrome=monochrome)
+    screen = wait('[OPEN]', focused='[OPEN]')
+    # Startup terminal responses must reach fzf before its input barrier.
+    assert not keys.has_pan_barrier()
+    assert '>' in next(line for line in screen.splitlines() if '▸' in line and 'filters ▸' not in line)
+    capture_dir = os.environ.get('T_PICKER_CAPTURE_DIR')
+    def capture(state):
+        if capture_dir:
+            target = Path(capture_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / f'resume-{width}x{height}-mono{int(monochrome)}-{state}.txt').write_text(keys.capture())
+    capture('left')
+    keys('Tab')
+    screen = wait('(1)', focused='[OPEN]')
+    def wheel(code):
+        frame = wait('resume >')
+        row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line and 'filters ▸' not in line)
+        keys('-l', f'\x1b[<{code};12;{row}M')
+    for _ in range(10): wheel(65)
+    screen = wait('FAR-RIGHT', focused='FAR-RIGHT')
+    assert any('<' in line for line in screen.splitlines() if '▸' in line and 'filters ▸' not in line)
+    assert 'Edit filters' in screen
+    assert '(1)' in screen
+    capture('right')
+    for _ in range(10): wheel(64)
+    wait('[OPEN]', focused='[OPEN]')
+    keys('-l', 'end-of-title')
+    screen = wait('1/1 (')
+    # The match is in the hidden right-hand part of the canonical row.
+    wait('[OPEN]', focused='[OPEN]')
+    selected = finish()
+    assert len(selected) == 1
+    assert len(selected[0].split('\t')) >= 3, selected
+    assert selected[0].split('\t')[2] == 'sid1'
+    assert selected[0].endswith('END-OF-TITLE')
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_serializes_query_mark_wheel_and_accept_in_one_burst(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=44, height=20)
+    screen = wait('[OPEN]')
+    row = next(i for i, line in enumerate(screen.splitlines(), 1) if '▸' in line and 'filters ▸' not in line)
+    # No polling between these events: query, mark and pan must keep input order.
+    keys('-l', 'Older api\t' + f'\x1b[<65;12;{row}M' * 4)
+    wait('1/1 (1)', focused='api task')
+    selected = finish()
+    assert len(selected) == 1 and selected[0].split('\t')[2] == 'sid2'
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_keeps_query_cursor_and_handles_horizontal_wheel(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=44, height=20)
+    wait('[OPEN]')
+    keys('-l', 'Older api')
+    wait('1/1 (0)')
+    keys('Left', 'Left', 'Left')
+    frame = wait('resume > Older api')
+    row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line and 'filters ▸' not in line)
+    keys('-l', f'\x1b[<67;12;{row}M' * 4)
+    wait('api task', focused='api task')
+    keys('-l', 't')
+    wait('resume > Older tapi')
+    keys('BSpace')
+    wait('1/1 (0)')
+    selected = finish()
+    assert len(selected[0].split('\t')) >= 3, selected
+    assert selected[0].split('\t')[2] == 'sid2'
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_excludes_details_preview_and_survives_resize_cancel(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=71, height=37)
+    wait('[OPEN]')
+    # Toggle and mouse arrive together: use the post-toggle preview hitbox.
+    keys('-l', '\x1f' + '\x1b[<65;12;33M' * 3)
+    frame = wait('ND-OF-TITLE')
+    # A wheel event in the details pane is still handled by native fzf.
+    frame = wait('[OPEN]', focused='[OPEN]')
+    assert '<' not in next(line for line in frame.splitlines() if '▸' in line and 'filters ▸' not in line)
+    keys('-l', '\x1f')
+    wait('[OPEN]', absent=('ND-OF-TITLE',))
+    keys.resize(32, 12)
+    frame = wait('Edit filters', focused='[OPEN]', columns=32)
+    focus = next(line for line in frame.splitlines() if '▸' in line and 'filters ▸' not in line)
+    ending = 'FAR-RIGHT' if re.search(r'\[OPEN\]\s+2', focus) else 'END-OF-TITLE'
+    row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line and 'filters ▸' not in line)
+    keys('-l', f'\x1b[<65;12;{row}M' * 10)
+    wait(ending[-5:], focused=ending[-5:], columns=32)
+    assert finish('Escape', 130) == []
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_suspension_and_bracketed_paste_restore_terminal(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=44, height=20)
+    wait('[OPEN]')
+    keys('C-z')
+    # This detached non-job-control fixture may ignore TSTP. It must still
+    # resume the owned fzf process and leave its terminal usable.
+    keys('-l', '\x1b[200~Older api\x1b[201~')
+    wait('1/1 (0)')
+    assert finish('C-c', 130) == []
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_defers_resize_repaint_until_fragmented_paste_ends(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=71, height=37)
+    wait('[OPEN]')
+    keys('-l', '\x1b[200~Older ')
+    # Keep the real terminal paste open across a resize and separate reads.
+    time.sleep(.1)
+    keys.resize(44, 20)
+    time.sleep(.1)
+    keys('-l', 'api\x1b[201~')
+    wait('1/1 (0)', columns=44)
+    selected = finish()
+    assert selected[0].split('\t')[2] == 'sid2'
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+def test_resume_filter_editor_and_hidden_badge_keep_native_counts(picker, width, height):
+    start, wait, keys, finish = picker
+    start(profile='resume-pan', mode='resume', width=width, height=height)
+    screen = wait('0 hidden', focused='[OPEN]')
+    assert '2/2 (0)' in screen and 'Edit filters' in screen
+    keys('M-f')
+    screen = wait('Hide filters', focused='[OPEN]')
+    assert '0 hidden' in screen
+    keys('M-f')
+    wait('Edit filters', focused='[OPEN]')
+    keys('C-g')
+    wait('1 hidden', focused='[OPEN]')
+    screen = wait('1/1 (0)', focused='[OPEN]')
+    assert '1 hidden' in screen
+    keys('C-g')
+    wait('0 hidden', focused='[OPEN]')
+    keys('-l', 'codex')
+    wait('1/1 (0)', focused='[OPEN]')
+    assert finish()[0].split('\t')[2] == 'sid1'
+
+
+
+@pytest.mark.fzf_compat
+def test_resume_pan_barrier_accepts_background_snapshot_growth(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-resume-refresh', mode='resume', warm_resume=True, width=105, height=24)
+    frame = wait('Refreshing local', focused='Second Task')
+    row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line and 'filters ▸' not in line)
+    keys('Tab')
+    wait('(1)', focused='First Task')
+    keys.release_collector()
+    # Every wheel turn runs the input/API barrier while discovery can grow all.
+    keys('-l', f'\x1b[<65;12;{row}M' * 8 + f'\x1b[<64;12;{row}M' * 8)
+    modern = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
+    wait('3/3 (1)' if modern else '3/3 (0)', absent=['Refreshing local'])
     assert finish('Escape', status=130) == []

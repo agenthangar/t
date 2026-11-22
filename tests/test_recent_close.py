@@ -116,14 +116,14 @@ def test_marker_survives_sort_and_filter(history, filters, tmp_path):
     assert (tmp_path / 'sort').read_text() == 'closed'
     assert 'session-2' in (tmp_path / 'current').read_text().splitlines()[0]
     header = (tmp_path / 'current-header').read_text()
-    assert '↶ last closed  ↻ work in progress  ● attached' in header
+    assert '↶ last closed' in header and '↻ work in progress' in header and '↗ preview' in header
     assert '— no PR' in header
     filters.render(tmp_path, 'resume', 'next-sort', 68, 'WORKING ON')
-    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == '↶ WORKING ON'
+    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == 'STATUS  WORKING ON'
     assert (tmp_path / 'sort').read_text() == 'turn'
     output = (tmp_path / 'current').read_text().splitlines()
     assert output[0].split('\t')[2] == 'session-0'
-    assert output[2].split('\t')[-1].startswith('↶ ')
+    assert output[2].split('\t')[-1][1] == '↶'
     filters.render(tmp_path, 'resume', 'match-agent', 68, identity=('api', '2', 'session-1'))
     assert '↶ ' not in (tmp_path / 'current').read_text()
     filters.render(tmp_path, 'resume', 'reset-filters', 68)
@@ -161,7 +161,7 @@ def test_history_marker_columns_align(history, width):
 def test_real_recent_close_marker_keeps_focus(picker, width, height, plain):
     start, wait, keys, finish = picker
     start(profile='resume-closed', mode='resume', width=width, height=height, monochrome=plain)
-    screen = wait('Sort: last closed', focused='Older api')
+    screen = wait('Last closed', focused='Older api')
     marked = next(line for line in screen.splitlines() if 'Older api' in line)
     assert '↶' in marked
     frames = Path('artifacts/recent-close')
@@ -171,10 +171,10 @@ def test_real_recent_close_marker_keeps_focus(picker, width, height, plain):
     heading = next(line for line in screen.splitlines() if 'WORKING ON' in line)
     assert heading.index('WORKING ON') == before
     keys('C-y')
-    screen = wait('Sort: turn' if width <= 44 else 'Sort: last turn', ordered=['Newest web', 'Older api'])
+    screen = wait('Last turn', ordered=['Newest web', 'Older api'])
     assert '↶' in next(line for line in screen.splitlines() if 'Older api' in line)
     keys('-l', 'Older')
-    screen = wait('1/2 (0)', focused='Older api')
+    screen = wait('1/1 (0)', focused='Older api')
     assert next(line for line in screen.splitlines() if 'Older api' in line).index('Older api') == before
     finish('Escape', 130)
 

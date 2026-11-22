@@ -1025,35 +1025,40 @@ and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
-The resume picker always labels PRS, REPO, SLOT, AGENT, LAST TURN, and TITLE.
+The resume picker labels STATUS, PRS, REPO, SLOT, AGENT, LAST TURN, and TITLE.
 TITLE prefers the recorded conversation name. A `Prompt:` prefix identifies
 an opening prompt used as a fallback. `Saved label:` identifies older display
 text whose source cannot be verified.
 A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
 LAST TURN shows the local date and time to the minute. Green Ctrl-U sits next
-to the refresh status. During an active refresh, put the previous refresh time
-and amber host warnings on separate rows when space permits.
-Group filter controls with the hidden count and state. Show the current sort
-with Ctrl-S toggle and Ctrl-Y next on one row when they fit. In the full header,
-leave a blank row before filters, sort, LEGEND, and the columns. LEGEND gets
-its own heading row, followed by the session markers and the separate PR
-legend directly above the result hotkeys. Use matching colors in the legend
-and rows for last closed (↶, cyan), work in
-progress (↻, amber), attached (●, green), and PR states. Attached identifies an
-existing session that opens in place. Separate legend entries with spaces.
-The work-in-progress icon appears in the left gutter
-independently of PR state. The gutter reserves space only when a row has evidence.
-Columns stay aligned when filtering or sorting. Timeouts use amber, active
-filtering and sort use highlighted labels, and column headings use high contrast.
-PRS shows up to two associated pull request numbers with spaced state icons
-(↴ merged, ○ open, ◌ draft, ! conflict, × closed, ? unknown) and a count of any
-additional PRs. ↗ shows a verified preview deployment for that PR head. A dash
-indicates no recorded PR. Color follows GitHub’s status palette and the symbols
-remain visible in monochrome.
-The picker refreshes stale states in the background. Ctrl-D toggles hiding MERGED rows and advertises the
-next action in the header. It uses explicit snapshot metadata, never title text.
-Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
+to the refresh status. During an active refresh, show the previous refresh time when space permits.
+Hosts use a green ✓ for current, cyan … for refreshing, and a red × for failed
+connections, with the reason in amber. The hidden count belongs beside the
+result count. Older fzf versions show it on the first header line below the count.
+Active filters list their current value and shortcut even with the editor closed.
+Alt-F (⌥F on macOS) opens and closes the inline filter editor. Ctrl-T includes
+attached sessions or returns to the saved-only default. Return attaches to an
+existing terminal session when one is selected. The current sort and its actions
+use the same summary and action layout as filters.
+
+Leave blank rows between the full header sections, before the result hotkeys,
+and before the columns. The legend follows the table order: Status, PRs, Agent.
+Status icons identify attached (●), last closed (↶), work in progress (↻), and
+a verified preview deployment (↗). Tab marks action targets with fzf’s green ✓.
+Matching legend entries and row icons use the same colors. The AGENT column
+shows terminal glyphs while full names remain searchable and visible in details.
+Column widths remain stable while filtering and sorting. Over the table,
+wheel up pans left and wheel down pans right. Horizontal wheel input follows
+its direction. STATUS stays fixed while the other columns and their headings
+move together. Search still matches offscreen text. Up and Down move focus.
+Left and Right edit the query.
+
+PRS shows up to two associated pull requests with vertically aligned state icons
+before their numbers (↴ merged, ○ open, ◌ draft, ! conflict, × closed, ? unknown).
+A count indicates additional PRs. A dash indicates no recorded PR. Color follows
+GitHub’s status palette, and the symbols remain visible in monochrome.
+Ctrl-D toggles hiding merged histories using explicit snapshot metadata.
 For histories with multiple associated PRs, all must be explicitly merged before
 the row is hidden; mixed or unknown states remain visible. Live rows without
 structured PR metadata stay UNKNOWN. A merged PR does not imply completed work.
@@ -1068,8 +1073,8 @@ current computation; the selection gutter ✓ marks an action target.
 
 Query and visible selection identity survive supported reloads; hidden marks
 are removed. Old fzf clears marks on filter actions. These remain filtered/multi
-modes, not new commands or discovery operations. Every shortcut and a focused
-row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
+modes, not new commands or discovery operations. Keep primary shortcuts and a focused row visible at 80×24, 44×20, and 32×12.
+The inline editor reveals additional filter shortcuts. Short terminals use a borderless
 full-height view, including nested value pickers. Narrow headers use ⌃ on macOS and ^ elsewhere for Ctrl
 and show the selected column count; full values are available in Filters. One cyan
 summary highlights enabled constraints, with explicit ON/OFF text in monochrome.

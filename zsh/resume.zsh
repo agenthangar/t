@@ -691,10 +691,10 @@ _t_resume() {
 
   # Measure display widths from the full snapshot so filtering cannot move a
   # column. Keep the verified merged aggregate in the private selection fields.
-  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_text pr_count pr_aggregate slot_label pr_display pr_width pr_extra slot_display agent_display slot_width
+  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_count pr_aggregate pr_display pr_width slot_display agent_glyph agent_display pr_index
   local REPLY_PR_BADGE REPLY_PR_PREVIEW
-  local -a f cells pr_cells pr_widths host_cells slot_cells
-  local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 i=1
+  local -a f cells pr_first pr_second pr_first_width pr_second_width pr_extras pr_widths host_cells
+  local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 first_width=0 second_width=0 i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
     if [[ $f[7] != - ]]; then
@@ -711,9 +711,11 @@ _t_resume() {
       if [[ ${live_work[$live_identity/$live_host]:-} == yes ]]; then
         f[16]=yes
       fi
-      cands[$i]="${(pj:\t:)f}"
     fi
-    pr_text= pr_count=0 pr_width=0 pr_aggregate=
+    pr_first[i]='' pr_second[i]='' pr_extras[i]=''
+    pr_first_width[i]=0 pr_second_width[i]=0
+    pr_count=0 pr_aggregate=
+    f[17]=-
     for pr_ref in ${=f[15]}; do
       [[ $pr_ref =~ '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*:(OPEN|MERGED|CLOSED|UNKNOWN)$' ]] || continue
       pr_key=${pr_ref%:*}
@@ -727,6 +729,9 @@ _t_resume() {
       elif [[ $pr_aggregate != "$pr_state" ]]; then
         pr_aggregate=MIXED
       fi
+      if [[ $pr_state == OPEN && ${REPLY_PR_PREVIEW:-} == 1 ]]; then
+        f[17]=yes
+      fi
       if (( ++pr_count <= 2 )); then
         case $pr_state/${REPLY_PR_BADGE:-} in
           MERGED/*) pr_symbol=↴ ;;
@@ -736,51 +741,50 @@ _t_resume() {
           CLOSED/*) pr_symbol=× ;;
           *) pr_symbol='?' ;;
         esac
-        (( pr_count == 1 )) || (( pr_width++ ))
-        (( pr_width += ${#pr_number} + 3 ))
-        pr_text+="${pr_text:+ }#$pr_number $pr_symbol"
-        if [[ $pr_state == OPEN && ${REPLY_PR_PREVIEW:-} == 1 ]]; then
-          pr_text+=' ↗'
-          (( pr_width += 2 ))
+        if (( pr_count == 1 )); then
+          pr_first[i]="$pr_symbol #$pr_number"
+          pr_first_width[i]=$(( ${#pr_number} + 3 ))
+        else
+          pr_second[i]="$pr_symbol #$pr_number"
+          pr_second_width[i]=$(( ${#pr_number} + 3 ))
         fi
       fi
     done
     if (( pr_count > 2 )); then
-      pr_extra=" +$(( pr_count - 2 ))"
-      pr_text+=$pr_extra
-      (( pr_width += ${#pr_extra} ))
+      pr_extras[i]="  +$(( pr_count - 2 ))"
     elif (( ! pr_count )); then
       case $f[13] in
-        NONE) pr_text=—; pr_width=1 ;;
-        UNKNOWN) pr_text='?'; pr_width=1 ;;
-        *) pr_text=${(L)f[13]}; pr_width=${#pr_text} ;;
+        NONE) pr_first[i]=—; pr_first_width[i]=1 ;;
+        UNKNOWN) pr_first[i]='?'; pr_first_width[i]=1 ;;
+        *) pr_first[i]=${(L)f[13]}; pr_first_width[i]=${#pr_first[i]} ;;
       esac
     fi
-    pr_cells+=("$pr_text")
-    pr_widths+=("$pr_width")
     if [[ -n $pr_aggregate ]]; then
       f[13]=$pr_aggregate
-      cands[$i]="${(pj:\t:)f}"
     fi
+    cands[$i]="${(pj:\t:)f}"
+    (( pr_first_width[i] <= first_width )) || first_width=$pr_first_width[i]
+    (( pr_second_width[i] <= second_width )) || second_width=$pr_second_width[i]
 
     org=${f[9]:-}
-    slot_label=$f[2]
-    slot_width=${#slot_label}
     if [[ $f[7] != - ]]; then
-      slot_label+=" ●"
-      (( slot_width += 2 ))
       org=${${f[7]#app:}#fg:}
       [[ $org == here ]] && org=-
     fi
     host_cells+=("${org:#-}")
-    slot_cells+=("$slot_label")
     (( ${#f[1]} > rw )) && rw=${#f[1]}
-    (( slot_width > sw )) && sw=$slot_width
-    (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))
+    (( ${#f[2]} > sw )) && sw=${#f[2]}
     (( ${#f[5]} > tw )) && tw=${#f[5]}
     (( ${#host_cells[-1]} > ow )) && ow=${#host_cells[-1]}
-    (( pr_width > pw )) && pw=$pr_width
     (( i++ ))
+  done
+  for (( pr_index=1; pr_index <= $#cands; pr_index++ )); do
+    pr_width=$pr_first_width[pr_index]
+    if [[ -n ${pr_second[pr_index]} ]]; then
+      pr_width=$(( first_width + 2 + second_width + ${#pr_extras[pr_index]} ))
+    fi
+    pr_widths+=("$pr_width")
+    (( pr_width <= pw )) || pw=$pr_width
   done
   _pr_state_flush
   row_format="%s  %-${rw}s  "
@@ -811,12 +815,21 @@ _t_resume() {
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
     agent=${f[10]:-claude}
-    printf -v agent_display '%s %-*s' "${_DEV_AGENT_GLYPH[$agent]:-?}" $(( aw - 2 )) "$agent"
-    printf -v pr_display '%s%*s' "$pr_cells[$i]" $(( pw - pr_widths[i] )) ''
+    case $agent in
+      codex) agent_glyph='>_' ;;
+      claude) agent_glyph='*' ;;
+      cursor) agent_glyph='<>' ;;
+      *) agent_glyph='?' ;;
+    esac
+    printf -v agent_display '%s%*s' "$agent_glyph" $(( aw - ${#agent_glyph} )) ''
+    pr_display=${pr_first[i]}
+    if [[ -n ${pr_second[i]} ]]; then
+      printf -v pr_display '%s%*s  %s%*s%s' "$pr_display" $(( first_width - pr_first_width[i] )) '' \
+        "${pr_second[i]}" $(( second_width - pr_second_width[i] )) '' "${pr_extras[i]}"
+    fi
+    printf -v pr_display '%s%*s' "$pr_display" $(( pw - pr_widths[i] )) ''
     cells=("$pr_display" "$f[1]")
-    slot_width=${#f[2]}
-    [[ $f[7] == - ]] || (( slot_width += 2 ))
-    printf -v slot_display '%s%*s' "$slot_cells[$i]" $(( sw - slot_width )) ''
+    printf -v slot_display "%-${sw}s" "$f[2]"
     cells+=("$slot_display" "$agent_display")
     (( ow )) && cells+=("${host_cells[$i]:-local}")
     cells+=("$f[5]" "$f[6]")

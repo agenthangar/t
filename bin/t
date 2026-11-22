@@ -13987,20 +13987,21 @@ REMOTE SESSIONS
   With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
-  Return (Enter) resumes. Esc cancels. Tab marks rows with ✓.
+  Return (Enter) resumes a saved session or attaches to a running terminal.
+  Esc cancels. Tab marks rows with ✓.
   Ctrl-B resumes the last verified close within the command scope.
-  Ctrl-U refreshes this picker and reports host status.
-  Ctrl-/ shows details for the focused row.
+  Ctrl-U refreshes the picker. Ctrl-/ shows details for the focused row.
+  Wheel over the table to pan. STATUS stays fixed. Up and Down move focus,
+  and Left and Right edit the search. Search includes offscreen text.
   PRS shows ↴ merged, ○ open, ◌ draft, ! conflict, × closed, or ? unknown.
-  A ↗ indicates a verified preview deployment for the PR head.
-  ↻ in the left gutter marks verified work in progress. LAST TURN shows the
-  local date and time. TITLE uses the saved name when available.
-  A Prompt: prefix identifies a fallback to the conversation’s opening prompt.
-  REPO is present in every view.
-  ● beside the slot marks an attached session you can open in place.
+  STATUS shows ● attached, ↶ last closed, ↻ work in progress, and ↗ verified preview.
+  LAST TURN shows local date and time. TITLE uses the saved name when available.
+  Prompt: identifies an opening prompt. REPO is present in every view.
   Run from outside a registered repo to browse all repos.
 
-  Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.
+  Active filters show their shortcuts beside their values. Alt-F opens the
+  filter editor. Ctrl-F toggles filters, Ctrl-X resets them, and Ctrl-T
+  switches between saved only and saved plus attached.
   Ctrl-G/O/R matches the focused row's agent, host, or repo; repeat to clear.
   Ctrl-D hides or shows histories whose associated PRs are all merged.
 

@@ -684,6 +684,42 @@
     "libexec/t_runtime_install.py:run:subprocess.Popen": {
       "kind": "passthrough",
       "reason": "Explicit reviewed runtime installation announces its phase and streams installer output; cancellation terminates the owned child group."
+    },
+    "bin/t:_resume_picker_stage:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Builds an immutable snapshot with a bounded shell child while the resume picker or refresh rail owns the terminal."
+    },
+    "bin/t:_resume_picker_observe:time.sleep": {
+      "kind": "background",
+      "reason": "The bounded discovery observer polls in the background while the active picker displays the refresh status."
+    },
+    "libexec/t_picker_viewport.py:search:subprocess.run": {
+      "kind": "protocol",
+      "reason": "The active resume picker delegates canonical-row matching to the shared noninteractive fzf matcher and captures its output. The existing picker owns terminal rendering; a competing spinner would corrupt it."
+    },
+    "libexec/t_picker_viewport.py:relay.drain:select.select": {
+      "kind": "passthrough",
+      "reason": "The live fzf PTY drain polls output at ten-millisecond intervals during native input and reload barriers, keeping the picker responsive without another terminal renderer."
+    },
+    "libexec/t_picker_viewport.py:relay.synchronize:select.select": {
+      "kind": "protocol",
+      "reason": "The live terminal input barrier waits for PTY writability in ten-millisecond steps within its five-second deadline. fzf retains visible terminal ownership throughout synchronization."
+    },
+    "libexec/t_picker_viewport.py:relay.synchronize:time.sleep": {
+      "kind": "protocol",
+      "reason": "Five-millisecond polls await the native input acknowledgement and settled canonical rows under the input and picker API deadlines. The active fzf screen supplies the interaction; an added spinner would overwrite it."
+    },
+    "libexec/t_picker_viewport.py:relay.update:time.sleep": {
+      "kind": "protocol",
+      "reason": "Five-millisecond polls confirm the exact viewport reload and restored focus/mark identities within the picker API deadline. The existing fzf screen owns rendering while its PTY output continues draining."
+    },
+    "libexec/t_picker_viewport.py:relay:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "Starts the shared interactive fzf picker on its controlled PTY; fzf owns terminal input and rendering until selection or cancellation, with relay cleanup restoring the outer terminal."
+    },
+    "libexec/t_picker_viewport.py:relay:select.select": {
+      "kind": "passthrough",
+      "reason": "The live picker event loop polls terminal input and PTY output in forty-millisecond steps, forwarding fzf rendering and handling resize/paste events. A second progress renderer would corrupt the picker screen."
     }
   },
   "shell": [

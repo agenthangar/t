@@ -60,9 +60,9 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     assert "claude -r c1" in zsh.log.read_text()
     assert "codex resume" not in zsh.log.read_text()  # the live row keeps its owner
     rows = log.read_text().splitlines()
-    assert any(row.startswith("↻ ") and "⬡ codex" in row and "4 ●" in row
+    assert any(row.startswith("● ↻") and ">_" in row and "4 ●" not in row
                and "Named live conversation" in row for row in rows)
-    assert any("3" in row and "✱ claude" in row and "Fix login" in row for row in rows)
+    assert any("3" in row and re.search(r"  \*  ", row) and "Fix login" in row for row in rows)
     assert "--with-nth=-1" in (tmp_path / "fzf.log.args").read_text()
 
 
@@ -216,7 +216,7 @@ def test_resume_default_filters_live_rows_without_dropping_their_details(zsh, tm
     filtered = pathlib.Path(f"{files}.filtered").read_text()
     all_rows = pathlib.Path(f"{files}.all").read_text()
     assert "Dead work" in filtered and "Live work" not in filtered
-    assert "Dead work" in all_rows and "Live work" in all_rows and "⬡ codex" in all_rows
+    assert "Dead work" in all_rows and "Live work" in all_rows and ">_" in all_rows
     assert pathlib.Path(f"{files}.show").read_text().strip() == ""
     r = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True, **env)
     assert "rc=1" in r.stdout, r.stdout
@@ -277,7 +277,7 @@ def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
     assert "Live work" in initial and "Dead work" in initial
     assert "Live work" not in filtered and "Dead work" in filtered
     header = pathlib.Path(f"{log}.header0").read_text()
-    assert "Filters ON" in header and "saved only" in header
+    assert "Active filter" in header and "Saved only" in header
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 
@@ -307,7 +307,7 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
         assert pathlib.Path(f'{log}.step{index}').read_text().splitlines() == initial
         header = semantic_chrome(pathlib.Path(f'{log}.header{index}').read_text()).splitlines()[-1]
         assert header.index('TITLE') == initial[0].split('\t')[-1].index('Task 2')
-        assert header.split() == ['PRS', 'REPO', 'SLOT', 'AGENT', 'LAST', 'TURN', 'TITLE']
+        assert header.split() == ['STATUS', 'PRS', 'REPO', 'SLOT', 'AGENT', 'LAST', 'TURN', 'TITLE']
     arguments = pathlib.Path(f'{log}.args').read_text()
     assert '--no-sort' in arguments
     for letter in ('t', 'r', 'g', 'o', 'v'):
@@ -381,8 +381,10 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
     initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
     merged = next(row for row in initial if '\tc2\t' in row)
     pr_column, _, working_on = merged.split('\t')[-1].partition('  2')
-    assert pr_column.startswith('↻ #42 ↴' if aggregate else '#42 ↴')
-    assert ('#43 ! ↗' in pr_column) == bool(aggregate)
+    assert pr_column[8:].startswith('↴ #42')
+    assert ('! #43' in pr_column[8:]) == bool(aggregate)
+    assert ('↗' in pr_column[:8]) == bool(aggregate)
+    assert ('↻' in pr_column[:8]) == bool(aggregate)
     assert '#42' not in working_on
     hidden = pathlib.Path(f'{log}.step0').read_text()
     assert ('\tc2\t' in hidden) == bool(aggregate)

@@ -25,16 +25,22 @@ Reuse the shared control styles and two-space table gutters. Keep the focused
 result visible in short terminals.
 In the resume picker, place the green Ctrl-U refresh action beside the refresh
 status. Use bright cyan for an active refresh, then show the previous refresh
-time and amber host warnings on separate rows when space permits. Pack the
-filter state and shortcuts together. Put the current sort, toggle and cycle
-shortcuts on one row where they fit. In the full header, put a blank row before
-filters, sort, LEGEND, and the columns. Give LEGEND its own heading row and put
-the PR symbols on a separate row immediately above the result hotkeys. Show
-those hotkeys without a heading. Separate legend entries with spaces. Use the
-same colors in the legend and rows. Label
-↶ as last closed, ↻ as work in progress, and ● as attached. Highlight the
-written Return or Enter, Esc, and Tab labels. Put Ctrl-B for resuming the
-last verified close on the result hotkey row.
+time and per-host outcomes on separate rows when space permits. Use a green ✓
+for current hosts, a red × for failed connections, and amber for their reasons.
+Keep the hidden count beside the result count. Show the applied filters and
+their shortcuts together, with Alt-F (⌥F on macOS) on its own line to reveal the
+filter editor. Present the current sort and its shortcuts using the same
+summary and action layout. In the full header, leave blank rows before filters,
+sort, the legend, the result hotkeys, and the columns. Compact layouts may
+shorten these breaks to keep a focused result visible.
+
+Order the legend by table column: Status, PRs, Agent. Within Status, use the
+row order for attached (●), last closed (↶), work in progress (↻), and verified
+preview (↗). Use matching colors in the legend and rows. The green fzf check
+marks selected rows. Align PR state icons in fixed positions within PRS, and
+keep the font-independent agent symbols in their own column. Keep STATUS fixed while headings
+and rows pan together. Highlight Return or Enter, Esc, and Tab, and put
+Ctrl-B for the last verified close on the result hotkey row.
 Do not interpret requests to improve picker filtering or sorting as requests for
 new CLI flags unless the user explicitly asks for flags or noninteractive control.
 

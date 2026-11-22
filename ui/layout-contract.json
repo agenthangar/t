@@ -19,6 +19,7 @@
         "tests/test_picker_ui.py::test_primary_action_and_focused_row_visible_in_small_viewports",
         "tests/test_picker_ui.py::test_inline_filters_keep_the_list_visible_and_repeat_clears",
         "tests/test_picker_ui.py::test_resume_sort_controls_keep_focused_row_and_change_order",
+        "tests/test_picker_ui.py::test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks",
         "tests/test_picker_ui.py::test_filter_toggle_preserves_query_and_removes_hidden_marks",
         "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
         "tests/test_picker_ui.py::test_open_discovery_notice_keeps_focused_row_visible",
