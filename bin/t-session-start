@@ -109,6 +109,10 @@ usage_helper="${history_helper%/*}/t_usage.py"
 if [[ -f $usage_helper ]]; then
   python3 "$usage_helper" record "$sid" "$agent" "$cwd" "$tx" >/dev/null 2>&1 || true
 fi
+recovery_helper="${history_helper%/*}/t_auto_recovery.py"
+if [[ -n ${T_RECOVERY_TOKEN:-} && -f $recovery_helper ]]; then
+  python3 "$recovery_helper" register "$agent" "$sid" "$cwd" "$tx" >/dev/null 2>&1 || true
+fi
 
 # Retry saved workflow revisions at launch/resume without injecting turns or
 # relying on dotfiles/launchd. The helper is bounded and never blocks a launch.

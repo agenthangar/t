@@ -141,7 +141,7 @@ _t_lifecycle_effect() {
       if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 && -n $session && $event != (launch|resume) ]]; then
         python3 "$T_HOME/bin/t" __cache-record "$event" "$sid" "$agent" "$dir" "${session#dev-}" >/dev/null 2>&1 || true
       fi
-      _dev_history_record "$sid" "$agent" "$dir" "$event"
+      _dev_history_record "$sid" "$agent" "$dir" "$event" || return $?
       [[ $event == (launch|resume) ]] && _dev_recovery_watch "$session"
       return 0 ;;
     close-check)
@@ -174,6 +174,7 @@ _t_lifecycle_effect() {
         [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
            $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
       fi
+      python3 "$T_HOME/libexec/t_auto_recovery.py" retire "$(_dev_agent_of_session "$1")" "$(_dev_session_sid "$1" "$2")" || return 1
       tmux kill-session -t "$immutable:" || return 1
       if [[ -n $pid ]]; then
         _t_wait_for_exit "$pid"
@@ -309,6 +310,7 @@ _t_lifecycle_effect() {
       while IFS=$'\t' read -r fgpid fgsid fgcwd fglabel fgagent; do
         [[ $fgsid == "$sid" && ${fgcwd:A} == ${dir:A} && $fgagent == "$agent" ]] || continue
         _dev_agent_is_service "$fgpid" && return 1
+        _dev_history_record "$sid" "$agent" "$dir" handoff || return 1
         kill -TERM "$fgpid" || return 1
         _t_wait_for_exit "$fgpid"
         if kill -0 "$fgpid" 2>/dev/null; then

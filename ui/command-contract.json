@@ -940,6 +940,25 @@
           ],
           "layout": "inherit",
           "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
+        },
+        "recovery_holding": {
+          "argv": [
+            "session",
+            "open",
+            "api",
+            "1"
+          ],
+          "when": "the original slot contains a verified automatic recovery holding pane",
+          "patterns": [
+            "single",
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_prior_boot_opens_multiple_distinct_detached_holding_panes"
+          ],
+          "notes": "Attach the existing holding pane without starting another agent. Use the shared rail to inspect real recovery metadata and review launch settings before resuming.",
+          "layout": "rail"
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
@@ -2899,7 +2918,8 @@
         "tests/test_design_system.py::test_refresh_finds_merged_design_without_moving_stale_checkouts",
         "tests/test_design_system.py::test_refresh_menu_selects_merged_source_without_duplicate_rows",
         "tests/test_workflow_single_model.py::test_clear_text_instructions_is_staged_and_preserves_policy",
-        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop"
+        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop",
+        "tests/test_auto_recovery.py::test_menu_stages_changes_without_writing"
       ],
       "modes": {
         "default": {
@@ -3089,6 +3109,23 @@
           ],
           "notes": "Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes.",
           "layout": "inherit"
+        },
+        "automatic_recovery": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "when": "Recovery is selected in the settings menu",
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_menu_stages_changes_without_writing",
+            "tests/test_config.py::test_recovery_toggle_applies_only_after_config_review"
+          ],
+          "notes": "Stage the host-local toggle and login service repair, then save through the shared review.",
+          "layout": "rail"
         }
       },
       "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection uses the shared one-row comparison table, readiness and configured identity with a width-aware layout and sourced benchmark legend. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; number keys open available focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable.. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged. Text instructions opens Edit, Clear and Back; clearing is staged and an empty clear is a no-op. Explicit Scan again includes registered-checkout and latest origin default-branch evidence without moving checkouts or refs; sources absent from the active worktree are labeled and selection advises updating that worktree. Remote failures retain local candidates. Ordinary browsing never fetches.",
@@ -12319,6 +12356,306 @@
           "layout": "inherit"
         }
       },
+      "layout": "mixed"
+    },
+    "system recovery status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "system",
+            "recovery",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "machine"
+        }
+      },
+      "layout": "plain"
+    },
+    "session recovery pause": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "pause",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Change recovery eligibility for one exact enrolled session without stopping its agent.",
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "session recovery resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "resume",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Change recovery eligibility for one exact enrolled session without stopping its agent.",
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "session recovery status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "status",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "session",
+            "recovery",
+            "status",
+            "api",
+            "1",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "machine"
+        }
+      },
+      "layout": "plain"
+    },
+    "remote system recovery status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote session recovery status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote session recovery pause": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "recovery",
+            "pause"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved.",
+      "layout": "mixed"
+    },
+    "remote session recovery resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "recovery",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved.",
       "layout": "mixed"
     }
   },

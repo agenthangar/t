@@ -1781,6 +1781,27 @@ review/save/discard transaction; preparation is an explicit immediate machine ac
 Retain **Ask which local model** alongside Pause and Continue locally. Preserve
 queue wait, owned model unloading and cloud-return recovery from main.
 
+## Automatic recovery
+
+`t config` includes **Recovery → Automatic recovery** as a host-local staged
+setting. Review/save applies it; cancel writes nothing. Running status belongs to
+the setting row; Back has no status value. Pending toggles say starts/stops on save.
+Enabling on macOS installs the user login service and merges owned agent hooks.
+Worktree setup is supported: the review identifies the source, and the service
+invokes that worker directly. Saving Recovery from a different source updates the
+service and hooks without relinking the shared command.
+Disabling removes those integrations without stopping running agents. The setting
+is not propagated to other hosts or written to shell configuration.
+
+`t system recovery status [--json]` and
+`t session recovery status [repo] [slot] [--json]` are read-only detail/machine
+outputs. `t session recovery pause|resume [repo] [slot]` are direct eligibility
+actions. An exact conversation ID is also accepted; missing targets infer only an
+unambiguous current workspace. These commands never open a picker, update prompt,
+or submit a continuation. There is no public recovery enable/disable command.
+Session details expose phase, pause, eligibility, and retry reason. See
+[automatic recovery](../docs/automatic-recovery.md) for the runtime contract.
+
 ## Standalone companion: nosleep
 
 The package installs `nosleep` alongside `t`; it is not a `t` subcommand.
@@ -2251,3 +2272,10 @@ The `mlx-vlm` provider uses the existing model picker and exact provider/model
 identity. Its runtime is private and managed; no desktop app is needed.
 Verification and measurement remain separate from LM Studio even when both use
 the same downloaded artifact.
+
+Recovery holding panes preserve the original slot when exact launch settings are
+unavailable. They display real tool/model metadata and the recovery reason,
+remain one pane per eligible slot, and open through `t open REPO SLOT`. Review
+launch settings before resuming; detaching leaves the holding pane available.
+A successful canonical update migrates enabled recovery service registration and
+hooks to the installed source. Status and discovery never start that service.

@@ -1387,7 +1387,16 @@ _dev_session_rows_cli() {
   # _dev_ps_snapshot); pass 2 prints, after ONE _transcript_meta_batch has read
   # every title at once rather than forking python3 per slot.
   local -a rows rowtx tpaths tx mrows f _PR_STALE
-  local -A title_of pr_of _PR_SPAWNED
+  local -A title_of pr_of _PR_SPAWNED holding_of
+  local recovery_row
+  local -a recovery_fields recovery_rows
+  if [[ -f $T_HOME/libexec/t_auto_recovery.py ]]; then
+    recovery_rows=("${(@f)$(python3 "$T_HOME/libexec/t_auto_recovery.py" holding-rows)}")
+    for recovery_row in "${recovery_rows[@]}"; do
+      recovery_fields=("${(@ps:\t:)recovery_row}")
+      [[ $#recovery_fields == 7 ]] && holding_of[dev-${recovery_fields[3]}]=$recovery_row
+    done
+  fi
   local s short sid psid dir state context summary agent i mr mrest REPLY
   _dev_ps_snapshot
   # tmux replaces literal tabs in -F with `_` on macOS 3.7c. Keep the
@@ -1395,6 +1404,7 @@ _dev_session_rows_cli() {
   while IFS='|' read -r s state dir; do
     [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
     short="${s#dev-}"
+    [[ -z ${holding_of[$s]:-} ]] || continue
     agent=$(_dev_agent_of_session "$s")
     # Authoritative id (current pane, registry, then cwd-validated stamp) —
     # not the raw CLAUDE_RESUME_ID stamp, which a reused slot can carry stale from a
@@ -1469,6 +1479,12 @@ _dev_session_rows_cli() {
     # Private enrichment input: retain the display transcript already validated
     # above, including the unknown-id fallback. Never export it as a targeting id.
     [[ ${1:-} == --transcripts ]] && printf '\t%s' "${rowtx[$i]}"
+    printf '\n'
+  done
+  for recovery_row in "${recovery_rows[@]}"; do
+    [[ -n $recovery_row ]] || continue
+    print -rn -- "$recovery_row"
+    [[ ${1:-} == --transcripts ]] && printf '\t-'
     printf '\n'
   done
   # plus any FOREGROUND (non-tmux) claudes on this machine, same row format.
@@ -1847,6 +1863,7 @@ _dev_kill_fg() {
       continue
     fi
     tsess=$(_dev_tmux_session_of_pid "$pid")
+    _dev_history_record "$sid" "$agent" "$cwd" close || continue
     if [[ -n $tsess ]]; then
       tmux kill-session -t "=$tsess:" 2>/dev/null && { echo "Killed $label (tmux session $tsess)"; killed=1; }
     else
@@ -2288,6 +2305,10 @@ _dev_history_record() {
   # must freeze the revision now, without waiting for transcript discovery.
   [[ $mode == record-deferred ]] || tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
   python3 "$T_HOME/libexec/t_history.py" "$mode" "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
+  if [[ $event == (close|handoff) && -f $T_HOME/libexec/t_auto_recovery.py ]]; then
+    python3 "$T_HOME/libexec/t_auto_recovery.py" retire "$agent" "$sid" || return 1
+  fi
+  return 0
 }
 
 _dev_with_launch_locks() {
@@ -2333,6 +2354,9 @@ _dev_launch_preflight() {
   _dev_ps_snapshot
   while IFS='|' read -r name owner_path; do
     [[ -n $name ]] || continue
+    if [[ $name == ${_T_AUTO_HOLD_SESSION:-} ]] && _t_auto_holding_verified "$_T_AUTO_HOLD_SESSION" "$dir" "$sid" "$_T_AUTO_HOLD_SOCKET" "$_T_AUTO_HOLD_PANE"; then
+      continue
+    fi
     if [[ $name == $session || ( -n $owner_path && ${owner_path:A} == $dir ) ]]; then
       print -u2 -- "t: a live tmux session already owns $session or $dir ($name)"
       return 1
@@ -2358,6 +2382,11 @@ _dev_launch_preflight() {
     return 1
   fi
   while IFS=$'\t' read -r host row_sid row_cwd row_name; do
+    if [[ $host == local && $row_name == ${_T_AUTO_HOLD_SESSION#dev-} &&
+          -n ${_T_AUTO_HOLD_SESSION:-} && ${row_cwd:A} == $dir ]] &&
+       _t_auto_holding_verified "$_T_AUTO_HOLD_SESSION" "$dir" "$sid" "$_T_AUTO_HOLD_SOCKET" "$_T_AUTO_HOLD_PANE"; then
+      continue
+    fi
     if [[ $row_sid == $sid ]]; then
       print -u2 -- "t: saved conversation is already live in $row_name on $host"
       return 1
@@ -3030,7 +3059,7 @@ _t_dev() {
     fi
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
-    _dev_recovery_watch "$session"
+    [[ -n $(tmux show-options -qv -t "=$session:" @t_recovery_holding) ]] || _dev_recovery_watch "$session"
     _t_session_attach "$session" "$live_agent" || {
       print -u2 -- "t open: could not attach $session; inspect $logfile"
       return 1
