@@ -117,14 +117,15 @@ def test_last_rejects_incompatible_filters_before_discovery(zsh, flags):
     assert 'cannot be combined' in result.stderr and 'UNEXPECTED_DISCOVERY' not in result.stdout
 
 
-def test_public_wait_routes_and_plain_slot_alias():
+@pytest.mark.parametrize('wait_flag', ['--wait', '-w'])
+def test_public_wait_routes_and_plain_slot_alias(wait_flag):
     cli = load_script(REPO_ROOT / 'bin/t', 'resume_last_cli')
     parser = cli.build_parser()
     for command in ('session open', 'session close', 'session resume', 'session move', 'session list', 'session history',
                     'remote open', 'remote resume', 'remote move', 'remote kill'):
-        assert parser.parse_args(command.split() + ['--wait']).wait
-    assert cli._plain_slot_resume(['resume', 'api', '3', '--wait'])
-    assert not cli._plain_slot_resume(['resume', 'api', '3', '--last', '--wait'])
+        assert parser.parse_args(command.split() + [wait_flag]).wait
+    assert cli._plain_slot_resume(['resume', 'api', '3', wait_flag])
+    assert not cli._plain_slot_resume(['resume', 'api', '3', '--last', wait_flag])
 
 
 @pytest.mark.parametrize('change', ['resume', 'close', 'missing'])
@@ -147,10 +148,11 @@ def test_last_launch_refresh_refuses_invalidated_identity(app, history, store, m
     assert calls == ['repo']
 
 
-def test_remote_last_wait_forwards_exact_flags_without_terminal(zsh):
+@pytest.mark.parametrize('wait_flag', ['--wait', '-w'])
+def test_remote_last_wait_forwards_exact_flags_without_terminal(zsh, wait_flag):
     result = zsh("REMOTE_HOSTS=(mini user@mini); "
                  "ssh() { print -r -- \"SSH $*\"; return 17; }; "
-                 "t remote resume mini api --last --wait")
+                 "t remote resume mini api --last " + wait_flag)
     assert result.returncode == 17, result.stdout + result.stderr
     assert 'zsh -lic' in result.stdout and '--last' in result.stdout and '--wait' in result.stdout
 
@@ -211,12 +213,13 @@ def test_private_wait_uses_same_post_snapshot_for_candidates_and_owners(adapter,
     assert capsys.readouterr().out.split('\t')[3] == 'after'
 
 
-def test_remote_close_wait_crosses_host_worker_boundary(zsh, tmp_path):
+@pytest.mark.parametrize('wait_flag', ['--wait', '-w'])
+def test_remote_close_wait_crosses_host_worker_boundary(zsh, tmp_path, wait_flag):
     import sys
     stub = tmp_path / 'stubbin/t'
     stub.write_text(f'#!{sys.executable}\nimport sys\nprint("REMOTE " + " ".join(sys.argv[1:]))\n')
     stub.chmod(0o755)
-    result = zsh('REMOTE_HOSTS=(mini user@mini); t remote kill mini api --wait')
+    result = zsh('REMOTE_HOSTS=(mini user@mini); t remote kill mini api ' + wait_flag)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'remote --host mini session close api --wait' in result.stdout
 
@@ -224,7 +227,8 @@ def test_remote_close_wait_crosses_host_worker_boundary(zsh, tmp_path):
 @pytest.mark.parametrize('command,helper', [('t session open api', '_t_open'), ('t open api', '_t_open'),
                                           ('t session resume api --last', '_t_resume'),
                                           ('t session move api', '_t_session_move'), ('t move api', '_t_session_move')])
-def test_public_wait_reaches_shell_discovery_scope(zsh, command, helper):
-    result = zsh(helper + '() { print -r -- "WAIT=$T_DISCOVERY_EXPLICIT_WAIT ARGS=$*"; }; ' + command + ' --wait')
+@pytest.mark.parametrize('wait_flag', ['--wait', '-w'])
+def test_public_wait_reaches_shell_discovery_scope(zsh, command, helper, wait_flag):
+    result = zsh(helper + '() { print -r -- "WAIT=$T_DISCOVERY_EXPLICIT_WAIT ARGS=$*"; }; ' + command + ' ' + wait_flag)
     assert result.returncode == 0 and 'WAIT=1' in result.stdout
-    assert '--wait' not in result.stdout
+    assert wait_flag not in result.stdout

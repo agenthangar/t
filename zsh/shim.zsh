@@ -127,9 +127,9 @@ _t_dispatch() {
   fi
   # Discovery waits are invocation scoped, including aliases and remote workers.
   local -x T_DISCOVERY_EXPLICIT_WAIT=${T_DISCOVERY_EXPLICIT_WAIT:-0}
-  if [[ $shell_verb == (open|resume|move|beam|remote) && ${(M)shell_args:#--wait} != '' ]]; then
+  if [[ $shell_verb == (open|resume|move|beam|remote) && ${(M)shell_args:#(-w|--wait)} != '' ]]; then
     T_DISCOVERY_EXPLICIT_WAIT=1
-    shell_args=("${(@)shell_args:#--wait}")
+    shell_args=("${(@)shell_args:#(-w|--wait)}")
   fi
   # A plain slot resume selects an immutable conversation from that slot's
   # history. Never substitute a generic live slot (which may be an empty shell).
@@ -951,7 +951,7 @@ _t() {
   case "$group/$action" in
     remote/kill)
       if [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
-        _values 'flag' -y --yes --wait -h --help
+        _values 'flag' -y --yes -w --wait -h --help
       elif (( CURRENT == first )); then _values 'repo or slot' "${(@f)$(_dev_repo_selectors)}" 1 2 3 4 all
       else _values 'slot' 1 2 3 4 all; fi ;;
     remote/open|remote/move|remote/resume)
@@ -975,7 +975,7 @@ _t() {
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
             local -a remote_flags=(-h --help)
-            case $action in open) remote_flags+=(--new --wait) ;; move) remote_flags+=(--to --from --session --all --detach --fg --wait) ;; resume) remote_flags+=(--days --all --last --wait) ;; esac
+            case $action in open) remote_flags+=(--new -w --wait) ;; move) remote_flags+=(--to --from --session --all --detach --fg -w --wait) ;; resume) remote_flags+=(--days --all --last -w --wait) ;; esac
             _values 'flag' $remote_flags
           elif [[ $action != move && -z $remote_legacy ]] && (( remote_count == 0 )); then
             _values 'host' ${(k)REMOTE_HOSTS}
@@ -1002,7 +1002,7 @@ _t() {
       if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -h --help; fi ;;
     session/history)
-      local -a history_flags=(--limit --page --refresh --json --wait -h --help)
+      local -a history_flags=(--limit --page --refresh --json -w --wait -h --help)
       if [[ ${words[CURRENT-1]} == --limit || ${words[CURRENT-1]} == --page ]]; then
         _message 'positive integer'
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )) \
@@ -1040,13 +1040,13 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
         case $action in
-          open) flags+=(--wait --new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
-          close) flags+=(-y --yes -r --remote --wait) ;;
+          open) flags+=(-w --wait --new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
+          close) flags+=(-y --yes -r --remote -w --wait) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
-          move) flags+=(--wait -r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
-          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host --last --wait) ;;
+          move) flags+=(-w --wait -r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
+          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host --last -w --wait) ;;
         esac
         _values 'flag' "${flags[@]}"
       elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
@@ -1070,7 +1070,7 @@ _t() {
       _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -l --local -a --all --wait -h --help; fi ;;
+      else _values 'flag' -r --remote -l --local -a --all -w --wait -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)

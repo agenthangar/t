@@ -48,11 +48,11 @@ refuses without launching or substituting another conversation. `--live` and
 explicit `--days` cannot be combined with `--last`. Existing `--cli`, `--fg`
 and `--host` destinations retain exact source and live ownership checks.
 
-`--wait` is available on session open, close, resume, move, list and slot history,
+`-w` (`--wait`) is available on session open, close, resume, move, list and slot history,
 including compatibility and remote routes. When the requested discovery scope has
 no eligible results and refresh is pending, the same wait turns on automatically,
 including static lists, redirected output and history JSON. Available scoped results
-and settled empty/failure results return immediately. Explicit --wait also observes
+and settled empty/failure results return immediately. Explicit `-w` also observes
 a pending refresh when results exist. Every wait is bounded to 30 seconds. Timeout retains the
 final available snapshot for manual selection, with its incomplete notice; direct
 `--last` refuses it. Live rows and saved candidates use the same post-wait
@@ -984,8 +984,8 @@ Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
 Lists with available scoped results return immediately; empty pending lists
-automatically observe refresh for up to 30 seconds. `t session list --wait`
-(also `t ls --wait`) observes refresh even when scoped results exist, then prints
+automatically observe refresh for up to 30 seconds. `t session list -w`
+(also `t ls -w`) observes refresh even when scoped results exist, then prints
 the same table and freshness notices. It uses the shared delayed spinner only in
 capable terminals; redirected waits are silent and never prompt. Completion,
 failure or timeout ends observation; Ctrl-C returns 130 without cancelling the
