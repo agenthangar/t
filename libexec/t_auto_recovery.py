@@ -194,7 +194,8 @@ def enroll(rows):
             if old.get('generation') != generation:
                 continue
             if old:
-                old.update(row)
+                old.update({k: row[k] for k in ('session', 'cwd', 'socket', 'pane', 'pane_pid', 'pid', 'start')
+                            if k in row})
                 old.update(**spec, argv_verified=True, workspace=location, boot=current_boot)
                 if old.get('phase') == 'attention' and not old.get('submission'):
                     old.update(phase='unknown', failures=0, next_retry=0,
