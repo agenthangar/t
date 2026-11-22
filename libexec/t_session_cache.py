@@ -435,6 +435,8 @@ def request(operation, payload=None, *, deadline=None):
         return _wire(operation, payload) if deadline is None else _wire(operation, payload, deadline)
     except (OSError, ValueError):
         pass
+    if operation == 'discover' and payload.get('observe') is True:
+        return {'hosts': [], 'loading': False, 'unavailable': True}
     if operation == 'artifact':
         return {'value': None}  # Standalone live collectors must not start a daemon.
     # The daemon holds its own lifetime lock. Multiple requesting processes may
@@ -554,6 +556,7 @@ class _Memory:
                 entry['pending'] = False
                 entry.pop('last_used', None)
                 entry.pop('requested', None)
+                entry.pop('force_refresh', None)
                 if entry['checked'] > self.clock() or entry['retry'] > self.clock() + TTL:
                     entry['checked'] = entry['retry'] = 0
                 self.entries[key] = entry
@@ -686,35 +689,48 @@ class _Memory:
                 return {'invalidated': targets}
             if operation != 'discover':
                 raise ValueError('unknown session cache operation')
+            observe = payload.get('observe') is True
             hosts = []
             for spec in payload.get('hosts', []):
                 if not isinstance(spec, dict) or not isinstance(spec.get('target'), str):
                     raise ValueError('invalid discovery host')
                 # Friendly aliases do not create a second host cache.
                 key = _digest({k: v for k, v in spec.items() if k != 'host'})
-                if self.loading and not payload.get('observe'):
+                if self.loading and not observe:
                     self.waiting[key] = {'hosts': [spec], 'fields': list(dict.fromkeys(
-                        self.waiting.get(key, {}).get('fields', []) + payload.get('fields', [])))}
+                        self.waiting.get(key, {}).get('fields', []) + payload.get('fields', []))),
+                                         'refresh': payload.get('refresh') is True or self.waiting.get(key, {}).get('refresh', False)}
                 entry = self.entries.get(key)
-                if entry is None and not self.loading:
+                if entry is None and not self.loading and not observe:
                     entry = self.entries.setdefault(key, dict(spec=spec, checked=0, retry=0, refreshing=False))
                 if entry is not None:
-                    self._overlay(entry)
                     now = self.clock()
                     failure = self.failures.get(spec['target'], {})
-                    entry['last_used'] = now
+                    if not observe:
+                        self._overlay(entry)
+                        entry['last_used'] = now
                     retry = failure.get('retry_at', 0)
                     missing = any(field not in entry.get('value', {}) for field in payload.get('fields', []) if field in ('rows', 'resume', 'catalog', 'mcp', 'scopes'))
+                    force = payload.get('refresh') is True and spec['target'] not in self.active_targets and not entry.get('pending')
                     stale = bool(entry.get('dirty')) or not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
-                    if spec['target'] == 'local':
-                        due = stale or missing or 'catalog' not in entry.get('value', {}) or now - entry['checked'] > LOCAL_INTERVAL
-                        if due and not payload.get('observe'):
-                            entry['requested'] = True
-                        self._schedule(key, entry)
-                    elif ((stale or missing) and not payload.get('observe') and not self.loading
-                          and not entry['refreshing'] and spec['target'] not in self.active_targets
-                          and now >= retry and now >= entry.get('next_poll', 0)):
-                        self._start(key, entry)
+                    if not observe:
+                        if spec['target'] == 'local':
+                            due = stale or missing or entry.get('pending') or 'catalog' not in entry.get('value', {}) or now - entry['checked'] > LOCAL_INTERVAL
+                            if due or force:
+                                entry['requested'] = True
+                        if force and not self.loading and not entry['refreshing']:
+                            entry['force_refresh'] = True
+                            self._start(key, entry)
+                        elif spec['target'] == 'local':
+                            self._schedule(key, entry)
+                        elif ((stale or missing or entry.get('pending')) and not self.loading
+                              and not entry['refreshing'] and spec['target'] not in self.active_targets
+                              and now >= retry and now >= entry.get('next_poll', 0)):
+                            self._start(key, entry)
+                    auth_failed = 'resume' in payload.get('fields', []) and any(
+                        item.get('code') == 'github_auth_failed' for item in
+                        entry.get('value', {}).get('catalog', {}).get('diagnostics', [])
+                        if isinstance(item, dict))
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
                                       checked=entry['checked'], stale=stale,
                                       refreshing=entry['refreshing'] or (entry.get('requested', False) and not failure) or (missing and not failure and spec['target'] != 'local') or entry.get('pending', False) or (stale and now >= retry
@@ -722,6 +738,7 @@ class _Memory:
                                       error=failure.get('error', entry.get('error', '')), retry_at=retry,
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
                                       observed=entry.get('observed', entry['checked']),
+                                      resume_pr_auth_failed=auth_failed,
                                       timings=entry.get('timings', {}),
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
@@ -764,7 +781,8 @@ class _Memory:
         """Versioned host-local metadata only. No imported evidence or prompts."""
         if payload.get('spec', {}).get('target') != 'local':
             raise ValueError('only local discovery may be exported')
-        view = self.handle('discover', {'hosts': [payload['spec']], 'fields': ['rows', 'catalog', 'scopes']})
+        view = self.handle('discover', {'hosts': [payload['spec']], 'fields': ['rows', 'catalog', 'scopes'],
+                                        'refresh': payload.get('refresh') is True})
         host = view['hosts'][0]
         value = host.get('value')
         health = {k: host.get(k) for k in ('checked', 'observed', 'refreshing', 'error', 'error_kind')}
@@ -802,6 +820,9 @@ class _Memory:
         with self.lock:
             entry = self.entries[key]
             spec = dict(entry['spec'], reconcile=not entry.get('reconciled') or self.clock() - entry['reconciled'] >= TTL)
+            # Demand drives scheduling; only an explicit refresh forces reconciliation.
+            if entry.pop('force_refresh', False):
+                spec.update(refresh=True, reconcile=True)
             if spec['target'] == 'local':
                 spec['live_only'] = not entry.get('value')
             if spec['target'] != 'local' and entry.get('value'):

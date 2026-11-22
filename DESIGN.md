@@ -44,9 +44,26 @@ For `t open` and `t resume`, extend those controls and preserve every existing
 filter and sort choice. Ctrl-F toggles filters, Ctrl-X resets filters, Ctrl-S
 toggles sorting, and Ctrl-Y cycles sort choices; use native Mac labels when appropriate.
 Slot history retains its pagination keys and uses Ctrl-S/Ctrl-Y for sorting.
-Match `t open` visually: reuse its shared sort block, blank rows between header
-sections, and two-space table gutters when space permits. Compact layouts may
-remove those gaps to keep the focused result visible.
+Reuse the shared control styles and two-space table gutters. Keep the focused
+result visible in short terminals.
+In the resume picker, place the green Ctrl-U refresh action beside the refresh
+status. Use bright cyan for an active refresh, then show the previous refresh
+time and per-host outcomes on separate rows when space permits. Use a green ✓
+for current hosts, a red × for failed connections, and amber for their reasons.
+Keep the hidden count beside the result count. Show the applied filters and
+their shortcuts together, with Alt-F (⌥F on macOS) on its own line to reveal the
+filter editor. Present the current sort and its shortcuts using the same
+summary and action layout. In the full header, leave blank rows before filters,
+sort, the legend, the result hotkeys, and the columns. Compact layouts may
+shorten these breaks to keep a focused result visible.
+
+Order the legend by table column: Status, PRs, Agent. Within Status, use the
+row order for attached (●), last closed (↶), work in progress (↻), and verified
+preview (↗). Use matching colors in the legend and rows. The green fzf check
+marks selected rows. Align PR state icons in fixed positions within PRS, and
+keep the font-independent agent symbols in their own column. Keep STATUS fixed while headings
+and rows pan together. Highlight Return or Enter, Esc, and Tab, and put
+Ctrl-B for the last verified close on the result hotkey row.
 Do not interpret requests to improve picker filtering or sorting as requests for
 new CLI flags unless the user explicitly asks for flags or noninteractive control.
 

@@ -20,7 +20,8 @@ _t_fzf_worker() {
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
       T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK T_PICKER_NOTICE \
-      T_PICKER_NEW_SESSION T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS; do
+      T_PICKER_NEW_SESSION T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS \
+      T_PICKER_DISCOVERY_STATUS T_PICKER_REFRESH_CALLBACK; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
     # Keep large prefix-assigned inputs out of the environment of exec itself.
@@ -41,11 +42,10 @@ _t_fzf_worker() {
   '
 }
 
-# Noninteractive matching for presentation viewports. Use the same fzf matcher
-# against complete canonical display fields, independently of visible slices.
+# Match the full canonical display independently of its visible viewport.
 _t_fzf_match() {
   FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE=/dev/null command fzf \
-    --delimiter="$(printf '\t')" --nth=-1 --ansi --exact --no-extended -i --no-sort --filter="$1"
+    --delimiter="$(printf '\t')" --nth=-1,10 --ansi --exact --no-extended -i --no-sort --filter="$1"
 }
 
 _t_fzf() {
@@ -245,7 +245,15 @@ _t_fzf_filtered() (
   fi
   umask 077
   _t_picker_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-picker.XXXXXX") || return 1
-  trap '[ ! -f "$_t_picker_dir/update.pid" ] || kill "$(cat "$_t_picker_dir/update.pid")" 2>/dev/null; rm -rf -- "$_t_picker_dir"' EXIT
+  # shellcheck disable=SC2329
+  _t_picker_cleanup() {
+    for _t_picker_pid_file in "$_t_picker_dir/update.pid" "$_t_picker_dir/observe.pid"; do
+      _t_picker_pid=$(cat "$_t_picker_pid_file" 2>/dev/null) || continue
+      kill "$_t_picker_pid" 2>/dev/null
+    done
+    rm -rf -- "$_t_picker_dir"
+  }
+  trap '_t_picker_cleanup' EXIT
   trap 'exit 130' HUP INT TERM
   export T_PICKER_DEFAULT="$_t_picker_dir/default" T_PICKER_ALL="$_t_picker_dir/all"
   export T_PICKER_STATE="$_t_picker_dir/show-all" T_PICKER_TOGGLE="$_t_picker_dir/toggle"
@@ -335,12 +343,14 @@ Tab mark ✓"
     cp "$_t_picker_dir/header-0" "$T_PICKER_HEADER_DEFAULT"
     cp "$_t_picker_dir/header-$T_PICKER_SESSION_MASK" "$T_PICKER_HEADER_ALL"
   fi
-  # Generic and state-only headers share the Air chrome on initial paint and
-  # every reload. Snapshot-aware headers are rendered by t_picker_filters.py.
-  for _t_air_header in "$_t_picker_dir"/header-*; do
-    _t_fzf_chrome FILTERS < "$_t_air_header" > "$_t_air_header.air" || return $?
-    mv "$_t_air_header.air" "$_t_air_header"
-  done
+  # Snapshot-aware pickers render their first frame and reloads with the
+  # Python filter helper. Only fallback pickers consume the static headers.
+  if [ -z "$_t_picker_source" ] && [ -z "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
+    for _t_air_header in "$_t_picker_dir"/header-*; do
+      _t_fzf_chrome FILTERS < "$_t_air_header" > "$_t_air_header.air" || return $?
+      mv "$_t_air_header.air" "$_t_air_header"
+    done
+  fi
   # New fzf versions retain marks for identities still visible after reload.
   # Older versions clear marks explicitly so a hidden target cannot be accepted.
   export T_PICKER_CLEAR_MARKS='deselect-all+'
@@ -349,10 +359,22 @@ Tab mark ✓"
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
     case $_t_picker_fzf_help in *--footer=*) export T_PICKER_NATIVE_FOOTER=1 ;; esac
   fi
+  _t_picker_terminal=
+  case $_t_picker_size in
+    ''|*[!0-9\ ]*) ;;
+    *)
+      if [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size#* }" -gt 0 ]; then
+        _t_picker_terminal=1
+      fi
+      ;;
+  esac
+  _t_picker_viewport=
+  case $_t_picker_fzf_help in *--listen*) _t_picker_viewport=$_t_picker_terminal ;; esac
+  _t_picker_start=
   case $_t_picker_fzf_help in
     *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
   esac
-  if [ -n "$_t_picker_source" ] || [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
+  if [ -n "$_t_picker_source" ] || [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ] || [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
     : > "$_t_picker_dir/source"
     [ -z "$_t_picker_source" ] || printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
     if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
@@ -361,9 +383,11 @@ Tab mark ✓"
       if [ -n "$_t_picker_columns" ]; then
         case $_t_picker_fzf_help in
           *--header-border*) ;;
-          *) export T_PICKER_COLUMNS="  $_t_picker_columns" ;;
+          *) export T_PICKER_LEGACY_COLUMNS=1 ;;
         esac
       fi
+      printf '%s\n' "$_t_picker_columns" > "$_t_picker_dir/columns"
+      printf '%s' "${T_PICKER_DISCOVERY_STATUS:-}" > "$_t_picker_dir/discovery-status"
       printf '%s\n' "${T_PICKER_AUTH_HOSTS:-}" > "$_t_picker_dir/auth-hosts"
       # The persistent warning needs another row; fzf 0.44 otherwise exhausts
       # its 60%-height window at 80x24 before rendering a focused session.
@@ -372,6 +396,9 @@ Tab mark ✓"
     T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
     [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
     T_PICKER_HEADER_WIDTH=$(( T_PICKER_HEADER_WIDTH - 12 ))
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_compact" ]; then
+      T_PICKER_HEADER_WIDTH=$(( ${_t_picker_size#* } - 5 ))
+    fi
     if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size%% *}" -le 14 ]; then
       set -- --height=100% --border=none "$@"
       _t_picker_margin=0
@@ -379,20 +406,30 @@ Tab mark ✓"
     fi
     export T_PICKER_HEADER_WIDTH
     export T_PICKER_FILTER_HELPER="$T_HOME/libexec/t_picker_filters.py"
-    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_columns" ] && [ -r "$T_HOME/libexec/t_picker_viewport.py" ]; then
-      export T_PICKER_PAN=1
-      export T_PICKER_COLUMNS="$_t_picker_columns" T_PICKER_PAN_HEADER_PAD=0
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_viewport" ] && [ -n "$_t_picker_columns" ] && [ -r "$T_HOME/libexec/t_picker_viewport.py" ]; then
+      export T_PICKER_PAN=1 T_PICKER_COLUMNS="$_t_picker_columns" T_PICKER_PAN_HEADER_PAD=0
       case $_t_picker_fzf_help in *--header-border*) ;; *) T_PICKER_PAN_HEADER_PAD=2 ;; esac
       export T_PICKER_PAN_FRAME_ROWS=6
       if [ "${_t_picker_size%% *}" -le 14 ]; then T_PICKER_PAN_FRAME_ROWS=1
       elif [ "${_t_picker_size#* }" -le 60 ]; then T_PICKER_PAN_FRAME_ROWS=2; fi
       printf 0 > "$_t_picker_dir/pan-offset"
-      # fzf starts a private authenticated loopback API. Its chosen ephemeral
-      # port is delivered back to the relay without reserving a racy port.
       export FZF_API_KEY
       FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+      # One start binding combines viewport registration and live refresh.
       # shellcheck disable=SC2016
-      set -- --disabled --listen=127.0.0.1:0 --bind='f11:execute-silent(cp "$T_PICKER_VIEWS/pan-sync-request" "$T_PICKER_VIEWS/pan-sync-ack")' --bind='start:execute-silent(printf "%s" "$FZF_PORT" > "$T_PICKER_VIEWS/pan-port")' --bind='change:execute-silent(sh "$T_PICKER_TOGGLE" search {q})+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")' --preview='printf "%s\n" {-2}' "$@"
+      _t_picker_start='execute-silent(printf "%s" "$FZF_PORT" > "$T_PICKER_VIEWS/pan-port")'
+      # shellcheck disable=SC2016
+      set -- --disabled --listen=127.0.0.1:0 --bind='f11:execute-silent(cp "$T_PICKER_VIEWS/pan-sync-request" "$T_PICKER_VIEWS/pan-sync-ack")' --bind='change:execute-silent(sh "$T_PICKER_TOGGLE" search {q})+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")' --preview='printf "%s\n\nAgent: %s\n" {-2} {10}' "$@"
+    fi
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_terminal" ] && [ "${_t_picker_size#* }" -gt 40 ] && [ "${_t_picker_size%% *}" -gt 14 ]; then
+      case $_t_picker_fzf_help in
+        *--info-command*)
+          printf 1 > "$_t_picker_dir/info-command"
+          # Keep fzf's native counts and selected count intact.
+          # shellcheck disable=SC2016
+          set -- --info-command='count=$(cat "$T_PICKER_VIEWS/hidden-count"); if [ "${T_PICKER_COLOR:-0}" = 1 ] && [ "$count" != 0 ]; then printf "%s · \033[1m%s hidden\033[0m" "$FZF_INFO" "$count"; else printf "%s · %s hidden" "$FZF_INFO" "$count"; fi' "$@"
+          ;;
+      esac
     fi
     T_PICKER_COLOR=0
     if [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ] && [ -t 2 ]; then
@@ -475,7 +512,7 @@ SH
     _t_picker_bind=
     _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo ctrl-s:toggle-sort ctrl-y:next-sort alt-s:toggle-sort'
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
-      _t_picker_specs="$_t_picker_specs ctrl-d:merged"
+      _t_picker_specs="$_t_picker_specs ctrl-d:merged alt-f:edit-filters"
     else
       _t_picker_specs="$_t_picker_specs ctrl-d:match-interface"
     fi
@@ -500,6 +537,31 @@ SH
     set -- --no-sort "$@"
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
       _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
+      if [ "${T_PICKER_RESUME_LAST:-}" = 1 ]; then
+        # Unlike accepting a row, this action also works with no search matches.
+        # shellcheck disable=SC2016
+        _t_picker_bind="${_t_picker_bind},"'ctrl-b:execute-silent(touch "$T_PICKER_VIEWS/last-closed")+abort'
+      fi
+      if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
+        _t_picker_track=
+        case $_t_picker_fzf_help:$T_PICKER_CLEAR_MARKS in *--track*:) _t_picker_track='track-current+' ;; esac
+        # fzf suspends keyboard handling while the shared refresh rail is up.
+        # shellcheck disable=SC2016
+        _t_picker_bind="${_t_picker_bind},ctrl-u:${_t_picker_track}${T_PICKER_CLEAR_MARKS}"'execute(sh -c "$T_PICKER_REFRESH_CALLBACK" </dev/tty >/dev/tty)+execute-silent(sh "$T_PICKER_TOGGLE" current)+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+      fi
+      case ${T_PICKER_DISCOVERY_STATUS:-} in
+        *'"status": "refreshing"'*)
+          if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
+            export FZF_API_KEY T_PICKER_TRACK="$_t_picker_track"
+            [ "${T_PICKER_PAN:-}" = 1 ] || FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+            # The worker stages rows privately. fzf adopts them alongside its
+            # normal filter and sort actions through its authenticated listener.
+            # shellcheck disable=SC2016
+            _t_picker_start="${_t_picker_start}${_t_picker_start:++}"'execute-silent(T_PICKER_OBSERVE=1 sh -c "exec $T_PICKER_REFRESH_CALLBACK" </dev/null >/dev/null 2>&1 & echo $! > "$T_PICKER_VIEWS/observe.pid")'
+            set -- --listen=127.0.0.1:0 "$@"
+          fi
+          ;;
+      esac
     fi
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
       if [ "$_t_picker_spec" = alt-t:turn ]; then
@@ -526,6 +588,7 @@ SH
   if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
     case ${T_PICKER_SESSION_FILTERS:-} in open|resume|kill|list) set -- --info=inline "$@" ;; esac
   fi
+  [ -z "$_t_picker_start" ] || set -- --bind="start:$_t_picker_start" "$@"
   if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then
     set -- --footer="$(cat "$_t_picker_dir/footer")" --footer-border=none "$@"
   fi
@@ -558,6 +621,10 @@ SH
     fi
     break
   done
+  if [ -f "$_t_picker_dir/last-closed" ]; then
+    printf '%s\n' last-closed
+    return 0
+  fi
   if [ "$_t_picker_rc" = 0 ]; then
     if [ "${T_PICKER_PAN:-}" = 1 ]; then
       # The private final field is presentation only; command callers receive

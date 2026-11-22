@@ -45,7 +45,11 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     proj.mkdir(parents=True)
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"Fix login"}}\n')
     log = tmp_path / "fzf.log"
-    live = (f"_dev_session_rows() {{ print -r -- '-\t{wt4}\tapi-4\tdetached\tactive\tLive work\tcodex'; }}; "
+    live_record = '\t'.join(['1800000000', 'api', '4', 'live-thread', str(wt4), 'date',
+                             'Named live conversation', 'local', 'codex', '-', 'org/api',
+                             'NONE', '-', '-', 'yes', 'name'])
+    live = (f"_dev_session_rows() {{ print -r -- 'live-thread\t{wt4}\tapi-4\tdetached\tactive\tLive work\tcodex'; }}; "
+            f"_t_resume_history_candidates() {{ print -r -- '{live_record}'; }}; "
             "_dev_open_tab() { echo \"TAB $*\"; }; ")
     r = zsh(live + "_t_resume api --live; echo rc=$?", _tty=True, FZF_LOG=str(log),
             FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt4))
@@ -56,8 +60,9 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     assert "claude -r c1" in zsh.log.read_text()
     assert "codex resume" not in zsh.log.read_text()  # the live row keeps its owner
     rows = log.read_text().splitlines()
-    assert any("4" in row and "⬡ codex" in row and "● active" in row and "Live work" in row for row in rows)
-    assert any("3" in row and "✱ claude" in row and "Fix login" in row for row in rows)
+    assert any(row.startswith("● ↻") and ">_" in row and "4 ●" not in row
+               and "Named live conversation" in row for row in rows)
+    assert any("3" in row and re.search(r"  \*  ", row) and "Fix login" in row for row in rows)
     assert "--with-nth=-1" in (tmp_path / "fzf.log.args").read_text()
 
 
@@ -211,7 +216,7 @@ def test_resume_default_filters_live_rows_without_dropping_their_details(zsh, tm
     filtered = pathlib.Path(f"{files}.filtered").read_text()
     all_rows = pathlib.Path(f"{files}.all").read_text()
     assert "Dead work" in filtered and "Live work" not in filtered
-    assert "Dead work" in all_rows and "Live work" in all_rows and "⬡ codex" in all_rows
+    assert "Dead work" in all_rows and "Live work" in all_rows and ">_" in all_rows
     assert pathlib.Path(f"{files}.show").read_text().strip() == ""
     r = zsh(shell + "_t_resume api --live; echo rc=$?", _tty=True, **env)
     assert "rc=1" in r.stdout, r.stdout
@@ -272,7 +277,7 @@ def test_resume_live_hotkey_hides_live_without_losing_saved_rows(zsh, tmp_path):
     assert "Live work" in initial and "Dead work" in initial
     assert "Live work" not in filtered and "Dead work" in filtered
     header = pathlib.Path(f"{log}.header0").read_text()
-    assert "Filters ON" in header and "saved only" in header
+    assert "Active filter" in header and "Saved only" in header
     assert "send-keys" not in (zsh.log.read_text() if zsh.log.exists() else "")
 
 
@@ -301,13 +306,13 @@ def test_resume_last_turn_overrides_mtime_and_sort_hotkeys_keep_rows(zsh, tmp_pa
     for index in range(7):
         assert pathlib.Path(f'{log}.step{index}').read_text().splitlines() == initial
         header = semantic_chrome(pathlib.Path(f'{log}.header{index}').read_text()).splitlines()[-1]
-        assert header.index('WORKING ON') == initial[0].split('\t')[-1].index('Task 2')
-        assert header.split() == ['PR', 'SLOT', 'AGENT', 'ACTIVITY', 'WORKING', 'ON']
+        assert header.index('TITLE') == initial[0].split('\t')[-1].index('Task 2')
+        assert header.split() == ['STATUS', 'PRS', 'REPO', 'SLOT', 'AGENT', 'LAST', 'TURN', 'TITLE']
     arguments = pathlib.Path(f'{log}.args').read_text()
     assert '--no-sort' in arguments
     for letter in ('t', 'r', 'g', 'o', 'v'):
         assert 'alt-' + letter + ':' in arguments
-    assert 'Last:' in log.read_text()
+    assert re.search(r'2026-10-22 \d{2}:\d{2}  Task 2', log.read_text())
     # Noninteractive explicit-slot fallback also picks the actual latest turn.
     # Move both transcripts under the same slot, retaining their opposed mtimes.
     project2 = zsh.home / '.claude/projects' / re.sub(r'[^A-Za-z0-9]', '-', str(zsh.home / 'code/.worktrees/api/2'))
@@ -356,22 +361,35 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
              'else print -r -- "$tx"$\'\\t\'"Task · #99 merged"$\'\\t\'; fi; done; }; '
              '_pr_state_flush() { :; }; '
              'mkdir -p "$HOME/.cache/claude-sessions/pr"; '
-             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; ')
+             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; '
+             'print -r -- OPEN > "$HOME/.cache/claude-sessions/pr/org#api#43"; '
+             'print -r -- "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd CONFLICT"'
+             ' > "$HOME/.cache/claude-sessions/pr/org#api#43.badge"; '
+             'print -r -- "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd 1"'
+             ' > "$HOME/.cache/claude-sessions/pr/org#api#43.preview"; ')
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
-                            'date', 'Associated open and merged PRs · #42 merged', 'local', 'claude', '-', 'org/api', aggregate])
-        shell += f"_t_resume_history_candidates() {{ print -r -- '{record}'; }}; "
+                            'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api',
+                            aggregate, '-', 'org/api#42:MERGED org/api#43:OPEN', 'yes', 'name'])
+        prompt = '\t'.join(['1800000000', 'api', '3', 'c3', str(zsh.home / 'code/.worktrees/api/3'),
+                            'date', 'Task · #99 merged', 'local', 'claude', '-', 'org/api',
+                            'NONE', '-', '-', '-', 'prompt'])
+        shell += f"_t_resume_history_candidates() {{ print -rl -- '{record}' '{prompt}'; }}; "
     result = zsh(shell + '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log),
                  PICK_ACTIONS='merged,merged', PICK_CANCEL='1')
     assert 'rc=1' in result.stdout, result.stdout
     initial = pathlib.Path(f'{log}.initial').read_text().splitlines()
     merged = next(row for row in initial if '\tc2\t' in row)
-    assert merged.split('\t')[-1].startswith('[MIXED ' if aggregate else '[MERGED ')
-    assert '#42 merged' in merged
+    pr_column, _, working_on = merged.split('\t')[-1].partition('  2')
+    assert pr_column[8:].startswith('↴ #42')
+    assert ('! #43' in pr_column[8:]) == bool(aggregate)
+    assert ('↗' in pr_column[:8]) == bool(aggregate)
+    assert ('↻' in pr_column[:8]) == bool(aggregate)
+    assert '#42' not in working_on
     hidden = pathlib.Path(f'{log}.step0').read_text()
     assert ('\tc2\t' in hidden) == bool(aggregate)
     assert '\tc3\t' in hidden
-    assert 'Task · #99 merged' in hidden
+    assert ('Prompt: Task · #99 merged' if aggregate else 'Task · #99 merged') in hidden
     assert '\tc2\t' in pathlib.Path(f'{log}.step1').read_text()
     assert 'alt-m:' in pathlib.Path(f'{log}.args').read_text()
     assert 'send-keys' not in (zsh.log.read_text() if zsh.log.exists() else '')

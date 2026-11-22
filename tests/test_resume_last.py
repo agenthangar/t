@@ -37,6 +37,12 @@ def test_last_closed_scope_and_duplicate_evidence(adapter):
     assert adapter.last_closed_candidate(data, ['org/api']) == old
 
 
+@pytest.mark.parametrize('extra', ['org/api#42:OPEN', '-\tyes', '-\tyes\trecorded'])
+def test_last_closed_uses_extended_picker_metadata(adapter, extra):
+    extended = candidate() + '\t' + extra
+    assert adapter.last_closed_candidate(snapshot(extended), ['api']) == extended
+
+
 @pytest.mark.parametrize('state', ['missing', 'tie', 'unavailable', 'loading', 'refreshing', 'stale', 'error', 'wait_timed_out', 'conflict', 'invalidated'])
 def test_last_closed_refuses_incomplete_missing_tied_or_conflicting(adapter, state):
     data = snapshot(candidate())

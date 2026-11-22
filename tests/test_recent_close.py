@@ -79,7 +79,7 @@ def test_close_to_discovery_and_exact_resume(history, monkeypatch, tmp_path, zsh
     protocol = list(discovery['_catalog_candidates']({'conversations': saved}, adapter, 'local'))
     view = {'hosts': [{'host': 'local', 'value': {'resume': protocol}}]}
     protocol = list(discovery['candidates'](view, ['api']))
-    assert len(protocol) == 3 and len(protocol[0].split('\t')) == 13
+    assert len(protocol) == 3 and len(protocol[0].split('\t')) == 16
     shell = ('_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(protocol)) + '; }; '
              '_t_fzf_filtered() { print -u2 -- "$1"; print -r -- "${${(f)1}[1]}"; }; '
              '_t_resume_history_launch() { print -u2 -- "EXACT $2 $3"; print dev-api-99; }; '
@@ -87,7 +87,6 @@ def test_close_to_discovery_and_exact_resume(history, monkeypatch, tmp_path, zsh
     result = zsh(shell, _tty=True)
     assert result.returncode == 0, result.stdout
     assert 'EXACT session-2 claude' in result.stdout
-    assert '↶' in result.stdout
     assert 'EXACT session-0' not in result.stdout
     assert 'attach-session -t =dev-api-99:' in zsh.log.read_text()
     # Old peer records remain accepted, with no fabricated closure timestamp.
@@ -110,26 +109,34 @@ def test_marker_survives_sort_and_filter(history, filters, tmp_path):
         lines.append('\t'.join(['api', str(i + 1), row['sid'], '/wt', 'date', row['title'], '-',
                                 'history', '-', row['agent'], row['last_turn'], row['repo'],
                                 'OPEN', history._SORT['closed_time'](row), f'api-{i + 1}  {row["title"]}']))
-    source = filters.mark_resume('\n'.join(lines))
+    source = '\n'.join(lines)
     for name in ('source', 'all', 'rows-0', 'rows-1'):
         (tmp_path / name).write_text(source + '\n')
     filters.render(tmp_path, 'resume', 'current', 68)
     assert (tmp_path / 'sort').read_text() == 'closed'
     assert 'session-2' in (tmp_path / 'current').read_text().splitlines()[0]
-    assert '↶ last closed' in (tmp_path / 'current-header').read_text()
+    header = (tmp_path / 'current-header').read_text()
+    assert '↶ last closed' in header and '↻ work in progress' in header and '↗ preview' in header
+    assert '— no PR' in header
     filters.render(tmp_path, 'resume', 'next-sort', 68, 'WORKING ON')
-    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == '  WORKING ON'
+    assert (tmp_path / 'current-header').read_text().splitlines()[-1] == 'STATUS  WORKING ON'
     assert (tmp_path / 'sort').read_text() == 'turn'
     output = (tmp_path / 'current').read_text().splitlines()
     assert output[0].split('\t')[2] == 'session-0'
-    assert output[2].split('\t')[-1].startswith('↶ ')
+    assert output[2].split('\t')[-1][1] == '↶'
     filters.render(tmp_path, 'resume', 'match-agent', 68, identity=('api', '2', 'session-1'))
     assert '↶ ' not in (tmp_path / 'current').read_text()
     filters.render(tmp_path, 'resume', 'reset-filters', 68)
     assert (tmp_path / 'sort').read_text() == 'turn'
     assert '↶ ' in (tmp_path / 'current').read_text()
-    assert '↶' not in filters.mark_resume('\n'.join(lines), incomplete=True)
-    assert 'unknown' in filters.closure_legend(filters.metadata(source, 'resume'), True)
+    (tmp_path / 'discovery-status').write_text(json.dumps(dict(
+        hosts=[dict(host='mac', status='timed out')], auth_hosts=['mini'])))
+    filters.render(tmp_path, 'resume', 'current', 68)
+    assert '↶ ' in (tmp_path / 'current').read_text()
+    assert 'mac timed out' in (tmp_path / 'current-header').read_text()
+    assert 'GitHub auth failed: mini' in (tmp_path / 'current-header').read_text()
+    tied = source.replace(history._SORT['closed_time'](data[1]), history._SORT['closed_time'](data[2]))
+    assert '↶' not in filters.mark_resume(tied)
 
 
 @pytest.mark.parametrize('width', [20, 28, 32, 44, 59, 60, 61, 62, 80, 100, 120])
@@ -154,7 +161,7 @@ def test_history_marker_columns_align(history, width):
 def test_real_recent_close_marker_keeps_focus(picker, width, height, plain):
     start, wait, keys, finish = picker
     start(profile='resume-closed', mode='resume', width=width, height=height, monochrome=plain)
-    screen = wait('Sort: last closed', focused='Older api')
+    screen = wait('Last closed', focused='Older api')
     marked = next(line for line in screen.splitlines() if 'Older api' in line)
     assert '↶' in marked
     frames = Path('artifacts/recent-close')
@@ -164,11 +171,9 @@ def test_real_recent_close_marker_keeps_focus(picker, width, height, plain):
     heading = next(line for line in screen.splitlines() if 'WORKING ON' in line)
     assert heading.index('WORKING ON') == before
     keys('C-y')
-    screen = wait('Sort: turn' if width <= 44 else 'Sort: last turn', ordered=['Newest web', 'Older api'])
+    screen = wait('Last turn', ordered=['Newest web', 'Older api'])
     assert '↶' in next(line for line in screen.splitlines() if 'Older api' in line)
     keys('-l', 'Older')
-    # The viewport helper searches canonical rows before reloading fzf, so its
-    # input count is the single matching row rather than the full snapshot.
     screen = wait('1/1 (0)', focused='Older api')
     matched = next(line for line in screen.splitlines() if 'Older api' in line)
     assert '↶' in matched

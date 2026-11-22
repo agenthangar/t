@@ -1,8 +1,29 @@
 """Codex index reads and durable rollout validation shared by lifecycle callers."""
 from contextlib import closing
+import json
 from pathlib import Path
 import sqlite3
 import sys
+
+
+def session_names(home):
+    """Read per-thread names maintained by Codex, ignoring unfinished writes."""
+    names = {}
+    try:
+        with (Path(home) / 'session_index.jsonl').open(encoding='utf-8', errors='replace') as stream:
+            for line in stream:
+                if not line.endswith('\n'):
+                    break
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(row, dict) and isinstance(row.get('id'), str)
+                        and isinstance(row.get('thread_name'), str) and row['thread_name'].strip()):
+                    names[row['id']] = row
+    except OSError:
+        pass
+    return names
 
 
 def rows(path, query, parameters=(), *, initialize_sidecars=True, timeout=.5, row_factory=None):

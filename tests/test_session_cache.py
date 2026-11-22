@@ -115,6 +115,53 @@ def discover(engine, *hosts):
     return engine.handle('discover', {'hosts': list(hosts) or [spec()]})
 
 
+def test_explicit_refresh_coalesces_without_evicting_retained_rows(engine, cache):
+    memory, now, jobs, _ = engine
+    host = spec('mini')
+    discover(memory, host)
+    drain(jobs)
+    old = discover(memory, host)['hosts'][0]['value']
+    assert old
+    memory.failures['mini'] = dict(retry_at=now[0] + 60, error='unreachable', kind='transport')
+    outcomes = iter([{'_pending': True}, {'rows': 'New rows', 'resume': []}])
+    requests = []
+    def collect(target):
+        requests.append(target.get('refresh', False))
+        return next(outcomes)
+    memory.collect = collect
+    for _ in range(3):
+        latest = memory.handle('discover', {'hosts': [host], 'refresh': True})['hosts'][0]
+        assert latest['refreshing'] and latest['value'] == old
+        assert len(jobs) == 1
+    drain(jobs)
+    assert requests == [True] and discover(memory, host)['hosts'][0]['value'] == old
+    now[0] += 1
+    discover(memory, host)
+    drain(jobs)
+    assert requests == [True, False]
+    refreshed = discover(memory, host)['hosts'][0]
+    assert not refreshed['refreshing'] and refreshed['value']['rows'] == 'New rows'
+
+
+def test_observing_discovery_neither_schedules_nor_renews_collectors(engine, cache):
+    memory, now, jobs, _ = engine
+    discover(memory)
+    drain(jobs)
+    existing = next(iter(memory.entries.values()))
+    last_used = existing['last_used']
+    now[0] += cache.TTL + 1
+    def observe():
+        return memory.handle('discover', {'hosts': [spec(), spec('new')], 'observe': True})
+    saved = observe()['hosts']
+    assert saved[0]['stale'] and saved[0]['value'] and saved[1]['value'] is None
+    assert not jobs and len(memory.entries) == 1 and existing['last_used'] == last_used
+    discover(memory)
+    assert observe()['hosts'][0]['refreshing']
+    assert len(jobs) == 1
+    drain(jobs)
+    assert not observe()['hosts'][0]['refreshing'] and not jobs
+
+
 def drain(jobs):
     callback, *args = jobs.pop(0)
     callback(*args)
@@ -755,3 +802,45 @@ def test_detached_workers_pin_relative_config_and_safe_legacy_identity(cache, mo
     monkeypatch.chdir('/')
     assert cache._identity() == identity
     assert legacy not in list(cache._compatible_identities())
+
+
+@pytest.mark.parametrize('target', ['local', 'mini'])
+def test_demand_and_explicit_refresh_have_separate_collector_semantics(engine, cache, target):
+    memory, now, jobs, _ = engine
+    host = spec(target)
+    discover(memory, host); drain(jobs)
+    requests = []
+    value = next(iter(memory.entries.values()))['value']
+    memory.collect = lambda request: (requests.append(request.copy()), value.copy())[1]
+    now[0] += cache.TTL + 1
+    discover(memory, host); drain(jobs)
+    assert not requests[-1].get('refresh')
+    memory.failures[target] = dict(retry_at=now[0] + 60, error='unreachable', kind='transport')
+    memory.handle('discover', {'hosts': [host], 'refresh': True, 'observe': True})
+    assert not jobs
+    memory.handle('discover', {'hosts': [host], 'refresh': True})
+    assert len(jobs) == 1
+    drain(jobs)
+    assert requests[-1]['refresh'] and requests[-1]['reconcile']
+    now[0] += cache.REMOTE_INTERVAL
+    memory.tick()
+    if target == 'local':
+        assert not jobs
+    else:
+        assert len(jobs) == 1
+        drain(jobs)
+        assert not requests[-1].get('refresh')
+
+
+def test_refresh_requested_while_loading_is_retained_separately_from_demand(engine, cache):
+    memory, now, jobs, _ = engine
+    discover(memory); drain(jobs)
+    requests = []
+    restored = cache._Memory(clock=lambda: now[0], submit=lambda *job: jobs.append(job),
+                             collect=lambda request: (requests.append(request), dict(rows='new', resume=[], catalog={}))[1])
+    restored.handle('discover', {'hosts': [spec()], 'fields': ['rows'], 'refresh': True})
+    restored.handle('discover', {'hosts': [spec()], 'fields': ['catalog']})
+    restored.restore(memory.snapshot())
+    assert len(jobs) == 1
+    drain(jobs)
+    assert requests[0]['refresh'] and requests[0]['reconcile']

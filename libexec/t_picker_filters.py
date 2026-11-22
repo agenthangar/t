@@ -1,4 +1,5 @@
-"""Filter a private picker snapshot without rediscovery or session actions."""
+"""Render and filter a private picker snapshot without session actions."""
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -6,9 +7,9 @@ import re
 import subprocess
 import sys
 
-from t_session_details import clip_columns, display_width, enrich, format_last_turn
+from t_session_details import clip_columns, display_width, enrich, format_last_turn, wrap_columns
 from t_picker_theme import key_labels, paint, control_rows, sort_rows
-from t_session_sort import RESUME_SORTS, SAVED_SORTS, natural, turn_epoch, latest_closed
+from t_session_sort import RESUME_SORTS, SAVED_SORTS, natural, turn_epoch, latest_closed, sort_label
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -20,6 +21,13 @@ OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
                'task': ('Ctrl-W', 'task')}
 
 PR_STATES = {'MERGED', 'OPEN', 'CLOSED', 'NONE', 'UNKNOWN', 'MIXED'}
+PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗': '96',
+             '?': '37', '—': '37'}
+PR_CHIP = r'[↴○◌!×?] #\d+'
+RESUME_STATUS_WIDTH = 8
+RESUME_MARK_ROLES = {'●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
+RESUME_AGENTS = {'codex': ('>_', 'agent-codex'), 'claude': ('*', 'agent-claude'),
+                 'cursor': ('<>', 'key')}
 
 
 def metadata(source, profile):
@@ -35,7 +43,9 @@ def metadata(source, profile):
                 host='local' if host == 'here' else host, repo=repo, session=slot,
                 turn=fields[10] if len(fields) > 11 else '-',
                 pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN',
-                closed=fields[13] if len(fields) > 14 and location == '-' else '-')
+                closed=fields[13] if len(fields) > 14 and location == '-' else '-',
+                work=len(fields) > 16 and fields[15] == 'yes',
+                preview=len(fields) > 17 and fields[16] == 'yes')
         else:
             if len(fields) < 7:
                 continue
@@ -89,10 +99,11 @@ def resume_turns(source, home, codex_home, owners=''):
         turn = detail.split('\t')[-1]
         if row[7] == 'history' and len(row) > 11 and turn_epoch(row[11]) != float('-inf'):
             turn = row[11]
-        when = format_last_turn(turn)
-        row[4] = 'Last: ' + when if row[6] == '-' else row[4] + ' · Last: ' + when
+        row[4] = format_last_turn(turn, '%Y-%m-%d %H:%M')
         pr = row[13] if len(row) > 13 and row[13] in PR_STATES else 'UNKNOWN'
-        result.append('\t'.join(row[:10] + [turn] + ([row[12]] if len(row) > 12 else ['-']) + [pr, row[14] if len(row) > 14 and row[6] == '-' else '-']))
+        result.append('\t'.join(row[:10] + [turn, row[12] if len(row) > 12 else '-', pr,
+            row[14] if len(row) > 14 and row[6] == '-' else '-', row[15] if len(row) > 15 else '-',
+            row[16] if len(row) > 16 else '-']))
     records = metadata('\n'.join(row + '\t' for row in result), 'resume')
     return sort_resume(result, records, 'closed' if any(r['closed'] != '-' for r in records.values()) else 'turn')
 
@@ -103,12 +114,12 @@ def choose(rows, records, filters):
             for name, value in filters.items())]
 
 
-def pack(parts, width):
+def pack(parts, width, separator=' · '):
     lines = []
     for part in parts:
         part = clip_columns(part, width)
-        if lines and display_width(lines[-1] + ' · ' + part) <= width:
-            lines[-1] += ' · ' + part
+        if lines and display_width(lines[-1] + separator + part) <= width:
+            lines[-1] += separator + part
         else:
             lines.append(part)
     return lines
@@ -123,34 +134,37 @@ def state_label(profile, mask):
         'pending included' if mask & 2 else 'clean only')
 
 
-def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False, hide_merged=False, sort_enabled=True, legend=''):
+def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False,
+           hide_merged=False, sort_enabled=True, show_legend=False, status=(),
+           filters_expanded=False, hidden_info=False, attached_results=False, legend=''):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
-    compact = width <= 40 or int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    compact = width <= 40 or short
+    if profile == 'resume':
+        return resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
+                             hide_merged, sort_enabled, show_legend, status, compact, short,
+                             filters_expanded, hidden_info, attached_results)
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
     def keys(parts, selected=()):
         return control_rows(parts, width, selected, compact, color, 'selected' if profile == 'open' else 'active')
-    lines = [] if compact else [style('HOTKEYS', 'heading')]
     actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab ✓',
                'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
+    lines = [] if compact else [style('HOTKEYS', 'heading')]
     if profile == 'open' and os.environ.get('T_PICKER_NEW_SESSION') == '1':
         actions.append('Ctrl-N new')
     lines += keys(actions)
     if not compact:
-        lines += ['']
-    lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle', 'Ctrl-X reset'], ['Filters ON'] if enabled else [])
-    controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for name, (shortcut, label) in FACETS.items()
-                                  if profile != 'resume' or name != 'interface']
+        lines.append('')
+    lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle',
+                   'Ctrl-X reset'], ['Filters ON'] if enabled else [])
+    controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
     active = [f'{FACETS[name][0]} {FACETS[name][1]}' for name, value in filters.items()
               if enabled and value is not None and name in FACETS]
     state_active = enabled and mask != (3 if profile == 'kill' else 1)
     if state_active:
         active.append('Ctrl-T state')
-    if profile == 'resume':
-        controls.append('Ctrl-D merged')
-        if enabled and hide_merged:
-            active.append('Ctrl-D merged')
     lines += keys(controls, active)
     summary = ', '.join(f'{name}={value}' for name, value in filters.items() if value is not None)
     summary = state_label(profile, mask) + (' · ' + summary if summary else '')
@@ -162,7 +176,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
         lines += [''] if profile == 'open' else [style('Match highlighted row; repeat key to clear'), '']
-    lines += sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'), include_closed=profile == 'resume', selected_role='selected' if profile == 'open' else 'active')
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile == 'open',
+                       selected_role='selected' if profile == 'open' else 'active')
     if not compact:
         lines += ['']
     if legend:
@@ -170,6 +185,99 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if columns:
         column_width = width + int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) if os.environ.get('T_PICKER_PAN') == '1' else width
         lines.append(style(clip_columns(columns, column_width)))
+    return '\n'.join(lines) + '\n'
+
+
+def resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
+                  hide_merged, sort_enabled, show_legend, status, compact, short,
+                  filters_expanded=False, hidden_info=False, attached_results=False):
+    style = lambda text, role='action': paint(text, role) if color else text
+    def keys(parts, selected=()):
+        return control_rows(parts, width, selected, compact, color, separator='  ')
+    def summary(label, values, active):
+        label_width = max(16, display_width(label) + 2) if width >= 60 else 0
+        prefix = label.ljust(label_width) if label_width else label + ' '
+        text = prefix + '  '.join(key_labels(value, compact=compact) for value in values)
+        rows, line = [], ''
+        for word in re.findall(r'\S+\s*', text):
+            if line and display_width(line + word.rstrip()) > width:
+                rows.append(line.rstrip())
+                line = ' ' * label_width
+            if display_width(line + word.rstrip()) > width:
+                pieces = wrap_columns(word.rstrip(), width - label_width)
+                rows.extend(line + piece for piece in pieces[:-1])
+                line = ' ' * label_width + pieces[-1]
+            else:
+                line += word
+        if line:
+            rows.append(line.rstrip())
+        if not color:
+            return rows
+        result = []
+        for index, row in enumerate(rows):
+            if index == 0 and row.startswith(label):
+                row = style(label, 'selected' if active else 'hint') + row[len(label):]
+            row = re.sub(r'(?:Ctrl-[A-Z/]|Alt-[A-Z]|[⌃⌥^][A-Z/]|M-[A-Z])',
+                         lambda match: style(match[0], 'heading'), row)
+            result.append(row)
+        return result
+
+    active = []
+    if not mask:
+        active.append('Ctrl-T Saved only')
+    active += [f'{FACETS[name][0]} {name.title()}: {value}' for name, value in filters.items()
+               if name in FACETS and value is not None]
+    if hide_merged:
+        active.append('Ctrl-D Merged PRs hidden')
+    filter_label = ('Active filter' if len(active) == 1 else 'Active filters') if enabled and active else (
+        'No active filters' if enabled else 'Filters paused')
+    filter_rows = summary(filter_label, active if enabled and active else ['Saved + attached'], enabled and bool(active))
+    editor = keys(['Alt-F ' + ('Hide filters ▾' if filters_expanded else 'Edit filters ▸')])
+    editor_rows = []
+    if filters_expanded:
+        controls = ['Ctrl-F ' + ('pause filters' if enabled else 'enable filters'),
+                    'Ctrl-T ' + ('show saved only' if mask else 'include attached'),
+                    'Ctrl-G agent', 'Ctrl-O host', 'Ctrl-R repo', 'Ctrl-D hide merged', 'Ctrl-X reset filters']
+        if compact:
+            controls = ['Ctrl-F ' + ('pause' if enabled else 'enable'), 'Ctrl-T state',
+                        'Ctrl-G agent', 'Ctrl-O host', 'Ctrl-R repo', 'Ctrl-D merged', 'Ctrl-X reset']
+        editor_rows = keys(controls)
+    sort_rows = summary('Active sort' if sort_enabled else 'Sort paused',
+                        [sort_label(sort).capitalize() if sort_enabled else 'Snapshot order'], sort_enabled)
+    sort_keys = keys(['Ctrl-Y ' + ('sort' if compact else 'Next sort'),
+                      'Ctrl-S ' + (('pause' if compact else 'Pause sort') if sort_enabled else
+                                   ('resume' if compact else 'Resume sort'))])
+    legend = ([style('LEGEND', 'heading')] + resume_legend(width, short, color,
+              attached=attached_results)) if show_legend else []
+    actions = resume_action_rows(width, compact, color, attached_results)
+    columns_rows = [style(clip_columns(columns, width))] if columns else []
+    # fzf before 0.75 cannot extend its native result counter. Keep its badge on
+    # the first header row, directly beneath the counter, including zero.
+    badge = [] if hidden_info else [style(f'[{hidden} hidden]', 'warning' if hidden else 'hint')]
+    # Empty-result and authentication/failure notices must survive compact
+    # layouts; losing them hides the reason a saved session is unavailable.
+    critical, health = [], []
+    for line in status:
+        plain = re.sub(r'\x1b\[[0-9;]*m', '', line)
+        target = critical if (plain == 'No matching conversations' or
+            plain.startswith('GitHub auth failed:') or '× ' in plain) else health
+        target.append(line)
+    # The terminal frame and focused results keep their space during live resize.
+    # Blank separators and explanatory chrome yield before the primary controls.
+    height = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24')
+    frame = int(os.environ.get('T_PICKER_PAN_FRAME_ROWS') or ('2' if short else '8'))
+    budget = max(3, height - frame - (1 if filters_expanded or (short and critical) else 3))
+    groups = [badge, health[:1], critical + health[1:], [''] if status and not compact else [],
+              filter_rows, editor, editor_rows, [''] if not compact else [],
+              sort_rows, sort_keys, [''] if not compact else [],
+              [] if short else legend, [''] if not compact else [], actions,
+              [''] if columns_rows and not compact else [], columns_rows]
+    order = [3, 7, 10, 14, 12, 11, 2, 4, 8, 6, 9, 1]
+    for index in order:
+        if sum(map(len, groups)) <= budget:
+            break
+        groups[index] = critical if index == 2 else []
+    lines = [line for group in groups for line in group]
     return '\n'.join(lines) + '\n'
 
 
@@ -300,9 +408,13 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     enabled = enabled_file.read_text() == '1' if enabled_file.exists() else True
     merged_file = directory / 'hide-merged'
     hide_merged = merged_file.exists() and merged_file.read_text() == '1'
+    expanded_file = directory / 'filters-expanded'
+    filters_expanded = expanded_file.exists() and expanded_file.read_text() == '1'
     maximum = 3 if profile == 'kill' else 1
     if action == 'toggle-filters':
         enabled = not enabled
+    elif profile == 'resume' and action in ('expand-filters', 'edit-filters'):
+        filters_expanded = not filters_expanded
     elif action == 'toggle-sort':
         sort_enabled = not sort_enabled
     elif action == 'next-sort':
@@ -372,6 +484,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         rows = [row for row in (directory / 'all').read_text().splitlines() if row not in unattached]
     else:
         rows = (directory / f'rows-{mask}').read_text().splitlines()
+    rows = [row for row in rows if row]
     selected = choose(rows, records, filters) if enabled else rows
     if profile in ('resume', 'list'):
         if profile == 'resume' and enabled and hide_merged:
@@ -385,89 +498,244 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         selected = sort_resume(selected, records, sort)
     sort_file.write_text(sort)
     sort_enabled_file.write_text('1' if sort_enabled else '0')
-    total = len((directory / 'all').read_text().splitlines())
+    total = sum(bool(row) for row in (directory / 'all').read_text().splitlines())
     hidden = total - len(selected)
+    attached_results = profile == 'resume' and any(len(row.split('\t')) > 6 and
+        row.split('\t')[6] != '-' for row in selected)
+    (directory / 'hidden-count').write_text(str(hidden))
     if os.environ.get('T_PICKER_PAN') == '1':
-        from t_picker_viewport import project, search
+        from t_picker_viewport import search
         query_file = directory / 'pan-query'
         selected = search(selected, query_file.read_text() if query_file.exists() else '')
-        if closure_legend(records):
-            columns = '  ' + columns
-        selected, columns = project(directory, selected, columns, width - int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')))
-        columns = ' ' * int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) + columns
-    (directory / 'current').write_text(''.join(row + '\n' for row in selected))
-    warning = ''
-    notice = directory / 'discovery-notice'
-    if notice.exists() and notice.read_text().strip():
-        warning = clip_columns(notice.read_text().strip(), width) + '\n'
     if profile == 'resume':
-        # The invocation snapshot persists through every filter/sort/reset reload.
-        hosts = (directory / 'auth-hosts').read_text().splitlines() if (directory / 'auth-hosts').exists() else []
+        selected = mark_resume('\n'.join(selected), records).splitlines()
+    (directory / 'current').write_text(''.join(row + '\n' for row in selected))
+    status = []
+    notice = directory / 'discovery-notice'
+    color = os.environ.get('T_PICKER_COLOR') == '1'
+    health = directory / 'discovery-status'
+    freshness = json.loads(health.read_text()) if health.exists() and health.stat().st_size else None
+    refresh = bool(os.environ.get('T_PICKER_REFRESH_CALLBACK'))
+    if profile == 'resume' and (freshness is not None or refresh):
+        status = resume_health(freshness or {}, width, color, refresh)
+    elif notice.exists() and notice.read_text().strip():
+        status.append(clip_columns(notice.read_text().strip(), width))
+    if profile == 'resume':
+        if freshness is not None:
+            hosts = freshness.get('auth_hosts', [])
+        else:
+            hosts = (directory / 'auth-hosts').read_text().splitlines() if (directory / 'auth-hosts').exists() else []
         hosts = [host for host in hosts if host]
         if hosts:
             summary = 'GitHub auth failed: ' + ', '.join(hosts)
-            warning = clip_columns(summary, width) + '\n' + warning
-    legend = closure_legend(records, bool(warning)) if profile == 'resume' else ''
+            summary = clip_columns(summary, width)
+            line = paint(summary, 'warning') if color else summary
+            if freshness is None:
+                status.insert(0, line)
+            else:
+                status.append(line)
+        if (directory / 'columns').exists():
+            columns = (directory / 'columns').read_text().rstrip('\n')
+        if not selected:
+            if int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
+                status = status[:1]
+            status.append('No matching conversations')
+        if columns:
+            columns = f'{"STATUS":<{RESUME_STATUS_WIDTH}}' + columns
+            if os.environ.get('T_PICKER_LEGACY_COLUMNS') == '1':
+                columns = '  ' + columns
+    if os.environ.get('T_PICKER_PAN') == '1':
+        from t_picker_viewport import project
+        pad = int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0'))
+        # Legacy fzf's fixed two-cell header indent stays outside logical STATUS.
+        table_columns = columns[pad:] if pad else columns
+        selected, columns = project(directory, selected, table_columns, width - pad,
+                                    fixed=RESUME_STATUS_WIDTH)
+        columns = ' ' * pad + columns
+        (directory / 'current').write_text(''.join(row + '\n' for row in selected))
+    legend = ''
     if profile == 'open':
         legend = '● attached · ○ unattached · ✓ context · ↻ work in progress'
         if not selected:
-            warning += 'No matching sessions' + (' · Ctrl-N new' if os.environ.get('T_PICKER_NEW_SESSION') == '1' else '') + '\n'
+            status.append('No matching sessions' + (' · Ctrl-N new' if os.environ.get('T_PICKER_NEW_SESSION') == '1' else ''))
         if os.environ.get('T_PICKER_NATIVE_FOOTER') == '1' and int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') > 14:
             (directory / 'footer').write_text('\n'.join(pack(legend.split(' · '), width)) + '\n')
             legend = ''
         elif int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
             legend = ''
-    if profile == 'resume' and legend and columns and os.environ.get('T_PICKER_PAN') != '1':
-        columns = '  ' + columns
     controls = header(profile, mask, filters, hidden, columns, width,
-                      sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled, legend)
-    if os.environ.get('T_PICKER_PAN') == '1':
-        height = int(os.environ.get('T_PICKER_HEADER_HEIGHT', '24'))
-        budget = height - int(os.environ.get('T_PICKER_PAN_FRAME_ROWS', '1')) - 1
-        if len((warning + controls).splitlines()) > budget:
-            # Legacy fzf retains its initial border/margins across resize. Keep
-            # the primary controls, active state, sort and table above one row.
-            key = lambda text: key_labels(text, compact=True)
-            compact = [key('Enter/Esc · Tab ✓ · Ctrl-/'),
-                       key('Filters ' + ('ON' if enabled else 'OFF') + ' · Ctrl-F · Ctrl-X'),
-                       key('Ctrl-T ' + state_label(profile, mask)),
-                       key('Sort ' + sort + ' · Ctrl-S · Ctrl-Y'), columns]
-            controls = '\n'.join(clip_columns(line, width) for line in compact) + '\n'
-            # Discovery/auth notices keep their existing priority.
-            if warning:
-                controls = '\n'.join(controls.splitlines()[1:]) + '\n'
-    (directory / 'current-header').write_text(warning + controls)
+                      sort, enabled, color, hide_merged, sort_enabled, profile == 'resume',
+                      status if profile == 'resume' else (), filters_expanded,
+                      (directory / 'info-command').exists() and (directory / 'info-command').read_text() == '1',
+                      attached_results, legend)
+    (directory / 'current-header').write_text(('\n'.join(status) + '\n' if status and profile != 'resume' else '') + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))
+    if profile == 'resume':
+        expanded_file.write_text('1' if filters_expanded else '0')
 
 
-def closure_legend(records, incomplete=False):
-    if not any(r.get('closed', '-') != '-' for r in records.values()):
-        return ''
-    latest = None if incomplete else latest_closed(records)
-    return '↶ last closed · ' + format_last_turn(records[latest]['closed']) if latest else 'Last closed unknown'
+def resume_action_rows(width, compact, color, attached=False):
+    enter = 'Return' if sys.platform == 'darwin' else 'Enter'
+    details = key_labels('Ctrl-/', compact=compact)
+    labels = [enter, 'Esc', 'Tab', details] if compact else [
+        key_labels('Enter'), key_labels('Esc'), key_labels('Tab'), details]
+    actions = list(labels) if compact else [f'{key} {action}' for key, action in zip(
+        labels, ('resume/attach' if attached else 'resume', 'cancel', 'mark ✓', 'details'))]
+    if os.environ.get('T_PICKER_RESUME_LAST') == '1':
+        shortcut = key_labels('Ctrl-B', compact=compact)
+        actions.append(f'{shortcut} ↶' if compact else f'{shortcut} resume last closed')
+        if not compact and display_width('  '.join(actions)) > width:
+            actions[-1] = f'{shortcut} last closed'
+        labels.append(shortcut)
+    lines = pack(actions, width, '  ')
+    if not color:
+        return lines
+    def label(part):
+        key = next((value for value in labels if part == value or part.startswith(value + ' ')), part)
+        text, check, _ = part[len(key):].partition('✓')
+        return paint(key, 'key') + paint(text, 'action') + (resume_mark(check) if check else '')
+    return ['  '.join(label(part) for part in line.split('  ')) for line in lines]
 
 
-def mark_resume(source, incomplete=False):
-    records = metadata(source, 'resume')
-    if not any(r.get('closed', '-') != '-' for r in records.values()):
-        return source.rstrip('\n')
-    latest = None if incomplete else latest_closed(records)
+def resume_mark(text):
+    return paint(text, RESUME_MARK_ROLES[text[0]])
+
+
+def resume_legend(width, short, color, *, attached=True):
+    close = '↶ close' if short else '↶ last closed'
+    work = '↻ WIP' if width < 64 or short else '↻ work in progress'
+    status = (['● attached'] if attached else []) + [close, work, '↗ preview']
+    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '? unknown', '— no PR']
+    agents = {glyph: (name.capitalize(), role) for name, (glyph, role) in RESUME_AGENTS.items()}
+    if short:
+        return [line for line in pack(status, width, '  ')] if not color else [
+            '  '.join(resume_mark(part) for part in line.split('  ')) for line in pack(status, width, '  ')]
+    groups = [('Status', status, resume_mark), ('PRs', prs, lambda entry: pr_color(entry, entry[0])),
+              ('Agent', [f'{glyph} {name}' for glyph, (name, _) in agents.items()],
+               lambda entry: paint(entry, agents[entry.split(' ', 1)[0]][1]))]
+    lines = []
+    for label, entries, style in groups:
+        prefix = f'{label:<6}  '
+        for i, line in enumerate(pack(entries, width - len(prefix), '  ')):
+            formatted = '  '.join(style(part) for part in line.split('  ')) if color else line
+            lines.append((prefix if not i else ' ' * len(prefix)) + formatted)
+    return lines
+
+
+def pr_color(text, symbol):
+    if 'NO_COLOR' in os.environ or os.environ.get('TERM') == 'dumb':
+        return text
+    return f'\033[{PR_COLORS[symbol]}m{text}\033[0m' if symbol in PR_COLORS else text
+
+
+def color_resume_prs(display):
+    if display.startswith(('— ', '? ')):
+        return pr_color(display[0], display[0]) + display[1:]
+    leading = re.match(rf'^(?:{PR_CHIP})(?: +{PR_CHIP})?', display)
+    if not leading:
+        return display
+    return re.sub(PR_CHIP, lambda chip: pr_color(chip[0], chip[0][0]), leading[0]) + display[leading.end():]
+
+
+def resume_health(health, width, color, refresh=False):
+    short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    hosts = health.get('hosts', [])
+    stamp = max((host.get('observed') or host.get('checked') or 0 for host in hosts), default=0)
+    last = datetime.fromtimestamp(stamp) if stamp else None
+    date = '%H:%M' if last and last.date() == datetime.now().date() else '%b %d %H:%M'
+    timing = 'Last refresh ' + last.strftime(date) if last else 'No refresh yet'
+    pending = [host['host'] for host in hosts if host.get('status') == 'refreshing']
+    warnings = []
+    if health.get('unavailable'):
+        warnings.append('Discovery unavailable')
+    if health.get('cancelled'):
+        warnings.append('Refresh cancelled')
+    if health.get('failed'):
+        warnings.append('Update failed')
+    style = lambda text, role: paint(text, role) if color else text
+    title = 'Refreshing ' + ', '.join(pending) if pending else timing
+    if width <= 28 and not pending:
+        title = title.removeprefix('Last refresh ')
+    title_role = 'progress' if pending else 'action'
+    shortcut = ''
+    if refresh:
+        shortcut = key_labels('Ctrl-U' if width <= 40 else 'Ctrl-U refresh now', compact=width <= 40)
+    title_width = width - (display_width(shortcut) + 2 if shortcut else 0)
+    title = clip_columns(title, title_width)
+    line = style(title, title_role)
+    if shortcut:
+        line += '  ' + style(shortcut, 'primary')
+    neutral = []
+    if pending and last:
+        neutral.append(timing)
+    status_rows = [style(text, 'action') for text in pack(neutral, width, '  ')]
+    outcomes = []
+    failed = []
+    for host in hosts:
+        name, status = host['host'], host.get('status', 'not checked')
+        if status == 'current':
+            plain = clip_columns('✓ ' + name, width)
+            rendered = style('✓', 'primary') + style(plain[1:], 'action')
+        elif status == 'refreshing':
+            plain = clip_columns('↻ ' + name, width)
+            rendered = style('↻', 'progress') + style(plain[1:], 'action')
+        else:
+            name = clip_columns(name, max(1, width - 4))
+            reason = clip_columns(status, width - display_width(name) - 3)
+            plain = '× ' + name + (' ' + reason if reason else '')
+            rendered = (pr_color('×', '×') if color else '×') + style(' ' + name, 'action')
+            rendered += style(' ' + reason, 'warning') if reason else ''
+            failed.append((plain, rendered))
+        outcomes.append((plain, rendered))
+    for warning in warnings:
+        plain = clip_columns('× ' + warning, width)
+        rendered = (pr_color('×', '×') if color else '×') + style(plain[1:], 'warning')
+        outcomes.append((plain, rendered))
+        failed.append((plain, rendered))
+    def outcome_rows(parts):
+        rows, current_plain, current_styled = [], '', ''
+        for plain, rendered in parts:
+            if current_plain and display_width(current_plain + '  ' + plain) > width:
+                rows.append(current_styled)
+                current_plain, current_styled = '', ''
+            current_plain += ('  ' if current_plain else '') + plain
+            current_styled += ('  ' if current_styled else '') + rendered
+        return rows + ([current_styled] if current_styled else [])
+    host_rows = outcome_rows(outcomes)
+    details = outcome_rows(failed or outcomes)[:1] if short else status_rows + host_rows
+    return [line, *details]
+
+
+def mark_resume(source, records=None):
+    records = metadata(source, 'resume') if records is None else records
+    latest = latest_closed(records)
+    color = os.environ.get('T_PICKER_COLOR') == '1'
     result = []
     for line in source.splitlines():
         fields = line.split('\t')
-        marker = '↶' if tuple(fields[:3]) == latest else ' '
-        if marker == '↶' and sys.stderr.isatty():
-            marker = paint(marker, 'heading')
-        fields[-1] = marker + ' ' + fields[-1]
+        key = tuple(fields[:3])
+        record = records.get(key, {})
+        attached = len(fields) >= 10 and fields[6] != '-'
+        marks = ('●' if attached else ' ', '↶' if key == latest else ' ',
+                 '↻' if record.get('work') else ' ', '↗' if record.get('preview') else ' ')
+        prefix = ''.join(resume_mark(mark) if color and mark != ' ' else mark for mark in marks)
+        display = fields[-1]
+        if color:
+            glyph, role = RESUME_AGENTS.get(record.get('agent'), ('?', 'action'))
+            if len(fields) >= 18:
+                agent_cell = rf'(?<=  ){re.escape(fields[0])} +{re.escape(fields[1])} +({re.escape(glyph)})(?=  )'
+                display = re.sub(agent_cell, lambda match: match[0][:-len(glyph)] + paint(glyph, role), display, count=1)
+            display = color_resume_prs(display)
+        fields[-1] = prefix + ' ' * (RESUME_STATUS_WIDTH - len(marks)) + display
         result.append('\t'.join(fields))
     return '\n'.join(result)
 
 
 if __name__ == '__main__':
     if sys.argv[1] == '--resume-mark':
-        print(mark_resume(sys.stdin.read(), bool(os.environ.get('T_PICKER_NOTICE'))))
+        print(mark_resume(sys.stdin.read()))
         sys.exit(0)
     if sys.argv[1] == '--resume-turns':
         print('\n'.join(resume_turns(sys.stdin.read(), os.environ['HOME'],

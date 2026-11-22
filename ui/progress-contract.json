@@ -773,6 +773,14 @@
       "kind": "passthrough",
       "reason": "Explicit reviewed runtime installation announces its phase and streams installer output; cancellation terminates the owned child group."
     },
+    "bin/t:_resume_picker_stage:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Builds an immutable snapshot with a bounded shell child while the resume picker or refresh rail owns the terminal."
+    },
+    "bin/t:_resume_picker_observe:time.sleep": {
+      "kind": "background",
+      "reason": "The bounded discovery observer polls in the background while the active picker displays the refresh status."
+    },
     "libexec/t_session_models.py:run:subprocess.call": {
       "kind": "passthrough",
       "reason": "After reviewed same-worktree handoff and verified source shutdown, the native Claude CLI owns the interactive terminal and renders its own progress."

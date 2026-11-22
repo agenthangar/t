@@ -104,7 +104,7 @@ def test_persistent_auth_header_survives_every_action(filters, tmp_path, width):
     for action in ['current', 'agent', 'host', 'repo', 'first', 'sort-repo', 'all', 'default', 'off', 'on']:
         filters.render(tmp_path, 'resume', action, width, 'SESSION  TASK')
         text = (tmp_path / 'current-header').read_text()
-        assert text.startswith('GitHub auth failed:')
+        assert text.splitlines()[1].startswith('GitHub auth failed:')
         assert 'Enter' in text
         assert all(filters.display_width(line) <= width for line in text.splitlines())
         if width <= 36:
