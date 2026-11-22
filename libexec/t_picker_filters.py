@@ -168,7 +168,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     if legend:
         lines.append(style(clip_columns(legend, width)))
     if columns:
-        lines.append(style(clip_columns(columns, width)))
+        column_width = width + int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) if os.environ.get('T_PICKER_PAN') == '1' else width
+        lines.append(style(clip_columns(columns, column_width)))
     return '\n'.join(lines) + '\n'
 
 
@@ -280,6 +281,9 @@ def pick_value(directory, name, records, current):
 
 def render(directory, profile, action, width, columns='', facet=None, identity=()):
     directory = Path(directory)
+    if os.environ.get('T_PICKER_PAN') == '1' and (directory / 'pan-size').exists():
+        height, width = map(int, (directory / 'pan-size').read_text().split())
+        os.environ['T_PICKER_HEADER_HEIGHT'] = str(height)
     records = metadata((directory / 'source').read_text(), profile)
     names = list(OPEN_FACETS) if profile == 'open' else [
         name for name in FACETS if profile != 'resume' or name != 'interface']
@@ -355,6 +359,8 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         else:
             values = [None] + sorted({record.get(action, 'unknown') for record in records.values()})
             filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
+    elif action == 'search' and os.environ.get('T_PICKER_PAN') == '1':
+        (directory / 'pan-query').write_text(facet or '')
     elif action != 'current':
         raise ValueError('unknown picker filter: ' + action)
     if mask > (2 if profile == 'open' else maximum):
@@ -380,6 +386,15 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     sort_file.write_text(sort)
     sort_enabled_file.write_text('1' if sort_enabled else '0')
     total = len((directory / 'all').read_text().splitlines())
+    hidden = total - len(selected)
+    if os.environ.get('T_PICKER_PAN') == '1':
+        from t_picker_viewport import project, search
+        query_file = directory / 'pan-query'
+        selected = search(selected, query_file.read_text() if query_file.exists() else '')
+        if closure_legend(records):
+            columns = '  ' + columns
+        selected, columns = project(directory, selected, columns, width - int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')))
+        columns = ' ' * int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) + columns
     (directory / 'current').write_text(''.join(row + '\n' for row in selected))
     warning = ''
     notice = directory / 'discovery-notice'
@@ -402,10 +417,25 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             legend = ''
         elif int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
             legend = ''
-    if profile == 'resume' and legend and columns:
+    if profile == 'resume' and legend and columns and os.environ.get('T_PICKER_PAN') != '1':
         columns = '  ' + columns
-    controls = header(profile, mask, filters, total - len(selected), columns, width,
+    controls = header(profile, mask, filters, hidden, columns, width,
                       sort, enabled, os.environ.get('T_PICKER_COLOR') == '1', hide_merged, sort_enabled, legend)
+    if os.environ.get('T_PICKER_PAN') == '1':
+        height = int(os.environ.get('T_PICKER_HEADER_HEIGHT', '24'))
+        budget = height - int(os.environ.get('T_PICKER_PAN_FRAME_ROWS', '1')) - 1
+        if len((warning + controls).splitlines()) > budget:
+            # Legacy fzf retains its initial border/margins across resize. Keep
+            # the primary controls, active state, sort and table above one row.
+            key = lambda text: key_labels(text, compact=True)
+            compact = [key('Enter/Esc · Tab ✓ · Ctrl-/'),
+                       key('Filters ' + ('ON' if enabled else 'OFF') + ' · Ctrl-F · Ctrl-X'),
+                       key('Ctrl-T ' + state_label(profile, mask)),
+                       key('Sort ' + sort + ' · Ctrl-S · Ctrl-Y'), columns]
+            controls = '\n'.join(clip_columns(line, width) for line in compact) + '\n'
+            # Discovery/auth notices keep their existing priority.
+            if warning:
+                controls = '\n'.join(controls.splitlines()[1:]) + '\n'
     (directory / 'current-header').write_text(warning + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
