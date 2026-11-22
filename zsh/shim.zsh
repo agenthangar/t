@@ -36,12 +36,12 @@ t() {
   [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
     case ${1:-} in
-      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
+      session|remote|issue|idea|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
         esac ;;
-      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
+      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|ideate|checkout|new|instructions|permissions|config) label+=" $1" ;;
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
@@ -76,6 +76,10 @@ _t_dispatch() {
   [[ $verb == hosts && $action == run ]] && help_requested=
   [[ -n $help_requested ]] && { command t "$@"; return; }
   [[ -z $verb ]] && { command t; return; }
+  if [[ $verb == ideate || ( $verb == idea && $action == (start|resume|publish) ) ]]; then
+    _t_install idea "$@"
+    return $?
+  fi
   # Only commands that enter a checkout, launch a foreground session, or edit
   # shell settings need local dispatch. The executable owns all other groups.
   local shell_verb=$verb
@@ -758,7 +762,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners eval config mcp profile policy agent system login help)
+  local -a nouns=(session move issue share ideate idea remote repo cursor hosts agentcore workflow runners eval config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -800,6 +804,25 @@ _t() {
     else
       _message 'saved configuration name or run ID (omit for fzf)'
     fi
+    return
+  fi
+  if [[ $group == idea ]]; then
+    if (( CURRENT == first - 1 )); then
+      local -a idea_actions=(list ls show start resume publish)
+      _describe -t actions 'idea action' idea_actions
+    elif [[ ${words[CURRENT]} == -* ]]; then
+      _values 'flag' -h --help
+    elif [[ $action == (show|resume|publish) ]]; then
+      local -a idea_ids
+      idea_ids=("${(@f)$(command t idea list 2>/dev/null | awk '/^idea-/ {print $1}')}")
+      _values 'saved idea ID' "${idea_ids[@]}"
+    else
+      _message 'idea title'
+    fi
+    return
+  fi
+  if [[ $group == ideate ]]; then
+    _values 'flag' -h --help
     return
   fi
   if [[ $group == issue ]]; then

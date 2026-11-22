@@ -2288,3 +2288,31 @@ remain one pane per eligible slot, and open through `t open REPO SLOT`. Review
 launch settings before resuming; detaching leaves the holding pane available.
 A successful canonical update migrates enabled recovery service registration and
 hooks to the installed source. Status and discovery never start that service.
+
+### Private ideas
+
+`t ideate` opens the shared RailUI idea menu. `t idea start [TITLE]` starts the
+configured native Codex or Claude agent in a private XDG state workspace outside
+Git, with the global workflow. It needs no repository or GitHub login. Successful
+native exit offers Create repository or Save for later; cancellation and failed
+native exits preserve the draft. `t idea resume ID` continues the exact recorded
+conversation in that workspace and refuses another live writer.
+
+`t idea list` and `t idea show ID` print static read-only output, including stable
+exact IDs, titles, status and known publication details. They never prompt, create
+state or check for updates. Action commands require a terminal.
+
+Publication exports only explicitly marked regular files under `publish/`.
+All files begin unchecked; Select all files and Ctrl-A include eligible nested
+files, Clear all files clears marks, Space marks one, and v opens a safe focused
+file review. Arrows/j/k move, Enter continues, q/Esc returns and Ctrl-C cancels.
+Back preserves file marks and focus. An explicit empty initial commit is valid.
+Repository name, GitHub owner, Private/Public (default Private), and alias precede
+a scrollable y/n/q review of `~/code/NAME`, main, and every selected path.
+
+The confirmed byte snapshot is staged in a separate private Git repository.
+Native transcripts, private notes and idea metadata remain local. GitHub creation
+records its immutable repository ID; push, clone and alias registration retry the
+same approved commit only after identity and remote-main checks. Existing local
+paths and unknown remotes are never adopted. Local registration, trust and merge
+settings follow repository creation helpers; configured remote hosts are excluded.
