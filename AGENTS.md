@@ -17,6 +17,12 @@ Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
 
 Before changing user-facing behavior, read [the repository design system](DESIGN.md).
+Every CLI preview must use the current design system and behave as a complete,
+keyboard-operable TUI. Match the shared renderer's layout and bindings, preserve
+focus and selection through navigation and resize, and exercise the full flow
+with the keyboard before sharing. Follow
+[the CLI preview requirements](DESIGN.md#cli-previews) for planning prototypes
+and previews of implemented commands.
 For session-picker filtering or sorting requests, inspect the existing hotkeys
 in that design system and the shared picker before proposing an interaction.
 Extend the hotkey controls and preserve existing filter/sort choices. Add CLI
