@@ -403,3 +403,6 @@ printf '\nRun t config setup in a new zsh shell.\n'
 for tool in git python3 zsh tmux; do
     command -v "$tool" >/dev/null 2>&1 || echo "Missing dependency: $tool" >&2
 done
+
+# Reconcile packaged helpers after successful full integration as well.
+python3 "$T_LINK_SRC/libexec/t_session_cache.py" retire "$T_DISCOVERY_PREVIOUS" 2>/dev/null || true
