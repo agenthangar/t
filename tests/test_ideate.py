@@ -286,6 +286,9 @@ if "clone" in args and any(url in args for url in (ssh_url, https_url)):
     result = subprocess.run([git, *(remote if arg == url else arg for arg in args)])
     if result.returncode:
         raise SystemExit(result.returncode)
+    if os.environ.get("IDEA_CLONE_LINK"):
+        os.symlink(os.environ["IDEA_CLONE_LINK"], pathlib.Path(args[-1]) / "docs",
+                   target_is_directory=True)
     os.execv(git, [git, "-C", args[-1], "remote", "set-url", "origin", url])
 if ("ls-remote" in args or "push" in args) and "origin" in args:
     if "push" in args and os.environ.get("IDEA_DENY_PUSH") and pathlib.Path(os.environ["IDEA_DENY_PUSH"]).exists():
@@ -394,6 +397,33 @@ def test_cancelling_review_keeps_draft_without_creating_remote(box, tmp_path):
     assert not (home / 'code/neighborhood-walks').exists()
     listing = invoke(env, 'idea', 'list', cwd=tmp_path)
     assert ident in listing.stdout
+
+
+def test_publish_accepts_symlink_above_the_checkout_root(box, tmp_path):
+    home, env, tools = box
+    home_alias = tmp_path / 'home-alias'
+    home_alias.symlink_to(home, target_is_directory=True)
+    env['HOME'] = str(home_alias)
+    ident = start_draft(env, tmp_path)
+    remote = github_fixture(env, tools, tmp_path)
+    code, output = terminal(env, ['idea', 'publish', ident], tmp_path, publish_actions())
+    assert code == 0, output
+    assert published_files(env, remote) == ['README.md', 'docs/routes.txt']
+    assert (home / 'code/neighborhood-walks/docs/routes.txt').read_text() == 'Oak Loop\n'
+
+
+def test_publish_rejects_symlink_inside_the_pending_checkout(box, tmp_path):
+    home, env, tools = box
+    ident = start_draft(env, tmp_path)
+    github_fixture(env, tools, tmp_path)
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    env['IDEA_CLONE_LINK'] = str(outside)
+    code, output = terminal(env, ['idea', 'publish', ident], tmp_path, publish_actions())
+    assert code == 1, output
+    assert 'unsafe local clone directory' in output
+    assert not (outside / 'routes.txt').exists()
+    assert not (home / 'code/neighborhood-walks').exists()
 
 
 @pytest.mark.parametrize('selection,files', [(b'j \r', ['__all']), (b'\r', [])],
