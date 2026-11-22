@@ -310,7 +310,11 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     refresh_line = next(line for line in screen.splitlines() if 'Last refresh' in line)
     assert 'Ctrl-U refresh now' in refresh_line
     assert 'HOTKEYS' not in screen
-    assert screen.index('LEGEND') < screen.index('↴ merged') < screen.index('Tab ✓') < screen.index('PRS') < screen.index('Second Task')
+    assert screen.index('LEGEND') < screen.index('↶ last closed') < screen.index('↴ merged') < screen.index('Tab mark') < screen.index('PRS') < screen.index('Second Task')
+    action_line = next(line for line in screen.splitlines() if 'Tab mark' in line)
+    assert ('Return resume' if sys.platform == 'darwin' else 'Enter resume') in action_line
+    assert 'Esc cancel' in action_line
+    assert '● attached' in screen and '● live' not in screen
     lines = screen.splitlines()
     columns = next(i for i, line in enumerate(lines) if 'PRS' in line and 'REPO' in line)
     assert not lines[columns - 1].strip(' │')

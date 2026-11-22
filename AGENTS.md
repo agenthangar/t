@@ -24,7 +24,9 @@ flags only when the user explicitly requests flags or noninteractive control.
 In the resume picker, color Ctrl-U beside refresh status. Put the PR legend on
 its own row under LEGEND, then show result hotkeys without a heading. Leave a
 blank line before the columns when height permits. Separate legend labels with
-spaces. Keep the close marker without a close legend label.
+spaces. Match legend colors to row colors and label ↶ as last closed,
+↻ as work in progress, and ● as attached. Spell out Return or Enter, Esc, and
+Tab in bright text.
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use

@@ -272,6 +272,8 @@ Display native Mac labels (`⌃T`, `⌃S`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) o
 other hosts use `Ctrl-T`, `Ctrl-S`, `Enter`, `Esc`, `Tab`. Compact headers use the short
 Mac symbols or `^T` on other systems. Only labels change: bindings remain the
 same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
+Filtered resume uses bold, written Return or Enter, Esc, and Tab labels at all
+sizes.
 Let label columns use available width before truncating; never cap wide-terminal
 labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
@@ -1011,10 +1013,12 @@ A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
 LAST TURN shows the local date and time to the minute. Green Ctrl-U sits next
 to the refresh status. Filters and sort come before the LEGEND heading. The PR
-legend occupies its own row above the unheaded result hotkeys. Leave a blank
-line before the column headings when height permits. Space separates legend entries, including work in progress
-(↻), live ownership (●), and no recorded PR (—). The close marker carries no
-legend label. The work-in-progress icon appears in the left gutter
+legend occupies its own row above the unheaded result hotkeys when height permits.
+Leave a blank line before the column headings when height permits. Use
+matching colors in the legend and rows for last closed (↶, cyan), work in
+progress (↻, amber), attached (●, green), and PR states. Attached identifies an
+existing session that opens in place. Separate legend entries with spaces.
+The work-in-progress icon appears in the left gutter
 independently of PR state. The gutter reserves space only when a row has evidence.
 Columns stay aligned when filtering or sorting. Timeouts use amber, active
 filtering and sort use highlighted labels, and column headings use high contrast.

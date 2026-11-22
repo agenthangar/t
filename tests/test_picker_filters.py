@@ -1,6 +1,7 @@
 """Filtering uses immutable snapshot metadata, never displayed task text."""
 import json
 from pathlib import Path
+import re
 
 import pytest
 from conftest import load_script
@@ -330,6 +331,41 @@ def test_resume_pr_badges_color_only_the_leading_labels(filters, monkeypatch):
     )
     monkeypatch.setenv('NO_COLOR', '1')
     assert filters.color_resume_prs(display) == display
+
+
+def test_resume_legend_matches_row_colors(filters, monkeypatch):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    monkeypatch.setenv('T_PICKER_COLOR', '1')
+    def row(slot, location, closed, work, display):
+        return '\t'.join(['api', str(slot), f'sid{slot}', '/wt', 'date', 'title', location,
+                          'history', '-', 'codex', '-', 'org/api', 'OPEN', closed, '-', work, '-', display])
+
+    saved = row(1, '-', '2026-11-21T10:00:00Z', 'yes', '#42 ! ↗ #43 ↴  api  1  ⬡ codex  Title')
+    attached = row(2, 'here', '-', '-', '—              api  2 ●  ⬡ codex  Title ●')
+    saved, attached = [line.split('\t')[-1] for line in filters.mark_resume(saved + '\n' + attached).splitlines()]
+    legend = '\n'.join(filters.resume_legend(100, False, True))
+    for symbol, label, code, display in [
+        ('↶', 'last closed', '36', saved), ('↻', 'work in progress', '33', saved),
+        ('●', 'attached', '92', attached), ('!', 'conflict', '33', saved),
+        ('↗', 'preview', '96', saved), ('↴', 'merged', '95', saved),
+        ('—', 'no PR', '37', attached),
+    ]:
+        assert f'\x1b[{code}m{symbol} {label}\x1b[0m' in legend
+        assert re.search(rf'\x1b\[{code}m(?:#\d+ )?{symbol}\x1b\[0m', display)
+    assert attached.endswith('Title ●')
+
+
+@pytest.mark.parametrize('platform,enter', [('darwin', 'Return'), ('linux', 'Enter')])
+@pytest.mark.parametrize('width,compact', [(27, True), (100, False)])
+def test_resume_action_labels_use_readable_text(filters, monkeypatch, platform, enter, width, compact):
+    monkeypatch.setattr(filters.sys, 'platform', platform)
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    lines = filters.resume_action_rows(width, compact, True)
+    for label in (enter, 'Esc', 'Tab'):
+        assert f'\x1b[1;97m{label}\x1b[0m' in lines[0]
+    assert all(filters.display_width(re.sub(r'\x1b\[[0-9;]*m', '', line)) <= width for line in lines)
 
 
 def test_resume_remote_history_retains_exported_turn_without_local_transcript(filters, tmp_path):

@@ -28,7 +28,9 @@ In the resume picker, place the green Ctrl-U refresh action beside the refresh
 status. Put filters and sort above the LEGEND heading. Give the PR legend its
 own row immediately above the result hotkeys. Show those hotkeys without a
 heading and leave a blank line before the columns when height permits. Separate
-legend entries with spaces. The close marker has no legend label.
+legend entries with spaces. Use the same colors in the legend and rows. Label
+↶ as last closed, ↻ as work in progress, and ● as attached. Highlight the
+written Return or Enter, Esc, and Tab labels.
 Do not interpret requests to improve picker filtering or sorting as requests for
 new CLI flags unless the user explicitly asks for flags or noninteractive control.
 

@@ -13963,7 +13963,8 @@ REMOTE SESSIONS
   With explicit options, a slot without a terminal takes its newest saved chat.
 
 PICKER CONTROLS
-  Tab marks rows with ✓. Ctrl-U refreshes this picker and reports host status.
+  Return (Enter) resumes. Esc cancels. Tab marks rows with ✓.
+  Ctrl-U refreshes this picker and reports host status.
   Ctrl-/ shows details for the focused row.
   PRS shows ↴ merged, ○ open, ◌ draft, ! conflict, × closed, or ? unknown.
   A ↗ indicates a verified preview deployment for the PR head.
@@ -13971,6 +13972,7 @@ PICKER CONTROLS
   local date and time. TITLE uses the saved name when available.
   A Prompt: prefix identifies a fallback to the conversation’s opening prompt.
   REPO is present in every view.
+  ● beside the slot marks an attached session you can open in place.
   Run from outside a registered repo to browse all repos.
 
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles live state.

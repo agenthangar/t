@@ -30,7 +30,7 @@ def key_labels(text, platform=None, compact=False):
 def paint(text, role='hint'):
     if 'NO_COLOR' in os.environ or os.environ.get('TERM') == 'dumb':
         return text
-    code = {'heading': '36', 'action': '37', 'hint': '90', 'active': '1;4;96',
+    code = {'heading': '36', 'action': '37', 'key': '1;97', 'hint': '90', 'active': '1;4;96',
             'selected': '1;4;97;48;5;23', 'warning': '33', 'primary': '92'}[role]
     return '\033[' + code + 'm' + text + '\033[0m' if text else ''
 

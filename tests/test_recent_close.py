@@ -116,8 +116,8 @@ def test_marker_survives_sort_and_filter(history, filters, tmp_path):
     assert (tmp_path / 'sort').read_text() == 'closed'
     assert 'session-2' in (tmp_path / 'current').read_text().splitlines()[0]
     header = (tmp_path / 'current-header').read_text()
-    assert '↻ work in progress  ● live  — no PR' in header
-    assert 'latest verified close' not in header
+    assert '↶ last closed  ↻ work in progress  ● attached' in header
+    assert '— no PR' in header
     filters.render(tmp_path, 'resume', 'next-sort', 68, 'WORKING ON')
     assert (tmp_path / 'current-header').read_text().splitlines()[-1] == '↶ WORKING ON'
     assert (tmp_path / 'sort').read_text() == 'turn'

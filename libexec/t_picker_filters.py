@@ -21,8 +21,10 @@ OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
                'task': ('Ctrl-W', 'task')}
 
 PR_STATES = {'MERGED', 'OPEN', 'CLOSED', 'NONE', 'UNKNOWN', 'MIXED'}
-PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗': '96', '?': '37'}
+PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗': '96',
+             '?': '37', '—': '37'}
 PR_CHIP = r'#\d+ [↴○◌!×?](?: ↗)?'
+RESUME_MARK_ROLES = {'↶': 'heading', '↻': 'warning', '●': 'primary'}
 
 
 def metadata(source, profile):
@@ -129,7 +131,7 @@ def state_label(profile, mask):
 
 
 def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False,
-           hide_merged=False, sort_enabled=True, legend='', status=()):
+           hide_merged=False, sort_enabled=True, show_legend=False, status=()):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
     short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
@@ -141,12 +143,7 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         return control_rows(parts, width, selected, compact, color, 'selected' if filled else 'active')
     resume = profile == 'resume'
     lines = list(status[:2] if tight_resume else status)
-    if resume:
-        actions = ['Enter/Esc' if compact else 'Enter resume', 'Tab ✓',
-                   'Ctrl-/' if compact else 'Ctrl-/ details']
-        if not compact:
-            actions.insert(1, 'Esc cancel')
-    else:
+    if not resume:
         actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓',
                    'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
         if not compact:
@@ -191,17 +188,12 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines += sort_lines
     if not compact:
         lines += ['']
-    if legend:
-        if short:
-            legend = '↴ merged  ○ open'
+    if show_legend:
         if not compact:
             lines.append(style('LEGEND', 'heading'))
-        for line in legend.splitlines():
-            line = clip_columns(line, width)
-            lines.append(re.sub(r'[↴○◌!×↗?] [a-z]+',
-                                lambda match: pr_color(match[0], match[0][0]), line) if color else line)
+        lines += resume_legend(width, short, color)
     if resume:
-        lines += keys(actions)
+        lines += resume_action_rows(width, compact, color)
         if columns and not compact:
             lines.append('')
     if columns:
@@ -431,7 +423,6 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         status = resume_health(freshness or {}, width, color, refresh)
     elif notice.exists() and notice.read_text().strip():
         status.append(clip_columns(notice.read_text().strip(), width))
-    legend = ''
     if profile == 'resume':
         if freshness is not None:
             hosts = freshness.get('auth_hosts', [])
@@ -455,9 +446,8 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             columns = (('↶ ' if latest else '  ') if close_gutter else '') + ('  ' if work_gutter else '') + columns
             if os.environ.get('T_PICKER_LEGACY_COLUMNS') == '1':
                 columns = '  ' + columns
-        legend = resume_legend(width)
     controls = header(profile, mask, filters, total - len(selected), columns, width,
-                      sort, enabled, color, hide_merged, sort_enabled, legend,
+                      sort, enabled, color, hide_merged, sort_enabled, profile == 'resume',
                       status if profile == 'resume' else ())
     (directory / 'current-header').write_text(('\n'.join(status) + '\n' if status and profile != 'resume' else '') + controls)
     enabled_file.write_text('1' if enabled else '0')
@@ -465,10 +455,35 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     state_file.write_text(json.dumps(filters))
 
 
-def resume_legend(width):
-    marks = '↻ WIP' if width < 64 else '↻ work in progress'
-    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '↗ preview', '? unknown']
-    return '\n'.join([marks + '  ● live  — no PR', *pack(prs, width, '  ')])
+def resume_action_rows(width, compact, color):
+    enter = 'Return' if sys.platform == 'darwin' else 'Enter'
+    details = key_labels('Ctrl-/', compact=compact)
+    actions = [enter, 'Esc', 'Tab', details] if compact else [
+        f'{enter} resume', 'Esc cancel', 'Tab mark', f'{details} details']
+    lines = pack(actions, width, '  ')
+    if not color:
+        return lines
+    def label(part):
+        key, space, action = part.partition(' ')
+        return paint(key, 'key') + space + paint(action, 'action')
+    return ['  '.join(label(part) for part in line.split('  ')) for line in lines]
+
+
+def resume_mark(text):
+    return paint(text, RESUME_MARK_ROLES[text[0]])
+
+
+def resume_legend(width, short, color):
+    close = '↶ close' if short and width < 33 else '↶ last closed'
+    work = '↻ WIP' if width < 64 or short else '↻ work in progress'
+    marks = pack([close, work, '● attached'], width, '  ')
+    prs = [] if short else pack([
+        '↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '↗ preview',
+        '? unknown', '— no PR'], width, '  ')
+    if not color:
+        return marks + prs
+    return (['  '.join(resume_mark(part) for part in line.split('  ')) for line in marks]
+            + ['  '.join(pr_color(part, part[0]) for part in line.split('  ')) for line in prs])
 
 
 def pr_color(text, symbol):
@@ -478,6 +493,8 @@ def pr_color(text, symbol):
 
 
 def color_resume_prs(display):
+    if display.startswith(('— ', '? ')):
+        return pr_color(display[0], display[0]) + display[1:]
     def chip(match):
         text, symbol = match[0], match[1]
         if text.endswith(' ↗'):
@@ -548,10 +565,17 @@ def mark_resume(source, records=None):
         key = tuple(fields[:3])
         close = '↶' if key == latest else ' '
         work = '↻' if records.get(key, {}).get('work') else ' '
-        prefix = ((paint(close, 'heading') if color and close != ' ' else close) + ' ' if close_gutter else '')
+        prefix = ((resume_mark(close) if color and close != ' ' else close) + ' ' if close_gutter else '')
         if work_gutter:
-            prefix += (paint(work, 'warning') if color and work != ' ' else work) + ' '
-        fields[-1] = prefix + (color_resume_prs(fields[-1]) if color else fields[-1])
+            prefix += (resume_mark(work) if color and work != ' ' else work) + ' '
+        display = fields[-1]
+        if color:
+            if len(fields) >= 10 and fields[6] != '-':
+                # Match the aligned slot cell before title text or ANSI is added.
+                slot = rf'^.*? {{2,}}{re.escape(fields[0])} {{2,}}{re.escape(fields[1])} (●)(?=  )'
+                display = re.sub(slot, lambda match: match[0][:-1] + resume_mark('●'), display, count=1)
+            display = color_resume_prs(display)
+        fields[-1] = prefix + display
         result.append('\t'.join(fields))
     return '\n'.join(result)
 
