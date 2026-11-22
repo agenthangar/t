@@ -662,15 +662,20 @@ def publish(cfg, record, review, api, *, _already_locked=False):
                 _git(pending, 'symbolic-ref', 'HEAD', 'refs/heads/main')
                 _git(pending, 'read-tree', publication['commit'])
                 for entry in publication['files']:
-                    name = str(_relative(entry['path']))
-                    result = _run(['git', '-C', pending, 'cat-file', 'blob', publication['commit'] + ':' + name],
+                    relative = _relative(entry['path'])
+                    result = _run(['git', '-C', pending, 'cat-file', 'blob', publication['commit'] + ':' + str(relative)],
                                   check=False, text=False, timeout=60)
                     data = result.stdout
                     if result.returncode or hashlib.sha256(data).hexdigest() != entry['sha256'] or len(data) != entry['size']:
                         raise IdeaError('approved Git object changed before clone completion')
-                    target = pending_path / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if target.is_symlink() or any(p.is_symlink() for p in target.parents):
+                    directory = pending_path
+                    for component in relative.parts[:-1]:
+                        directory /= component
+                        if directory.is_symlink():
+                            raise IdeaError('unsafe local clone directory')
+                        directory.mkdir(exist_ok=True)
+                    target = directory / relative.name
+                    if target.is_symlink():
                         raise IdeaError('unsafe local clone file')
                     target.write_bytes(data)
                     target.chmod(entry['mode'])
