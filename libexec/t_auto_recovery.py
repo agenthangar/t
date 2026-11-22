@@ -460,6 +460,7 @@ def event(agent, payload, token=None):
         }.get(kind)
         if kind in ('SessionStart', 'sessionStart'):
             row.setdefault('phase', 'unknown')
+            row.update(next_retry=0, outcome='')
             if launch.get('socket') and launch.get('session'):
                 for name, value in (('CLAUDE_RESUME_ID', sid), ('DEV_AGENT', agent)):
                     run(['tmux', '-S', launch['socket'], 'set-environment', '-t', '='+launch['session'], name, value])
@@ -479,6 +480,8 @@ def event(agent, payload, token=None):
         if phase:
             row['phase'] = phase
             row['reason'] = payload.get('reason', '')[:500]
+            if phase == 'idle':
+                row['failures'] = 0
         if kind in ('UserPromptSubmit', 'beforeSubmitPrompt', 'turn/started'):
             row['turn'] = payload.get('turn_id') or payload.get('prompt_id') or uuid.uuid4().hex
             prompt = payload.get('prompt', '')
@@ -775,7 +778,7 @@ def pause(identity, value):
 
 
 def retire(agent, sid):
-    if not (root()/'journal.json').exists():
+    if not sid or sid == '-' or agent not in AGENTS or not (root()/'journal.json').exists():
         return
     def change(data):
         row = data['sessions'].get(key(agent, sid))
@@ -1126,10 +1129,13 @@ def launch(agent, argv, chosen=None):
         if os.environ.get('T_RECOVERY_RESTORE_GENERATION'):
             raise ValueError('automatic recovery was disabled before launch')
         return subprocess.call(argv)
+    restoring = bool(os.environ.get('T_RECOVERY_RESTORE_GENERATION'))
     if agent == 'codex' and chosen is None:
         try:
             helper('t_offline')['launch_options'](argv, os.getcwd(), recovery=True)
         except ValueError:
+            if restoring:
+                raise
             # Unsupported native modes remain usable; do not enroll an invocation
             # whose approval/provider configuration cannot be reproduced.
             print('t recovery: this invocation requires manual recovery.', file=sys.stderr)
@@ -1145,12 +1151,20 @@ def launch(agent, argv, chosen=None):
             result = subprocess.call(argv)
     except KeyboardInterrupt:
         result = 130
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print('t recovery: ' + display_text(error), file=sys.stderr)
+        result = 1
     def finish(data):
         record = data['launches'].pop(token, {})
         row = data['sessions'].get(agent + ':' + record.get('sid', ''))
         if row and row.get('generation') == token:
             if result in (0, 130) and not row.get('restoring'):
                 row.update(open=False, phase='interrupted' if result == 130 else 'idle')
+            elif restoring and result and row.get('phase') not in ('outage', 'attention'):
+                attempts = row.get('failures', 0) + 1
+                row.update(failures=attempts, next_retry=time.time() + retry_delay(attempts),
+                           phase='attention' if attempts >= 3 else 'unknown',
+                           reason=f'Agent exited with status {result} during recovery')
             row['exit_code'] = result
     update(finish)
     return result

@@ -666,6 +666,21 @@ def test_launch_tracks_close_and_recovery_stop_without_native_agents(auto, tmp_p
     assert auto.prefix('claude')[-2:] == ['launch', 'claude']
 
 
+def test_native_startup_failure_stops_retrying_after_three_attempts(auto, tmp_path, monkeypatch):
+    enable(auto)
+    row = session(auto, tmp_path, phase='unknown')
+    monkeypatch.chdir(row['cwd'])
+    monkeypatch.setattr(auto.subprocess, 'call', lambda argv: 7)
+    for _ in range(3):
+        monkeypatch.setenv('T_RECOVERY_RESTORE_GENERATION', row['generation'])
+        assert auto.launch('claude', ['claude', '--resume', SID]) == 7
+        row = auto.status()['sessions'][0]
+    assert row['phase'] == 'attention'
+    assert row['failures'] == 3
+    auto.retire('codex', '')
+    assert auto.status()['sessions'] == [row]
+
+
 def test_guard_requires_enabled_identity_and_native_writer_release(auto, tmp_path, monkeypatch):
     row = session(auto, tmp_path, agent='codex')
     with pytest.raises(ValueError, match='disabled'):
