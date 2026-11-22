@@ -15,9 +15,9 @@ open apps/rnnr/.build/rnnr.app
 ```
 
 The locally built app uses this checkout’s `t` backend and the existing user
-configuration. Build again after moving the checkout. Click the fox in the menu
-bar to open the pane. macOS may ask for permission to control Terminal the first
-time you use a session action.
+configuration. Build again after moving the checkout. Opening the app shows
+the pane. Click the fox in the menu bar to toggle it. macOS may ask for
+permission to control Terminal the first time you use a session action.
 
 Click a session to attach in a new Terminal window. **New**, **All sessions**,
 **Open**, **Resume**, and **Move** open the corresponding `t` flows in Terminal.
