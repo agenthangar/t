@@ -580,8 +580,7 @@ def _resume_discovery_wait(refresh):
     ui = _RailUI()
     try:
         ui.raw()
-        result = ui.pick('Refreshing saved conversations', [('skip', 'Skip waiting')],
-                         context=('Waiting for fresh results…',), back_label='cancel',
+        result = ui.pick('Refreshing sessions', [('skip', 'Skip waiting')], back_label='cancel',
                          refresh=refresh, refresh_interval=.25)
         if result is None:
             raise KeyboardInterrupt

@@ -101,7 +101,7 @@ def test_resume_wait_rail_layout(t_mod, monkeypatch, width, height):
     assert ui.restored
     frame = ui.frames[0]
     plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in frame)
-    assert 'Skip waiting' in plain and '▸' in plain and 'cancel' in plain
+    assert 'Refreshing sessions' in plain and 'Skip waiting' in plain and '▸' in plain and 'cancel' in plain
     assert sum(t_mod._term_rows(line, width) for line in frame) <= height
     assert all(t_mod._vis_len(line) <= width for line in frame)
 

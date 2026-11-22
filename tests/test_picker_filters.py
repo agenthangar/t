@@ -315,10 +315,31 @@ def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
     healthy = {'hosts': [{'host': 'local', 'status': 'current', 'checked': 1700000000}]}
     pending = {'hosts': [{'host': 'local', 'status': 'refreshing', 'checked': 1700000000}]}
     shortcut = filters.key_labels('Ctrl-U refresh now')
-    for status, prefix in ((healthy, 'Last refresh '), (pending, 'Refreshing local  ')):
+    for status, prefix in ((healthy, '\x1b[37mLast refresh '), (pending, '\x1b[1;96mRefreshing local\x1b[0m  ')):
         line = filters.resume_health(status, 120, True, True)[0]
         assert line.startswith(prefix)
         assert f'  \x1b[92m{shortcut}\x1b[0m' in line
+
+
+def test_resume_refresh_separates_timing_and_host_status(filters, monkeypatch):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    health = {'hosts': [
+        {'host': 'local', 'status': 'refreshing', 'observed': 1700000000},
+        {'host': 'mini', 'status': 'timed out'},
+        {'host': 'mac', 'status': 'unreachable'},
+        {'host': 'dev', 'status': 'current'},
+    ]}
+    lines = filters.resume_health(health, 80, True, True)
+    assert lines[0].startswith('\x1b[1;96mRefreshing local\x1b[0m')
+    assert lines[1].startswith('\x1b[37mLast refresh ')
+    assert lines[2] == '\x1b[33mmini timed out  mac unreachable\x1b[0m'
+    assert lines[3] == '\x1b[37mdev current\x1b[0m'
+    monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '12')
+    compact = filters.resume_health(health, 27, False, True)
+    assert len(compact) == 2
+    assert compact[0] == 'Refreshing local  ' + filters.key_labels('Ctrl-U', compact=True)
+    assert compact[1] == 'mini timed out'
 
 
 def test_resume_pr_badges_color_only_the_leading_labels(filters, monkeypatch):

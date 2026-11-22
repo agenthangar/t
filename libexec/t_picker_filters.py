@@ -440,6 +440,8 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         if (directory / 'columns').exists():
             columns = (directory / 'columns').read_text().rstrip('\n')
         if not selected:
+            if int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
+                status = status[:1]
             status.append('No matching conversations')
         if columns:
             latest, close_gutter, work_gutter = resume_gutters(records)
@@ -508,16 +510,15 @@ def color_resume_prs(display):
 
 
 def resume_health(health, width, color, refresh=False):
+    short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     hosts = health.get('hosts', [])
     stamp = max((host.get('observed') or host.get('checked') or 0 for host in hosts), default=0)
     last = datetime.fromtimestamp(stamp) if stamp else None
     date = '%H:%M' if last and last.date() == datetime.now().date() else '%b %d %H:%M'
-    timing = 'Last refresh ' + last.strftime(date) if last else 'No completed refresh'
-    current = [host['host'] for host in hosts if host.get('status') == 'current']
+    timing = 'Last refresh ' + last.strftime(date) if last else 'No refresh yet'
     pending = [host['host'] for host in hosts if host.get('status') == 'refreshing']
-    healthy = [timing] + ([', '.join(current) + ' current'] if current else [])
-    if pending:
-        healthy = ['Refreshing ' + ', '.join(pending), 'showing retained rows', *healthy]
+    current = ', '.join(host['host'] for host in hosts if host.get('status') == 'current')
+    current = f'{current} current' if current else ''
     warnings = [host['host'] + ' ' + host['status'] for host in hosts
                 if host.get('status') not in ('refreshing', 'current')]
     if health.get('unavailable'):
@@ -525,30 +526,29 @@ def resume_health(health, width, color, refresh=False):
     if health.get('cancelled'):
         warnings.append('Refresh cancelled')
     if health.get('failed'):
-        warnings.append('Could not update rows')
-    if width <= 28:
-        time_label = timing.removeprefix('Last refresh ')
-        if not pending:
-            healthy = [time_label] + ([', '.join(current) + ' current'] if current else [])
-        else:
-            healthy = healthy[:1]
+        warnings.append('Update failed')
+    style = lambda text, role: paint(text, role) if color else text
+    title = 'Refreshing ' + ', '.join(pending) if pending else timing
+    if width <= 28 and not pending:
+        title = title.removeprefix('Last refresh ')
+    title_role = 'progress' if pending else 'action'
+    shortcut = ''
     if refresh:
-        shortcut = key_labels('Ctrl-U' if width <= 28 else 'Ctrl-U refresh now', compact=width <= 40)
-        healthy[0] = clip_columns(healthy[0], width - display_width(shortcut) - 2) + '  ' + shortcut
-    if warnings:
-        line = ' · '.join([*healthy, *warnings])
-        if display_width(line) <= width:
-            normal = ' · '.join(healthy) + ' · '
-            warn = ' · '.join(warnings)
-            lines = [normal + (paint(warn, 'warning') if color else warn)]
+        shortcut = key_labels('Ctrl-U' if width <= 40 else 'Ctrl-U refresh now', compact=width <= 40)
+    title_width = width - (display_width(shortcut) + 2 if shortcut else 0)
+    title = clip_columns(title, title_width)
+    line = style(title, title_role)
+    if shortcut:
+        line += '  ' + style(shortcut, 'primary')
+    details = [(text, 'warning') for text in pack(warnings, width, '  ')]
+    if pending and last and (not short or not details):
+        details.insert(0, (clip_columns(timing, width), 'action'))
+    if current:
+        if not pending and display_width(title + '  ' + current) <= title_width:
+            line += '  ' + style(current, 'action')
         else:
-            lines = [clip_columns(' · '.join(healthy), width),
-                     *(paint(part, 'warning') if color else part for part in pack(warnings, width))]
-    else:
-        lines = pack(healthy, width)
-    if refresh and color:
-        lines[0] = lines[0].replace(shortcut, paint(shortcut, 'primary'), 1)
-    return lines
+            details.append((clip_columns(current, width), 'action'))
+    return [line, *(style(text, role) for text, role in (details[:1] if short else details))]
 
 
 def resume_gutters(records):

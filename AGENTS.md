@@ -21,7 +21,9 @@ For session-picker filtering or sorting requests, inspect the existing hotkeys
 in that design system and the shared picker before proposing an interaction.
 Extend the hotkey controls and preserve existing filter/sort choices. Add CLI
 flags only when the user explicitly requests flags or noninteractive control.
-In the resume picker, color Ctrl-U beside refresh status. Put the PR legend on
+In the resume picker, put green Ctrl-U beside the refresh status. Show active
+refresh in bright cyan and host warnings in amber. Give the previous refresh
+time and host outcomes their own lines when height permits. Put the PR legend on
 its own row under LEGEND, then show result hotkeys without a heading. Leave a
 blank line before the columns when height permits. Separate legend labels with
 spaces. Match legend colors to row colors and label ↶ as last closed,

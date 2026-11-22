@@ -994,8 +994,10 @@ Interactive resume, including plain slot history, displays retained results
 immediately. Cold discovery and service recovery use the same wait/recovery rail
 as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
 no overall timeout for an advancing cold refresh; repeated service connection
-failures return to Retry / Cancel. The filtered picker reports the last refresh
-and the status of each host. Refreshes already running when the picker opens
+failures return to Retry / Cancel. The filtered picker shows the active refresh
+in bright cyan, with the previous refresh time and host outcomes on separate
+lines when height permits. Warnings such as timeouts use amber.
+Refreshes already running when the picker opens
 update it as hosts finish. Press Ctrl-U to refresh the same scope on demand.
 The picker retains query, filter, and sort choices and uses the available
 snapshot if a host fails. Ctrl-R remains the repository filter in this picker

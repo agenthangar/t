@@ -379,7 +379,10 @@ def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', warm_resume=True, width=105, height=24)
     screen = wait('Refreshing local', focused='Second Task')
-    assert 'Ctrl-U refresh now' in next(line for line in screen.splitlines() if 'Refreshing local' in line)
+    lines = screen.splitlines()
+    status = next(i for i, line in enumerate(lines) if 'Refreshing local' in line)
+    assert 'Ctrl-U refresh now' in lines[status]
+    assert 'Last refresh' in lines[status + 1]
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')

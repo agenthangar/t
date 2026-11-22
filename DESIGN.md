@@ -25,7 +25,9 @@ Match `t open` visually: reuse its shared sort block, blank rows between header
 sections, and two-space table gutters when space permits. Compact layouts may
 remove those gaps to keep the focused result visible.
 In the resume picker, place the green Ctrl-U refresh action beside the refresh
-status. Put filters and sort above the LEGEND heading. Give the PR legend its
+status. Use bright cyan for an active refresh and put its previous refresh time
+and host outcomes on separate lines when height permits. Use amber for host
+warnings. Put filters and sort above the LEGEND heading. Give the PR legend its
 own row immediately above the result hotkeys. Show those hotkeys without a
 heading and leave a blank line before the columns when height permits. Separate
 legend entries with spaces. Use the same colors in the legend and rows. Label
