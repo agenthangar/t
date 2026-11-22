@@ -289,7 +289,7 @@ exec /bin/zsh "$@"
                 screen = screen.replace('↩ Return', 'Enter').replace('↩', 'Enter')
                 screen = screen.replace('⎋ Esc', 'Esc').replace('⎋', 'Esc')
                 screen = screen.replace('⇥ Tab', 'Tab').replace('⇥', 'Tab')
-                screen = re.sub(r'⌥([A-Z])', r'Alt-\1', screen)
+                screen = re.sub(r'(?:⌥|M-)([A-Z])', r'Alt-\1', screen)
                 screen = re.sub(r'[⌃^]([A-Z/])', r'Ctrl-\1', screen)
                 positions = [screen.find(value) for value in ordered]
                 in_order = all(p >= 0 for p in positions) and positions == sorted(positions)
