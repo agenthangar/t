@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import shutil
 import signal
@@ -17,6 +18,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNTIME_PROTOCOL = 1
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 BACKGROUND = "Cannot use the background server"
 DEAD = "Agent pane has exited"
@@ -510,7 +512,7 @@ def source_version():
     return stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size
 
 
-def watch(socket):
+def watch(socket, token=None):
     loaded = source_version()
     with (cache(socket) / "watch.lock").open("w") as lock:
         try:
@@ -518,7 +520,24 @@ def watch(socket):
         except BlockingIOError:
             return 0
         watcher = Watcher(socket)
+        try:
+            runtime = runpy.run_path(str(ROOT / 'libexec/t_runtime.py'))
+            runtime_path = cache(socket) / 'watch.runtime.json'
+            reload_path = cache(socket) / 'watch.reload.json'
+            record = runtime['publish'](runtime_path, 'recoverywatcher', socket, token=token)
+        except (OSError, ValueError, TypeError, SyntaxError):
+            runtime, record = None, None
         while True:
+            if record and reload_path.exists():
+                try:
+                    request = runtime['replacement'](reload_path, record, 'recoverywatcher')
+                    if request:
+                        # Existing recovery self-exec semantics release/reacquire
+                        # its singleton lock; no agent or job receives a signal.
+                        os.execv(sys.executable, [sys.executable, str(runtime['dispatcher']()),
+                                 request['source'], 'libexec/t_recovery.py', 'watch-resume', socket, record['token']])
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+                    reload_path.unlink(missing_ok=True)
             # t update replaces this source, but a long-lived Python process
             # otherwise keeps the old module in memory indefinitely. exec drops
             # the close-on-exec flock; the replacement reacquires it or exits if
@@ -540,12 +559,12 @@ def watch(socket):
     return 0
 
 
-def start(session):
+def start(session, socket=None):
     if os.environ.get("T_RECOVERY_DISABLE"):
         return 0
-    result = run(["tmux", "display-message", "-p", "-t", "=" + session + ":", "#{socket_path}"])
-    socket = result.stdout.strip()
-    if result.returncode or not socket.startswith("/"):
+    result = run(["tmux", "display-message", "-p", "-t", "=" + session + ":", "#{socket_path}"]) if not socket else None
+    socket = result.stdout.strip() if result else socket
+    if (result and result.returncode) or not socket.startswith("/"):
         return 1
     env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "watch", socket],
@@ -771,7 +790,7 @@ def main(argv):
         action, *args = argv
         if action == "start":
             return start(*args)
-        if action == "watch":
+        if action in ("watch", "watch-resume"):
             return watch(*args)
         if action == "reopen":
             # These are tmux UI callbacks, not shell-facing success codes.
@@ -787,7 +806,7 @@ def main(argv):
             respond(*args[:2], action == "accept", *args[2:])
             return 0  # Includes callbacks from old menus whose offer is gone.
         raise ValueError("unknown recovery action")
-    except (OSError, ValueError, TypeError) as error:
+    except (OSError, ValueError, TypeError, SyntaxError) as error:
         print("t recovery: " + str(error), file=sys.stderr)
         return 1
 

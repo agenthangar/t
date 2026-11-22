@@ -362,11 +362,33 @@ Git checks use the shared terminal spinner; redirected output stays static.
 Already-current installations skip setup; failed setup is retried. `--relink`
 explicitly repairs links/integrations and reviews deferred instruction migration.
 `--local` still switches sources when another source is installed.
-Successful updates also reconcile obsolete discovery helpers, including an
-already-current result: use bounded revision handshakes only at existing private
-endpoints attributable to the updated installation. Preserve current helpers,
-development worktrees and live sessions; do not start a service. `--check` never
-performs this maintenance. Cleanup is best-effort and adds no terminal output.
+Successful updates and already-current results reconcile supported live runtime
+components: t-owned terminal hooks, compatible terminal observers, recovery
+watchers and obsolete discovery helpers. The newly installed binary dispatches
+capability-specific inspect/apply/verify adapters. Source-content fingerprints,
+protocol versions and private retry receipts distinguish current, updated,
+deferred, restart-required and failed outcomes. Missing required recovery
+watchers are repaired only for verified live managed sessions with recovery
+enabled. No service starts without an eligible owner. Existing discovery
+retirement uses bounded private revision handshakes and never starts a daemon.
+
+Only indexed hooks with t's exact command grammar are rewritten; user hooks and
+development source pins are preserved. Compatible observers self-exec at their
+own safe boundary with the same original PTY and singleton-lock descriptors,
+pending detach event and elapsed loss deadline. Legacy observers remain
+untouched until normal attachment. Legacy watchers whose old package source is
+unavailable report restart-required. Runtime reconciliation sends no signals to
+agents or jobs, injects no shell commands and never initiates session closure.
+Existing shells adopt their source at the next prompt or t invocation.
+
+A stable private per-user dispatcher survives versioned Homebrew/release source
+replacement. The hidden `__runtime-reconcile` transport is an internal machine
+route under `system update`, with an installer-only concise display mode; it is
+not a public command. Installer bootstrap runs only after setup succeeds.
+`--check` remains read-only; failed setup never refreshes live runtimes. Partial
+failures return nonzero and retry on the next update, including no-op updates.
+Deferred and restart-required outcomes are reported without forcing a restart.
+Ordinary updates remain local; `--all` retains its explicit selected-host scope.
 Continue after failures, including unreachable
 hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
 hosts means a local-only update. Remote updates never fan out recursively.

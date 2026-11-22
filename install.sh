@@ -78,7 +78,7 @@ valid_source() {
     [[ "$(cat "$root/.t-install-version")" == 1 ]] || return 1
     for asset in install.sh t.plugin.zsh local.zsh.example \
         claude/settings.json.example bin/t bin/nosleep zsh/lifecycle.zsh zsh/nosleep.zsh zsh/nosleep-fallback.zsh libexec/nosleep_config.py libexec/nosleep_hotspot.py libexec/nosleep_wifi.py libexec/nosleep_wifi.swift libexec/nosleep_credentials.py libexec/nosleep_credentials.swift bin/t-session-start bin/claude-stamp-tmux bin/cursor-beam \
-        libexec/t_dev.py libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
+        libexec/t_dev.py libexec/t_runtime.py libexec/t_runtime_dispatch.py libexec/t_progress.py libexec/t_shell_setup.py libexec/t_onboarding.py libexec/t_discovery.py \
         libexec/t_toml.py libexec/t_codex_socket.py libexec/vendor/SHA256SUMS libexec/vendor/tomli-LICENSE libexec/vendor/tomli/__init__.py libexec/vendor/tomli/_parser.py libexec/vendor/tomli/_re.py libexec/vendor/tomli/_types.py libexec/vendor/tomli/py.typed \
         libexec/t_workflow.py libexec/t_workflow_install.py libexec/t_workflow_context.py libexec/t_design_system.py libexec/t_workflow_sync.py libexec/t_issue.py libexec/t_issue_policy.txt libexec/t_resume_source.py libexec/t_lifecycle.py libexec/t_codex_store.py libexec/t_codex_ownership.py libexec/t_history.py libexec/t_candidates.py libexec/t_config_path.py libexec/t_session_cache.py libexec/t_session_discovery.py libexec/t_session_details.py libexec/t_picker_filters.py libexec/t_picker_viewport.py libexec/t_picker_theme.py libexec/t_repos.py \
         libexec/t_local_worker.py libexec/t_local_setup.py libexec/t_local_models.py libexec/t_local_inference.py libexec/t_offline.py libexec/mlx-models.json libexec/local-models.json libexec/t_mcp_setup.py \
@@ -380,7 +380,10 @@ if [[ "${T_AUTO_TRUST:-}" == 1 && -z "${T_NO_TRUST:-}" ]]; then
 fi
 
 if [[ -n "${T_LINKS_ONLY:-}" ]]; then
-    python3 "$T_LINK_SRC/libexec/t_session_cache.py" retire "$T_DISCOVERY_PREVIOUS" 2>/dev/null || true
+    # This is the success boundary: no runtime refresh runs after failed setup.
+    # Use the installed binary even when this installer was launched by an older updater.
+    python3 "$T_LINK_SRC/bin/t" __runtime-reconcile \
+        "$(python3 -c 'import json,sys; print(json.dumps({"previous_sources": [sys.argv[1]] if sys.argv[1] else [], "bootstrap_install": True, "display": True}))' "$T_DISCOVERY_PREVIOUS")"
     exit 0
 fi
 
@@ -403,3 +406,6 @@ printf '\nRun t config setup in a new zsh shell.\n'
 for tool in git python3 zsh tmux; do
     command -v "$tool" >/dev/null 2>&1 || echo "Missing dependency: $tool" >&2
 done
+
+# Bootstrap the stable runtime front door only after the full install succeeds.
+python3 "$T_LINK_SRC/bin/t" __runtime-reconcile '{"bootstrap_install":true,"display":true}'
