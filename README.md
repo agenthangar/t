@@ -399,8 +399,8 @@ Use `t system diagnose` when something is missing.
 ## Commands
 
 Run `t` or `t help` for a short overview, then `t help <noun>` or
-`t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form,
-with `t share` as the context sharing command.
+`t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form.
+`t share` opens context sharing and `t ideate` opens the idea menu.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
@@ -455,6 +455,9 @@ for a host's login shell.
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
 | `t issue open [repo] [number ...]` | Open one or several GitHub issues in your browser |
+| `t ideate` / `t idea start [title]` | Open the idea menu or start brainstorming in a private workspace |
+| `t idea list` / `t idea show <id>` | Find saved idea IDs and see workspace and publication details |
+| `t idea resume <id>` / `t idea publish <id>` | Continue brainstorming or turn reviewed files into a GitHub repository |
 | `t share` / `t share --to claude` | Review captured conversation context and start a new agent session; `--to` also works without a terminal when the source is known |
 | `t share --to agent:id [--file summary.md] [--attach history.md]` | Share context with an exact existing conversation; `--file` supplies your own text |
 | `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
@@ -868,6 +871,22 @@ monitor startup. Native desktop apps and CLIs launched outside `t` are not monit
 The monitor runs from a stable directory and reloads its code after an update.
 Before opening another Cursor chat, `t` requires existing Cursor CLIs to have verified
 current chat IDs; close an untracked CLI first to avoid duplicate conversation owners.
+
+### Brainstorming before you have a repository
+
+`t ideate` opens the idea menu. `t idea start 'Neighborhood walks'` starts
+the configured Codex or Claude CLI in a private workspace outside Git. When
+the agent exits, choose **Save for later** or **Create repository**.
+Run `t idea list` to find a saved idea's ID and use it with
+`t idea resume ID` to continue the conversation or `t idea publish ID`
+to create the repository.
+
+Keep files you intend to publish under `publish/`. In the file checklist,
+Space marks a file and Ctrl-A marks all eligible files, including nested
+files. Review the first commit and choose **Private** or **Public**.
+After confirmation, `t` pushes the commit, registers the local checkout,
+and prints the repository URL and a `t open` command. The working notes
+and conversation history stay separate from the repository.
 
 ### Sharing context between agents
 

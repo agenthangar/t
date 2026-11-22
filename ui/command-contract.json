@@ -12657,6 +12657,283 @@
       },
       "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved.",
       "layout": "mixed"
+    },
+    "ideate": {
+      "patterns": [
+        "wizard",
+        "single",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "ideate"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "ideate"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
+    },
+    "idea list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "idea show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "show",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "idea start": {
+      "patterns": [
+        "wizard",
+        "single",
+        "passthrough",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "start"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "passthrough",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "idea",
+            "start"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
+    },
+    "idea resume": {
+      "patterns": [
+        "wizard",
+        "single",
+        "passthrough",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "resume",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "passthrough",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "idea",
+            "resume",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
+    },
+    "idea publish": {
+      "patterns": [
+        "wizard",
+        "multi",
+        "review",
+        "action",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_publishes_only_reviewed_files"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "publish",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "wizard",
+            "multi",
+            "review",
+            "action",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_publishes_only_reviewed_files"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "idea",
+            "publish",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        },
+        "retry": {
+          "argv": [
+            "idea",
+            "publish",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "review",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_ideate.py::test_publication_retry_keeps_reviewed_commit"
+          ],
+          "notes": "Retry the same approved initial commit after verifying immutable repository identity and expected remote main.",
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
     }
   },
   "display_schemas": {
