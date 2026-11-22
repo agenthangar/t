@@ -405,6 +405,10 @@
       "kind": "background",
       "reason": "Bounded old-runtime shutdown is performed by the opted-in background recovery service."
     },
+    "libexec/t_auto_recovery.py:migrate:time.sleep": {
+      "kind": "protocol",
+      "reason": "The private updater child waits up to 12 seconds for its new worker to publish a heartbeat. The caller owns the terminal spinner."
+    },
     "libexec/t_auto_recovery.py:watch:time.sleep": {
       "kind": "background",
       "reason": "The optional per-user supervisor waits between recovery polls without writing terminal output."

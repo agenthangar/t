@@ -640,7 +640,7 @@ def setup_note():
     return ''
 
 
-def configure(value, expected):
+def configure(value, expected, *, enroll_live=True):
     if read(settings_path()).get('enabled', False) != expected:
         raise ValueError('recovery configuration changed while editing; reopen t config')
     if value and activation_error():
@@ -671,7 +671,8 @@ def configure(value, expected):
     if path.is_symlink():
         raise ValueError('refusing recovery LaunchAgent symlink')
     path.write_bytes(plistlib.dumps(document)); path.chmod(0o600)
-    enroll(snapshot())
+    if enroll_live:
+        enroll(snapshot())
     write(settings_path(), {'enabled': True, 'source': str(ROOT)})
     run(['launchctl', 'bootout', target])
     result = run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(path)])
@@ -702,7 +703,9 @@ def migrate():
                for path in files if path.exists()]
     started = time.time()
     try:
-        configure(True, True)
+        # The worker reconciles live owners after it starts. Waiting on process
+        # inventory here could exhaust the outer updater's migration deadline.
+        configure(True, True, enroll_live=False)
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
             heartbeat = read(root()/'heartbeat.json')

@@ -8615,9 +8615,14 @@ def _t_update_result(args, status, source=None, previous_sources=()):
             runtime_result = _t_reconcile_runtime(source, previous_sources)
             recovery = os.path.join(source, 'libexec', 't_auto_recovery.py')
             if os.path.isfile(recovery):
-                migrated = subprocess.run([sys.executable, os.path.join(source, 'bin/t'), '__auto-recovery', 'migrate'],
-                    cwd='/', timeout=45, env={key: value for key, value in os.environ.items()
-                        if not key.startswith('COV_CORE_') and key not in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER')})
+                with _spinner("Refreshing automatic recovery"):
+                    migrated = subprocess.run(
+                        [sys.executable, os.path.join(source, 'bin/t'), '__auto-recovery', 'migrate'],
+                        cwd='/', timeout=90, capture_output=True, text=True,
+                        env={key: value for key, value in os.environ.items()
+                             if not key.startswith('COV_CORE_') and key not in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER')})
+                if migrated.returncode and migrated.stderr.strip():
+                    print(migrated.stderr.strip(), file=sys.stderr)
                 runtime_result = runtime_result or migrated.returncode
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             print('t runtime: ' + str(error) + '; retry t update', file=sys.stderr)
