@@ -51,22 +51,26 @@ refreshing or another peer has failed. The picker freezes its snapshot: filterin
 sorting and paging never reorder the selected conversation in response to a
 background refresh. Incomplete views retain their warning and require selection.
 
-A cold interactive open/resume uses the shared wait rail. Return skips waiting;
-Esc/Ctrl-C cancels observation with status 130 without cancelling shared work.
-The first usable result opens selection automatically. A settled failure offers
-Retry, Browse retained results when available, or Cancel. Skipping with no usable
-results says “No sessions available yet”; incomplete emptiness never launches a
-new session. Explicit Retry clears only failed targets' cooldowns.
+When the requested repository/host/slot/session scope has no eligible results
+and refresh is pending, session open, close, resume, move, list and slot history
+automatically observe one bounded refresh for up to 30 seconds. The automatic
+wait ends as soon as an observation contains eligible scoped results, even
+while another host or the local history catalog is still refreshing. This also applies
+to redirected output and history JSON. Available scoped results and settled
+empty/failure results return immediately. Explicit `--wait` observes refresh even
+when results exist. Presentation-only picker filters/search never start discovery.
 
-A missing socket or service loss during waiting starts one elected replacement
-candidate per four-second handoff window. The lifetime lock still permits only
-one owner. Replacement restores persistence; an old daemon that loses its socket
-exits and removes only its own endpoint. Repeated bounded connection failures
-return to the recovery rail instead of leaving “retry shortly” as the only action.
+Timeout or service loss retains the final available snapshot and incomplete notice;
+it never enters another waiting or retry rail. Incomplete emptiness never launches
+a new session. Ctrl-C returns 130 without cancelling shared work or resetting a
+host. Lists stay static and redirected waits never prompt. MCP and collectors
+remain immediate; ownership checks remain live and unaffected.
 
-Ordinary lists, MCP, JSON and redirected output remain immediate and noninteractive.
-`t session list --wait` / `t ls --wait` retain their explicit 30-second observation
-limit and never prompt. A failed observer retains its last available snapshot.
+A missing socket or service loss can start one elected replacement candidate per
+four-second handoff window. The lifetime lock still permits only one owner.
+Replacement restores persistence; an old daemon that loses its socket exits and
+removes only its own endpoint. Observer failure retains its last snapshot within
+the same bounded wait; it never starts a caller-controlled retry loop.
 
 Before remote-inclusive open browsing, a known OS network denial or missing
 IPv4 and IPv6 routes returns an immediate error. Use `t open --local` to browse

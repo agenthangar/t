@@ -99,8 +99,8 @@ def test_incomplete_startup_prompt_cannot_switch(offline, argv):
 
 def test_startup_picker_selects_model_directly_and_exposes_retry(offline):
     local = {'catalogue': lambda **kw: {'models': models()}}
-    ui = UI(['1'])
-    assert offline.choose_local(ui, local, policy(), startup=True)['model'] == 'b'
+    ui = UI(['local'])
+    assert offline.choose_local(ui, local, policy(), startup=True)['model'] == 'a'
     assert len(ui.calls) == 1
     assert ('retry', 'Retry cloud') in ui.calls[0][0][1]
     assert ('pause', 'Cancel startup') in ui.calls[0][0][1]
@@ -109,7 +109,7 @@ def test_startup_picker_selects_model_directly_and_exposes_retry(offline):
 
 
 @pytest.mark.parametrize('prompt', [None, 'Keep the supplied task exactly.'])
-@pytest.mark.parametrize('choices', [['1'], ['retry', '1'], [None], ['1', '0']])
+@pytest.mark.parametrize('choices', [['local'], ['retry', 'local'], [None], ['local', 'local']])
 def test_startup_recovery_retries_or_launches_local_without_extra_screen(offline, tmp_path, monkeypatch, prompt, choices):
     m = offline
     ui = UI(choices)
@@ -129,7 +129,7 @@ def test_startup_recovery_retries_or_launches_local_without_extra_screen(offline
         assert ('--' in argv) == (prompt is not None)
         if prompt:
             assert argv[-1] == prompt
-        if choices == ['1', '0'] and len(launches) == 1:
+        if choices == ['local', 'local'] and len(launches) == 1:
             raise ValueError('local unavailable')
         return 0
     monkeypatch.setattr(m, 'supervise', supervise)
@@ -140,7 +140,7 @@ def test_startup_recovery_retries_or_launches_local_without_extra_screen(offline
     assert m.recover(argv, policy(), tmp_path) == (1 if choices == [None] else 0)
     assert len(ui.calls) == len(choices)
     assert len(cloud) == (2 if 'retry' in choices else 1)
-    assert len(launches) == (0 if choices == [None] else 2 if choices == ['1', '0'] else 1)
+    assert len(launches) == (0 if choices == [None] else 2 if choices == ['local', 'local'] else 1)
 
 
 @pytest.mark.parametrize('ask', [True, False])
@@ -181,7 +181,7 @@ else:
 @pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
 def test_startup_picker_keeps_retry_and_cancel_accessible(offline, t_mod, width, height):
     from test_tui import make_ui
-    ui = make_ui(t_mod, ['j', 'j', 'j', 'enter'], width, height)
+    ui = make_ui(t_mod, ['j', 'enter'], width, height)
     assert offline.choose_local(ui, {'catalogue': lambda **kw: {'models': models()}},
                                 policy(), startup=True) == 'retry'
     assert all(len(frame) <= height for frame in ui.frames)
@@ -194,8 +194,11 @@ def test_saved_pause_policy_uses_owned_supervisor(offline, monkeypatch):
     def supervise(argv, chosen, cwd):
         calls.append((argv, chosen))
         return 17
-    monkeypatch.setattr(local, 'helper', lambda name: {
-        'launch_options': lambda *args: None, 'supervise': supervise})
+    modules = {
+        't_auto_recovery': {'enabled': lambda: False},
+        't_offline': {'launch_options': lambda *args: None, 'supervise': supervise},
+    }
+    monkeypatch.setattr(local, 'helper', modules.__getitem__)
     assert local.lead(['codex'], chosen=dict(policy(), on_cloud_failure='pause')) == 17
     assert calls[0][0] == ['codex'] and calls[0][1]['on_cloud_failure'] == 'pause'
     assert calls[0][1]['cloud_retry_seconds'] == 300
@@ -205,7 +208,7 @@ def test_saved_pause_policy_uses_owned_supervisor(offline, monkeypatch):
 def test_failed_cloud_return_keeps_original_task_and_local_progress(offline, tmp_path, monkeypatch, task):
     m = offline
     monkeypatch.setattr(m.os, 'isatty', lambda fd: True)
-    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['0'])))
+    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['local'])))
     monkeypatch.setattr(m, 'choose_cloud', lambda *a: {'model': 'cloud'})
     ready = threading.Event(); ready.set()
     monkeypatch.setattr(m, 'RecoveryProbe', lambda: nullcontext(SimpleNamespace(ready=ready)))
@@ -244,7 +247,7 @@ def test_failed_cloud_return_keeps_original_task_and_local_progress(offline, tmp
 def test_startup_runner_preserves_prompt_and_tracks_first_local_turn(offline, tmp_path, monkeypatch, prompt):
     m = offline
     monkeypatch.setattr(m.os, 'isatty', lambda fd: True)
-    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['0'])))
+    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['local'])))
     monkeypatch.setattr(m, 'RecoveryProbe', lambda: nullcontext(SimpleNamespace(ready=threading.Event())))
     def supervise(argv, chosen, cwd, **kw):
         cp = kw['checkpoint']
@@ -269,7 +272,8 @@ def test_startup_runner_preserves_prompt_and_tracks_first_local_turn(offline, tm
 def test_startup_without_models_still_offers_cloud_retry(offline):
     ui = UI(['retry'])
     assert offline.choose_local(ui, {'catalogue': lambda **kw: {'models': []}}, policy(), startup=True) == 'retry'
-    assert ui.calls[0][0][1] == [('retry', 'Retry cloud'), ('pause', 'Cancel startup')]
+    assert ui.calls[0][0][1] == [('local', 'Start locally'), ('retry', 'Retry cloud'), ('pause', 'Cancel startup')]
+    assert 'local' in ui.calls[0][1]['disabled']
 
 
 def test_startup_preview_retries_without_starting_any_services(monkeypatch, capsys):
@@ -292,7 +296,7 @@ def test_startup_preview_retries_without_starting_any_services(monkeypatch, caps
 def test_empty_local_start_does_not_consume_cloud_return_offer(offline, tmp_path, monkeypatch):
     m = offline
     monkeypatch.setattr(m.os, 'isatty', lambda fd: True)
-    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['0'])))
+    monkeypatch.setattr(m, 'recovery_ui', lambda *a: nullcontext(UI(['local'])))
     ready = threading.Event(); ready.set()
     monkeypatch.setattr(m, 'RecoveryProbe', lambda: nullcontext(SimpleNamespace(ready=ready)))
     offers, stages = [], []

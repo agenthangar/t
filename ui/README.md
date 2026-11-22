@@ -48,9 +48,12 @@ refuses without launching or substituting another conversation. `--live` and
 explicit `--days` cannot be combined with `--last`. Existing `--cli`, `--fg`
 and `--host` destinations retain exact source and live ownership checks.
 
-`--wait` is available on session open, close, resume, move, list and slot history,
-including compatibility and remote routes. It observes the shared refresh for at
-most 30 seconds, returning immediately for settled results. Timeout retains the
+`-w` (`--wait`) is available on session open, close, resume, move, list and slot history,
+including compatibility and remote routes. When the requested discovery scope has
+no eligible results and refresh is pending, the same wait turns on automatically,
+including static lists, redirected output and history JSON. Available scoped results
+and settled empty/failure results return immediately. Explicit `-w` also observes
+a pending refresh when results exist. Every wait is bounded to 30 seconds. Timeout retains the
 final available snapshot for manual selection, with its incomplete notice; direct
 `--last` refuses it. Live rows and saved candidates use the same post-wait
 snapshot. Ctrl-C returns 130 and leaves the background refresh running. Redirected
@@ -94,7 +97,16 @@ once, including source and owner validation. Failures preserve a bounded shell
 cause and identify which readiness field changed (session, workspace, agent or
 conversation). They never relax ownership checks. It never switches to the latest
 conversation in that slot or force-opens a fresh context. A second failure retains
-the diagnostic; Cancel returns 130 and stops the batch. Redirected and machine
+the diagnostic. When a failed managed close left a verified local Codex writer
+without its terminal, the rail identifies the stranded client and offers to stop
+it. Repair checks the owner again and waits for writer release before retrying
+the selected conversation. When Repair finds the same unresolved lock and holder again, it
+reports it after a fresh scan without a second settling wait. If ownership of the
+original worktree is still unclear and the selected Codex writer is verified free,
+offer **Resume in fresh worktree / Cancel** when its saved commit and transcript
+are available locally. Show the saved commit and where local edits stay. On
+selection, allocate a fresh worktree, verify ownership again and open the exact
+conversation. Cancel returns 130 and stops the batch. Redirected and machine
 calls never prompt. When the shell captures an owner on stdout, render recovery
 on the original terminal stderr, keeping the owner protocol clean.
 
@@ -105,12 +117,15 @@ identity is compared. These diagnostics never weaken the ownership checks.
 
 Missing Codex metadata can also be scoped through a verified standalone CLI: its
 process identity, sole thread lock, and working directory must remain stable across
-two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
-evidence remain blocked. This fallback never deletes a lock or stops its owner.
+two live probes, including when the CLI uses t’s fast-mode launch options. For
+t’s supervised private Codex backend, the verifier can match the exact thread
+and workspace in its checkpoint to the live supervisor, stdio pipes and runtime
+log. Shared backends, cwd overrides on standalone clients, unsupported modes,
+and ambiguous evidence remain blocked. These checks never delete a lock or stop its owner.
 
 Development preview: `python3 scripts/preview_session_repair.py` exercises the
 shared repair rail with sample data. Use `open` for numbered-open recovery or
-`--blocked` for a persistent ownership refusal. No real sessions are changed.
+`resume --blocked` to try the fresh worktree choice. No real sessions are changed.
 
 `t session open api 3 --force` enters the force confirmation directly. `--yes`
 confirms only an explicit numeric force target; redirected commands never prompt.
@@ -353,6 +368,33 @@ Git checks use the shared terminal spinner; redirected output stays static.
 Already-current installations skip setup; failed setup is retried. `--relink`
 explicitly repairs links/integrations and reviews deferred instruction migration.
 `--local` still switches sources when another source is installed.
+Successful updates and already-current results reconcile supported live runtime
+components: t-owned terminal hooks, compatible terminal observers, recovery
+watchers and obsolete discovery helpers. The newly installed binary dispatches
+capability-specific inspect/apply/verify adapters. Source-content fingerprints,
+protocol versions and private retry receipts distinguish current, updated,
+deferred, restart-required and failed outcomes. Missing required recovery
+watchers are repaired only for verified live managed sessions with recovery
+enabled. No service starts without an eligible owner. Existing discovery
+retirement uses bounded private revision handshakes and never starts a daemon.
+
+Only indexed hooks with t's exact command grammar are rewritten; user hooks and
+development source pins are preserved. Compatible observers self-exec at their
+own safe boundary with the same original PTY and singleton-lock descriptors,
+pending detach event and elapsed loss deadline. Legacy observers remain
+untouched until normal attachment. Legacy watchers whose old package source is
+unavailable report restart-required. Runtime reconciliation sends no signals to
+agents or jobs, injects no shell commands and never initiates session closure.
+Existing shells adopt their source at the next prompt or t invocation.
+
+A stable private per-user dispatcher survives versioned Homebrew/release source
+replacement. The hidden `__runtime-reconcile` transport is an internal machine
+route under `system update`, with an installer-only concise display mode; it is
+not a public command. Installer bootstrap runs only after setup succeeds.
+`--check` remains read-only; failed setup never refreshes live runtimes. Partial
+failures return nonzero and retry on the next update, including no-op updates.
+Deferred and restart-required outcomes are reported without forcing a restart.
+Ordinary updates remain local; `--all` retains its explicit selected-host scope.
 Continue after failures, including unreachable
 hosts; return nonzero if any fail. Ctrl-C stops the batch with 130. No registered
 hosts means a local-only update. Remote updates never fan out recursively.
@@ -926,13 +968,15 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
-The open picker shows retained sessions immediately and freezes that snapshot.
-Background refresh never reorders an active selection. With no usable results,
-open and resume use the shared wait rail: Return skips; Esc/Ctrl-C cancels only
-observation. Completed discovery opens selection. A settled failure offers
-**Retry / Browse retained results / Cancel**; omit Browse when unavailable.
-Skipping without results says **No sessions available yet**. Incomplete empty
-results never start a fresh session. Cancel returns 130.
+The open picker shows retained scoped sessions immediately and freezes that
+snapshot. Background refresh never reorders an active selection. When no eligible
+results exist in the requested repository/host/slot/session scope, pending discovery
+automatically observes one bounded refresh for up to 30 seconds. Settled empty or
+failed discovery returns immediately. Timeout keeps the available snapshot and its
+incomplete notice; it never enters a second waiting or retry rail. Incomplete empty
+results never start a fresh session. Ctrl-C returns 130 without stopping refresh.
+Presentation-only filters and search operate on the displayed snapshot and never
+trigger another scan; rows revealable through picker controls count as available.
 
 Inventory reconciliation has a 24-hour TTL and never discards retained results.
 Recently used namespaces receive lightweight local activity checks every five
@@ -945,8 +989,9 @@ available rows. Old peers retain the hourly full-collector fallback.
 Session lists (`t ls` / `t session list`) also include remote hosts by default;
 `-l`/`--local` lists only this machine. Repository scope and `--all` are independent
 of host scope. Session lists always print a read-only table, including in terminals.
-Ordinary lists return immediately. `t session list --wait` (also `t ls --wait`)
-explicitly observes a pending cache refresh for up to 30 seconds before printing
+Lists with available scoped results return immediately; empty pending lists
+automatically observe refresh for up to 30 seconds. `t session list -w`
+(also `t ls -w`) observes refresh even when scoped results exist, then prints
 the same table and freshness notices. It uses the shared delayed spinner only in
 capable terminals; redirected waits are silent and never prompt. Completion,
 failure or timeout ends observation; Ctrl-C returns 130 without cancelling the
@@ -967,14 +1012,20 @@ Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T c
 Open also supports Ctrl-P/B/V/E/W for the highlighted row’s progress/model/session/context/task.
 Ctrl-A (off) and Ctrl-L (on) remain compatibility shortcuts.
 The compatibility --attached flag starts with filtering off and defaults retained.
-There is no new-session shortcut or details preview in open; use `t open --new`.
+Ctrl-N starts a fresh local session: a repository-scoped picker keeps that
+repository; the unscoped picker first selects a registered local repository with
+the shared single picker. Inclusive browsing never chooses a remote destination
+for new work. Explicit `--remote` and host-targeted pickers keep their existing
+remote routing and use `--new` directly. There is no details preview in open.
+Empty and filtered-empty lists stay open: Enter does nothing, Ctrl-N starts new
+work, and Esc cancels without starting anything.
 Press `Ctrl-K` to kill only the focused session, independently of multi-selection marks.
 The shortcut authorizes that session like Enter in close, retaining ownership
 and ownership safety checks. Keep the picker open and remove only successfully
 closed rows from its cached snapshot, without inventory discovery. Preserve query,
 filters, and other marks on both supported fzf versions. Failed or canceled closes
 keep their row and show the outcome in the picker. Closing the last row leaves an
-empty picker; Esc exits without starting a session.
+empty picker; Ctrl-N remains available and Esc exits without starting a session.
 A plain green ✓ selection marker stays readable on the dark cyan focus row;
 never paint a reversed-color block behind it. The marker occupies its own gutter
 beside the focus pointer, separate from status marks in the row.
@@ -990,19 +1041,21 @@ repository IDs; names and directory basenames alone never establish equivalence.
 `t remote resume --all --host HOST` explicitly keeps this scope on the chosen host.
 An explicit or inferred locally registered repository resolves there by identity.
 
-Interactive resume, including plain slot history, displays retained results
-immediately. Cold discovery and service recovery use the same wait/recovery rail
-as open. Return skips to available results; Esc/Ctrl-C cancels with 130. There is
-no overall timeout for an advancing cold refresh; repeated service connection
-failures return to Retry / Cancel. The filtered picker shows the active refresh
-in bright cyan, with the previous refresh time and host outcomes on separate
-lines when height permits. Warnings such as timeouts use amber.
-Refreshes already running when the picker opens
-update it as hosts finish. Press Ctrl-U to refresh the same scope on demand.
-The picker retains query, filter, and sort choices and uses the available
-snapshot if a host fails. Ctrl-R remains the repository filter in this picker
-and refreshes in plain slot history. Nonterminal, JSON, and private collector
-output stay static.
+Resume, including plain slot history, displays retained eligible scoped results
+immediately. With no results, pending discovery automatically waits for up to 30
+seconds before retaining the final snapshot. This applies to redirected and JSON
+history too; collectors never wait recursively. --days eligibility uses the same
+cutoff before and after observation. --last waits while pending discovery prevents
+a safe unique closure selection, then retains its strict incomplete/tied refusal.
+Timeout never retries or prompts. Incomplete results retain a warning through
+filtering, sorting and history paging. Ctrl-C cancels observation with 130 while
+the shared refresh continues.
+
+Interactive resume uses the same cold discovery and service recovery rail as
+open. In the picker, an in-flight refresh updates results as hosts finish.
+Ctrl-U refreshes the same discovery scope and preserves query, filters and
+sort. Ctrl-R filters by repository in the resume picker and refreshes plain
+slot history.
 
 After a saved selection, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
@@ -1085,6 +1138,12 @@ The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
 target. Explicit close targets retain live-agent confirmation unless `-y` is
 supplied.
+
+Managed close requests a graceful client exit before removing its tmux session.
+If the client outlives the wait, keep its pane available. An interactive local
+close can then offer **Force stop / Cancel** for the verified client. A timed-out
+automatic or noninteractive close reports the incomplete stop. The close is
+recorded only after the client exits and its conversation writer releases.
 
 The close picker includes standalone terminal clients and verified loaded Codex
 app conversations. Its existing default still hides attached or uncertain work;
@@ -1367,6 +1426,18 @@ example, opening a fresh slot and closing its untouched terminal releases the
 live slot; closing a terminal with an open PR leaves its agent available to
 reattach with `t open`. Termination retains saved conversations, branches, and
 worktrees. This is a one-time check on terminal loss, not a periodic idle sweep.
+A narrowly verified Python `-m http.server` preview directly owned by the agent
+can be stopped when it has an explicit loopback bind (`127.0.0.1`, `::1`, or
+`localhost`) and only supported static-server arguments. Its serving directory
+may be outside the worktree, including `/tmp`. Unknown launchers, scripts,
+transfers, backups, preview descendants and mixed background work preserve the
+session without signals. Completion requires a clean worktree and code already
+published and merged into the target branch, including verified squash merges;
+an idle turn alone is insufficient. Before cleanup, t rechecks the owner, task,
+Git and every process identity, sends TERM only to individually verified preview
+PIDs and waits at most five seconds for each to exit. A refusal or surviving
+preview preserves the session, with partial cleanup recorded privately. No
+process-group sweep or forced kill is used. All guards run again before closure.
 Hooks are installed on launch/resume and managed attachment, on the owning host;
 list/status never install hooks or initiate cleanup. Desktop and unmanaged
 foreground sessions retain their existing behavior.
@@ -1743,6 +1814,27 @@ review/save/discard transaction; preparation is an explicit immediate machine ac
 Retain **Ask which local model** alongside Pause and Continue locally. Preserve
 queue wait, owned model unloading and cloud-return recovery from main.
 
+## Automatic recovery
+
+`t config` includes **Recovery → Automatic recovery** as a host-local staged
+setting. Review/save applies it; cancel writes nothing. Running status belongs to
+the setting row; Back has no status value. Pending toggles say starts/stops on save.
+Enabling on macOS installs the user login service and merges owned agent hooks.
+Worktree setup is supported: the review identifies the source, and the service
+invokes that worker directly. Saving Recovery from a different source updates the
+service and hooks without relinking the shared command.
+Disabling removes those integrations without stopping running agents. The setting
+is not propagated to other hosts or written to shell configuration.
+
+`t system recovery status [--json]` and
+`t session recovery status [repo] [slot] [--json]` are read-only detail/machine
+outputs. `t session recovery pause|resume [repo] [slot]` are direct eligibility
+actions. An exact conversation ID is also accepted; missing targets infer only an
+unambiguous current workspace. These commands never open a picker, update prompt,
+or submit a continuation. There is no public recovery enable/disable command.
+Session details expose phase, pause, eligibility, and retry reason. See
+[automatic recovery](../docs/automatic-recovery.md) for the runtime contract.
+
 ## Standalone companion: nosleep
 
 The package installs `nosleep` alongside `t`; it is not a `t` subcommand.
@@ -1829,6 +1921,40 @@ routes for the internal saved-conversation implementation, excluded from menus a
 completion. Public instructions use `session resume`.
 
 ### Local inference activity
+
+Fresh local-only Codex sessions in tmux expose **Prefix F6** session controls.
+Verification (for example, **Verified on this Mac at 32K**) and live availability
+are separate: **Waiting for memory · 5.0 GiB short** uses the scheduler's current
+physical-memory, budget and GPU constraints. Auxiliary queued requests cannot
+hide this blocker. Details retain elapsed time, deadline and the cause on timeout.
+The native conversation stays queued while the user explores either action.
+
+**Free memory…** shows already released idle, unpinned t-owned models. macOS
+applications are sorted by estimated resident memory with nothing selected.
+Space marks apps; Enter reviews their names; **Quit selected apps** sends normal
+quit requests. Save dialogs remain owned by each app; an app that remains running
+is **Still open**. Terminal hosts, runtime/provider applications, system services
+and other users' apps are excluded. External models link to their provider's
+controls. Measure physical memory after every quit; estimates never authorize
+admission. Expiry requires explicit **Retry**, never automatic resubmission.
+Read-only request lists and JSON never open these controls or quit applications.
+
+**Choose model…** offers Local, OpenAI and Claude using shared selection and
+review. Each local model shows verification and current availability using the
+scheduler's memory calculation, including loaded/generating, memory shortfall,
+disabled runtime and unknown measurements. Browsing never loads a model.
+Review the destination, unchanged worktree, bounded context and screenshot
+support. Missing model readiness or image capability disables that destination.
+Retain PNG/JPEG attachments privately and verify their contents before handoff.
+Stop the owned Codex backend before launching the destination. Failed handoffs
+retain the source conversation and checkpoint. Native `/model` keeps the native
+provider's supported controls; Prefix F6 is the cross-provider entry point.
+Existing user F6 bindings are preserved. Unsupervised worker-only panes offer
+memory recovery and direct users to their native model controls; they never
+invent a conversation export. After a Claude handoff, its native `/model` owns
+model selection; further cross-provider export requires a supported controller.
+Existing managers upgrade only when idle; active requests are never restarted
+to install these controls.
 
 In an owned tmux pane, local lead and worker launches add a compact
 `local MODEL · inferring` status segment only during observed model requests.
@@ -1966,6 +2092,18 @@ and the native routing-discovery bootstrap failure use the same ready-model
 selection after verified runtime shutdown. Show Retry cloud and Cancel startup
 instead of offering to pause a conversation that does not exist. Selection starts
 locally immediately with the original text prompt or an empty conversation.
+Both recovery screens offer one **Continue locally** or **Start locally** action.
+Seed it with the configured workflow provider/model when ready and memory-fit,
+otherwise the first eligible pair. **Left/Right** cycles eligible pairs while this
+row is focused; cycling never launches. **Enter** immediately launches the exact
+selected pair. Hide the cycle hint with fewer than two eligible pairs and consume
+horizontal arrows without leaving recovery. **Up/Down** retains connection and
+pause/cancel navigation; **Esc** keeps its existing pause/cancel behavior. Display
+the model basename, provider, readiness and memory fit. Summarize unavailable
+models and show the configured unavailable model's reason without listing the
+whole catalogue. A blocked or empty local action explains why it cannot launch.
+Choices apply only to this session and preserve workflow settings.
+
 Incomplete startup input disables local selection. Preserve Pause passthrough;
 routing-discovery failure alone never authorizes automatic local fallback.
 
@@ -2073,8 +2211,18 @@ Reports read existing local evidence only: no model start, downloads or network.
 installation for updates. `t install nightr` is its compatibility convenience.
 `--yes` explicitly runs installation without review; `--dry-run` is read-only.
 `t system apps status nightr [--json]` never starts an app, prompts or downloads.
-These commands target this Mac and do not infer a repository. Nightr is optional
-in the installer and has its own `t config` entry, separate from coding agents.
+These commands target this Mac and do not infer a repository. Nightr also has its
+own `t config` entry.
+
+An unnamed, interactive `t agent install` (`t install`) on macOS offers Nightr in
+**Desktop Apps**, unchecked by default. The shared review shows `brew tap
+agenthangar/tap` if needed, then `brew install --cask agenthangar/tap/nightr`
+for a fresh install, or `nightr update` for an existing installation. Confirming
+runs the reviewed action. Fresh guided installs require the verified Homebrew
+cask. An existing installation keeps its package owner and must pass signature
+and receipt verification before its updater runs. Enroll Nightr in managed
+updates after successful verification. Named agents, unattended runs, dry runs,
+and remote installs retain their agent-only behavior.
 
 `t system update` includes opted-in Nightr installations, preserving Homebrew or
 direct ownership. It never installs an absent app. App setup and helper approval
@@ -2162,3 +2310,38 @@ The `mlx-vlm` provider uses the existing model picker and exact provider/model
 identity. Its runtime is private and managed; no desktop app is needed.
 Verification and measurement remain separate from LM Studio even when both use
 the same downloaded artifact.
+
+Recovery holding panes preserve the original slot when exact launch settings are
+unavailable. They display real tool/model metadata and the recovery reason,
+remain one pane per eligible slot, and open through `t open REPO SLOT`. Review
+launch settings before resuming; detaching leaves the holding pane available.
+A successful canonical update migrates enabled recovery service registration and
+hooks to the installed source. Status and discovery never start that service.
+
+### Private ideas
+
+`t ideate` opens the shared RailUI idea menu. `t idea start [TITLE]` starts the
+configured native Codex or Claude agent in a private XDG state workspace outside
+Git, with the global workflow. It needs no repository or GitHub login. Successful
+native exit offers Create repository or Save for later; cancellation and failed
+native exits preserve the draft. `t idea resume ID` continues the exact recorded
+conversation in that workspace and refuses another live writer.
+
+`t idea list` and `t idea show ID` print static read-only output, including stable
+exact IDs, titles, status and known publication details. They never prompt, create
+state or check for updates. Action commands require a terminal.
+
+Publication exports only explicitly marked regular files under `publish/`.
+All files begin unchecked; Select all files and Ctrl-A include eligible nested
+files, Clear all files clears marks, Space marks one, and v opens a safe focused
+file review. Arrows/j/k move, Enter continues, q/Esc returns and Ctrl-C cancels.
+Back preserves file marks and focus. An explicit empty initial commit is valid.
+Repository name, GitHub owner, Private/Public (default Private), and alias precede
+a scrollable y/n/q review of `~/code/NAME`, main, and every selected path.
+
+The confirmed byte snapshot is staged in a separate private Git repository.
+Native transcripts, private notes and idea metadata remain local. GitHub creation
+records its immutable repository ID; push, clone and alias registration retry the
+same approved commit only after identity and remote-main checks. Existing local
+paths and unknown remotes are never adopted. Local registration, trust and merge
+settings follow repository creation helpers; configured remote hosts are excluded.

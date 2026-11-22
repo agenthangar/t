@@ -62,7 +62,8 @@ if __name__ == "__main__":
     _dev_source = Path(__file__).resolve().parent.parent
     _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
     try:
-        _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+        _dev_selected = (_dev_source if sys.argv[1:2] == ['__runtime-reconcile']
+                         else _dev['select_root'](_dev_source, explicit=True))
     except KeyboardInterrupt:
         sys.exit(130)
     os.environ['T_DEV_CONTEXT'] = str(_dev_selected)
@@ -771,9 +772,11 @@ def cmd_ls(cfg, args):
         text = zsh_capture(command)
     else:
         cache = _session_discovery()
-        view = cache['discover'](cfg, local=not args.remote, fields=['rows'])
-        if getattr(args, 'wait', False):
-            view = cache['wait_for_refresh'](cfg, view, local=not args.remote)
+        def usable(snapshot):
+            text = cache['rows'](snapshot, prefixed=args.remote)
+            return bool(_scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope))
+        view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False),
+                                           usable=usable, local=not args.remote, fields=['rows'])
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
@@ -4408,6 +4411,15 @@ def _config_sessions_mcp(ui, pending, context=()):
             states = helper["status"](HOME)
 
 
+def _automatic_recovery():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_auto_recovery.py'))
+
+
+def _recovery_pending(cfg):
+    return (getattr(cfg, '_recovery_enabled', False) != getattr(cfg, '_recovery_initial', False) or
+            getattr(cfg, '_recovery_repair', False))
+
+
 def _config_wizard(cfg, workflows_only=False, workflow_target=None):
     ui = _RailUI()
     ui._config_interrupts = True
@@ -4420,6 +4432,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
             return key
         ui.read_key = interrupt_key
     _workflow_session(cfg)
+    cfg._recovery_initial = cfg._recovery_enabled = _automatic_recovery()['enabled']()
     edited = copy.deepcopy(cfg)
     initial = _config_state(cfg)
     before = getattr(cfg, "_config_before", None)
@@ -4445,10 +4458,11 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "MCP servers ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("edit", "Open config in editor"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("recovery", "Recovery ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
-                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited) + _recovery_pending(edited)
                 edited._workflow_shell_pending = bool(_config_diff(initial, _config_state(edited)))
+                values['recovery'] = 'Enabled · this Mac' if edited._recovery_enabled else 'Disabled · this Mac'
                 values.update({"hosts": f"{len(edited.hosts)} registered",
                                "repos": ", ".join(sorted(edited.repos)) or "none registered",
                                "beam": edited.beam_host or "none", "save": f"{pending} pending"})
@@ -4472,7 +4486,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                                      accents={"cancel": "y"},
                                      primary=("s", "SAVE CHANGES", f"{pending} pending"), shortcuts={"s": "save"},
                                      default=next(i for i, row in enumerate(rows) if row[0] == last))
-                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited) + _recovery_pending(edited)
                 if choice in (None, "cancel"):
                     if pending:
                         choice = ui.pick(f"{pending} unsaved change{'s' if pending != 1 else ''}", [
@@ -4485,6 +4499,13 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         ui.done("cancelled", "earlier saves kept; no pending changes saved" if getattr(cfg, "_config_saved", False) else "nothing written")
                         return None
                 last = choice if choice in dict(rows) else last
+                if choice == 'recovery':
+                    recovery = _automatic_recovery()
+                    edited._recovery_enabled = recovery['menu'](ui, edited._recovery_enabled)
+                    state = recovery['status']()
+                    edited._recovery_repair = edited._recovery_enabled and (
+                        not state['running'] or state.get('source', _t_source_root()) != _t_source_root())
+                    continue
                 if choice == "mcp":
                     _config_mcp(ui, pending)
                     continue
@@ -4541,7 +4562,19 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         lines += ["      " + line for line in _workflow_review(
                             edited._workflow_document, before=edited._workflow_initial,
                             activate=edited._workflow_activate)]
-                    if changes or _workflow_pending(edited):
+                    if _recovery_pending(edited):
+                        lines += (["      Enable automatic recovery on this Mac after login.",
+                                   "      Enroll open and future managed sessions; resume interrupted work in background.",
+                                   "      Approval waits and explicit pauses remain waiting; nosleep stays manual."]
+                                  if edited._recovery_enabled else
+                                  ["      Disable automatic recovery and remove its login service; running agents continue."])
+                        unavailable = _automatic_recovery()['activation_error']() if edited._recovery_enabled else ''
+                        if unavailable:
+                            lines.append('      ' + unavailable)
+                        note = _automatic_recovery()['setup_note']() if edited._recovery_enabled else ''
+                        if note:
+                            lines.append('      ' + note)
+                    if changes or _workflow_pending(edited) or _recovery_pending(edited):
                         if choice == "save-local":
                             lines.append("      After saving: open Local worker & models.")
                         answer = ui.page("Review local settings", lines, ("enter", "y", "n", "q", "esc", "abort"),
@@ -4628,7 +4661,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                     _config_tool_menu(ui, edited, choice, catalogs)
 
             except KeyboardInterrupt:
-                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited)
+                pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited) + _recovery_pending(edited)
                 if not pending:
                     raise
                 ui.raw()
@@ -5307,6 +5340,10 @@ def _config_persist_changes(cfg, result, before):
     """Use the same atomic settings transaction for save-and-exit and continuation."""
     current = _config_state(cfg)
     changes = _config_diff(current, _config_state(result))
+    if _recovery_pending(result) and result._recovery_enabled:
+        unavailable = _automatic_recovery()['activation_error']()
+        if unavailable:
+            raise ValueError(unavailable)
     shell_changed = bool(changes)
     workflow_changed = _workflow_pending(result)
     after = _config_text(before, changes, current)
@@ -5336,8 +5373,13 @@ def _config_persist_changes(cfg, result, before):
             context["settings_source"] = rebound
         helper["save"](workflow_doc, workflow_before, extra, main_settings=main_settings,
                        refresh_source=bool(rebound), propagation_context=context)
-    else:
+    elif changes:
         _config_write(_current_local_rc(), before, after)
+    if _recovery_pending(result):
+        _automatic_recovery()['configure'](result._recovery_enabled, result._recovery_initial)
+        result._recovery_initial = result._recovery_enabled
+        result._recovery_repair = False
+        print('✓ saved automatic recovery for this Mac')
     targets = _host_new_targets(cfg.hosts, result.hosts)
     return after if shell_changed else before, shell_changed, workflow_changed, targets
 
@@ -5437,6 +5479,7 @@ def cmd_config(cfg, args):
         print(f"Local worker: t config local --show (setup: t config local)")
         print("Nightr: t system apps status nightr (setup: t config → Nightr)")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
+        print('Automatic recovery: ' + ('enabled' if _automatic_recovery()['enabled']() else 'disabled') + ' · this Mac')
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
             print(f"Host {alias}: {target}")
@@ -5476,7 +5519,7 @@ def cmd_config(cfg, args):
                 return rc
         else:
             before = getattr(cfg, "_config_before", before)
-            if not _config_diff(_config_state(cfg), _config_state(result)) and not _workflow_pending(result):
+            if not _config_diff(_config_state(cfg), _config_state(result)) and not _workflow_pending(result) and not _recovery_pending(result):
                 print("No pending changes — earlier saves kept" if getattr(cfg, "_config_saved", False)
                       else "Settings unchanged — nothing written")
                 return 0
@@ -5645,7 +5688,7 @@ class _RailUI:
         self.out.write("\x1b[?25h")
         self.out.flush()
 
-    def read_key(self):
+    def read_key(self, horizontal=False):
         import select
         try:
             ch = os.read(self.fd, 1).decode(errors="replace")
@@ -5655,7 +5698,10 @@ class _RailUI:
             r, _, _ = select.select([self.fd], [], [], 0.05)
             if r:
                 seq = os.read(self.fd, 2).decode(errors="replace")
-                return {"[A": "up", "OA": "up", "[B": "down", "OB": "down"}.get(seq, "esc")
+                arrows = {"[A": "up", "OA": "up", "[B": "down", "OB": "down"}
+                if horizontal:
+                    arrows.update({"[C": "right", "OC": "right", "[D": "left", "OD": "left"})
+                return arrows.get(seq, "esc")
             return "esc"
         return {"\r": "enter", "\n": "enter", " ": "space", "\x03": "abort",
                 "\x04": "abort", "": "abort"}.get(ch, ch)
@@ -5726,13 +5772,15 @@ class _RailUI:
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
              on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
              columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite="",
-             refresh=None, refresh_interval=.5):
+             refresh=None, refresh_interval=.5, cycle=None):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
         Optional shortcuts return an action key. refresh may update context in
         place; True returns '__done__' without a keypress. Timed repaint retains
-        selection and marks and uses the same viewport as ordinary pickers."""
+        selection and marks and uses the same viewport as ordinary pickers.
+        Optional cycle maps row keys to direction callbacks; only these pickers
+        decode horizontal arrows, leaving every existing keyboard profile intact."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
         cells, notes = cells or {}, notes or {}
@@ -5747,6 +5795,8 @@ class _RailUI:
                 marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
+        if cycle:
+            keys += " · ←→ model"
         if focused_shortcuts:
             keys += ' · ' + '/'.join(focused_shortcuts) + ' sources/tools'
         flash = ""
@@ -5812,6 +5862,9 @@ class _RailUI:
                 else:
                     display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
                                 mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key not in cells and key not in table_rows and notes.get(key):
+                    display.extend((f'{self.rail}    {self.st.y}{part}{self.st.r}', n if i < 2 else None)
+                                   for i, part in enumerate(_wrap_columns(notes[key], max(1, self.cols() - 7))))
                 if key in table_rows and n == cur and details:
                     display.append((self.rail, None))
                     for detail in details(key):
@@ -5828,7 +5881,12 @@ class _RailUI:
                 import select
                 if not select.select([sys.stdin], [], [], max(.05, refresh_interval))[0]:
                     continue
-            k = self.read_key()
+            k = self.read_key(horizontal=True) if cycle is not None else self.read_key()
+            if k in ("left", "right") and cycle is not None:
+                action = cycle.get(rows[cur][0])
+                if action is not None:
+                    action(-1 if k == "left" else 1)
+                continue
             if k in (focused_shortcuts or {}) and (rows[cur][0] in cells or rows[cur][0] in table_rows):
                 return focused_shortcuts[k], rows[cur][0]
             if k in (shortcuts or {}):
@@ -8036,7 +8094,7 @@ def _install_result(items):
         elif it["kind"] == "shell":
             sel["shell"] = True
         elif it["kind"] == "app":
-            sel["nightr"] = True
+            sel["nightr"] = it["action"]
     return sel
 
 
@@ -8119,9 +8177,16 @@ def _install_plan(sel, probed, os_name, has_brew, headless, hosts):
             else:
                 rec(f"login:{a}", "error",
                     f"{a} login: not installed and not selected for install")
-    if sel.get("nightr"):
-        rec("app:nightr", "run", "install Nightr and include its updates in t system update",
-            [sys.executable, str(Path(__file__).resolve()), "system", "apps", "install", "nightr", "--yes"], interactive=True)
+    nightr = sel.get("nightr")
+    if nightr and os_name == "darwin":
+        action, _ = nightr
+        if action == "install":
+            rec("app:nightr", "run", "brew install --cask agenthangar/tap/nightr", nightr=nightr,
+                prerequisite="brew tap agenthangar/tap  # if needed")
+        elif action == "update":
+            rec("app:nightr", "run", "nightr update", nightr=nightr)
+        else:
+            rec("app:nightr", "error", "Nightr: repair the unrecognized installation before retrying")
     if any(s["do"] == "run" for s in steps):
         rec("sync", "run", "refresh t links, hooks, and selected agent integrations")
     if sel.get("shell"):
@@ -8147,6 +8212,8 @@ def _install_render(steps, st):
             hosts.append(s["host"])
             continue
         if s["do"] == "run":
+            if s.get("prerequisite"):
+                lines.append(f"{st.g}+{st.r} {s['prerequisite']}")
             lines.append(f"{st.g}+{st.r} {s['label']}")
         elif s["do"] == "skip":
             lines.append(f"{st.y}= {s['label']}{st.r}")
@@ -8431,7 +8498,7 @@ def _t_offer_update(installation=None):
 
 def _plain_slot_resume(words):
     """Match the public shell shim's option-free slot history shortcut."""
-    words = [word for word in words if word != "--wait"]
+    words = [word for word in words if word not in ("-w", "--wait")]
     return (len(words) in (2, 3) and words[0] == "resume" and
             re.fullmatch(r"[0-9]+", words[-1]) is not None and
             not words[1].startswith("-"))
@@ -8457,6 +8524,14 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if verb in ('system', 'session') and tail[:1] == ['recovery']:
+        return len(tail) == 1 or tail[1] == 'status'
+    if verb in ("idea", "ideate"):
+        if verb == "idea" and (not tail or tail[0] in ("list", "show")):
+            return True
+        if terminal is None:
+            terminal = sys.stdin.isatty() and sys.stdout.isatty()
+        return not terminal
     if words[:2] == ["system", "apps"]:
         return len(words) > 2 and (words[2] == "status" or "--dry-run" in words[3:])
     if words[:2] == ["install", "nightr"]:
@@ -8556,7 +8631,7 @@ def _t_auto_update(argv):
                       "--json" in operation[3:operation.index("--") if "--" in operation else len(operation)])
     # Share may write a receipt while emitting JSON; keep its machine protocol
     # free of update prompts independently of the read-only classifier.
-    if (not operation or runner_machine or operation[0] in ("share", "doctor", "ls") or operation[0] not in public or _command_readonly(argv)
+    if (not operation or runner_machine or operation[0] in ("share", "idea", "ideate", "doctor", "ls") or operation[0] not in public or _command_readonly(argv)
             or not _t_update_interactive()):
         return None
     installation = _t_update_installation()
@@ -8680,13 +8755,60 @@ def _t_refs_refresh(repository):
         pass  # Ref freshness never changes a successful update/push result.
 
 
-def _t_update_result(args, status):
+def _t_runtime_report(value):
+    changed = [item for item in value['results'] if item['status'] != 'current']
+    if changed:
+        counts = {}
+        for item in changed:
+            label = item['status'] + ' ' + item['component']
+            counts.setdefault(label, set()).add((item.get('server', ''), item.get('target', '')))
+        print('t runtime: ' + '; '.join(label + (f' ({count})' if count > 1 else '')
+                                       for label, targets in counts.items() for count in [len(targets)]), file=sys.stderr)
+        reported = set()
+        for item in changed:
+            key = (item['component'], item.get('reason', ''), item.get('server', ''), item.get('session', ''), item.get('target', ''))
+            if item['status'] in ('failed', 'deferred', 'restart-required') and key[1] and key not in reported:
+                location = item.get('session') or item.get('server') or item.get('target', '')
+                action = item.get('next_action', '')
+                print('  ' + (location + ' ' if location else '') + key[0] + ': ' + key[1]
+                      + ('; ' + action if action else ''), file=sys.stderr)
+                reported.add(key)
+
+
+def _t_reconcile_runtime(source, previous_sources=(), bootstrap=False):
+    """Dispatch through the newly installed binary, never old in-memory helpers."""
+    if not os.path.isfile(os.path.join(source, 'libexec', 't_runtime.py')):
+        return 0  # Older supported installations have no runtime capability yet.
+    payload = json.dumps(dict(previous_sources=list(previous_sources), bootstrap_install=bootstrap))
+    with _spinner("Refreshing running t helpers"):
+        result = subprocess.run([sys.executable, os.path.join(source, 'bin/t'), '__runtime-reconcile', payload],
+                                capture_output=True, text=True, cwd='/', timeout=90,
+                                env={key: value for key, value in os.environ.items()
+                                     if not key.startswith('COV_CORE_') and key not in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER')})
+    try:
+        value = json.loads(result.stdout)
+        changed = [item for item in value['results'] if item['status'] != 'current']
+    except (ValueError, KeyError, TypeError):
+        print('t runtime: refresh failed; retry t update' + (': ' + result.stderr.strip() if result.stderr else ''), file=sys.stderr)
+        return result.returncode or 1
+    _t_runtime_report(value)
+    return result.returncode
+
+
+def _t_update_result(args, status, source=None, previous_sources=()):
     args._update_status = status
+    runtime_result = 0
+    if source:
+        try:
+            runtime_result = _t_reconcile_runtime(source, previous_sources)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            print('t runtime: ' + str(error) + '; retry t update', file=sys.stderr)
+            runtime_result = 1
     if status == "updated":
         _t_refs_refresh(_t_source_root())
     if not getattr(args, "_update_batch", False):
         print(f"t: {status}", flush=True)
-    return 0
+    return runtime_result
 
 
 def _t_update_linked(root):
@@ -8810,6 +8932,7 @@ def _cmd_update_t(cfg, args):
         if args.relink:
             return _t_relink(opt)
         previous = _t_release_version(opt)
+        previous_source = os.path.realpath(opt)
         pending = _t_update_pending(opt)
         retry_setup = pending.exists()
         try:
@@ -8819,7 +8942,7 @@ def _cmd_update_t(cfg, args):
                              "current": previous, "brew": brew["brew"], "formula": brew["formula"]}, force=True))
             if (state.get("checked") and not state.get("error") and
                     not state.get("available") and not retry_setup):
-                return _t_update_result(args, "up to date")
+                return _t_update_result(args, "up to date", opt)
             if integrated:
                 pending.parent.mkdir(parents=True, exist_ok=True)
                 pending.touch()
@@ -8831,13 +8954,13 @@ def _cmd_update_t(cfg, args):
             return upgraded.returncode
         if previous and _t_release_version(opt) == previous and not retry_setup:
             pending.unlink(missing_ok=True)
-            return _t_update_result(args, "up to date")
+            return _t_update_result(args, "up to date", opt, [previous_source])
         if integrated:
             result = _t_relink(opt, quiet=True)
             if result:
                 return result
             pending.unlink(missing_ok=True)
-        return _t_update_result(args, "updated")
+        return _t_update_result(args, "updated", opt, [previous_source])
     release = _t_release_version(active)
     if release:
         if args.dev:
@@ -8855,12 +8978,21 @@ def _cmd_update_t(cfg, args):
                          _t_updates()["check"]({"kind": "release", "source": active,
                                                 "current": release}, force=True))
             if state.get("checked") and not state.get("error") and not state.get("available"):
-                return _t_update_result(args, "up to date")
+                return _t_update_result(args, "up to date", active)
             linked_before = _t_update_linked(active)
+            link_before = os.path.realpath(os.path.join(HOME, "bin/t"))
             result = subprocess.run([sys.executable, updater],
                                     env={**os.environ, "T_UPDATE_QUIET": "1"}).returncode
             status = "up to date" if linked_before and _t_update_linked(active) else "updated"
-            return result if result else _t_update_result(args, status)
+            if result:
+                return result
+            link = Path(HOME) / "bin/t"
+            installed = active
+            if link.is_symlink() and str(link.resolve()) != link_before:
+                candidate = str(link.resolve().parents[1])
+                if _t_release_version(candidate):
+                    installed = candidate
+            return _t_update_result(args, status, installed, [active])
         except OSError as exc:
             print(f"t update: could not start release updater: {exc}", file=sys.stderr)
             return 1
@@ -8897,7 +9029,7 @@ def _cmd_update_t(cfg, args):
     latest = _t_git(canonical, "rev-parse", "origin/main")
     pending = _t_update_pending(canonical)
     if before and before == latest and _t_update_linked(canonical) and not pending.exists():
-        return _t_update_result(args, "up to date")
+        return _t_update_result(args, "up to date", canonical)
     # A failed/interrupted reconciliation must be retried even after HEAD moved.
     try:
         pending.parent.mkdir(parents=True, exist_ok=True)
@@ -8912,7 +9044,7 @@ def _cmd_update_t(cfg, args):
     result = _t_relink(canonical, quiet=True)
     if result == 0:
         pending.unlink(missing_ok=True)
-        _t_update_result(args, "updated")
+        result = _t_update_result(args, "updated", canonical)
     if result == 0 and local is not None:
         print(f"t now uses local checkout {canonical}; future t update calls update its main branch.")
     return result
@@ -8938,6 +9070,14 @@ def _install_walk(steps, close=False):
             continue
         if kind in ("sync", "shell"):
             rc = _install_relink() if kind == "sync" else _repair_shell_setup()
+            if rc:
+                failed += 1
+                print(f"{st.b}✗ {s['label']}{st.r} (rc {rc})")
+            else:
+                print(f"✓ {s['label']}")
+            continue
+        if kind == "app":
+            rc = _nightr_module()["guided_install"](*s["nightr"])
             if rc:
                 failed += 1
                 print(f"{st.b}✗ {s['label']}{st.r} (rc {rc})")
@@ -9156,18 +9296,25 @@ def cmd_install(cfg, args):
                   {"t": "header", "sec": "shell", "label": "SHELL SETUP"},
                   {"t": "toggle", "sec": "shell", "kind": "shell", "alias": "zsh integration",
                    "value": f"{shell_rc} · preserve existing settings", "checked": True}]
-    if sys.platform == "darwin" and not args.agents:
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if sys.platform == "darwin" and not (args.agents or args.dry_run or args.yes) and interactive:
+        action = _nightr_module()["guided_selection"]()
+        value = {"install": "Install via Homebrew", "update": "Update existing installation",
+                 "unknown": "Installation needs repair"}[action[0]]
         items += [{"t": "spacer", "sec": "apps"},
                   {"t": "header", "sec": "apps", "label": "DESKTOP APPS"},
                   {"t": "toggle", "sec": "apps", "kind": "app", "alias": "Nightr",
-                   "value": "Keep your Mac awake · optional", "checked": False}]
+                   "value": value, "action": action, "checked": False}]
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 
-    def plan():   # the review re-plans from the live marks
-        return _install_plan(_install_result(items), probed, os_name, has_brew, headless, hosts)
+    reviewed_steps = []
 
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    def plan():   # the review re-plans from the live marks
+        nonlocal reviewed_steps
+        reviewed_steps = _install_plan(_install_result(items), probed, os_name, has_brew, headless, hosts)
+        return reviewed_steps
+
     if args.dry_run or args.yes or not interactive:
         steps = plan()
         lines = _install_render(steps, st)
@@ -9201,7 +9348,7 @@ def cmd_install(cfg, args):
         if not wizard_ran:
             print("t install: aborted — nothing run")
         return 130
-    return _install_then_setup(cfg, args, _install_walk(plan(), close=wizard_ran))
+    return _install_then_setup(cfg, args, _install_walk(reviewed_steps, close=wizard_ran))
 
 
 def _install_then_setup(cfg, args, rc, chain=True):
@@ -12139,6 +12286,7 @@ def _tool_detail(cfg, ctx, args):
                            for p in prompts[-10:]] if len(prompts) > 3 else []
     row["last_assistant"] = rec.get("last_asst")
     row["also_at"] = rec.get("also_at") or []
+    row['recovery'] = _automatic_recovery()['detail'](row.get('agent', ''), rec.get('sid', ''))
     if row.get("slot") and row.get("cwd"):
         row["url"] = _dev_url(row["slot"], row["cwd"])
     row["git"] = _git_brief(row["worktree"] if row.get("worktree_exists") else row["cwd"])
@@ -12468,6 +12616,14 @@ def cmd_mcp(cfg, args):
     return _mcp_serve(cfg)
 
 
+def cmd_automatic_recovery(cfg, args):
+    try:
+        return _automatic_recovery()['command'](args, cfg)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        print('t recovery: ' + str(exc), file=sys.stderr)
+        return 1
+
+
 def cmd_session_goal(cfg, args):
     try:
         args.repo = _resolve_repo_selector(cfg.repos, args.repo) or args.repo
@@ -12500,12 +12656,21 @@ def cmd_history(cfg, args):
         cache = _session_discovery()
         if getattr(args, 'refresh', False):
             cache['event'](['local', *cfg.hosts.values()])
-        if getattr(args, 'wait', False) or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
-            view, notice = cache['bounded_snapshot'](cfg, fields=['catalog'])
-        elif not getattr(args, 'json', False) and sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
-            view, notice = cache['resume_snapshot'](cfg, _resume_discovery_wait, fields=['catalog'], choose=_open_discovery_choice)
-        else:
-            view, notice = cache['discover'](cfg, fields=['catalog']), ''
+        def usable(snapshot):
+            store = cache['SnapshotStore'](snapshot)
+            try:
+                scoped = helper['HistoryCommand'](cfg, globals(), store=store)
+                scoped.discovery_view = snapshot
+                alias, slot = scoped.scope(args.target)
+                return bool(scoped.records(alias, slot))
+            finally:
+                store.close()
+        try:
+            view, notice = cache['bounded_snapshot'](cfg, fields=['catalog'], usable=usable,
+                explicit=getattr(args, 'wait', False) or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1')
+        except (ValueError, OSError) as error:
+            print(f't resume: {error}', file=sys.stderr)
+            return 1
         if not getattr(args, 'json', False):
             cache['announce'](view)
         snapshot = cache['SnapshotStore'](view)
@@ -12544,6 +12709,7 @@ def cmd_eval(cfg, args):
 # shell-bound dispatch in zsh/; the Python parser remains the source of flag
 # definitions for both public commands and compatibility aliases.
 COMMAND_GROUPS = {
+    "idea": {v: ("idea", v) for v in ("list", "show", "start", "resume", "publish")},
     "eval": {
         "config": {v: ("eval", "config", v) for v in ("list", "show", "edit")},
         "benchmarks": {"list": ("eval", "benchmarks", "list")},
@@ -12555,6 +12721,7 @@ COMMAND_GROUPS = {
     "issue": {"list": ("issue", "list"), "status": ("issue", "status"),
               "start": ("issue", "start"), "open": ("issue", "open")},
     "session": {
+        "recovery": {verb: ('session', 'recovery', verb) for verb in ('pause', 'resume', 'status')},
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
         "resume": ("resume",), "history": ("history",), "cd": ("cd",), "move": ("beam",),
@@ -12598,6 +12765,7 @@ COMMAND_GROUPS = {
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
               "trust": ("trust",)},
     "system": {"integrate": ("integrate",), "update": ("update",),
+               "recovery": {"status": ("system", "recovery", "status")},
                "apps": {v: ("system", "apps", v) for v in ("install", "status")},
                "diagnose": ("doctor",), "advisories": ("__advisories",),
                "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
@@ -12630,6 +12798,7 @@ def cmd_remote(cfg, args):
 
 
 GROUP_DESCRIPTIONS = {
+    "idea": "Brainstorm privately and publish reviewed ideas",
     "eval": "Evaluate frontier and local coding workflows against third-party benchmarks",
     "mcp": "Inspect MCP servers and manage t session tools on this machine",
     "remote": "Run command families on registered SSH hosts",
@@ -12785,6 +12954,8 @@ WORK
   remote     Run command families on registered SSH hosts
   issue      List, inspect, work on, and open GitHub issues
   share      Share context between agent conversations
+  ideate     Brainstorm a new idea or continue a saved draft
+  idea       List, inspect, continue and publish saved ideas
   repo       List and manage repositories
   cursor     List, resume, and send Cursor chats
   hosts      Manage remote SSH hosts and run commands
@@ -12810,7 +12981,7 @@ OPTIONS
 EXAMPLES
   t config onboard        Discover agents, repos, and hosts again
   t session open api      Open or reattach an api session
-  t session list --remote  List sessions across machines
+  t ideate                Brainstorm before creating a repository
 
 LEARN MORE
   t help <noun> [verb]      Show command details
@@ -12860,6 +13031,50 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group in ('system recovery', 'session recovery'):
+        verbs = ('status',) if group.startswith('system') else ('pause', 'resume', 'status')
+        return _wrap_help('USAGE\n  t ' + group + ' <verb>' + (' [repo] [slot]' if group.startswith('session') else '') +
+                          '\n\nConfigure automatic recovery in t config → Recovery.\n\nCOMMANDS\n' +
+                          '\n'.join('  ' + verb + '  ' + {'status': 'Read recovery state (--json for machine output)',
+                            'pause': 'Pause automatic recovery for a session', 'resume': 'Restore recovery eligibility for a session'}[verb] for verb in verbs) +
+                          '\n\nSession targets accept an exact conversation ID or REPO SLOT.\nOmit the target to infer an unambiguous current workspace. No picker opens.\nRun t help ' + group + ' <verb> for details.\n')
+    if group == "idea":
+        return _wrap_help("""USAGE
+  t idea <verb> [arguments]
+  t ideate
+  t idea list
+  t idea show ID
+  t idea start [TITLE]
+  t idea resume ID
+  t idea publish ID
+
+COMMANDS
+  list     Print saved idea IDs, titles and status without changes
+  show     Inspect an exact saved idea without changes
+  start    Brainstorm a new idea with the configured Codex or Claude agent
+  resume   Continue brainstorming a saved idea
+  publish  Review selected files and create a GitHub repository
+
+SCOPE
+  Ideas are private local workspaces outside Git, using your global workflow.
+  No repository argument or repository inference. Ideation requires no GitHub
+  login. Action commands require a terminal. List and show never prompt or write.
+  Resume uses the exact recorded native conversation in the same workspace.
+  Keep private notes in the workspace; only selected files under publish/ are
+  eligible for publication. All files start unchecked; Ctrl-A selects nested
+  files, Space marks one, and v reviews the focused file. Private is the default.
+  Review the owner, repository name, visibility, alias, ~/code path, main branch
+  and files before confirming. An explicit empty initial commit is allowed.
+  Publication retries retain the approved commit; remote or local collisions
+  stop safely. Native conversations and private notes stay in the idea workspace.
+
+EXAMPLES
+  t idea start 'Neighborhood walks'
+  t idea list
+  t idea publish idea-<exact-id>
+
+Run t help idea <verb> for details.
+""")
     if group == 'system usage':
         return _wrap_help("USAGE\n  t system usage <verb> [ID] [--json]\n\nCOMMANDS\n  list  Print recorded usage without selection\n  show  Inspect usage; omit ID for fzf\n\nSCOPE\n  This machine's sessions, recorded workflow revisions and evaluations.\n  No repository argument or inference. JSON never prompts.\n  Run t help system usage <verb> for details.\n")
     if group == "eval" or group.startswith("eval "):
@@ -13075,6 +13290,10 @@ SCOPE
   This Mac only; no repository argument or repository inference.
   Installation is optional and requires macOS and a published signed release.
   Homebrew owns its installations. Direct installs use verified Nightr releases.
+  Select Nightr in the interactive t install checklist to install it with Homebrew
+  or run nightr update for an existing installation.
+  To install manually with Homebrew, run brew tap agenthangar/tap followed by
+  brew install --cask agenthangar/tap/nightr after the cask is published.
   t system update includes opted-in apps; it never installs absent apps.
   Run nightr setup for explicit helper authorization and login preferences.
   t install nightr is a compatibility convenience.
@@ -13166,7 +13385,7 @@ def _command_description(group, action):
                     "move": "Move a session between machines", "read": "Read slot output",
                     "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
                     "search": "Search and resume a saved conversation",
-                    "goal": "Send a new objective to a live agent"},
+                    "goal": "Send a new objective to a live agent", "recovery": "Inspect or pause automatic recovery"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
                  "locate": "Print a checkout path", "create": "Create a GitHub repository",
                  "clone": "Clone and register a repository", "add": "Register an existing checkout"},
@@ -13189,6 +13408,7 @@ def _command_description(group, action):
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
                   "trust": "Trust a folder in installed agents"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t and managed apps",
+                   "recovery": "Inspect automatic recovery; configure with t config",
                    "apps": "Install and inspect optional desktop apps",
                    "diagnose": "Diagnose the local setup", "advisories": "Manage periodic advisory checks", "usage": "Inspect workflow, session and evaluation usage"},
     }
@@ -13324,6 +13544,22 @@ def build_parser():
                    help="show version, active source, and current worktree")
     sub = p.add_subparsers(dest="verb", metavar="<verb>")
     p._group_parsers = {}
+    sub.add_parser('ideate', help='brainstorm a new idea or continue a saved draft',
+        description='Open the private idea menu. Uses your configured native Codex or Claude agent and global workflow. '
+                    'No repository or GitHub login is needed for brainstorming. Requires a terminal.')
+    idea = sub.add_parser('idea', help='list, inspect, continue and publish private ideas')
+    idea_sub = idea.add_subparsers(dest='idea_action', required=True)
+    for action, description in (
+            ('list', 'Print saved idea IDs, titles and status without prompting or writing state.'),
+            ('show', 'Inspect an exact saved idea ID, workspace, native agent, status and publication checkpoints without changes.'),
+            ('start', 'Brainstorm a new idea with the configured Codex or Claude agent. Requires a terminal; no Git repository or GitHub login is needed.'),
+            ('resume', 'Continue brainstorming a saved idea in its exact native conversation and private workspace. Requires a terminal.'),
+            ('publish', 'Review files under publish/, owner, name, visibility, alias and local path before creating a GitHub repository. Requires a terminal; defaults to Private. Retries keep the approved commit.')):
+        leaf = idea_sub.add_parser(action, help=description, description=description)
+        if action in ('show', 'resume', 'publish'):
+            leaf.add_argument('identifier', metavar='ID', help='exact idea ID from t idea list')
+        elif action == 'start':
+            leaf.add_argument('title', nargs='?', metavar='TITLE', help='idea title; omit to enter it interactively')
     system = sub.add_parser('system', help='inspect system usage')
     system_sub = system.add_subparsers(dest='system_resource', required=True)
     _nightr_module()["add_parser"](system_sub)
@@ -13526,7 +13762,7 @@ TARGETS
   Legacy repository-only targets that could be mistaken for hosts require --host.
   Selection requires a terminal and fzf; scripts must provide explicit targets.
   Cancellation returns 130.""")
-        leaf.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery")
+        leaf.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery")
         if action != "move":
             leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
@@ -13569,7 +13805,7 @@ EXAMPLES
     remote_kill.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session")
     remote_kill.add_argument("slot", nargs="?", help="slot number or all; a lone slot uses the current repository")
     remote_kill.add_argument("kill_slot", nargs="?", help=argparse.SUPPRESS)
-    remote_kill.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery")
+    remote_kill.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery")
     remote_kill.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     remote_kill.set_defaults(remote=True)
 
@@ -13626,6 +13862,8 @@ SELECTION
 """,
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
+  After a session exits, use `t session resume <repo> <slot>` to select its
+  saved conversation.
   Use a SESSION name from `t session list` to open a foreground session:
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
@@ -13652,10 +13890,14 @@ SELECTION
   UI, status, model, session and task details, including idle rows.
   Column headers stay visible; narrow rows prioritize host/session and task.
   Tab marks ✓ independently of focus; Enter opens marked rows.
-  Press k to kill only the focused row, ignoring marks, with close safety checks.
+  Press Ctrl-K to kill only the focused row, ignoring marks, with close safety checks.
   Killing removes that row in place; the picker, search, filters and other marks stay.
   Failed or canceled closes keep the row. No session inventory refresh is performed.
-  Use --new to start a new session. One selection opens here; multiple
+  Ctrl-N starts a new local session in this repository; an unscoped picker
+  first asks for a registered local repository. Empty lists stay open until
+  Ctrl-N or cancellation; Enter on an empty list does nothing.
+  Explicit remote browsing uses --new to start remotely.
+  Use --new to start directly. One selection opens here; multiple
   selections each open in a new window, including the first. Remote pickers
   add HOST. --fg opens one. Failed windows report exact attach commands.
   Commands target only newly created windows; the invoking terminal stays free.
@@ -13730,12 +13972,12 @@ REMOTE SESSIONS
     location.add_argument("-r", "--remote", action="store_true", help="attach remotely; --new starts a session")
     location.add_argument("--host", help="open or attach on this host")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List cached live sessions across repositories and registered hosts without prompting. '
             'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
-            'Cold or expired entries refresh in the background; --wait observes refresh for up to 30 seconds. '
+            'Available scoped results return immediately; empty pending discovery waits up to 30 seconds. '
             'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
 
@@ -13750,10 +13992,10 @@ REMOTE SESSIONS
   Registered hosts are included by default with a HOST column; --local limits
   the view to this machine. -r retains the default.
 
-  Results return immediately by default. Use `t session list --wait` to wait up
-  to 30 seconds for the current refresh, then print available results with their
-  freshness. Ctrl-C cancels this wait; shared background refresh keeps running.
-  Redirected --wait is bounded and silent until results; it never prompts.
+  Available scoped results return immediately. Empty pending discovery waits up
+  to 30 seconds automatically, then prints the available snapshot. -w / --wait also
+  observes refresh when results exist. Settled empty results return immediately.
+  Ctrl-C returns 130 and leaves refresh running. Redirected waits never prompt.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
   NO_COLOR, TERM=dumb, or redirected stderr); local and reachable sessions remain
@@ -13775,7 +14017,7 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", dest="remote", action="store_false",
                           help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
@@ -13789,8 +14031,9 @@ REMOTE SESSIONS
   Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
   repo.
 
-  Tab marks multiple rows and Enter confirms and closes the selection without
-  further prompts; ownership checks still apply.
+  Tab marks multiple rows and Enter confirms the selection. Managed close waits
+  for the client to exit before removing the tmux session. If a local client
+  does not exit, an interactive close can offer Force stop or Cancel.
 
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden. Ctrl-F reveals standalone terminal sessions and
@@ -13822,7 +14065,7 @@ REMOTE SESSIONS
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
         description='Restart a stuck local CLI in the same conversation, pane, and worktree. Infer the current '
@@ -13906,6 +14149,9 @@ REMOTE SESSIONS
   report already-resumed conversations.
   Saved Codex resumes keep native cloud retries; automatic local continuation
   is unavailable. Startup failures retain the specific lifecycle diagnostic.
+  If Repair still can't verify the original worktree and the selected Codex
+  conversation is free, it can offer to open it in a fresh worktree at the
+  saved commit. Local edits stay in the original worktree.
 
   Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
@@ -13921,18 +14167,18 @@ REMOTE SESSIONS
     sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
             'Infer the current repository, or browse local and remote repositories outside a checkout. '
-            'Pending discovery waits in terminals; Return skips, Esc cancels. '
+            'Empty pending discovery waits up to 30 seconds; Ctrl-C cancels. '
             'Repositories are cloned only after selection. Ownership is checked live before attaching or resuming.',
 
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Open conversation history for api slot 2
-  %(prog)s --last --wait     Resume the most recently closed conversation
+  %(prog)s --last -w        Resume the most recently closed conversation
   In the repository resume picker, Ctrl-D hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
 
@@ -13944,19 +14190,23 @@ REMOTE SESSIONS
   Missing, tied or incomplete close evidence refuses without launching.
   --last cannot be combined with --live or an explicit --days.
 
-  --wait observes discovery for up to 30 seconds, then uses the retained snapshot;
+  -w / --wait observes discovery for up to 30 seconds, then uses the retained snapshot;
   --last refuses if it is still incomplete. Ctrl-C returns 130 and leaves refresh
   running. Redirected waits show no spinner and never prompt.
 
-  Pending saved discovery keeps waiting automatically in a terminal. Return
-  skips the wait and uses available cached results; Esc/Ctrl-C cancels without
-  stopping the shared refresh. Empty or failed completed scans stop waiting.
-  Redirected commands and JSON return immediately without a wait or prompt.
+  Available scoped saved results return immediately. Empty pending discovery
+  waits automatically for up to 30 seconds, including redirected commands and
+  history JSON. Settled empty or failed scans return immediately. Timeout keeps
+  the last snapshot and never enters another wait/retry screen. Ctrl-C returns
+  130 without stopping shared refresh. Picker filters never rescan discovery.
 
   Codex checks the selected conversation's writer lock and the destination
   workspace. Another conversation in a reused original slot can keep running
   when the saved conversation resumes into a different workspace.
   Saved selections sharing an original slot get independent safe destinations.
+  If Repair still can't verify the original worktree and the selected Codex
+  conversation is free, it can offer to open it in a fresh worktree at the
+  saved commit. Local edits stay in the original worktree.
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global
@@ -14080,7 +14330,7 @@ REQUIREMENTS AND DISCOVERY
     sp.add_argument("--host", metavar="H",
         help="send selected local history and worktree edits to host H, resume there, and attach")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp.add_argument("--last", action="store_true", help="resume the unique most recently closed saved conversation without a picker")
 
@@ -14181,7 +14431,7 @@ EXAMPLES
     sp.add_argument("-a", "--all", action="store_true", help="picker across every project")
     sp.add_argument("-s", "--session", help="target a session by id or unique prefix")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("read", help="read a dev slot's scrollable tmux log",
         description='Read a slot’s captured tmux output with less. Infer the current repository; read remote slots on '
@@ -14686,7 +14936,7 @@ EXAMPLES
         description='Install and log in agent CLIs using a checklist and command review. Missing agents start marked; '
             'installed, authenticated entries are locked. Enter runs reviewed commands; n edits; q aborts. '
             'Registered SSH hosts are offered next unless --no-hosts. --yes skips review. Installers preserve '
-            'existing settings; logins may open a browser.',
+            'existing settings; logins may open a browser. On macOS, the interactive checklist offers optional Nightr setup.',
         help_details="""DETAILS
 
   The `t config setup`-style checklist for the agent binaries themselves: probes
@@ -14697,6 +14947,16 @@ EXAMPLES
   runs, n goes back, q aborts).
 
   Logins are interactive (browser, or a device code over ssh / --headless).
+
+OPTIONAL DESKTOP APP
+  On macOS, run t install without named agents and select Nightr under Desktop
+  Apps. A fresh install adds the AgentHangar Homebrew tap if needed and installs
+  its Nightr cask. Selecting an existing installation runs nightr update.
+  The Homebrew path requires Homebrew and a published signed release and cask.
+
+  For manual Homebrew installation after the cask is published, run:
+    brew tap agenthangar/tap
+    brew install --cask agenthangar/tap/nightr
 
 REMOTE INSTALLATION
   Every REMOTE_HOSTS host is then offered the same run over ssh -t.
@@ -14884,6 +15144,21 @@ PERIODIC CHECKS
     lp.add_argument("url")
     lp.add_argument("name")
     lp.add_argument("alias")
+    for scope in ('system', 'session'):
+        family = system if scope == 'system' else sub.add_parser(scope, hidden=True, help='session resources')
+        resources = system_sub if scope == 'system' else family.add_subparsers(dest='resource', required=True)
+        rp = resources.add_parser('recovery', help='automatic recovery status and session eligibility')
+        rp.set_defaults(scope=scope)
+        actions = rp.add_subparsers(dest='action', required=True)
+        for action in (('status',) if scope == 'system' else ('pause', 'resume', 'status')):
+            leaf = actions.add_parser(action, help=('show read-only recovery status' if action == 'status' else action + ' automatic recovery eligibility'),
+                description='Configure automatic recovery in t config. Session controls accept [repo] [slot] or an exact conversation ID; infer the current workspace only when unambiguous. They never stop a running agent.')
+            if scope == 'session':
+                leaf.add_argument('repo', nargs='?', help='repository alias or exact conversation ID; infer current workspace when omitted')
+                leaf.add_argument('slot', nargs='?', help='slot number')
+            if action == 'status':
+                leaf.add_argument('--json', action='store_true', help='print read-only machine output')
+
     gp = sub.add_parser("__session-goal", hidden=True, help="send a new objective to a live agent",
         description="Send a new objective to a live local Claude or Codex tmux session. "
                     "REPO and SLOT are explicit; there is no inference or picker. "
@@ -14952,10 +15227,16 @@ PERIODIC CHECKS
     return p
 
 
+def cmd_idea(cfg, args):
+    return runpy.run_path(str(Path(_t_source_root()) / 'libexec/t_ideate.py'))['run'](cfg, args, globals())
+
+
 IMPLEMENTED = {
+    "ideate": cmd_idea, "idea": cmd_idea,
     "remote": cmd_remote,
+    "session": cmd_automatic_recovery,
     "__advisories": cmd_advisories,
-    "system": lambda cfg, args: cmd_apps(cfg, args) if args.system_resource == "apps" else runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner, lambda: _parse_rows(zsh_capture("_dev_session_rows"))),
+    "system": lambda cfg, args: cmd_automatic_recovery(cfg, args) if args.system_resource == "recovery" else cmd_apps(cfg, args) if args.system_resource == "apps" else runpy.run_path(str(Path(_t_source_root()) / "libexec/t_usage.py"))["command"](args, _spinner, lambda: _parse_rows(zsh_capture("_dev_session_rows"))),
     "issue": cmd_issue,
     "history": cmd_history,
     "share": cmd_share,
@@ -15134,6 +15415,28 @@ def _bare_entry():
 
 
 def _main(argv):
+    if len(argv) == 2 and argv[0] == '__runtime-reconcile':
+        try:
+            request = json.loads(argv[1])
+            if not isinstance(request, dict):
+                raise ValueError('invalid runtime reconciliation request')
+            display = request.pop('display', False)
+            recovery_failure = None
+            try:
+                _automatic_recovery()['migrate']()
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                recovery_failure = dict(component='automatic recovery', status='failed', reason=str(error))
+            value = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_runtime.py'))['reconcile'](**request)
+            if recovery_failure:
+                value['results'].append(recovery_failure)
+                value['failed'] = True
+        except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
+            value = dict(protocol=1, results=[dict(component='dispatcher', status='failed', reason=str(error))], failed=True)
+        if locals().get('display', False):
+            _t_runtime_report(value)
+        else:
+            print(json.dumps(value))
+        return int(value['failed'])
     if argv == ['__remote-protocol']:
         print(_REMOTE['PROTOCOL'])
         return 0
@@ -15151,6 +15454,12 @@ def _main(argv):
             help_words = help_words[1:]
         argv = ['remote', *help_words]
     argv = _hosts_argv(_runners_argv(argv))
+    if argv[:1] == ['__auto-recovery']:
+        try:
+            return _automatic_recovery()['internal'](argv[1:], api=globals())
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print('t recovery: ' + str(exc), file=sys.stderr)
+            return 1
     if len(argv) == 2 and argv[0] == '__resume-source':
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())
@@ -15194,34 +15503,28 @@ def _main(argv):
         repo = argv[argv.index('--repo') + 1] if '--repo' in argv else None
         options = dict(local='--local' in argv, host=selected_host,
                        fields=['rows', 'scopes', 'catalog'] if repo else ['rows'])
-        if '--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
-            try:
-                if '--open' in argv:
-                    cache['require_open_network'](Config(), local=options['local'], host=selected_host)
-                view, notice = cache['bounded_snapshot'](Config(), **options)
-            except (OSError, ValueError) as error:
-                print(f't: {error}', file=sys.stderr)
-                return 1
-            if '--notice-file' in argv:
-                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
-        elif '--open' in argv:
-            if not sys.stdin.isatty() or not sys.stderr.isatty():
-                print('t open: interactive discovery requires a terminal', file=sys.stderr)
-                return 1
-            # The shell captures rows from stdout. Shared progress and RailUI
-            # stay on the terminal, never in the inventory stream.
-            try:
-                with redirect_stdout(sys.stderr):
-                    view, notice = cache['open_snapshot'](Config(), _open_discovery_choice, wait=_resume_discovery_wait, **options)
-            except (OSError, ValueError) as error:
-                print(f't open: {error}', file=sys.stderr)
-                return 1
-            if '--notice-file' in argv:
-                Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
-        else:
-            view = cache['discover'](Config(), **options)
+        cfg = Config()
+        projection = dict(prefixed='--unprefixed' not in argv, repo=repo,
+            cli_only='--cli-only' in argv, remote_only='--remote-only' in argv,
+            move_only='--move-only' in argv,
+            slot=argv[argv.index('--slot') + 1] if '--slot' in argv else None,
+            session=argv[argv.index('--session') + 1] if '--session' in argv else None)
+        if repo in cfg.repos:
+            root = cfg.repos[repo]
+            projection['local_roots'] = [root, os.path.join(cfg.worktree_root, os.path.basename(root))]
+        try:
+            if '--open' in argv:
+                cache['require_open_network'](cfg, local=options['local'], host=selected_host)
+            view, notice = cache['bounded_snapshot'](cfg, **options,
+                explicit='--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1',
+                usable=lambda snapshot: bool(cache['rows'](snapshot, **projection)))
+        except (OSError, ValueError) as error:
+            print(f't: {error}', file=sys.stderr)
+            return 1
+        if '--notice-file' in argv:
+            Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
         cache['announce'](view)
-        text = cache['rows'](view, prefixed='--unprefixed' not in argv, repo=repo, cli_only='--cli-only' in argv)
+        text = cache['rows'](view, **projection)
         if '--basic' in argv:
             text = ''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in text.splitlines())
         sys.stdout.write(text)
@@ -15256,17 +15559,13 @@ def _main(argv):
                 return 2
             slot, aliases = aliases[-1], aliases[:at]
         cache = _session_discovery()
+        def usable(snapshot):
+            return cache['resume_usable'](snapshot, aliases, slot,
+                cutoff=int(os.environ.get('T_RESUME_CUTOFF', '0')),
+                last=os.environ.get('T_RESUME_LAST') == '1')
+        view, notice = cache['bounded_snapshot'](Config(), usable=usable,
+            explicit=os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1')
         status_file = os.environ.get('T_RESUME_STATUS_FILE')
-        notice = ''
-        last = os.environ.get('T_RESUME_LAST') == '1'
-        if os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1':
-            view, notice = cache['bounded_snapshot'](Config())
-        elif os.environ.get('T_RESUME_WAIT') == '1' and not last and sys.stdin.isatty() and sys.stderr.isatty():
-            with redirect_stdout(sys.stderr):
-                view, notice = cache['resume_snapshot'](Config(), _resume_discovery_wait,
-                                                       choose=_open_discovery_choice)
-        else:
-            view = cache['discover'](Config())
         if status_file:
             Path(status_file).write_text(json.dumps(cache['resume_health'](view)))
         else:
@@ -15274,8 +15573,8 @@ def _main(argv):
         if os.environ.get('T_RESUME_ROWS_FILE'):
             Path(os.environ['T_RESUME_ROWS_FILE']).write_text(''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in cache['rows'](view).splitlines()))
         if os.environ.get('T_RESUME_NOTICE_FILE'):
-            Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
-        if last:
+            Path(os.environ['T_RESUME_NOTICE_FILE']).write_text('Older or incomplete results · new sessions may be missing' if cache['_partial'](view) else '')
+        if os.environ.get('T_RESUME_LAST') == '1':
             try:
                 print(cache['last_closed_candidate'](view, aliases, slot))
             except ValueError as error:

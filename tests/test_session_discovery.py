@@ -229,9 +229,10 @@ def test_cli_adapters_use_cache_and_targeted_events(adapter, t_mod, monkeypatch,
     monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
     data = view()
     data['hosts'][0]['value']['scopes'] = {'api': ['/work']}
-    cfg = SimpleNamespace(hosts={'mini': 'user@mini'}, repos={'api': '/work'})
+    cfg = SimpleNamespace(hosts={'mini': 'user@mini'}, repos={'api': '/work'}, worktree_root='/trees')
     events = []
-    helper = {'discover': lambda *a, **kw: data, 'announce': lambda v: None,
+    helper = {'bounded_snapshot': lambda *a, **kw: (data, ''), 'announce': lambda v: None,
+              'resume_usable': adapter.resume_usable,
               'rows': adapter.rows, 'candidates': adapter.candidates,
               'invalidate': lambda *a, **kw: events.append((a, kw)),
               'event': lambda *a, **kw: events.append((a, kw))}

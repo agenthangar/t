@@ -17,19 +17,18 @@ Do not bypass that gate or automatically infer a minor/major bump from commit
 messages. See [the release policy](docs/releases.md) for operation and recovery.
 
 Before changing user-facing behavior, read [the repository design system](DESIGN.md).
+Every CLI preview must use the current design system and behave as a complete,
+keyboard-operable TUI. Match the shared renderer's layout and bindings, preserve
+focus and selection through navigation and resize, and exercise the full flow
+with the keyboard before sharing. Follow
+[the CLI preview requirements](DESIGN.md#cli-previews) for planning prototypes
+and previews of implemented commands.
 For session-picker filtering or sorting requests, inspect the existing hotkeys
 in that design system and the shared picker before proposing an interaction.
 Extend the hotkey controls and preserve existing filter/sort choices. Add CLI
 flags only when the user explicitly requests flags or noninteractive control.
-In the resume picker, put green Ctrl-U beside the refresh status. Show active
-refresh in bright cyan and host warnings in amber. Give the previous refresh
-time and host outcomes their own lines when height permits. Put the PR legend on
-its own row under LEGEND, then show result hotkeys without a heading. Leave a
-blank line before the columns when height permits. Separate legend labels with
-spaces. Match legend colors to row colors and label ↶ as last closed,
-↻ as work in progress, and ● as attached. Spell out Return or Enter, Esc, and
-Tab in bright text. Show Ctrl-B with the result hotkeys for resuming the last
-verified close.
+Follow the resume picker section of DESIGN.md for refresh, active filters,
+legend order, spacing, and the status and pull-request columns.
 Before changing a public command, read [the command and terminal contract](ui/README.md)
 and [the command inventory](ui/command-contract.json). Classify every new command
 and conditional mode; compatibility aliases inherit the canonical entry. Use
@@ -56,7 +55,7 @@ the user's browser. Reuse the shared session picker for
 interactive issue selection; allow multiple independent issues to be selected,
 but never start a second live owner for one issue. Do not add a bare `t issue`
 target form or a new public single-word command except the reviewed `t share`
-context handoff command and the reviewed `t move` alias for `t session move`.
+context handoff command, the reviewed `t ideate` private-idea menu, and the reviewed `t move` alias for `t session move`.
 Run `python3 scripts/lint_cli.py`
 after CLI changes; CI enforces this command contract.
 Command-group help must show repository argument positions and explain inference

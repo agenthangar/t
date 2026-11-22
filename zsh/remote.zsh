@@ -234,7 +234,13 @@ _dev_remote_attach() {
   [[ -n $fg ]] && rcmd+=" --fg"
   _term_title "$host: $prepo $pslot"
   local rc=0
-  ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=$?
+  local recovery_prefix
+  recovery_prefix=$(python3 "$T_HOME/libexec/t_auto_recovery.py" prefix codex)
+  if [[ -n $recovery_prefix && -z $fg ]]; then
+    python3 "$T_HOME/libexec/t_auto_recovery.py" reconnect "$target" "$prepo" "$pslot" || rc=$?
+  else
+    ssh -t "$target" "zsh -lic ${(qq)rcmd}" || rc=$?
+  fi
   _term_title ""
   return $rc
 }
@@ -1152,7 +1158,9 @@ _t_remote_host_pick() {
 _t_remote_move_rows() {
   local source=$1 repo=$2 rows
   if [[ ${3:-} == browse && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    local -a cache_args
+    local -a cache_args=(--move-only)
+    [[ -n $4 ]] && cache_args+=(--slot "$4")
+    [[ -n $5 ]] && cache_args+=(--session "$5")
     [[ -n $source ]] && cache_args+=(--host "$source")
     [[ -n $repo ]] && cache_args+=(--repo "$repo")
     _t_discovery_rows "${cache_args[@]}"
@@ -1309,7 +1317,7 @@ _t_remote() {
     for kill_arg in "$@"; do
       case $kill_arg in
         -y|--yes) force=1 ;;
-        --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
+        -w|--wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
         -*) print -u2 "t remote kill: unknown flag $kill_arg"; return 2 ;;
         *) kill_targets+=("$kill_arg") ;;
       esac
@@ -1362,7 +1370,7 @@ _t_remote() {
       -r|--remote) [[ $action == move ]] || return 2; remote=1 ;;
       -p|--pick) [[ $action == move ]] || return 2; pick=1 ;;
       --last) [[ $action == resume ]] || return 2; flags+=(--last) ;;
-      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
+      -w|--wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       --new) [[ $action == open ]] || return 2; flags+=(--new) ;;
       -d|--detach|-f|--fg) [[ $action == move ]] || return 2; flags+=("$arg") ;;
       -*) print -u2 "t remote $action: unknown flag $arg"; return 2 ;;
@@ -1478,7 +1486,8 @@ _t_remote() {
       (( _repo_selector_rc == 2 )) && return 2
       (( _repo_selector_rc == 0 )) && repo=$_repo_selector
     fi
-    rows=$(_t_remote_move_rows "$source" "$repo" browse); local source_rc=$?
+    rows=$(_t_remote_move_rows "$source" "$repo" browse "$slot" "$sid"); local source_rc=$?
+    (( source_rc == 130 )) && return 130
     (( source_rc == 2 )) && return 2
     (( source_rc == 0 )) || { print -u2 't session move: ownership scan failed; no conversation was moved'; return 1; }
     if [[ -z $source || $source == local ]]; then

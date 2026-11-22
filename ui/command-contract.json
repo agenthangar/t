@@ -719,9 +719,9 @@
     },
     "session open": {
       "patterns": [
-        "action",
-        "filtered",
         "multi",
+        "filtered",
+        "action",
         "wizard",
         "single"
       ],
@@ -739,6 +739,7 @@
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
         "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer",
         "tests/test_session_lifecycle.py::test_public_new_scopes_unindexed_writers",
+        "tests/test_recovery_tmux.py::test_stalled_input_menu_ignores_typing_then_restarts_on_keyboard_selection",
         "tests/test_session_cache.py::test_invalidation_detaches_without_cache_io_or_stale_live_rows",
         "tests/test_history_data.py::test_deferred_history_returns_while_database_is_locked",
         "tests/test_fresh_slot_allocation.py::test_new_uses_local_allocator_without_remote_probe",
@@ -791,7 +792,7 @@
             "tests/test_offline_discovery.py::test_open_offline_protocol_returns_error_without_empty_inventory",
             "tests/test_offline_discovery.py::test_local_only_discovery_does_not_require_network"
           ],
-          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until cancellation, never starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview or new-session controls. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection\u2019s attach command, continues the batch and returns nonzero. Show retained results immediately; use the shared skippable wait/recovery rail only when no usable snapshot exists. Persist a warning for explicitly accepted older/partial results across filter changes. Transport/authentication failures pause one hour across aliases/context; collector failures retry with bounded short backoff. Explicit Retry or t hosts reset HOST allows an early retry. Before remote-inclusive open discovery, a known OS network denial or missing IPv4 and IPv6 routes returns an immediate error directing to t open --local. This caller-local probe sends no packets, performs no DNS and never marks shared host caches failed.",
+          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until explicit Ctrl-N or cancellation, never implicitly starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview. Ctrl-N explicitly starts fresh local work in the scoped repository, or first selects a registered local repository for an unscoped browse. Inclusive discovery does not choose the destination. Explicit remote browsing retains --new routing and does not expose Ctrl-N. Verified empty and filtered-empty lists stay open; Enter does nothing and Esc cancels without creation. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection\u2019s attach command, continues the batch and returns nonzero. Show retained results immediately; use the shared skippable wait/recovery rail only when no usable snapshot exists. Persist a warning for explicitly accepted older/partial results across filter changes. Transport/authentication failures pause one hour across aliases/context; collector failures retry with bounded short backoff. Explicit Retry or t hosts reset HOST allows an early retry. Before remote-inclusive open discovery, a known OS network denial or missing IPv4 and IPv6 routes returns an immediate error directing to t open --local. This caller-local probe sends no packets, performs no DNS and never marks shared host caches failed.",
           "layout": "inherit"
         },
         "explicit": {
@@ -872,16 +873,17 @@
             "session",
             "open"
           ],
-          "when": "cold discovery is skipped or fails without usable retained rows",
+          "when": "requested discovery scope is empty while refresh is pending",
           "patterns": [
-            "single"
+            "multi",
+            "filtered"
           ],
           "read_only": false,
           "tests": [
-            "tests/test_session_wait.py::test_open_timeout_requires_explicit_cached_choice",
-            "tests/test_session_wait.py::test_open_recovery_uses_shared_rail_and_restores_terminal"
+            "tests/test_discovery_auto_wait.py::test_private_open_close_move_waits_for_same_eligible_projection",
+            "tests/test_discovery_auto_wait.py::test_automatic_wait_only_for_empty_pending_scope"
           ],
-          "notes": "Shared RailUI: Retry refresh, Browse retained results when available, Cancel. Explicit retry clears only failed targets. Warm browsing returns immediately; cancellation preserves shared refresh. Incomplete empty discovery never launches a session.",
+          "notes": "Automatically observe one bounded 30-second refresh; retain final snapshot/notice without another retry rail. Available scoped rows and settled empty/failure return immediately. Ctrl-C 130 preserves shared refresh. Incomplete empty discovery never launches a session.",
           "layout": "inherit"
         },
         "startup_recovery": {
@@ -904,6 +906,25 @@
           "notes": "Attach to the existing shared Start locally rail only for the live recovery controller in the exact pane and workspace. Ready models select directly; retry and cancel retain their existing behavior. Clear attachable state before launch or cancellation. This does not establish a model writer or relax saved-conversation ownership.",
           "layout": "rail"
         },
+        "new-session": {
+          "argv": [
+            "session",
+            "open"
+          ],
+          "patterns": [
+            "action",
+            "single"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_picker_ui.py::test_open_ctrl_n_explicitly_starts_new_local_session",
+            "tests/test_picker_ui.py::test_open_ctrl_n_works_without_a_selectable_row",
+            "tests/test_open_picker.py::test_unscoped_new_uses_registered_local_repository_picker",
+            "tests/test_open_picker.py::test_public_local_new_keeps_local_allocator"
+          ],
+          "notes": "Ctrl-N in an ordinary open picker explicitly starts a fresh local session, using its repository scope or first selecting a registered local repository with the shared single profile. No selectable placeholder session. Empty list Enter is a no-op and Esc cancels. Host-targeted and explicit remote browsing do not expose this action.",
+          "layout": "inherit"
+        },
         "bounded_wait": {
           "argv": [
             "session",
@@ -919,12 +940,31 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
+        },
+        "recovery_holding": {
+          "argv": [
+            "session",
+            "open",
+            "api",
+            "1"
+          ],
+          "when": "the original slot contains a verified automatic recovery holding pane",
+          "patterns": [
+            "single",
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_prior_boot_opens_multiple_distinct_detached_holding_panes"
+          ],
+          "notes": "Attach the existing holding pane without starting another agent. Use the shared rail to inspect real recovery metadata and review launch settings before resuming.",
+          "layout": "rail"
         }
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh local allocation reserves monotonically increasing numbers under a canonical-repository counter lock, then validates and creates under the workspace launch claim. It never reclaims old branches or queries remote desktop reservations. Cached origin or local default refs supply a pinned commit; one detached worker fetches origin refs every five minutes and observes t-managed update, push and merge refresh requests. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, background task or open PR. Explicit detach and unknown evidence retain the session; history and worktrees are preserved.",
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh local allocation reserves monotonically increasing numbers under a canonical-repository counter lock, then validates and creates under the workspace launch claim. It never reclaims old branches or queries remote desktop reservations. Cached origin or local default refs supply a pinned commit; one detached worker fetches origin refs every five minutes and observes t-managed update, push and merge refresh requests. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, unknown background task or open PR. Direct-agent Python static previews with exact native identities, safe import environment and verified loopback listeners may receive individual TERM signals after all guards pass; any changed identity, unsupported work, surviving preview or incomplete cleanup preserves the session. Explicit detach and unknown evidence retain the session; history and worktrees are preserved. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "picker"
     },
     "session list": {
@@ -1022,7 +1062,7 @@
             "tests/test_session_wait.py::test_list_wait_is_explicit_and_readonly",
             "tests/test_session_wait.py::test_wait_deadline_retains_rows_and_stops_queries"
           ],
-          "notes": "Explicitly observe the shared cache refresh for up to 30 seconds, then use the existing list renderer and freshness notices. Fresh caches return immediately. Delayed shared spinner only on capable terminals; no picker or prompt. Ctrl-C cancels only the caller with 130. Timeout or service loss retains available rows; no false empty result.",
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
           "layout": "inherit"
         },
         "wait_redirected": {
@@ -1040,7 +1080,7 @@
             "tests/test_session_wait.py::test_list_wait_is_explicit_and_readonly",
             "tests/test_session_wait.py::test_wait_deadline_retains_rows_and_stops_queries"
           ],
-          "notes": "Explicit --wait is bounded, silent until results and prompt-free when redirected. Ordinary lists and MCP remain immediate; table schema is unchanged.",
+          "notes": "Empty pending scoped lists automatically observe refresh for at most 30 seconds; explicit --wait also observes with retained results. Settled empty/failure returns immediately. Redirected output stays static and prompt-free; MCP remains immediate.",
           "layout": "inherit"
         }
       },
@@ -1091,14 +1131,14 @@
           "tests/test_command_behavior.py::test_session_table_clips_only_task_when_other_columns_fit"
         ]
       },
-      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead with WATCHER before last turn. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns while prioritizing WATCHER after the first three fields. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Include verified external Codex desktop conversations using held writer locks, exact rollout identity and live frontend ancestry; exclude saved history, helper threads and clients already represented by a managed slot.",
+      "notes": "STATUS, SESSION, WORKING ON first; observed local/cloud token percentage pair, icon-only tool, wrapping model list with star lead with WATCHER before last turn. UI is retained as metadata, omitted from overview. Narrow terminals omit optional columns while prioritizing WATCHER after the first three fields. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Include verified external Codex desktop conversations using held writer locks, exact rollout identity and live frontend ancestry; exclude saved history, helper threads and clients already represented by a managed slot. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "plain"
     },
     "session close": {
       "patterns": [
-        "action",
+        "multi",
         "filtered",
-        "multi"
+        "action"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository or all local/remote sessions",
@@ -1143,11 +1183,14 @@
           "read_only": false,
           "tests": [
             "tests/test_kill_multiselect.py::test_selected_local_close_disables_remote_fallback",
-            "tests/test_external_codex.py::test_external_app_close_never_reaches_process_or_remote_dispatch"
+            "tests/test_external_codex.py::test_external_app_close_never_reaches_process_or_remote_dispatch",
+            "tests/test_client_stop.py::test_graceful_stop_signals_client_before_pane_is_removed",
+            "tests/test_session_lifecycle.py::test_public_close_terminates_hup_resistant_client_before_removing_pane",
+            "tests/test_session_lifecycle.py::test_public_close_timeout_keeps_pane_and_never_forces_redirected_caller"
           ],
           "confirmation": "when_interrupting",
           "layout": "inherit",
-          "notes": "External <folder>:app-<thread-id> handles report individual app close unavailable without process lookup, signaling or host fallback. Terminal handles retain existing confirmation and exact-host routing."
+          "notes": "External <folder>:app-<thread-id> handles report individual app close unavailable without process lookup, signaling or host fallback. Terminal handles retain existing confirmation and exact-host routing. Managed close requests graceful exit before removing the pane. An interactive local timeout offers Force stop / Cancel for the verified client. Other timeouts keep the pane and return a failure. Record closure after verified client exit and writer release."
         },
         "bounded_wait": {
           "argv": [
@@ -1164,11 +1207,12 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         }
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "layout": "picker"
+      "layout": "picker",
+      "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
     },
     "session restart": {
       "patterns": [
@@ -1292,9 +1336,9 @@
     },
     "session resume": {
       "patterns": [
-        "action",
-        "filtered",
         "multi",
+        "filtered",
+        "action",
         "list",
         "single"
       ],
@@ -1347,7 +1391,8 @@
         "tests/test_recent_close.py::test_history_marker_columns_align",
         "tests/test_discovery_incremental.py::test_warm_browsing_does_not_wait_for_remote_or_activity",
         "tests/test_discovery_incremental.py::test_cold_service_failure_recovers_without_rerunning_command",
-        "tests/test_terminal_close.py::test_public_terminal_closure"
+        "tests/test_terminal_close.py::test_public_terminal_closure",
+        "tests/test_picker_ui.py::test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks"
       ],
       "modes": {
         "default": {
@@ -1469,9 +1514,11 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
+            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection",
+            "tests/test_client_stop.py::test_stranded_requires_native_sole_standalone_writer_without_terminal",
+            "tests/test_resume_performance.py::test_numbered_resume_repair_offers_fresh_worktree"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Repair can stop a verified local CLI stranded by an earlier managed close. Require explicit approval and verify writer release before resuming that conversation. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "discovery_wait": {
@@ -1479,19 +1526,18 @@
             "session",
             "resume"
           ],
-          "when": "interactive saved discovery is pending, including plain slot history",
+          "when": "requested discovery scope has no eligible results while refresh is pending; collectors excluded",
           "patterns": [
-            "single"
+            "multi",
+            "filtered"
           ],
           "read_only": false,
-          "layout": "rail",
+          "layout": "inherit",
           "tests": [
-            "tests/test_resume_wait.py::test_resume_waits_beyond_thirty_seconds_until_settled",
-            "tests/test_resume_wait.py::test_resume_wait_terminal_restores_on_every_exit",
-            "tests/test_resume_wait.py::test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows",
-            "tests/test_resume_wait.py::test_slot_history_wait_gates_and_snapshot"
+            "tests/test_discovery_auto_wait.py::test_saved_protocol_waits_for_scope_age_and_safe_last",
+            "tests/test_discovery_auto_wait.py::test_public_slot_history_redirected_waits_with_real_scope_and_identity"
           ],
-          "notes": "Shared RailUI observes pending refresh without an overall timeout. Return skips to available cached results; Esc/Ctrl-C returns 130 without cancelling discovery. Settled empty/failure ends observation. Incomplete results retain a warning and require selection, including one row. Nonterminal, JSON and collectors never enter this wait; existing filters, sorting and failed-host cooldowns are unchanged."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         },
         "bounded_wait": {
           "argv": [
@@ -1508,7 +1554,7 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         },
         "last_closed": {
           "argv": [
@@ -1543,7 +1589,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width \u21b6 marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, background task or open PR. Explicit detach and unknown evidence retain the session; history and worktrees are preserved.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width \u21b6 marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, unknown background task or open PR. Direct-agent Python static previews with exact native identities, safe import environment and verified loopback listeners may receive individual TERM signals after all guards pass; any changed identity, unsupported work, surviving preview or incomplete cleanup preserves the session. Explicit detach and unknown evidence retain the session; history and worktrees are preserved. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact. Resume table wheel-up pans left and wheel-down right without Shift; horizontal wheel follows direction. Query, controls and selection gutter remain fixed. Header and rows share a cell viewport; canonical rows preserve search and output identities. Pan retains query cursor, marks and focus. Wheel over controls/details remains native. No new command or flags.",
       "source_reconciliation": {
         "scope": "selected local and cross-host saved conversations",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1575,11 +1621,11 @@
     },
     "session history": {
       "patterns": [
+        "multi",
         "list",
         "machine",
-        "multi",
-        "single",
-        "action"
+        "action",
+        "single"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository and slot",
@@ -1699,9 +1745,11 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection"
+            "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection",
+            "tests/test_client_stop.py::test_stranded_requires_native_sole_standalone_writer_without_terminal",
+            "tests/test_resume_performance.py::test_numbered_resume_repair_offers_fresh_worktree"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Repair can stop a verified local CLI stranded by an earlier managed close. Require explicit approval and verify writer release before resuming that conversation. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "bounded_wait": {
@@ -1718,13 +1766,13 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         }
       },
       "display_schema": "history_information",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
       "visibility": "hidden-compatibility",
-      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width \u21b6 marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order.",
+      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width \u21b6 marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "history"
     },
     "session cd": {
@@ -1776,9 +1824,9 @@
     },
     "session move": {
       "patterns": [
-        "action",
         "multi",
-        "single"
+        "single",
+        "action"
       ],
       "renderer": "mixed",
       "scope": "named/current repository, or all outside a checkout; exact slots/IDs search local and registered remote owners; --remote adds remote sources to browsing",
@@ -1977,10 +2025,10 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         }
       },
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. When no current owner is found, suggest t session resume [repo] [slot] for saved work. Worktree snapshots preflight push access and peer capability before stopping; exact immutable transfer refs preserve divergent slot branches. No destination starts when snapshot publication or fetching fails.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. When no current owner is found, suggest t session resume [repo] [slot] for saved work. Worktree snapshots preflight push access and peer capability before stopping; exact immutable transfer refs preserve divergent slot branches. No destination starts when snapshot publication or fetching fails. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "mixed"
     },
     "session read": {
@@ -2880,7 +2928,8 @@
         "tests/test_design_system.py::test_refresh_finds_merged_design_without_moving_stale_checkouts",
         "tests/test_design_system.py::test_refresh_menu_selects_merged_source_without_duplicate_rows",
         "tests/test_workflow_single_model.py::test_clear_text_instructions_is_staged_and_preserves_policy",
-        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop"
+        "tests/test_workflow_single_model.py::test_text_instruction_menu_empty_or_cancel_is_noop",
+        "tests/test_auto_recovery.py::test_menu_stages_changes_without_writing"
       ],
       "modes": {
         "default": {
@@ -3070,6 +3119,23 @@
           ],
           "notes": "Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes.",
           "layout": "inherit"
+        },
+        "automatic_recovery": {
+          "argv": [
+            "config",
+            "open"
+          ],
+          "when": "Recovery is selected in the settings menu",
+          "patterns": [
+            "wizard"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_menu_stages_changes_without_writing",
+            "tests/test_config.py::test_recovery_toggle_applies_only_after_config_review"
+          ],
+          "notes": "Stage the host-local toggle and login service repair, then save through the shared review.",
+          "layout": "rail"
         }
       },
       "notes": " Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Top-level Frontend design contains Design approach and Design systems, independently of previews. Design systems groups a Default (Automatically or Off) and repositories using the workflow, including inherited assignments. Source pickers group Default, Choose a source, Manage and Navigation without explanatory paragraphs; candidates appear once. Automatically prefers root DESIGN.md, then one root design-system.md/design_system.md, then one candidate; ambiguity requests selection. Explicit paths and repository Off override the workflow default. Choose file or folder, Create design system and Scan again are explicit actions. Repository entries retain design_system.path or design_system.mode=off across assignment, inheritance and exclusion changes. Reads never discover, connect, or prompt. CLI planning-preview timing and approval are independent of working-command previews, default before implementation with required approval, and suppressed with disabled CLI previews; legacy CLI implementation approval stays inert. Guidance drafting is an explicit reviewed immediate action using a guarded isolated agent worktree, blocked while any settings are pending. It drafts DESIGN.md, an AGENTS.md reference and grounded conventions, stopping before publication; user selects the accepted source afterwards. Group workflow settings into Models, Behavior and Manage with stable focus. Settings pages offer scoped Reset to defaults; individual choices include resolved default/inheritance options, including binary switches. Parent resets cover nested settings and hidden choices; type resets restore live global inheritance. The stage checklist has exclusive one-model and default presets. Whole-workflow resets preserve names, assignments, repository design sources and other tool catalogues. Resetting routing/models never starts or downloads models. Resets are staged for review/save/discard; defaults/no-op resets and browsing create no inherited overrides. Completed routing resets survive interruption. Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes. Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption. Model selection uses the shared one-row comparison table, readiness and configured identity with a width-aware layout and sourced benchmark legend. Ready models select directly; unready models get one explicit Verify & use or Download, verify & use preparation review. Refresh exact provider/model/context readiness before staging. Preparation failures and cancellation preserve selection; resets/defaults are configuration-only. No redundant benchmark summary row; number keys open available focused provenance and m opens optional tools. Empty, missing-model, unavailable discovery and compatibility states remain usable.. Model lists use shared aligned comparison columns and a status/benchmark legend, including missing evidence. Workflow controls use Lead model and Lead reasoning effort. Inference exposes default task (900s), maximum task (1800s), inactivity (300s), and queue wait (300s), with a scoped time-limit reset; queued time is excluded from execution and inactivity. Existing command modes and read-only boundaries are unchanged. Text instructions opens Edit, Clear and Back; clearing is staged and an empty clear is a no-op. Explicit Scan again includes registered-checkout and latest origin default-branch evidence without moving checkouts or refs; sources absent from the active worktree are labeled and selection advises updating that worktree. Remote failures retain local candidates. Ordinary browsing never fetches.",
@@ -3457,7 +3523,7 @@
         "review"
       ],
       "renderer": "rail",
-      "scope": "local installed agents and optional hosts",
+      "scope": "local installed agents, optional macOS desktop app, and optional agent installation hosts",
       "confirmation": "enter",
       "tests": [
         "tests/test_install.py::test_install_plan_full_matrix",
@@ -3477,9 +3543,29 @@
             "tests/test_tui.py::test_install_review_defaults_to_enter",
             "tests/test_shell_setup.py::test_interactive_install_reviews_shell_repair_when_agents_present",
             "tests/test_agent_executable.py::test_install_walk_executes_detected_native_agent_outside_path",
-            "tests/test_agent_executable.py::test_install_walk_finds_binary_created_after_review"
+            "tests/test_agent_executable.py::test_install_walk_finds_binary_created_after_review",
+            "tests/test_nightr.py::test_guided_nightr_review_runs_only_the_confirmed_action"
           ],
-          "notes": "Resolve native agent executables outside PATH immediately before reviewed login/update steps; unavailable executables fail with a repair hint.",
+          "notes": "Resolve native agent executables outside PATH immediately before reviewed login/update steps; unavailable executables fail with a repair hint. An unnamed interactive macOS run offers an unchecked Nightr row under Desktop Apps.",
+          "layout": "inherit"
+        },
+        "desktop_apps": {
+          "argv": [
+            "agent",
+            "install"
+          ],
+          "patterns": [
+            "review"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_nightr.py::test_guided_nightr_review_runs_only_the_confirmed_action",
+            "tests/test_nightr.py::test_guided_nightr_stays_out_of_agent_only_modes",
+            "tests/test_nightr.py::test_guided_fresh_install_requires_verified_homebrew",
+            "tests/test_nightr.py::test_guided_existing_update_verifies_before_native_execution"
+          ],
+          "notes": "Mac only. The fresh review displays brew tap agenthangar/tap if needed, followed by brew install --cask agenthangar/tap/nightr. Confirming runs the strictly Homebrew acquisition with a verified release and cask. Existing signed packages use nightr update with verified package ownership. Enrollment in t system update follows verified success. No app action on deselection, cancel, named agents, unattended/--yes, dry-run or remote runs.",
           "layout": "inherit"
         },
         "dry_run": {
@@ -3661,7 +3747,11 @@
         "tests/test_dev_isolation.py::test_interrupted_initial_load_keeps_retryable_shell_function",
         "tests/test_dev_isolation.py::test_ctrl_c_during_startup_recovers_in_same_interactive_shell",
         "tests/test_dev_isolation.py::test_interrupted_reload_does_not_dispatch_stale_source",
-        "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files"
+        "tests/test_dev_isolation.py::test_two_dev_installations_never_change_shared_files",
+        "tests/test_discovery_update.py::test_update_retires_obsolete_namespace_and_preserves_current",
+        "tests/test_update.py::test_update_check_never_retires_helpers",
+        "tests/test_runtime.py::test_real_noop_update_repairs_hooks_without_agent_or_job_signals",
+        "tests/test_runtime.py::test_observer_exec_preserves_original_pty_lock_and_elapsed_loss_deadline"
       ],
       "modes": {
         "default": {
@@ -3729,7 +3819,7 @@
           "layout": "inherit"
         }
       },
-      "notes": "Current installations skip setup; --relink remains explicit repair. Routine Git/setup output is quiet; --all reports concise per-host results while preserving prompts, diagnostics, cancellation and failure status. Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative.",
+      "notes": "Current installations skip setup; --relink remains explicit repair. Routine Git/setup output is quiet; --all reports concise per-host results while preserving prompts, diagnostics, cancellation and failure status. Development follows the current validated linked t worktree automatically, without changing shared installation links or integration state. --dev confirms scoped availability; child helpers retain invocation-local source, and leaving the worktree restores canonical. Explicit development executables and custom PATH choices remain authoritative. Successful updates, including already-current reconciliation, retire obsolete discovery helpers only at existing private endpoints for this installation with bounded revision handshakes; current helpers and worktrees remain intact. --check never reconciles helpers. Runtime reconciliation uses the newly installed hidden __runtime-reconcile transport after successful or already-current results. Capability adapters verify source fingerprints and owner acknowledgements for indexed hooks, PTY observers, recovery watchers and discovery retirement. Preserve user hooks, pinned development roots, original PTY/lock/event/deadline and all agents/jobs. Legacy helpers defer or require normal restart; failures are nonzero and retry. --check and failed setup do not refresh runtimes.",
       "layout": "plain"
     },
     "system diagnose": {
@@ -4053,9 +4143,9 @@
     "remote open": {
       "patterns": [
         "single",
-        "action",
         "filtered",
-        "multi"
+        "multi",
+        "action"
       ],
       "renderer": "mixed",
       "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
@@ -4138,16 +4228,17 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
     },
     "remote kill": {
       "patterns": [
-        "action",
         "filtered",
-        "multi"
+        "multi",
+        "action"
       ],
       "renderer": "fzf",
       "scope": "explicit/inferred repository or all remote repositories; owning hosts discovered",
@@ -4241,10 +4332,10 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         }
       },
-      "notes": "Repository-first targets reuse session close --remote discovery, shared filtered multi-picker and confirmation safeguards. Preserve saved conversations, worktrees, remote zsh -lic and delegated exit status.",
+      "notes": "Repository-first targets reuse session close --remote discovery, shared filtered multi-picker and confirmation safeguards. Preserve saved conversations, worktrees, remote zsh -lic and delegated exit status. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "picker"
     },
     "remote move": {
@@ -4339,18 +4430,18 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         }
       },
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Host-first [host] [repo] [slot] names the source. --to selects the destination; --from/--host remain compatibility input.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Host-first [host] [repo] [slot] names the source. --to selects the destination; --from/--host remain compatibility input. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "mixed"
     },
     "remote resume": {
       "patterns": [
         "single",
-        "action",
         "filtered",
-        "multi"
+        "multi",
+        "action"
       ],
       "renderer": "mixed",
       "scope": "named/current repository, or all repositories outside a checkout; chosen SSH host(s)",
@@ -4449,19 +4540,20 @@
             "resume",
             "build"
           ],
-          "when": "interactive saved discovery is pending, including plain slot history",
+          "when": "requested discovery scope has no eligible results while refresh is pending; collectors excluded",
           "patterns": [
-            "single"
+            "single",
+            "filtered",
+            "multi",
+            "action"
           ],
           "read_only": false,
-          "layout": "rail",
+          "layout": "inherit",
           "tests": [
-            "tests/test_resume_wait.py::test_resume_waits_beyond_thirty_seconds_until_settled",
-            "tests/test_resume_wait.py::test_resume_wait_terminal_restores_on_every_exit",
-            "tests/test_resume_wait.py::test_candidate_protocol_wait_is_explicit_and_stdout_stays_rows",
-            "tests/test_resume_wait.py::test_slot_history_wait_gates_and_snapshot"
+            "tests/test_discovery_auto_wait.py::test_saved_protocol_waits_for_scope_age_and_safe_last",
+            "tests/test_discovery_auto_wait.py::test_public_slot_history_redirected_waits_with_real_scope_and_identity"
           ],
-          "notes": "The selected host uses session resume discovery_wait: Shared RailUI observes pending refresh without an overall timeout. Return skips to available cached results; Esc/Ctrl-C returns 130 without cancelling discovery. Settled empty/failure ends observation. Incomplete results retain a warning and require selection, including one row. Nonterminal, JSON and collectors never enter this wait; existing filters, sorting and failed-host cooldowns are unchanged."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         },
         "bounded_wait": {
           "argv": [
@@ -4480,7 +4572,7 @@
             "tests/test_resume_last.py::test_bounded_wait_uses_settled_snapshot"
           ],
           "layout": "inherit",
-          "notes": "Observe shared discovery for at most 30 seconds; retain the final snapshot, Ctrl-C 130 leaves refresh running. No retry rail after timeout. Explicit targets remain exact."
+          "notes": "Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact."
         },
         "last_closed": {
           "argv": [
@@ -4502,7 +4594,7 @@
           "notes": "No picker: exact most recent verified close across all scoped history. Refuse incomplete, missing, tied or invalidated evidence; preserve guarded destinations."
         }
       },
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "mixed"
     },
     "workflow list": {
@@ -9524,7 +9616,8 @@
           "layout": "machine"
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": " Memory-blocked request details retain the scheduler shortfall and deadline. This command remains static; the interactive Local worker & models requests menu offers Free memory with explicit app selection and review. Expired turns require an explicit retry."
     },
     "config models requests cancel": {
       "patterns": [
@@ -12274,6 +12367,583 @@
         }
       },
       "layout": "mixed"
+    },
+    "system recovery status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "system",
+            "recovery",
+            "status",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "machine"
+        }
+      },
+      "layout": "plain"
+    },
+    "session recovery pause": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "pause",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Change recovery eligibility for one exact enrolled session without stopping its agent.",
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "session recovery resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "resume",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Change recovery eligibility for one exact enrolled session without stopping its agent.",
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "session recovery status": {
+      "patterns": [
+        "detail",
+        "machine"
+      ],
+      "renderer": "plain",
+      "scope": "this host; explicit session or unambiguous current workspace",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+        "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "session",
+            "recovery",
+            "status",
+            "api",
+            "1"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "inherit"
+        },
+        "json": {
+          "argv": [
+            "session",
+            "recovery",
+            "status",
+            "api",
+            "1",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_auto_recovery.py::test_public_routes_and_readonly_modes",
+            "tests/test_auto_recovery.py::test_commands_pause_resume_and_status"
+          ],
+          "notes": "Read-only status; configure automatic recovery in t config.",
+          "layout": "machine"
+        }
+      },
+      "layout": "plain"
+    },
+    "remote system recovery status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote session recovery status": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "none",
+      "remote_policy": "query",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "recovery",
+            "status"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "mixed"
+    },
+    "remote session recovery pause": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "recovery",
+            "pause"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved.",
+      "layout": "mixed"
+    },
+    "remote session recovery resume": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "explicit source SSH host; session target is resolved on that host",
+      "confirmation": "external",
+      "remote_policy": "single",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "session",
+            "recovery",
+            "resume"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved.",
+      "layout": "mixed"
+    },
+    "ideate": {
+      "patterns": [
+        "wizard",
+        "single",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "ideate"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "ideate"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
+    },
+    "idea list": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "idea show": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "show",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_ideate.py::test_readonly_commands_print_without_changing_state"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "idea start": {
+      "patterns": [
+        "wizard",
+        "single",
+        "passthrough",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "start"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "passthrough",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "idea",
+            "start"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
+    },
+    "idea resume": {
+      "patterns": [
+        "wizard",
+        "single",
+        "passthrough",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "resume",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "wizard",
+            "single",
+            "passthrough",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_starts_and_resumes_private_native_session"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "idea",
+            "resume",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
+    },
+    "idea publish": {
+      "patterns": [
+        "wizard",
+        "multi",
+        "review",
+        "action",
+        "detail"
+      ],
+      "renderer": "rail",
+      "scope": "private local ideas; no repository inference or remote hosts",
+      "confirmation": "review",
+      "tests": [
+        "tests/test_ideate.py::test_publishes_only_reviewed_files"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "idea",
+            "publish",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "wizard",
+            "multi",
+            "review",
+            "action",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_ideate.py::test_publishes_only_reviewed_files"
+          ],
+          "layout": "inherit",
+          "terminal": true
+        },
+        "nonterminal": {
+          "argv": [
+            "idea",
+            "publish",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "terminal": false,
+          "tests": [
+            "tests/test_ideate.py::test_help_and_nonterminal_actions_have_no_side_effects"
+          ],
+          "layout": "inherit"
+        },
+        "retry": {
+          "argv": [
+            "idea",
+            "publish",
+            "idea-00000000000000000000000000000000"
+          ],
+          "patterns": [
+            "review",
+            "action"
+          ],
+          "read_only": false,
+          "terminal": true,
+          "tests": [
+            "tests/test_ideate.py::test_publication_retry_keeps_reviewed_commit"
+          ],
+          "notes": "Retry the same approved initial commit after verifying immutable repository identity and expected remote main.",
+          "layout": "inherit"
+        }
+      },
+      "layout": "rail"
     }
   },
   "display_schemas": {
@@ -12680,7 +13350,8 @@
         "passthrough",
         "action",
         "single",
-        "review"
+        "review",
+        "multi"
       ],
       "input": "Native Codex argv selected by the existing guarded t launcher; effective saved workflow policy",
       "interactive": true,
@@ -12724,7 +13395,17 @@
             "review",
             "passthrough"
           ],
-          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
+          "behavior": "Shared RailUI has one Continue locally/Start locally action seeded by the eligible configured provider/model or first ready pair. Scoped Left/Right cycles eligible pairs without launch; Enter launches the exact selection directly. Fewer than two pairs hides the cycle hint and horizontal arrows remain inert. Show basename/provider/readiness/memory fit, a bounded unavailable summary and configured-model reason. Blocked or empty actions stay disabled. Up/Down connection actions and Esc retain their behavior; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
+        },
+        "local_controls": {
+          "condition": "fresh local-only Codex in an owned interactive tmux pane",
+          "patterns": [
+            "single",
+            "multi",
+            "review",
+            "passthrough"
+          ],
+          "behavior": "Prefix F6 opens shared pane-scoped recovery controls. Keep a memory-blocked request queued while reviewing normal macOS app quits or a same-worktree model handoff. Show verified context separately from live shortfall; preserve cause and explicit Retry after expiry. Revalidate pane, generation, destination readiness and screenshots before stopping the owned source. Preserve existing F6 bindings; native /model remains native. Unsupported source exports fail closed."
         }
       },
       "tests": [
@@ -12735,6 +13416,9 @@
         "tests/test_offline_recovery.py::test_ready_model_is_immediate_action",
         "tests/test_offline_recovery.py::test_recovery_round_trip_and_failure_retry",
         "tests/test_offline_recovery.py::test_recovery_picker_uses_shared_viewport",
+        "tests/test_offline_recovery.py::test_local_selector_cycles_only_focused_eligible_pairs",
+        "tests/test_offline_recovery.py::test_local_selector_horizontal_is_inert_without_alternatives",
+        "tests/test_offline_attachment.py::test_fresh_readiness_reaches_offline_model_picker",
         "tests/test_local_inference.py::test_cloud_retry_limits",
         "tests/test_local_inference.py::test_cloud_recovery_staging_and_readiness",
         "tests/test_offline.py::test_configured_retry_window_and_pause",
@@ -12744,7 +13428,11 @@
         "tests/test_local_inference.py::test_saved_resume_launcher_executes_native_command",
         "tests/test_offline_startup.py::test_bootstrap_error_survives_immediate_frontend_exit",
         "tests/test_offline_startup.py::test_startup_recovery_retries_or_launches_local_without_extra_screen",
-        "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible"
+        "tests/test_offline_startup.py::test_startup_picker_keeps_retry_and_cancel_accessible",
+        "tests/test_memory_recovery.py::test_two_waiting_clients_overlap_and_share_one_load",
+        "tests/test_memory_recovery.py::test_waiting_controls_shared_layout",
+        "tests/test_session_models.py::test_local_to_openai_preserves_attachment_and_worktree",
+        "tests/test_session_models.py::test_controller_rechecks_owner_generation_and_readiness"
       ],
       "notes": "Cloud connection failure groups Retry cloud for (default up to 5 minutes) and Then (default Pause), with selected local model/readiness when Continue locally is chosen. Native exhaustion may finish earlier; progress resets the clock. The owned fresh-launch supervisor enforces both pause and local outcomes. Unsupported Pause launches explicitly retain native retries; unsupported local fallback fails before launch. Page reset preserves local model and machine readiness. Completed nested edits survive interruption."
     },

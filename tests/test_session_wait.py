@@ -14,7 +14,7 @@ from test_agent_seam import zsh  # noqa: F401
 def clock(adapter, monkeypatch):
     now = [0.0]
     monkeypatch.setattr(adapter, 'time', SimpleNamespace(
-        monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
+        time=lambda: 10000, monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
     return now
 
 
@@ -154,9 +154,9 @@ def test_wait_sees_refresh_queued_behind_another_context(engine):
     assert not memory.handle('discover', second)['hosts'][0]['refreshing']
 
 
-@pytest.mark.parametrize('wait', [False, True])
+@pytest.mark.parametrize('wait_flag', [None, '-w', '--wait'])
 @pytest.mark.parametrize('terminal', [False, True])
-def test_list_wait_is_explicit_and_readonly(t_mod, adapter, monkeypatch, capsys, wait, terminal):
+def test_list_wait_is_explicit_and_readonly(t_mod, adapter, monkeypatch, capsys, wait_flag, terminal):
     monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
     monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: terminal)
@@ -167,25 +167,28 @@ def test_list_wait_is_explicit_and_readonly(t_mod, adapter, monkeypatch, capsys,
     def observe(cfg, initial, **kwargs):
         calls.append(kwargs)
         return initial
-    helper = dict(discover=lambda *a, **kw: data, wait_for_refresh=observe,
+    def bounded(cfg, **kwargs):
+        assert kwargs['usable'](data)
+        return (observe(cfg, data, local=kwargs['local']) if kwargs['explicit'] else data), ''
+    helper = dict(bounded_snapshot=bounded,
                   announce=adapter.announce, rows=adapter.rows)
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: helper)
     cfg = SimpleNamespace(hosts={}, repos={}, worktree_root='/tmp/fixture-worktrees')
-    args = t_mod.build_parser().parse_args(['ls', '--local'] + (['--wait'] if wait else []))
+    args = t_mod.build_parser().parse_args(['ls', '--local'] + ([wait_flag] if wait_flag else []))
     assert t_mod.cmd_ls(cfg, args) == 0
     output = capsys.readouterr()
     assert 'api-1' in output.out and 'STATUS' in output.out
-    assert calls == ([{'local': True}] if wait else [])
+    assert calls == ([{'local': True}] if wait_flag else [])
     if not terminal:
         assert '\x1b' not in output.out + output.err
     for prefix in (['ls'], ['list'], ['session', 'list'], ['session', 'ls']):
-        assert t_mod._command_readonly(prefix + ['--wait'], terminal=terminal)
+        assert t_mod._command_readonly(prefix + ([wait_flag] if wait_flag else []), terminal=terminal)
 
 
 def test_list_wait_completion(zsh):
     result = zsh('_values() { print -l -- "$@"; }; words=(t session list --); CURRENT=4; _t')
     assert result.returncode == 0
-    assert '--wait' in result.stdout.splitlines()
+    assert {'-w', '--wait'} <= set(result.stdout.splitlines())
 
 
 @pytest.mark.parametrize('missing', [False, True])
@@ -195,7 +198,7 @@ def test_partial_empty_list_does_not_claim_verified_empty(t_mod, adapter, monkey
     data['hosts'][0]['value']['rows'] = ''
     data['hosts'].append(dict(host='mini', checked=0, refreshing=not missing,
                              error='offline' if missing else '', value=None))
-    helper = dict(discover=lambda *a, **kw: data, wait_for_refresh=lambda *a, **kw: data,
+    helper = dict(bounded_snapshot=lambda *a, **kw: (data, 'incomplete'),
                   announce=adapter.announce, rows=adapter.rows)
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: helper)
     cfg = SimpleNamespace(hosts={}, repos={}, worktree_root='/tmp/fixture-worktrees')
@@ -283,15 +286,8 @@ def test_open_timeout_requires_explicit_cached_choice(adapter, monkeypatch, avai
         data['hosts'][0]['value'] = None
     monkeypatch.setattr(adapter, 'discover', lambda *a, **k: data)
     monkeypatch.setattr(adapter, 'wait_for_refresh', lambda *a, **k: dict(data, wait_timed_out=True))
-    choices = []
-    choose = lambda message, rows: choices.append((message, rows)) or action
-    if available:
-        result, notice = adapter.open_snapshot(None, choose)
-        assert 'api-1' in adapter.rows(result) and 'incomplete' in notice
-    else:
-        with pytest.raises(KeyboardInterrupt):
-            adapter.open_snapshot(None, choose)
-    assert choices == ([] if available else [('Could not refresh sessions', False)])
+    result, notice = adapter.open_snapshot(None, lambda *a: pytest.fail('timeout retried or prompted'))
+    assert result == (data if available else dict(data, wait_timed_out=True)) and notice
 
 
 def test_warm_open_does_not_reset_remote_failure_cooldown(adapter, monkeypatch):
@@ -310,58 +306,57 @@ def test_warm_open_does_not_reset_remote_failure_cooldown(adapter, monkeypatch):
 
 def test_open_local_retry_and_verified_empty(adapter, monkeypatch):
     data = view()
-    data['hosts'][0].update(error='failed', value=None)
-    done = view()
-    done['hosts'][0]['value']['rows'] = ''
-    snapshots = iter([data, done])
-    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: next(snapshots))
+    data['hosts'][0]['value']['rows'] = ''
     calls = []
-    monkeypatch.setattr(adapter, 'request', lambda *args: calls.append(args) or {})
-    assert adapter.open_snapshot(None, lambda *a: 'retry') == (done, '')
-    assert calls == [('reset-host', {'target': 'local'})]
+    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: calls.append(k) or data)
+    monkeypatch.setattr(adapter, 'request', lambda *a, **k: pytest.fail('settled empty reset host'))
+    assert adapter.open_snapshot(None, lambda *a: pytest.fail('settled empty retried')) == (data, '')
+    assert len(calls) == 1
 
 
 def test_open_local_retry_service_unavailable(adapter, monkeypatch):
     data = view()
     data['hosts'][0].update(error='failed', value=None)
     monkeypatch.setattr(adapter, 'discover', lambda *a, **k: data)
-    monkeypatch.setattr(adapter, 'request', lambda *a: {'unavailable': True})
-    actions = iter(['retry', 'cancel'])
-    with pytest.raises(KeyboardInterrupt):
-        adapter.open_snapshot(None, lambda *a: next(actions))
+    monkeypatch.setattr(adapter, 'request', lambda *a: pytest.fail('settled failure reset host'))
+    result, notice = adapter.open_snapshot(None, lambda *a: pytest.fail('settled failure entered retry rail'))
+    assert result is data and notice
 
 
 def test_private_open_rows_waits_and_keeps_notice_out_of_rows(t_mod, adapter, monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(t_mod, 'Config', lambda: None)
-    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
-    monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}))
     calls = []
-    def snapshot(cfg, choose, **kwargs):
+    def snapshot(cfg, **kwargs):
         calls.append(kwargs)
         return view(), 'Older results'
-    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(open_snapshot=snapshot, announce=lambda v: None, rows=adapter.rows))
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(bounded_snapshot=snapshot,
+        require_open_network=lambda *a, **kw: None, announce=lambda v: None, rows=adapter.rows))
     notice = tmp_path / 'notice'
     assert t_mod.main(['__cache-rows', '--open', '--host', 'mini', '--repo', 'api', '--notice-file', str(notice)]) == 0
     assert notice.read_text() == 'Older results'
-    assert calls == [dict(local=False, host='mini', fields=['rows', 'scopes', 'catalog'], wait=t_mod._resume_discovery_wait)]
+    assert len(calls) == 1 and not calls[0]['explicit'] and calls[0]['host'] == 'mini'
+    assert calls[0]['fields'] == ['rows', 'scopes', 'catalog']
     assert 'Older results' not in capsys.readouterr().out
 
 
-def test_private_open_rows_never_prompts_off_terminal(t_mod, monkeypatch, capsys):
+def test_private_open_rows_never_prompts_off_terminal(t_mod, adapter, monkeypatch, capsys):
     monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: False)
-    assert t_mod.main(['__cache-rows', '--open']) == 1
-    assert 'requires a terminal' in capsys.readouterr().err
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}))
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
+        bounded_snapshot=lambda *a, **kw: (view(), ''), require_open_network=lambda *a, **kw: None,
+        announce=lambda v: None, rows=adapter.rows))
+    assert t_mod.main(['__cache-rows', '--open']) == 0
+    assert 'api-1' in capsys.readouterr().out
 
 
 def test_private_open_rows_reports_service_failure(t_mod, monkeypatch, capsys):
-    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
-    monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}))
     def failed(*args, **kwargs):
         raise OSError('session discovery unavailable; retry shortly')
-    monkeypatch.setattr(t_mod, '_session_discovery', lambda: {'open_snapshot': failed})
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: {'bounded_snapshot': failed, 'require_open_network': lambda *a, **kw: None})
     assert t_mod.main(['__cache-rows', '--open']) == 1
     output = capsys.readouterr()
-    assert not output.out and 't open: session discovery unavailable' in output.err
+    assert not output.out and 'session discovery unavailable' in output.err
 
 
 @pytest.mark.parametrize('available', [False, True])

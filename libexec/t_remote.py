@@ -57,7 +57,7 @@ def extend_registry(groups):
         return {name: mirror(value, (*prefix, name)) if isinstance(value, dict)
                 else ('remote', *prefix, name) for name, value in node.items()}
     groups['remote'].update({name: mirror(value, (name,)) for name, value in groups.items()
-                             if name != 'remote'})
+                             if name not in ('remote', 'idea')})
 
 
 def nested(words):
@@ -88,6 +88,8 @@ def split(words, groups):
             break
         path.append(word)
         node = node[word]
+    if path and path[0] == 'idea':
+        raise ValueError('ideas are local-only; use t idea on this machine')
     if not path or isinstance(node, dict):
         raise ValueError('remote requires a complete public command; use t remote --help')
     return tuple(path), words[len(path):], host
@@ -291,6 +293,10 @@ def execute(cfg, args, api):
                 worker = 'T_NO_UPDATE_CHECK=1 _t_remote ' + shlex.join(argv)
                 return subprocess.call(['zsh', '-lic', worker])
         parsed = child_args(api, path, tail)
+        if path[0] == 'session' and getattr(parsed, 'wait', False):
+            # Use the long spelling on the wire for older peers.
+            option_end = tail.index('--') if '--' in tail else len(tail)
+            tail[:option_end] = ['--wait' if word == '-w' else word for word in tail[:option_end]]
         context = repository_context(api, cfg, path, tail, parsed)
         if mode != 'query' and not host:
             if not cfg.hosts:

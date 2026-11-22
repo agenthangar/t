@@ -215,16 +215,11 @@ def test_open_retry_rechecks_network_before_resetting_shared_host(adapter, monke
     import errno
     import socket
     from test_offline_discovery import network
-    failures = {socket.AF_INET: None, socket.AF_INET6: None}
-    network(monkeypatch, failures)
-    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: {'hosts': [
-        dict(host='mini', target='mini', error='collector failed', value=None, refreshing=False)]})
-    monkeypatch.setattr(adapter, 'request', lambda *a, **k: pytest.fail('Offline retry reset a shared host'))
-    def choose(*a):
-        failures.update({socket.AF_INET: errno.EPERM, socket.AF_INET6: errno.EPERM})
-        return 'retry'
+    network(monkeypatch, {socket.AF_INET: errno.EPERM, socket.AF_INET6: errno.EPERM})
+    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: pytest.fail('offline request reached discovery'))
+    monkeypatch.setattr(adapter, 'request', lambda *a, **k: pytest.fail('offline request reset shared host'))
     with pytest.raises(OSError, match='network unavailable'):
-        adapter.open_snapshot(SimpleNamespace(hosts={'mini': 'mini'}), choose)
+        adapter.open_snapshot(SimpleNamespace(hosts={'mini': 'mini'}), lambda *a: pytest.fail('offline retry rail'))
 
 
 @pytest.mark.parametrize('old_key', ['absolute', 'empty', 'relative', 'different', 'other-source'])

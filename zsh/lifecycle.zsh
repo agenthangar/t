@@ -1,8 +1,21 @@
 # Private adapter: Python owns operation order; effects retain the calling shell.
 _t_lifecycle_run() {
   # Nested peers carry machine frames, so only the public controller draws progress.
-  if [[ $1 == peer ]]; then _t_lifecycle_run_impl "$@"
-  else _t_with_progress "Verifying conversation lifecycle" _t_lifecycle_run_impl "$@"; fi
+  if [[ $1 == close && -t 0 && -t 2 ]]; then
+    # Only this path can prompt. Duplicating a pipe on launch would keep the
+    # caller's command output open in newly created tmux servers.
+    local _T_LIFECYCLE_INPUT _T_LIFECYCLE_ERROR
+    exec {_T_LIFECYCLE_INPUT}<&0 {_T_LIFECYCLE_ERROR}>&2
+    {
+      _t_lifecycle_run_impl "$@"
+    } always {
+      exec {_T_LIFECYCLE_INPUT}<&- {_T_LIFECYCLE_ERROR}>&-
+    }
+  elif [[ $1 == (peer|close|auto-close) ]]; then
+    _t_lifecycle_run_impl "$@"
+  else
+    _t_with_progress "Verifying conversation lifecycle" _t_lifecycle_run_impl "$@"
+  fi
 }
 _t_lifecycle_run_impl() {
   local scratch frame code=1 worker_rc=0 action count argument rx tx worker_pid index
@@ -141,7 +154,7 @@ _t_lifecycle_effect() {
       if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 && -n $session && $event != (launch|resume) ]]; then
         python3 "$T_HOME/bin/t" __cache-record "$event" "$sid" "$agent" "$dir" "${session#dev-}" >/dev/null 2>&1 || true
       fi
-      _dev_history_record "$sid" "$agent" "$dir" "$event"
+      _dev_history_record "$sid" "$agent" "$dir" "$event" || return $?
       [[ $event == (launch|resume) ]] && _dev_recovery_watch "$session"
       return 0 ;;
     close-check)
@@ -156,7 +169,7 @@ _t_lifecycle_effect() {
       }
       print -r -- "$immutable" ;;
     stop)
-      local pid immutable=$3
+      local pid immutable=$3 client_token recovery_receipt stop_code=0 closed=0
       [[ $immutable == \$<-> &&
          $(tmux display-message -p -t "=$1:" '#{session_id}') == "$immutable" ]] || {
         print -u2 't close: selected owner changed; nothing was stopped'; return 1
@@ -164,18 +177,47 @@ _t_lifecycle_effect() {
       pid=$(_dev_session_claude_pid "$1")
       [[ -z $pid ]] || { _dev_agent_is_service "$pid" && return 1; }
       if [[ -n $4 ]]; then
+        [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
+           $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
+        _t_terminal_close_guard "$1" "$2" "$4" "$immutable" "$5" "$6" stop-previews || return 1
+        # Cleanup never authorizes closing a changed task. Rescan all guards and
+        # refuse a newly launched preview as well as any other background work.
         _t_terminal_close_guard "$1" "$2" "$4" "$immutable" "$5" "$6" || return 1
-        _dev_kill_no_pending_work "$2" && _t_terminal_processes_clear "$1" "$2" || return 1
+        _dev_kill_no_pending_work "$2" && _t_terminal_processes_clear "$1" "$2" strict || return 1
         [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
            $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
       fi
-      tmux kill-session -t "$immutable:" || return 1
-      if [[ -n $pid ]]; then
-        _t_wait_for_exit "$pid"
-        if kill -0 "$pid" 2>/dev/null && ! _t_pid_is_zombie "$pid"; then
-          print -u2 't close: agent has not exited; no release recorded'; return 1
+      # Resolve only one non-service client and bind birth, cwd and pane ancestry.
+      # The shell still owns SID/agent evidence; Python never guesses a thread.
+      [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
+         $(tmux display-message -p -t "=$1:" '#{session_id}') == "$immutable" ]] || return 1
+      client_token=$(python3 "$T_HOME/libexec/t_client_stop.py" capture "$1" "$2" "$immutable" "$pid" "$8") || return 1
+      [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" ]] || return 1
+      recovery_receipt=$(python3 "$T_HOME/libexec/t_auto_recovery.py" prepare-close "$8" "$7") || return 1
+      {
+        python3 "$T_HOME/libexec/t_client_stop.py" stop "$client_token" || stop_code=$?
+        if (( stop_code == 75 )); then
+          # Auto close and redirected callers never escalate. Use the original
+          # terminal descriptors, not the coprocess protocol or diagnostic files.
+          [[ -z $4 && -n $_T_LIFECYCLE_INPUT && -n $_T_LIFECYCLE_ERROR &&
+             -t $_T_LIFECYCLE_INPUT && -t $_T_LIFECYCLE_ERROR ]] || return 75
+          python3 "$T_HOME/libexec/t_client_stop.py" confirm 'Agent did not exit' \
+            "Force stop $8 in $1 (pid $pid). An unsaved turn may be lost." 'Force stop' \
+            <&$_T_LIFECYCLE_INPUT >&$_T_LIFECYCLE_ERROR 2>&$_T_LIFECYCLE_ERROR || return $?
+          [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" ]] || return 1
+          python3 "$T_HOME/libexec/t_client_stop.py" stop "$client_token" force || return $?
+        elif (( stop_code )); then
+          return $stop_code
         fi
-      fi
+        python3 "$T_HOME/libexec/t_client_stop.py" finalize "$client_token" || return $?
+        closed=1
+      } always {
+        # A retained client remains eligible for future automatic recovery.
+        if (( ! closed )) && [[ -n $recovery_receipt && $(_dev_session_sid "$1" "$2") == "$7" ]] &&
+           python3 "$T_HOME/libexec/t_client_stop.py" verify-live "$client_token" 2>/dev/null; then
+          python3 "$T_HOME/libexec/t_auto_recovery.py" restore-close "$recovery_receipt"
+        fi
+      }
       [[ -z $4 && -n $DEV_WORKTREE_ROOT && $2 == $DEV_WORKTREE_ROOT/* ]] && _dev_stop_rooted "$2"
       return 0 ;;
     auto-close-check)
@@ -304,6 +346,7 @@ _t_lifecycle_effect() {
       while IFS=$'\t' read -r fgpid fgsid fgcwd fglabel fgagent; do
         [[ $fgsid == "$sid" && ${fgcwd:A} == ${dir:A} && $fgagent == "$agent" ]] || continue
         _dev_agent_is_service "$fgpid" && return 1
+        _dev_history_record "$sid" "$agent" "$dir" handoff || return 1
         kill -TERM "$fgpid" || return 1
         _t_wait_for_exit "$fgpid"
         if kill -0 "$fgpid" 2>/dev/null; then

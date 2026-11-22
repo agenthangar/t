@@ -1,5 +1,6 @@
 """Optional Nightr package integration; never starts protection or authorizes helpers."""
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -53,21 +54,24 @@ def installed():
     try:
         with (APP / "Contents/Info.plist").open("rb") as stream:
             info = plistlib.load(stream)
-        if info.get("CFBundleIdentifier") != "ai.nightr.app" or not CLI.is_file():
+        if not isinstance(info, dict) or info.get("CFBundleIdentifier") != "ai.nightr.app" or not CLI.is_file():
             return None
         return str(info["CFBundleShortVersionString"])
     except (OSError, ValueError, KeyError, plistlib.InvalidFileException):
         return None
 
 
-def package(command):
+def package_installer():
     helper = Path(__file__).with_name("nightr_install.py")
-    return runpy.run_path(str(helper))["main"]([command])
+    return runpy.run_path(str(helper))
+
+
+def package(*argv):
+    return package_installer()["main"](list(argv))
 
 
 def package_owner():
-    helper = Path(__file__).with_name("nightr_install.py")
-    saved = runpy.run_path(str(helper))["read_record"]()
+    saved = package_installer()["read_record"]()
     if not saved or saved.get("owner") not in ("direct", "homebrew"):
         raise ValueError("verified package ownership is missing; run setup repair before opting into updates")
     return saved["owner"]
@@ -80,14 +84,14 @@ def brew_owned(brew):
     return result.returncode == 0
 
 
-def assert_migration_safe():
+def assert_migration_safe(*, verified_app=None):
     """Never stop or reset an unowned legacy monitor during package migration."""
     power = subprocess.run(["/usr/bin/pmset", "-g"], capture_output=True, text=True, timeout=5)
     if power.returncode:
         raise ValueError("could not check existing sleep protection; installation was not started")
     if not re.search(r"(?m)^\s*SleepDisabled\s+1\s*$", power.stdout):
         return
-    if installed():
+    if verified_app or (verified_app is None and installed()):
         result = subprocess.run([str(CLI), "status", "--json"], capture_output=True, text=True, timeout=5)
         try:
             response = json.loads(result.stdout)
@@ -156,6 +160,122 @@ def install():
     return 0
 
 
+def guided_selection():
+    """Snapshot the action for the review using only local bundle metadata."""
+    try:
+        metadata = APP.lstat()
+    except FileNotFoundError:
+        return "install", None
+    except OSError:
+        return "unknown", None
+    version = installed() if stat.S_ISDIR(metadata.st_mode) else None
+    return ("update", version) if version else ("unknown", None)
+
+
+def published_release(installer):
+    with tempfile.TemporaryDirectory(prefix="t-nightr-verify-") as temporary:
+        return installer["latest_manifest"](Path(temporary))
+
+
+def enroll_verified(installer, owner, team, brew):
+    with installer["installation_lock"]():
+        version = installer["verify_installed_receipt"](team)
+        saved = installer["read_record"]()
+        if not saved or (saved["owner"], saved["teamID"], saved["version"]) != (owner, team, version):
+            raise ValueError("the verified Nightr package does not have the expected ownership")
+        if owner == "homebrew":
+            installer["verify_homebrew_receipt"](brew, version)
+        record(owner)
+
+
+def guided_update(reviewed_version, installer, brew):
+    print("Nightr: verifying the installed package…", file=sys.stderr)
+    manifest = published_release(installer)
+    team = manifest["teamID"]
+    verify = installer["verify_installed_receipt"]
+    with installer["installation_lock"]():
+        version = verify(team)
+        if version != reviewed_version:
+            raise ValueError("Nightr changed after review; review the installer again")
+        version_key = installer["version_key"]
+        if version_key(version) > version_key(manifest["version"]):
+            raise ValueError("the installed Nightr is newer than the published release; wait for a matching or newer release")
+        saved = installer["read_record"]()
+        homebrew = installer["homebrew_receipt"](brew, known_direct=bool(saved and saved["owner"] == "direct"))
+        owner = "homebrew" if homebrew else "direct"
+        if saved and (saved["owner"] != owner or saved["teamID"] != team):
+            raise ValueError("Nightr package ownership could not be verified; repair the existing installation")
+        if homebrew:
+            installer["verify_homebrew_receipt"](brew, version)
+        assert_migration_safe(verified_app=True)
+    if not saved:
+        result = installer["main"](["adopt-" + owner])
+        if result:
+            return result
+    # The native updater acquires the package lock itself. Verify the canonical
+    # executable again after adoption and before handing over the terminal.
+    with installer["installation_lock"]():
+        if verify(team) != reviewed_version:
+            raise ValueError("Nightr changed after review; review the installer again")
+        saved = installer["read_record"]()
+        if not saved or (saved["owner"], saved["teamID"]) != (owner, team):
+            raise ValueError("Nightr package ownership changed after verification; repair the existing installation")
+        if homebrew:
+            installer["verify_homebrew_receipt"](brew, reviewed_version)
+    result = subprocess.call([str(CLI), "update"])
+    if result:
+        return result
+    enroll_verified(installer, owner, team, brew)
+    return 0
+
+
+def guided_install(action, version):
+    installer = package_installer()
+    try:
+        if sys.platform != "darwin":
+            raise ValueError("Nightr requires macOS")
+        with integration_lock():
+            integration()
+            if guided_selection() != (action, version):
+                raise ValueError("Nightr changed after review; review the installer again")
+            brew_path = shutil.which("brew")
+            brew = str(Path(brew_path).resolve()) if brew_path else None
+            if action == "update":
+                return guided_update(version, installer, brew)
+            if action != "install":
+                raise ValueError("repair the existing Nightr installation before trying again")
+            print("Nightr: checking existing protection…", file=sys.stderr)
+            assert_migration_safe(verified_app=False)
+            result = installer["main"](["install", "--homebrew-only"])
+            if result:
+                return result
+            print("Nightr: verifying the installed package…", file=sys.stderr)
+            enroll_verified(installer, "homebrew", published_release(installer)["teamID"], brew)
+            print("Nightr installed. Run nightr setup for helper and login setup.")
+            return 0
+    except (installer["InstallError"], OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired) as error:
+        print(f"Nightr: {error}", file=sys.stderr)
+        return 1
+
+
+@contextlib.contextmanager
+def integration_lock():
+    path = state_path().parent
+    path.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path / ".nightr.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise ValueError("invalid Nightr integration lock")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("another Nightr installation is in progress") from None
+        yield
+    finally:
+        os.close(fd)
+
+
 def command(args, ui_factory=None):
     try:
         if args.action == "status":
@@ -185,20 +305,8 @@ def command(args, ui_factory=None):
                 ui.restore()
             if choice != "install":
                 return 130
-        path = state_path().parent
-        path.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path / ".nightr.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-                raise ValueError("invalid Nightr integration lock")
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise ValueError("another Nightr installation is in progress") from None
+        with integration_lock():
             return install()
-        finally:
-            os.close(fd)
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"t system apps: {error}", file=sys.stderr)
         return 1

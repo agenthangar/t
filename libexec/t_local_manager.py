@@ -25,7 +25,7 @@ import urllib.parse
 import uuid
 
 LIB = Path(__file__).resolve().parent
-VERSION = 5
+VERSION = 6
 LIMIT = 16 * 1024**2
 TERMINAL = {'completed', 'cancelled', 'failed', 'timed_out', 'busy'}
 DEFAULTS = {'memory_percent': 80, 'idle_seconds': 300,
@@ -419,7 +419,7 @@ class Engine:
                 queued.append(item)
             positions = {j['id']: i + 1 for i, j in enumerate(queued)}
             requests = [dict({k: j.get(k) for k in ('id', 'client', 'owner', 'owner_label', 'model', 'provider', 'kind', 'state',
-                                                   'created', 'started', 'execution_started', 'finished', 'error', 'timeout_phase', 'tokens', 'revision')},
+                                                   'created', 'started', 'execution_started', 'finished', 'error', 'timeout_phase', 'tokens', 'revision', 'deadline', 'memory')},
                              queue_position=positions.get(j['id']),
                              queue_seconds=round((j.get('started') or j.get('finished') or now) - j['created'], 2),
                              loading_seconds=round((j.get('execution_started') or j.get('finished') or now) - j['started'], 2) if j.get('started') else 0,
@@ -433,14 +433,16 @@ class Engine:
                       for x in list(self.providers.instances.values())]
             return dict(protocol=VERSION, test_preflight=True, generation=self.generation, pid=os.getpid(), manager='blocked' if self.blocked else 'running',
                         error=self.blocked, updated=now, requests=requests[-200:], clients=clients,
-                        models=models + self.providers.external, settings=self.config,
+                        models=models + self.providers.external, released_models=getattr(self.providers, 'released', []), settings=self.config,
                         endpoints={'lmstudio': self.config['providers']['lmstudio']['url'],
                                    'ollama': self.providers.ollama_base or self.config['providers']['ollama']['url']})
 
     def client_status(self, client):
         now = time.time()
         jobs = [j for j in self.jobs.values() if j['client'] == client['id']]
-        current = next((j for j in reversed(jobs) if j['state'] not in TERMINAL), None)
+        pending = [j for j in jobs if j['state'] not in TERMINAL]
+        # A later auxiliary request must not conceal the admission blocker.
+        current = next((j for j in pending if j.get('memory')), None) or next(iter(pending), None)
         def duration(intervals):
             total, end = 0, 0
             for start, stop in sorted(intervals):
@@ -451,9 +453,18 @@ class Engine:
         wait = duration((j['created'], j.get('execution_started') or j.get('finished') or now) for j in jobs)
         queue = duration((j['created'], j.get('started') or j.get('finished') or now) for j in jobs)
         latest = jobs[-1] if jobs else None
-        failure = latest if latest and latest['state'] in ('busy', 'failed', 'timed_out') else None
+        failure = next((j for j in reversed(jobs) if j['state'] in ('busy', 'failed', 'timed_out') and j.get('memory')), None)
+        if failure and any(j['state'] == 'completed' and j['created'] > failure['finished'] for j in jobs):
+            failure = None  # A successful later retry replaces the retained blocker.
+        failure = failure or (latest if latest and latest['state'] in ('busy', 'failed', 'timed_out') else None)
+        if failure and failure.get('memory') and current and not current.get('memory') and current['created'] <= failure['finished']:
+            current = None  # Older auxiliary work cannot hide the expired blocker.
         return dict(id=client['id'], protocol=VERSION, model=client['chosen']['model'], provider=client['chosen']['provider'],
-                    state=current['state'] if current else 'working', wait_seconds=wait,
+                    state=('waiting_for_memory' if current.get('memory') else current['state']) if current else 'failed' if failure else 'working', wait_seconds=wait,
+                    tmux=client.get('tmux'), pane=client.get('pane'), kind=client['kind'],
+                    memory=(current or failure or {}).get('memory'),
+                    deadline=(current or failure or {}).get('deadline'),
+                    created=(current or failure or {}).get('created'),
                     queue_seconds=queue, loading_seconds=max(0, wait - queue),
                     outcome=client.get('outcome') or (failure['state'] if failure else None),
                     failure_reason=client.get('failure_reason') or (failure.get('error') if failure else None),
@@ -737,6 +748,8 @@ class Engine:
     def finish(self, job, state, error=None):
         if job.get('timeout_phase') and state == 'cancelled':
             state, error = 'timed_out', job['timeout_phase'].capitalize() + ' budget expired'
+        if state == 'timed_out' and job.get('memory'):
+            error = (error or 'Queue budget expired') + ': ' + job['memory']['reason']
         job.update(state=state, finished=time.time(), error=error)
         client = self.clients.get(job['client'])
         if client and client['kind'] == 'worker' and state in ('busy', 'timed_out'):
@@ -792,6 +805,7 @@ class Engine:
                 require_enabled(job['provider'])
                 job.update(state='loading', started=time.time())
                 instance = self.providers.get(job['chosen'], self.pins())
+                job.pop('memory', None)
                 job['alias'], job['revision'] = instance['alias'], instance['revision']
                 job['owned_instance'] = instance['owned']
                 # A shared stateful instance must survive cancellation by another client.
@@ -825,6 +839,7 @@ class Engine:
             except Exception as exc:
                 self.prune_history()
                 if type(exc).__name__ == 'WaitingForMemory' and not job['cancel'].is_set():
+                    job['memory'] = getattr(exc, 'memory', {'reason': str(exc)})
                     if self.clients.get(job['client'], {}).get('fail_fast'):
                         self.finish(job, 'busy', str(exc))
                     else:
@@ -1210,6 +1225,8 @@ class Client:
                     self.cancel_event.set()
                 if self.activity:
                     state = self.last['state']
+                    if hasattr(self.activity, 'update_memory'):
+                        self.activity.update_memory(memory=self.last.get('memory'), deadline=self.last.get('deadline'))
                     self.activity.update({'running': 'inferring', 'waiting_for_memory': 'waiting',
                                           'waiting_for_legacy': 'queued'}.get(state, state))
             except (OSError, ValueError) as exc:

@@ -143,8 +143,197 @@ def selected_rollout(sid):
     return matches[0]
 
 
+def _resume_release(sid, workspace, rollout, *, retry, unknown=None):
+    try:
+        path = Path(rollout) if rollout else selected_rollout(sid)
+        home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
+        creation_cwd = OWNERSHIP['_rollout_cwd'](str(path), sid)
+        STORE['rollout_integrity'](home, sid)
+    except sqlite3.Error as error:
+        raise LifecycleError('could not inspect the Codex ownership index; no conversation launched. ' + retry) from error
+    OWNERSHIP['assert_released'](None, sid, creation_cwd, run, codex_home=home,
+        rollout=str(path), ownership_cwd=workspace, unknown=unknown,
+        archived=path.resolve().is_relative_to((Path(home) / 'archived_sessions').resolve()), retry=retry)
+    return home, path, creation_cwd
+
+
+def verify_fresh_resume_source(sid, rollout, *, workspace=None):
+    """Check the selected native writer independently of unrelated siblings."""
+    validate_identity('codex', sid, str(Path(rollout).absolute()))
+    home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
+    path = Path(rollout)
+    cwd = OWNERSHIP['_rollout_cwd'](str(path), sid)
+    version = OWNERSHIP['_verify_rollout'](str(path), sid, cwd)
+    if OWNERSHIP['_lock_dir'](home) is None or version is None or version < (0, 159, 0):
+        raise LifecycleError('fresh resume requires a verifiable native Codex writer-lock contract')
+    unknown = set()
+    _resume_release(sid, workspace, rollout, retry='Retry: t session resume.', unknown=unknown)
+    return unknown
+
+
+def _fresh_resume_folder():
+    folder = state_home() / 'fresh-resumes'
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for directory in (folder, folder.parent, folder.parent.parent):
+        info = directory.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or
+                info.st_mode & (0o077 if directory == folder else 0o022)):
+            raise LifecycleError('unsafe fresh-resume proof directory')
+    return folder
+
+
+def _fresh_resume_path(token):
+    if not isinstance(token, str) or not re.fullmatch('[0-9a-f]{32}', token):
+        raise LifecycleError('invalid fresh-resume proof token')
+    return _fresh_resume_folder() / (token + '.json')
+
+
+def _read_fresh_private(path):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
+                info.st_mode & 0o077 or info.st_nlink != 1 or info.st_size > 65536):
+            raise LifecycleError('unsafe fresh-resume proof or reservation')
+        with os.fdopen(descriptor, closefd=False) as stream:
+            value = stream.read(65537)
+        current = path.lstat()
+        if (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino):
+            raise LifecycleError('fresh-resume proof or reservation changed')
+        return value
+    finally:
+        os.close(descriptor)
+
+
+def _fresh_reservation(workspace, token):
+    marker = Path(workspace).parent / ('.' + Path(workspace).name + '.history-reservation')
+    if _read_fresh_private(marker) != token:
+        raise LifecycleError('fresh-resume history reservation changed')
+
+
+def _fresh_holder(path):
+    """Capture the same held inode and exact stable process births twice."""
+    def snapshot():
+        info = path.lstat()
+        if not OWNERSHIP['_lock_held'](str(path)):
+            raise LifecycleError('fresh-resume sibling writer changed')
+        result = run(['lsof', '-nP', '-t', str(path)], timeout=5)
+        lines = result.stdout.splitlines()
+        if (result.returncode or (result.stderr or '').strip() or not lines or len(lines) > 32 or
+                any(not line.isdecimal() or int(line) <= 0 for line in lines)):
+            raise LifecycleError('could not verify fresh-resume sibling writer holders')
+        identity = OWNERSHIP['_holder_identity'](tuple(sorted({int(p) for p in lines})), run)
+        if identity is None:
+            raise LifecycleError('could not verify fresh-resume sibling writer process births')
+        current = path.lstat()
+        if ((info.st_dev, info.st_ino) != (current.st_dev, current.st_ino) or
+                not OWNERSHIP['_lock_held'](str(path))):
+            raise LifecycleError('fresh-resume sibling writer changed')
+        return dict(dev=info.st_dev, ino=info.st_ino, holders=[list(item) for item in identity])
+    try:
+        before = snapshot()
+        if snapshot() != before:
+            raise LifecycleError('fresh-resume sibling writer holders changed')
+        return before
+    except (OSError, subprocess.SubprocessError) as error:
+        raise LifecycleError('could not verify fresh-resume sibling writer holders') from error
+
+
+def begin_fresh_resume(sid, rollout, workspace, *, token):
+    """Only the history allocator calls this before creating its reserved path."""
+    validate_identity('codex', sid, workspace)
+    path = _fresh_resume_path(token)
+    _fresh_reservation(workspace, token)
+    if os.path.lexists(workspace) or str(Path(workspace).resolve()) != workspace:
+        raise LifecycleError('fresh-resume destination already exists or is not canonical')
+    unknown = verify_fresh_resume_source(sid, rollout, workspace=workspace)
+    home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex').resolve())
+    locks = OWNERSHIP['_lock_dir'](home)
+    writers = {other: _fresh_holder(Path(locks) / (other + '.lock')) for other in sorted(unknown)}
+    # Process probes can take time. Repeat the selected writer and sibling scan
+    # after collecting their identities, before granting allocation authority.
+    current = verify_fresh_resume_source(sid, rollout, workspace=workspace)
+    if current != unknown or any(_fresh_holder(Path(locks) / (other + '.lock')) != writers[other]
+                                 for other in sorted(current)):
+        raise LifecycleError('Codex sibling writers changed before fresh allocation')
+    final_unknown = verify_fresh_resume_source(sid, rollout, workspace=workspace)
+    if final_unknown != unknown:
+        raise LifecycleError('Codex sibling writers changed before fresh allocation')
+    if os.path.lexists(workspace):
+        raise LifecycleError('fresh-resume destination appeared before allocation')
+    home_info, lock_info = os.lstat(home), os.lstat(locks)
+    value = dict(version=1, token=token, sid=sid, workspace=workspace, codex_home=home,
+                 home_identity=[home_info.st_dev, home_info.st_ino],
+                 lock_identity=[lock_info.st_dev, lock_info.st_ino], writers=writers, allocated=False)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    created = None
+    try:
+        with os.fdopen(descriptor, 'w') as stream:
+            # Git accepts an existing empty directory. Claim it exclusively here
+            # so a competing creator cannot become allocator provenance.
+            os.mkdir(workspace)
+            created = os.lstat(workspace)
+            value['identity'] = [created.st_dev, created.st_ino]
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(value, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        if created is not None:
+            try:
+                current = os.lstat(workspace)
+                if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                    os.rmdir(workspace)
+            except OSError:
+                pass  # Never delete nonempty or changed allocation evidence.
+        raise
+    return token
+
+
+def _fresh_resume_record(token, sid, workspace, *, complete=True):
+    value = json.loads(_read_fresh_private(_fresh_resume_path(token)))
+    home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex').resolve())
+    if (not isinstance(value, dict) or value.get('version') != 1 or value.get('token') != token or
+            value.get('sid') != sid or value.get('workspace') != workspace or
+            value.get('codex_home') != home or not isinstance(value.get('writers'), dict) or
+            str(Path(workspace).resolve()) != workspace):
+        raise LifecycleError('fresh-resume proof identity changed')
+    _fresh_reservation(workspace, token)
+    for directory, key in ((home, 'home_identity'), (OWNERSHIP['_lock_dir'](home), 'lock_identity')):
+        if directory is None:
+            raise LifecycleError('fresh-resume native writer-lock directory disappeared')
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or value.get(key) != [info.st_dev, info.st_ino]:
+            raise LifecycleError('fresh-resume Codex state identity changed')
+    info = os.lstat(workspace)
+    if not stat.S_ISDIR(info.st_mode) or value.get('identity') != [info.st_dev, info.st_ino]:
+        raise LifecycleError('fresh-resume workspace identity changed')
+    if complete and value.get('allocated') is not True:
+        raise LifecycleError('fresh-resume allocator has not completed its worktree')
+    return value
+
+
+def finish_fresh_resume(token, sid, workspace):
+    value = _fresh_resume_record(token, sid, workspace, complete=False)
+    if value.get('allocated') is True:
+        raise LifecycleError('fresh-resume allocation was already completed')
+    info = os.lstat(workspace)
+    if not stat.S_ISDIR(info.st_mode):
+        raise LifecycleError('fresh-resume allocator did not create a real directory')
+    value['allocated'] = True
+    write_private(_fresh_resume_path(token), value)
+    return token
+
+
+def discard_fresh_resume(token):
+    _fresh_resume_path(token).unlink(missing_ok=True)
+
+
 def native_preflight(agent, sid, workspace, rollout=None, *, retry='Retry: t session resume.',
-                     new_workspace=None):
+                     new_workspace=None, fresh_resume=None):
+    if fresh_resume and (agent != 'codex' or not sid):
+        raise LifecycleError('fresh-resume proof requires the selected Codex conversation')
     if agent != 'codex':
         return
     if not sid:
@@ -162,13 +351,33 @@ def native_preflight(agent, sid, workspace, rollout=None, *, retry='Retry: t ses
         if other:
             raise LifecycleError('another Codex conversation owns this workspace: ' + other)
         return {'unresolved_writers': sorted(unknown or ())}
-    path = Path(rollout) if rollout else selected_rollout(sid)
-    home = str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex'))
-    creation_cwd = OWNERSHIP['_rollout_cwd'](str(path), sid)
-    STORE['rollout_integrity'](home, sid)
-    OWNERSHIP['assert_released'](None, sid, creation_cwd, run, codex_home=home,
-        rollout=str(path), ownership_cwd=workspace,
-        archived=path.resolve().is_relative_to((Path(home) / 'archived_sessions').resolve()), retry=retry)
+    proof = _fresh_resume_record(fresh_resume, sid, workspace) if fresh_resume else None
+    unknown = set() if proof is not None else None
+    home, path, cwd = _resume_release(sid, workspace, rollout, retry=retry, unknown=unknown)
+    if proof is not None:
+        version = OWNERSHIP['_verify_rollout'](str(path), sid, cwd)
+        if version is None or version < (0, 159, 0):
+            raise LifecycleError('fresh resume requires a verifiable native Codex writer-lock contract')
+        locks = OWNERSHIP['_lock_dir'](home)
+        for other in sorted(unknown):
+            if (other not in proof['writers'] or
+                    _fresh_holder(Path(locks) / (other + '.lock')) != proof['writers'][other]):
+                raise LifecycleError('Codex sibling writers changed after fresh allocation; no conversation launched')
+        # Holder probes can let a starting backend publish new locks or cwd
+        # metadata. Scan again after them, including the strict selected check;
+        # never carry the first scan's missing metadata through to launch.
+        final_unknown = set()
+        _resume_release(sid, workspace, rollout, retry=retry, unknown=final_unknown)
+        if final_unknown != unknown:
+            raise LifecycleError('Codex sibling writers changed after fresh allocation; no conversation launched')
+        for other in sorted(final_unknown):
+            info = os.lstat(Path(locks) / (other + '.lock'))
+            expected = proof['writers'][other]
+            if [info.st_dev, info.st_ino] != [expected['dev'], expected['ino']]:
+                raise LifecycleError('Codex sibling writer lock changed after fresh allocation')
+        _fresh_resume_record(fresh_resume, sid, workspace)
+        if locks and OWNERSHIP['_lock_held'](str(Path(locks) / (sid + '.lock'))):
+            raise LifecycleError('the selected Codex conversation is still loaded (its writer lock is held)')
 
 
 def wait_released(agent, sid, *, timeout=15):
@@ -835,6 +1044,8 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                 if 'launch' not in operation.value['receipts'] and operation.value.get('pending') != 'launch':
                     operation.step('inspect', lambda: adapter.call('replace-preflight', *arguments) if verb == 'replace' else adapter.call('preflight', session, workspace, sid), repeat=True)
                     native_options = {'new_workspace': arguments[8]} if verb == 'new' and len(arguments) > 8 else {}
+                    if verb == 'resume' and len(arguments) > 5 and arguments[5]:
+                        native_options['fresh_resume'] = arguments[5]
                     operation.step('ownership', lambda: native_preflight(agent, sid, workspace, **native_options), repeat=True)
                     operation.step('launch', lambda: adapter.call(verb, *arguments))
                 result = operation.step('ready', lambda: adapter.call('ready', session, workspace, agent, sid), repeat=True)
@@ -845,7 +1056,7 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                 automatic = verb == 'auto-close'
                 if 'stop' not in operation.value['receipts']:
                     owner = operation.step('inspect', lambda: adapter.call('auto-close-check' if automatic else 'close-check', *arguments), repeat=True)
-                    guard = [arguments[4], *arguments[6:], sid, agent] if automatic else []
+                    guard = [arguments[4], *arguments[6:], sid, agent] if automatic else ['', '', '', sid, agent]
                     operation.step('stop', lambda: adapter.call('stop', session, workspace, owner, *guard))
                 operation.step('released', lambda: wait_released(agent, sid), repeat=True)
                 operation.step('record', lambda: adapter.call('record', 'close', session, workspace, agent, sid))

@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 from pathlib import Path
 import runpy
@@ -13,7 +14,7 @@ def apps(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     module = runpy.run_path(str(Path(__file__).parents[1] / "libexec/t_nightr.py"))
-    monkeypatch.setitem(module["command"].__globals__, "assert_migration_safe", lambda: None)
+    monkeypatch.setitem(module["command"].__globals__, "assert_migration_safe", lambda **_: None)
     return module
 
 
@@ -130,12 +131,194 @@ def test_update_reports_app_failure_and_skips_dev(t_mod, monkeypatch):
     assert calls == [{"check": False}]
 
 
-def test_installer_nightr_selection_is_optional(t_mod):
-    selected = t_mod._install_result([{"t": "toggle", "kind": "app", "alias": "Nightr", "checked": True}])
-    steps = t_mod._install_plan(selected, {}, "darwin", False, False, {})
-    app = next(step for step in steps if step["step"] == "app:nightr")
-    assert app["cmd"][-5:] == ["system", "apps", "install", "nightr", "--yes"]
+@pytest.fixture
+def guided_wizard(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod, "_install_probe", lambda: {
+        agent: {"version": "1.0", "logged_in": True} for agent in t_mod.INSTALL_AGENTS})
+    monkeypatch.setattr(t_mod, "_install_relink", lambda: 0)
+    monkeypatch.setattr(t_mod, "_repair_shell_setup", lambda: 0)
+    monkeypatch.setattr(t_mod, "_install_then_setup", lambda cfg, args, rc, **kw: rc)
+    return t_mod
+
+
+@pytest.mark.parametrize("selection, checked, confirmed, expected", [
+    (("install", None), True, True, 0),
+    (("update", "0.1.0"), True, True, 0),
+    (("install", None), False, True, 0),
+    (("install", None), True, False, 130),
+    (("unknown", None), True, True, 1),
+])
+def test_guided_nightr_review_runs_only_the_confirmed_action(guided_wizard, monkeypatch, selection,
+                                                             checked, confirmed, expected):
+    t_mod = guided_wizard
+    monkeypatch.setattr(t_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: True)
+    request = t_mod.build_parser().parse_args(["install", "--no-hosts"])
+    calls = []
+
+    def review(items, plan):
+        app = next(item for item in items if item.get("kind") == "app")
+        assert app["alias"] == "Nightr" and not app["checked"]
+        app["checked"] = checked
+        steps = plan()
+        lines = t_mod._install_render(steps, t_mod.Style())
+        if not checked:
+            assert not any(step["step"] == "app:nightr" for step in steps)
+        elif selection[0] == "update":
+            assert any("nightr update" in line for line in lines)
+            assert not any("brew" in line for line in lines)
+        elif selection[0] == "install":
+            tap = next(i for i, line in enumerate(lines) if "brew tap agenthangar/tap  # if needed" in line)
+            assert "brew install --cask agenthangar/tap/nightr" in lines[tap + 1]
+        else:
+            assert any("repair the unrecognized installation" in line for line in lines)
+        assert not calls
+        # Applying the review uses its steps even if the live checklist differs.
+        app["checked"] = not checked
+        return confirmed
+
+    monkeypatch.setattr(t_mod, "_install_wizard", review)
+    monkeypatch.setattr(t_mod, "_nightr_module", lambda: {
+        "guided_selection": lambda: selection, "guided_install": lambda *a: calls.append(a) or 0})
+    assert t_mod.cmd_install(SimpleNamespace(hosts={}), request) == expected
+    assert calls == ([selection] if checked and confirmed and expected == 0 else [])
     assert "nightr" not in t_mod.INSTALL_AGENTS
+
+
+@pytest.mark.parametrize("platform, terminal, flags", [
+    ("linux", True, []),
+    ("darwin", False, []),
+    ("darwin", True, ["--yes"]),
+    ("darwin", True, ["--dry-run"]),
+    ("darwin", True, ["codex"]),
+    ("darwin", True, ["codex", "--yes"]),
+])
+def test_guided_nightr_stays_out_of_agent_only_modes(guided_wizard, monkeypatch, platform, terminal, flags):
+    t_mod = guided_wizard
+    monkeypatch.setattr(t_mod.sys, "platform", platform)
+    monkeypatch.setattr(t_mod.sys.stdin, "isatty", lambda: terminal)
+    monkeypatch.setattr(t_mod.sys.stdout, "isatty", lambda: terminal)
+    request = t_mod.build_parser().parse_args(["install", "--no-hosts", *flags])
+    monkeypatch.setattr(t_mod, "_nightr_module", lambda: pytest.fail("agent-only mode queried Nightr"))
+
+    def review(items, _):
+        assert not any(item.get("sec") == "apps" for item in items)
+        return False
+
+    monkeypatch.setattr(t_mod, "_install_wizard", review)
+    assert t_mod.cmd_install(SimpleNamespace(hosts={}), request) in (0, 1, 130)
+
+
+@pytest.mark.parametrize("result, owner, expected", [(0, "homebrew", 0), (7, None, 7), (0, "direct", 1), (0, None, 1)])
+def test_guided_fresh_install_requires_verified_homebrew(apps, monkeypatch, result, owner, expected):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    monkeypatch.setattr(apps["shutil"], "which", lambda name: "/test/brew")
+    events = []
+    team = "ABCDE12345"
+
+    def execute(argv):
+        events.append(argv)
+        return result
+
+    patch(apps, monkeypatch, guided_selection=lambda: ("install", None),
+          assert_migration_safe=lambda **kw: events.append(kw), package_installer=lambda: {
+              "InstallError": RuntimeError, "main": execute,
+              "latest_manifest": lambda _: {"teamID": team}, "installation_lock": contextlib.nullcontext,
+              "verify_installed_receipt": lambda expected: events.append(("verify", expected)) or "0.1.0",
+              "verify_homebrew_receipt": lambda brew, version: events.append((brew, version)),
+              "read_record": lambda: {"owner": owner, "teamID": team, "version": "0.1.0"} if owner else None})
+    assert apps["guided_install"]("install", None) == expected
+    assert events[:2] == [{"verified_app": False}, ["install", "--homebrew-only"]]
+    assert events[2:] == ([] if result else [("verify", team)] + ([('/test/brew', '0.1.0')] if not expected else []))
+    saved = apps["integration"]()
+    assert (saved["owner"] if saved else None) == (owner if expected == 0 else None)
+
+
+@pytest.mark.parametrize("selection, current", [(("install", None), ("update", "0.1.0")),
+                                                (("update", "0.1.0"), ("install", None))])
+def test_guided_install_does_not_switch_actions(apps, monkeypatch, selection, current, capsys):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    patch(apps, monkeypatch, guided_selection=lambda: current,
+          package_installer=lambda: {"InstallError": RuntimeError})
+    assert apps["guided_install"](*selection) == 1
+    assert "changed after review" in capsys.readouterr().err
+    assert apps["integration"]() is None
+
+
+@pytest.mark.parametrize("owner, adoption, failure", [
+    ("direct", False, None), ("homebrew", True, None), ("homebrew", False, None), ("direct", True, None),
+    ("direct", False, "verification"), ("homebrew", True, "adoption"), ("direct", False, "update"),
+    ("homebrew", False, "post-update verification"), ("direct", False, "changed owner"),
+    ("homebrew", False, "receipt"), ("homebrew", False, "post-update receipt"), ("homebrew", False, "ahead"),
+])
+def test_guided_existing_update_verifies_before_native_execution(apps, monkeypatch, owner, adoption, failure):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
+    monkeypatch.setattr(apps["shutil"], "which", lambda name: "/test/brew")
+    events = []
+    team = "ABCDE12345"
+    package = None if adoption else {"owner": owner, "teamID": team, "version": "0.1.0"}
+    bundle_version = "0.1.0"
+
+    def verify(expected_team):
+        events.append(("verify", expected_team))
+        if failure == "verification" or (failure == "post-update verification" and bundle_version == "0.1.1"):
+            raise RuntimeError("signature or package receipt could not be verified")
+        return bundle_version
+
+    def adopt(argv):
+        nonlocal package
+        events.append(argv)
+        if failure == "adoption":
+            return 7
+        package = {"owner": owner, "teamID": team, "version": bundle_version}
+        return 0
+
+    def verify_homebrew(brew, version):
+        events.append((brew, version))
+        if failure == "receipt" or (failure == "post-update receipt" and version == "0.1.1"):
+            raise RuntimeError("the exact Homebrew receipt could not be verified")
+
+    def update(argv):
+        nonlocal bundle_version
+        events.append(argv)
+        if failure == "update":
+            return 8
+        bundle_version = package["version"] = "0.1.1"
+        if failure == "changed owner":
+            package["owner"] = "homebrew"
+        return 0
+
+    patch(apps, monkeypatch, guided_selection=lambda: ("update", "0.1.0"),
+          assert_migration_safe=lambda **kw: events.append(kw), package_installer=lambda: {
+              "InstallError": RuntimeError, "latest_manifest": lambda _: {
+                  "teamID": team, "version": "0.0.9" if failure == "ahead" else "0.1.1"},
+              "version_key": lambda version: tuple(map(int, version.split("."))),
+              "installation_lock": contextlib.nullcontext, "verify_installed_receipt": verify,
+              "verify_homebrew_receipt": verify_homebrew, "read_record": lambda: package,
+              "homebrew_receipt": lambda *a, **kw: owner == "homebrew", "main": adopt})
+    monkeypatch.setattr(apps["subprocess"], "call", update)
+    result = apps["guided_install"]("update", "0.1.0")
+    assert events.pop(0) == ("verify", team)
+    if failure not in ("verification", "ahead") and owner == "homebrew":
+        assert events.pop(0) == ("/test/brew", "0.1.0")
+    if failure not in ("verification", "ahead", "receipt"):
+        assert events.pop(0) == {"verified_app": True}
+        if adoption:
+            assert events.pop(0) == ["adopt-" + owner]
+        if failure != "adoption":
+            assert events.pop(0) == ("verify", team)
+            if owner == "homebrew":
+                assert events.pop(0) == ("/test/brew", "0.1.0")
+            assert events.pop(0) == [str(apps["CLI"]), "update"]
+            if failure != "update":
+                assert events.pop(0) == ("verify", team)
+                if owner == "homebrew" and failure != "post-update verification":
+                    assert events.pop(0) == ("/test/brew", "0.1.1")
+    assert not events
+    assert result == {None: 0, "adoption": 7, "update": 8}.get(failure, 1)
+    saved = apps["integration"]()
+    assert (saved["owner"] if saved else None) == (owner if not failure else None)
 
 
 def test_nosleep_delegates_installed_app_before_legacy_monitor(tmp_path):

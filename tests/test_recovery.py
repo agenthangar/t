@@ -67,6 +67,169 @@ def test_invalid_cwd_failure_has_stable_discriminator(recovery):
     assert recovery.failure("codex", "■ " + INVALID_CWD) == recovery.INVALID_CWD
 
 
+@pytest.mark.parametrize("changed", ["drained", "unsupported", "owner", "detached"])
+def test_stalled_input_requires_continuous_verified_owner_and_rearms(recovery, target, monkeypatch, changed):
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    monkeypatch.setattr(recovery, "pane_failure", lambda *a: "")
+    monkeypatch.setattr(recovery, "owner", lambda *a: target)
+    monkeypatch.setattr(recovery, "descendant", lambda *a: True)
+    pending = [3, "viewer"]
+    monkeypatch.setattr(recovery, "pending_input", lambda *a: tuple(pending))
+    clock = [0]
+    monkeypatch.setattr(recovery.time, "monotonic", lambda: clock[0])
+    offers = []
+    monkeypatch.setattr(recovery, "offer", lambda *a, **kw: offers.append((dict(a[0]), a[1], kw)) or True)
+    watcher = recovery.Watcher(target["socket"])
+    for moment in (0, 3, 6, 9):
+        clock[0] = moment
+        watcher.poll()
+    assert not offers
+    clock[0] = 12
+    watcher.poll(); watcher.poll()
+    assert len(offers) == 1
+    assert offers[0][1:] == (recovery.STALLED, {"viewer": "viewer"})
+    clock[0] = 15
+    if changed == "owner":
+        target["pid"] = "99"
+    else:
+        pending[:] = [0, "viewer"] if changed == "drained" else [None, None]
+    watcher.poll()
+    pending[:] = [5, "viewer"]
+    clock[0] = 18
+    watcher.poll()
+    clock[0] = 30
+    watcher.poll(); watcher.poll()
+    assert len(offers) == 2
+    assert not list(recovery.cache(target["socket"]).glob("*.json"))  # No input or counts stored.
+
+
+@pytest.mark.parametrize("state", [{}, {"input_off": "1", "in_mode": "0", "viewers": ["v"]},
+                                   {"input_off": "0", "in_mode": "1", "viewers": ["v"]},
+                                   {"input_off": "0", "in_mode": "0", "viewers": []}])
+def test_input_probe_fails_closed_for_paused_or_unknown_routes(recovery, monkeypatch, state):
+    monkeypatch.setattr(recovery, "input_state", lambda *a: state)
+    monkeypatch.setattr(recovery, "unread_input", lambda *a: pytest.fail("must not open the PTY"))
+    assert recovery.pending_input("socket", "%1") == (None, None)
+
+
+@pytest.mark.parametrize("route", ["readonly", "control", "prefix", "regular", "unsupported"])
+def test_input_state_requires_regular_writable_root_client(recovery, monkeypatch, route):
+    rows = {"readonly": "v|%1|1|0|/dev/pts/1|root\n",
+            "control": "v|%1|0|1||root\n",
+            "prefix": "v|%1|0|0|/dev/pts/1|prefix\n",
+            "regular": "v|%1|0|0|/dev/pts/1|root\n",
+            "unsupported": "v|%1|||/dev/pts/1|root\n"}
+    monkeypatch.setattr(recovery, "tmux", lambda s, cmd, *a: result(
+        "/dev/pts/2|0|0|\n" if cmd == "display-message" else rows[route]))
+    state = recovery.input_state("socket", "%1", "v")
+    assert bool(state["viewers"]) == (route == "regular")
+    assert bool(state.get("readonly")) == (route == "readonly")
+
+
+@pytest.mark.parametrize("state", [{"input_off": "1"}, {"readonly": True}, {"in_mode": "1"}])
+@pytest.mark.parametrize("screen_error", ["", ERROR])
+def test_requested_recovery_explains_intentional_input_modes(recovery, target, monkeypatch, state, screen_error):
+    monkeypatch.setattr(recovery, "panes", lambda s: [target])
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["v"])
+    monkeypatch.setattr(recovery, "pane_failure", lambda *a: screen_error)
+    monkeypatch.setattr(recovery, "input_state", lambda *a: state)
+    menus = []
+    monkeypatch.setattr(recovery, "recovery_menu", lambda *a, **kw: menus.append(a) or True)
+    monkeypatch.setattr(recovery, "offer", lambda *a, **kw: pytest.fail("intentional mode must stay paused"))
+    assert recovery.reopen(target["socket"], target["pane"], "v") == 0
+    assert menus[0][3] == "t: INPUT PAUSED"
+    assert menus[0][-1] == [("Dismiss", "q", "")]
+
+
+def test_automatic_offer_has_no_letter_restart_accelerator(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["v"])
+    menus = []
+    monkeypatch.setattr(recovery, "recovery_menu", lambda *a, **kw: menus.append(a) or True)
+    assert recovery.offer(target, recovery.STALLED)
+    assert menus[0][3] == "t: TERMINAL INPUT WAITING"
+    assert menus[0][-1][0][1] == ""
+    assert menus[0][-1][-1][0] == "Dismiss"
+
+
+def test_unread_probe_observes_raw_pty_without_consuming_input(recovery):
+    import pty
+    import tty
+    master, slave = pty.openpty()
+    try:
+        name = os.ttyname(slave)
+        assert recovery.unread_input(name) is None  # Canonical input is not a stalled TUI.
+        tty.setraw(slave)
+        os.write(master, b"draft")
+        import time
+        deadline = time.monotonic() + 1
+        while recovery.unread_input(name) != 5 and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert recovery.unread_input(name) == 5
+        assert recovery.unread_input(name) == 5
+        assert os.read(slave, 5) == b"draft"
+        assert recovery.unread_input(name) == 0
+    finally:
+        os.close(master)
+        os.close(slave)
+    assert recovery.unread_input(name) is None
+    assert recovery.unread_input("not-a-tty") is None
+
+
+def test_restart_timeout_requires_separate_force_confirmation(recovery, target, monkeypatch):
+    target.update(viewer="v", error=recovery.REQUESTED)
+    token = make_offer(recovery, target)
+    path = recovery.cache(target["socket"]) / (token + ".offer")
+    recovery.write_json(path, target)
+    monkeypatch.setattr(recovery, "current", lambda *a: True)
+    launched = []
+    monkeypatch.setattr(recovery.subprocess, "run", lambda argv, **kw: launched.append(argv) or result(rc=75))
+    stop_token = {"process": {"pid": 42, "birth": "same"}}
+    monkeypatch.setattr(recovery, "capture_stop", lambda *a: stop_token)
+    offers = []
+    monkeypatch.setattr(recovery, "offer", lambda *a, **kw: offers.append((a, kw)) or True)
+    assert recovery.respond(target["socket"], token, True) == 1
+    assert len(launched) == 1
+    assert offers[0][0][0]["stop_token"] == stop_token
+    assert offers[0][1] == {"viewer": "v", "force": True}
+
+
+def test_force_offer_warns_and_defaults_to_cancel(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "clients", lambda *a: ["v"])
+    menus = []
+    monkeypatch.setattr(recovery, "recovery_menu", lambda *a, **kw: menus.append(a) or True)
+    assert recovery.offer(target, recovery.STALLED, force=True)
+    assert "An unsaved turn may be lost." in menus[0][4]
+    assert menus[0][-1][0][1] == ""
+    assert menus[0][-1][-1][0] == "Cancel"
+
+
+@pytest.mark.parametrize("same_owner", [False, True])
+def test_confirmed_force_revalidates_before_passing_exact_stop_token(recovery, target, monkeypatch, same_owner):
+    target.update(viewer="v", error=recovery.REQUESTED, force=True, stop_token={"process": {"pid": 42}})
+    token = make_offer(recovery, target)
+    recovery.write_json(recovery.cache(target["socket"]) / (token + ".offer"), target)
+    monkeypatch.setattr(recovery, "current", lambda *a: same_owner)
+    launched = []
+    monkeypatch.setattr(recovery.subprocess, "run", lambda argv, **kw: launched.append(argv) or result("Saved draft"))
+    assert recovery.respond(target["socket"], token, True) == (0 if same_owner else 1)
+    assert bool(launched) == same_owner
+    if launched:
+        words = shlex.split(launched[0][-1].split("; ", 1)[1])
+        assert words[:7] == ["_t_restart_slot", target["session"], target["cwd"], SID,
+                             "codex", "restart", "42"]
+        assert words[7] == ""
+        assert json.loads(words[8]) == target["stop_token"]
+
+
+def test_capture_stop_pins_socket_and_immutable_tmux_identity(recovery, target, monkeypatch):
+    monkeypatch.setattr(recovery, "tmux", lambda *a: result("$29\n"))
+    calls = []
+    monkeypatch.setattr(recovery.subprocess, "run", lambda argv, **kw: calls.append((argv, kw)) or result('{"process":{"pid":42}}'))
+    assert recovery.capture_stop(target) == {"process": {"pid": 42}}
+    assert calls[0][0][-5:] == [target["session"], target["cwd"], "$29", "42", "codex"]
+    assert calls[0][1]["env"]["TMUX"] == target["socket"] + ",0,0"
+
+
 def test_private_state_and_invalid_json(recovery, monkeypatch):
     directory = recovery.cache("/tmp/test")
     assert directory.stat().st_mode & 0o777 == 0o700
@@ -96,12 +259,13 @@ def test_run_errors_and_normal(recovery, monkeypatch):
 
 def test_panes_and_clients(recovery, monkeypatch):
     monkeypatch.setattr(recovery, "tmux", lambda *a: result(
-        "dev-api-1\t%1\t11\t/tmp/api\t1\t123\nother\t%2\t12\t/tmp/no\t0\t\n"
-        "dev-split-1\t%3\t13\t/tmp/split\t0\t\ndev-split-1\t%4\t14\t/tmp/split\t0\t\n"
-        "t-cursor-chat\t%5\t15\t/tmp/cursor\t0\t\nbad\n"))
+        "dev-api-1|%1|11|1|123|/tmp/api|slot\nother|%2|12|0||/tmp/no\n"
+        "dev-split-1|%3|13|0||/tmp/split\ndev-split-1|%4|14|0||/tmp/split\n"
+        "t-cursor-chat|%5|15|0||/tmp/cursor\nbad\n"))
     assert [p["pane"] for p in recovery.panes("socket")] == ["%1", "%5"]
     assert recovery.panes("socket")[0]["pane_dead_time"] == "123"
-    monkeypatch.setattr(recovery, "tmux", lambda *a: result("client1\t%1\nclient2\t%2\nbad\n"))
+    assert recovery.panes("socket")[0]["cwd"] == "/tmp/api|slot"
+    monkeypatch.setattr(recovery, "tmux", lambda *a: result("client1|%1\nclient2|%2\nbad\n"))
     assert recovery.clients("socket", "%2") == ["client2"]
 
 
@@ -458,15 +622,15 @@ def test_reopen_checks_current_failure_and_requesting_viewer(recovery, target, m
     monkeypatch.setattr(recovery, "clear_hint", lambda *a: cleared.append(a))
     rc = recovery.reopen(target["socket"], target["pane"], "other" if scenario == "other_client" else "requester")
     assert rc == (1 if scenario in ("missing", "other_client", "failed") else 0)
-    assert bool(offers) == (scenario in ("offer", "background", "failed"))
+    assert bool(offers) == (scenario in ("offer", "background", "failed", "cleared"))
     if offers:
-        assert offers == [((target, error), {"viewer": "requester"})]
+        assert offers == [((target, recovery.REQUESTED if scenario == "cleared" else error), {"viewer": "requester"})]
     assert bool(notices) == (scenario == "unverified")
     if notices:
         assert notices == [((target["socket"], target["pane"]), {"viewer": "requester"})]
-    assert bool(cleared) == (scenario in ("cleared", "unreadable"))
+    assert not cleared
     if scenario == "unreadable":
-        assert "close tmux output with q" in messages[-1][-1]
+        assert "INPUT PAUSED" in messages[-1][-1]
     assert bool(views) == (scenario not in ("missing", "other_client"))
     if scenario == "background":
         assert owners == [{"startup": True}]
@@ -516,6 +680,14 @@ def test_start_and_singleton(recovery, target, monkeypatch):
     monkeypatch.delenv("T_RECOVERY_DISABLE")
     assert recovery.start("dev-api-1") == 1
     monkeypatch.setattr(recovery, "run", lambda a: result(target["socket"]))
+    original = recovery.runpy.run_path
+    def modules(path):
+        helper = original(path)
+        if str(path).endswith('/t_runtime.py'):
+            helper.update(canonical_socket=lambda socket: socket, socket_aliases=lambda socket: [socket],
+                          worker_paths=lambda *args: [])
+        return helper
+    monkeypatch.setattr(recovery.runpy, 'run_path', modules)
     calls = []
     monkeypatch.setenv("COV_CORE_SOURCE", "never propagate")
     monkeypatch.setattr(recovery.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw)))

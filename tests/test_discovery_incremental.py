@@ -84,34 +84,21 @@ def test_warm_browsing_does_not_wait_for_remote_or_activity(adapter, monkeypatch
 
 @pytest.mark.parametrize('command', ['open', 'resume'])
 def test_cold_service_failure_recovers_without_rerunning_command(adapter, monkeypatch, command):
-    replies = iter([{'unavailable': True}] * 6 + [view()])
-    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: next(replies))
-    choices = []
-    def choose(message, available):
-        choices.append((message, available))
-        return 'retry'
-    def wait(refresh):
-        for _ in range(10):
-            if refresh():
-                return '__done__'
-        pytest.fail('Unbounded dead service wait')
-    if command == 'open':
-        result, _ = adapter.open_snapshot(None, choose, wait=wait)
-    else:
-        result, _ = adapter.resume_snapshot(None, wait, choose=choose)
-    assert result == view() and choices == [('Could not refresh sessions', False)]
+    data = {'unavailable': True}
+    calls = []
+    monkeypatch.setattr(adapter, 'discover', lambda *a, **k: calls.append(k) or data)
+    forbidden = lambda *a: pytest.fail('settled unavailable discovery entered a wait/retry rail')
+    result, notice = (adapter.open_snapshot(None, forbidden, wait=forbidden) if command == 'open'
+                      else adapter.resume_snapshot(None, forbidden, choose=forbidden))
+    assert result is data and notice and len(calls) == 1
 
 
 def test_cold_skip_and_cancel_never_creates_session(adapter, monkeypatch):
     cold = {'loading': True, 'hosts': []}
     monkeypatch.setattr(adapter, 'discover', lambda *a, **k: cold)
-    choices = []
-    def choose(message, available):
-        choices.append((message, available))
-        return 'cancel'
-    with pytest.raises(KeyboardInterrupt):
-        adapter.open_snapshot(None, choose, wait=lambda refresh: 'skip')
-    assert choices == [('No sessions available yet', False)]
+    monkeypatch.setattr(adapter, 'wait_for_refresh', lambda *a, **k: dict(cold, wait_timed_out=True))
+    result, notice = adapter.open_snapshot(None, lambda *a: pytest.fail('timeout prompted'))
+    assert result['wait_timed_out'] and notice
 
 
 def test_remote_export_unchanged_and_one_record_delta(engine, adapter):

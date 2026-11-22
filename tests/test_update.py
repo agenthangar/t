@@ -13,8 +13,19 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolated_update_checks(t_mod, monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(t_mod, "_t_reconcile_runtime", lambda *a, **k: 0)
     monkeypatch.setattr(t_mod, "_t_updates", lambda: {
         "check": lambda *args, **kwargs: {"checked": True, "error": True}})
+
+
+@pytest.fixture
+def discovery_retirements(t_mod, monkeypatch):
+    calls = []
+    def reconcile(source, previous=()):
+        calls.append((str(pathlib.Path(source) / 'bin/t'), list(previous)))
+        return 0
+    monkeypatch.setattr(t_mod, '_t_reconcile_runtime', reconcile)
+    return calls
 
 
 @pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
@@ -325,7 +336,7 @@ def _brew_trees(tmp_path):
     return roots, opt, opt_link, brew
 
 
-def test_homebrew_update_keeps_integrated_opt_links(t_mod, tmp_path, monkeypatch):
+def test_homebrew_update_keeps_integrated_opt_links(t_mod, tmp_path, monkeypatch, discovery_retirements):
     roots, opt, opt_link, brew = _brew_trees(tmp_path)
     home = tmp_path / "home"
     (home / "bin").mkdir(parents=True)
@@ -340,6 +351,7 @@ def test_homebrew_update_keeps_integrated_opt_links(t_mod, tmp_path, monkeypatch
     assert log.read_text().splitlines() == ["brew upgrade agenthangar/tap/t", "relink 1 unset"]
     assert os.readlink(home / "bin/t") == str(opt / "bin/t")
     assert (home / "bin/t").resolve() == roots[1] / "bin/t"
+    assert discovery_retirements == [(str(opt / 'bin/t'), [str(roots[0])])]
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[1]))
     assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
     assert log.read_text().splitlines()[-1] == "relink 1 unset"
@@ -502,7 +514,7 @@ def test_integrate_runs_full_release_installer(t_mod, tmp_path, monkeypatch):
     assert log.read_text().strip() == "unset,unset"
 
 
-def test_current_git_update_skips_installer(t_mod, monkeypatch, local_checkout, capfd):
+def test_current_git_update_skips_installer(t_mod, monkeypatch, local_checkout, capfd, discovery_retirements):
     main, home = local_checkout
     (home / "bin").mkdir()
     (home / "bin/t").symlink_to(main / "bin/t")
@@ -512,6 +524,7 @@ def test_current_git_update_skips_installer(t_mod, monkeypatch, local_checkout, 
     assert t_mod.cmd_update(None, args) == 0
     assert capfd.readouterr().out == "t: up to date\n"
     assert not (home / ".local/state/t/update").exists()
+    assert discovery_retirements == [(str(main / 'bin/t'), [])]
 
 
 def test_git_fetch_failure_keeps_diagnostics_and_skips_setup(t_mod, monkeypatch, local_checkout, capfd):
@@ -567,7 +580,7 @@ def test_explicit_repair_clears_pending_setup(t_mod, monkeypatch, local_checkout
     assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
 
 
-def test_current_release_skips_updater_but_relink_still_repairs(t_mod, tmp_path, monkeypatch, capsys):
+def test_current_release_skips_updater_but_relink_still_repairs(t_mod, tmp_path, monkeypatch, capsys, discovery_retirements):
     root = _release_tree(tmp_path)
     (root / "scripts/install-release.py").write_text("raise AssertionError('must not reinstall')")
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(root))
@@ -579,6 +592,7 @@ def test_current_release_skips_updater_but_relink_still_repairs(t_mod, tmp_path,
     assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
     assert capsys.readouterr().out == "t: up to date\n"
     assert checks == [({"kind": "release", "source": str(root), "current": "v1.2.3"}, {"force": True})]
+    assert discovery_retirements == [(str(root / 'bin/t'), [])]
     calls = []
     monkeypatch.setattr(t_mod, "_t_relink", lambda root: calls.append(root) or 0)
     assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=True)) == 0
@@ -600,7 +614,7 @@ def test_current_homebrew_skips_relink(t_mod, tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out == "t: up to date\n"
 
 
-def test_current_homebrew_check_skips_upgrade(t_mod, tmp_path, monkeypatch, capsys):
+def test_current_homebrew_check_skips_upgrade(t_mod, tmp_path, monkeypatch, capsys, discovery_retirements):
     roots, opt, opt_link, brew = _brew_trees(tmp_path)
     monkeypatch.setattr(t_mod, "_t_source_root", lambda: str(roots[0]))
     monkeypatch.setattr(t_mod, "_t_updates", lambda: {"check": lambda *a, **k:
@@ -608,6 +622,31 @@ def test_current_homebrew_check_skips_upgrade(t_mod, tmp_path, monkeypatch, caps
     monkeypatch.setattr(t_mod.subprocess, "run", lambda *a, **k: pytest.fail("already current"))
     assert t_mod.cmd_update(None, argparse.Namespace(dev=False, relink=False)) == 0
     assert capsys.readouterr().out == "t: up to date\n"
+    assert discovery_retirements == [(str(opt / 'bin/t'), [])]
+
+
+@pytest.mark.parametrize('prefix', [['system', 'update'], ['update']])
+def test_update_check_never_retires_helpers(t_mod, monkeypatch, discovery_retirements, prefix):
+    monkeypatch.setattr(t_mod, '_t_check_update', lambda **kwargs: (
+        {'kind': 'release', 'source': '/release', 'current': 'v0.1.1'},
+        {'checked': True, 'available': False}))
+    args = t_mod.build_parser().parse_args(t_mod._canonical_argv([*prefix, '--check']))
+    assert t_mod.cmd_update(None, args) == 0
+    assert not discovery_retirements
+
+
+def test_release_upgrade_reconciles_new_and_previous_sources(t_mod, tmp_path, monkeypatch, discovery_retirements):
+    old, new = _release_tree(tmp_path), _release_tree(tmp_path, 'v1.2.4')
+    home = tmp_path / 'home'
+    (home / 'bin').mkdir(parents=True)
+    link = home / 'bin/t'; link.symlink_to(old / 'bin/t')
+    (old / 'scripts/install-release.py').write_text(
+        'from pathlib import Path\n'
+        f'link = Path({str(link)!r})\nlink.unlink()\nlink.symlink_to({str(new / "bin/t")!r})\n')
+    monkeypatch.setattr(t_mod, 'HOME', str(home))
+    monkeypatch.setattr(t_mod, '_t_source_root', lambda: str(old))
+    assert t_mod.cmd_update(None, t_mod.build_parser().parse_args(['update'])) == 0
+    assert discovery_retirements == [(str(new / 'bin/t'), [str(old)])]
 
 
 def test_failed_homebrew_setup_retries_after_upgrade(t_mod, tmp_path, monkeypatch):

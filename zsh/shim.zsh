@@ -36,16 +36,20 @@ t() {
   [[ "$*" == 'config workflow instructions show'* || "$*" == 'workflow instructions show'* || "$*" == 'share read'* ]] && machine=1
   if [[ -t 1 && ${TERM:-dumb} != dumb && -z $machine && -z ${T_TITLE_ACTIVE:-} ]]; then
     case ${1:-} in
-      session|remote|issue|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
+      session|remote|issue|idea|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
           open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
         esac ;;
-      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|checkout|new|instructions|permissions|config) label+=" $1" ;;
+      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|ideate|checkout|new|instructions|permissions|config) label+=" $1" ;;
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
       case ${3:-} in start|list|ls|status|watch|inspect|logs|artifacts|cancel|cleanup) label+=" $3" ;; esac
+    fi
+    if [[ $1 == (system|session) && $2 == recovery ]]; then
+      label+=" recovery"
+      case ${3:-} in pause|resume|status) label+=" $3" ;; esac
     fi
     _term_title "$label"
     title_active=1
@@ -72,6 +76,10 @@ _t_dispatch() {
   [[ $verb == hosts && $action == run ]] && help_requested=
   [[ -n $help_requested ]] && { command t "$@"; return; }
   [[ -z $verb ]] && { command t; return; }
+  if [[ $verb == ideate || ( $verb == idea && $action == (start|resume|publish) ) ]]; then
+    _t_install idea "$@"
+    return $?
+  fi
   # Only commands that enter a checkout, launch a foreground session, or edit
   # shell settings need local dispatch. The executable owns all other groups.
   local shell_verb=$verb
@@ -127,9 +135,9 @@ _t_dispatch() {
   fi
   # Discovery waits are invocation scoped, including aliases and remote workers.
   local -x T_DISCOVERY_EXPLICIT_WAIT=${T_DISCOVERY_EXPLICIT_WAIT:-0}
-  if [[ $shell_verb == (open|resume|move|beam|remote) && ${(M)shell_args:#--wait} != '' ]]; then
+  if [[ $shell_verb == (open|resume|move|beam|remote) && ${(M)shell_args:#(-w|--wait)} != '' ]]; then
     T_DISCOVERY_EXPLICIT_WAIT=1
-    shell_args=("${(@)shell_args:#--wait}")
+    shell_args=("${(@)shell_args:#(-w|--wait)}")
   fi
   # A plain slot resume selects an immutable conversation from that slot's
   # history. Never substitute a generic live slot (which may be an empty shell).
@@ -379,7 +387,7 @@ _t_open_impl() {
     esac
     rest+=("$arg")
     case "$arg" in
-      --new|new)         a+=(new); isnew=1 ;;
+      --new|new)         isnew=1 ;;
       --attached)        include_attached=1 ;;
       --app) print -u2 -- "t: Codex Desktop support has been removed; use t session open --cli"; return 2 ;;
       --cli)             cli=1 ;;
@@ -391,7 +399,12 @@ _t_open_impl() {
       *)                 a+=("$arg"); [[ $arg == -* ]] && cli_intent=1 ;;
     esac
   done
+  [[ -z $isnew ]] || a+=(new)
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
+  if [[ -n $local_only && ( -n $remote || -n $host ) ]]; then
+    print -u2 't open: --local/--here and --remote/--host are mutually exclusive'
+    return 2
+  fi
   if (( ${a[(Ie)--force]} )) && [[ -n $isnew ]]; then
     print -u2 't open: --force cannot be combined with --new'; return 2
   fi
@@ -425,9 +438,12 @@ _t_open_impl() {
         print -u2 -- 't open: --local/--here and -r/--remote are mutually exclusive'
         return 2
       fi
-      _t_open_picker "$picker_repo" "$picker_remote" "$app" "$cli" "$include_attached"; picker_rc=$?
-      (( picker_rc == 2 )) || return $picker_rc
-      # No existing rows: use the ordinary fresh-session/default-host path.
+      _t_open_picker "$picker_repo" "$picker_remote" "$app" "$cli" "$include_attached" "" "$remote"; picker_rc=$?
+      if (( picker_rc == 3 )); then
+        _t_open_new_local "$picker_repo"
+        return $?
+      fi
+      return $picker_rc
     fi
   fi
 
@@ -485,7 +501,28 @@ _t_open_impl() {
   _t_dev "${a[@]}"
 }
 
-# Complete current-session picker. Return 2 when there are no candidates, or 3
+# Ctrl-N chooses a fresh local destination explicitly, independently of the
+# highlighted session and the inclusive browsing scope.
+_t_open_new_local() {
+  local repo=$1 selected row
+  local -a choices
+  if [[ -z $repo ]]; then
+    for repo in ${(ok)DEV_REPOS}; do
+      [[ -d ${DEV_REPOS[$repo]} ]] || continue
+      choices+=("$repo"$'\t'"$(_dev_homerel "${DEV_REPOS[$repo]}")")
+    done
+    (( $#choices )) || { print -u2 't open: no registered local repositories'; return 1; }
+    selected=$(print -rl -- "${choices[@]}" | _t_fzf_single 'new local session' 'Registered local repositories' \
+      --delimiter=$'\t' --with-nth=1,2 --prompt='new session > ') || return $?
+    [[ -n $selected ]] || return 130
+    repo=${selected%%$'\t'*}
+  fi
+  [[ -n ${DEV_REPOS[$repo]:-} && -d ${DEV_REPOS[$repo]} ]] || return 1
+  local _T_OPEN_REPO_ARGUMENT=1
+  _t_dev "$repo" new --local
+}
+
+# Complete current-session picker. Remote callers return 2 with no candidates; 3
 # for an explicit new-session request. Cancellation/failure must not start work.
 _t_open_picker() {
   local _T_OPEN_NOTICE_FILE picker_result
@@ -514,6 +551,8 @@ _t_open_picker_impl() {
   fi
   local -a fields candidates format_args
   local include_attached="$5" filtered
+  local -a cache_scope
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
   local scope_rel wt_rel cwd_rel
   scope_rel=$(_dev_homerel "$scope")
   wt_rel=$(_dev_homerel "${DEV_WORKTREE_ROOT}/${scope:t}")
@@ -523,28 +562,35 @@ _t_open_picker_impl() {
     (( inventory_rc == 0 )) || return 1
     format_args=(--remote)
   elif [[ -n $remote ]]; then
-    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" "${cache_scope[@]}" --details) || return $?
     format_args=(--remote)
   else
-    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" --local --unprefixed --details) || return $?
+    rows=$(_t_discovery_rows --open --notice-file "$_T_OPEN_NOTICE_FILE" "${cache_scope[@]}" --local --unprefixed --details) || return $?
     rows=$(print -r -- "$rows" | awk 'NF {print "local\t" $0}')
   fi
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue
-    if [[ -n $scope ]]; then
+    if [[ -n $scope && ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
       cwd_rel=$(_dev_homerel "$fields[3]")
       [[ $cwd_rel == $scope_rel || $cwd_rel == $scope_rel/* ||
          ( -n $DEV_WORKTREE_ROOT && $cwd_rel == $wt_rel/* ) ]] || continue
     fi
     candidates+=("$row")
   done
-  (( $#candidates )) || return 2
+  if (( $#candidates == 0 )); then
+    [[ -z $6 ]] || return 2
+    if [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+      print -u2 't open: discovery is incomplete; no session was started'
+      return 1
+    fi
+  fi
   [[ -n $repo ]] && format_args+=(--repo)
   rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
-  [[ -n $rows ]] || return 1
+  [[ -n $rows || $#candidates == 0 ]] || return 1
   local columns=${rows%%$'\n'*}
   rows=${rows#*$'\n'}
+  [[ -n $columns ]] || columns='SESSION  WORKING ON  LAST TURN'
   # Filter from raw ownership fields, then match stable host/session identities.
   local -A hidden
   for row in "${candidates[@]}"; do
@@ -579,7 +625,11 @@ _t_open_picker_impl() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    selected=$(T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
+    local new_session=1
+    # Explicit remote callers have their own fresh-session routing. A remote
+    # browse must never turn Ctrl-N into a local launch on the calling machine.
+    [[ -z $6 && -z $7 ]] || new_session=
+    selected=$(T_PICKER_NEW_SESSION="$new_session" T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
@@ -712,7 +762,7 @@ _t_beam_xlate() {
 # key for `on`), and slot/flags after. Pulls live from the ${(k)DEV_REPOS} /
 # ${(k)REMOTE_HOSTS} arrays so it stays current with ${T_LOCAL_RC}.
 _t() {
-  local -a nouns=(session move issue share remote repo cursor hosts agentcore workflow runners eval config mcp profile policy agent system login help)
+  local -a nouns=(session move issue share ideate idea remote repo cursor hosts agentcore workflow runners eval config mcp profile policy agent system login help)
   if (( CURRENT == 2 )); then
     _describe -t nouns 't command group' nouns
     return
@@ -754,6 +804,25 @@ _t() {
     else
       _message 'saved configuration name or run ID (omit for fzf)'
     fi
+    return
+  fi
+  if [[ $group == idea ]]; then
+    if (( CURRENT == first - 1 )); then
+      local -a idea_actions=(list ls show start resume publish)
+      _describe -t actions 'idea action' idea_actions
+    elif [[ ${words[CURRENT]} == -* ]]; then
+      _values 'flag' -h --help
+    elif [[ $action == (show|resume|publish) ]]; then
+      local -a idea_ids
+      idea_ids=("${(@f)$(command t idea list 2>/dev/null | awk '/^idea-/ {print $1}')}")
+      _values 'saved idea ID' "${idea_ids[@]}"
+    else
+      _message 'idea title'
+    fi
+    return
+  fi
+  if [[ $group == ideate ]]; then
+    _values 'flag' -h --help
     return
   fi
   if [[ $group == issue ]]; then
@@ -806,7 +875,7 @@ _t() {
   case $group in
     mcp) actions=(list ls status install uninstall) ;;
     remote) actions=(open move resume kill) ;;
-    session) actions=(open list ls close restart push pop resume cd move read view-plan paste search goal) ;;
+    session) actions=(open list ls close restart push pop resume cd move read view-plan paste search goal recovery) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -817,7 +886,7 @@ _t() {
     profile) actions=(init edit show apply) ;;
     policy) actions=(check show apply) ;;
     agent) actions=(login install status trust) ;;
-    system) actions=(integrate update diagnose advisories usage apps) ;;
+    system) actions=(integrate update diagnose advisories usage apps recovery) ;;
   esac
   [[ $group == hosts && ( $action == delete || $action == rm ) ]] && action=remove
   if (( ${#actions} )) && (( CURRENT == first - 1 )); then
@@ -835,6 +904,21 @@ _t() {
   if [[ $group == mcp ]]; then
     if [[ $action == (list|ls|status) ]]; then _values 'flag' --json -h --help
     else _values 'flag' -h --help; fi
+    return
+  fi
+  if [[ $group == (session|system) && $action == recovery ]]; then
+    if (( CURRENT == first )); then
+      local -a recovery_actions=(status)
+      [[ $group == session ]] && recovery_actions=(pause resume status)
+      _values 'recovery action' "${recovery_actions[@]}"
+    elif [[ ${words[CURRENT]} == -* || $group == system ]]; then
+      if [[ ${words[first]} == status ]]; then _values 'flag' --json -h --help
+      else _values 'flag' -h --help; fi
+    elif (( CURRENT == first + 1 )); then
+      _values 'repo or conversation ID' "${(@f)$(_dev_repo_selectors)}"
+    else
+      _message 'local slot number'
+    fi
     return
   fi
   if [[ $group == runners ]]; then
@@ -909,7 +993,7 @@ _t() {
   case "$group/$action" in
     remote/kill)
       if [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
-        _values 'flag' -y --yes --wait -h --help
+        _values 'flag' -y --yes -w --wait -h --help
       elif (( CURRENT == first )); then _values 'repo or slot' "${(@f)$(_dev_repo_selectors)}" 1 2 3 4 all
       else _values 'slot' 1 2 3 4 all; fi ;;
     remote/open|remote/move|remote/resume)
@@ -933,7 +1017,7 @@ _t() {
         *)
           if [[ ${words[CURRENT]} == -* ]]; then
             local -a remote_flags=(-h --help)
-            case $action in open) remote_flags+=(--new --wait) ;; move) remote_flags+=(--to --from --session --all --detach --fg --wait) ;; resume) remote_flags+=(--days --all --last --wait) ;; esac
+            case $action in open) remote_flags+=(--new -w --wait) ;; move) remote_flags+=(--to --from --session --all --detach --fg -w --wait) ;; resume) remote_flags+=(--days --all --last -w --wait) ;; esac
             _values 'flag' $remote_flags
           elif [[ $action != move && -z $remote_legacy ]] && (( remote_count == 0 )); then
             _values 'host' ${(k)REMOTE_HOSTS}
@@ -960,7 +1044,7 @@ _t() {
       if (( CURRENT == first )) && [[ $action == cd || $action == locate ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
       else _values 'flag' -h --help; fi ;;
     session/history)
-      local -a history_flags=(--limit --page --refresh --json --wait -h --help)
+      local -a history_flags=(--limit --page --refresh --json -w --wait -h --help)
       if [[ ${words[CURRENT-1]} == --limit || ${words[CURRENT-1]} == --page ]]; then
         _message 'positive integer'
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )) \
@@ -998,13 +1082,13 @@ _t() {
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
         case $action in
-          open) flags+=(--wait --new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
-          close) flags+=(-y --yes -r --remote --wait) ;;
+          open) flags+=(-w --wait --new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
+          close) flags+=(-y --yes -r --remote -w --wait) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
           paste) flags+=(-p --pick -n --newest) ;;
-          move) flags+=(--wait -r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
-          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host --last --wait) ;;
+          move) flags+=(-w --wait -r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
+          resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host --last -w --wait) ;;
         esac
         _values 'flag' "${flags[@]}"
       elif (( CURRENT == first )); then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
@@ -1028,7 +1112,7 @@ _t() {
       _values 'flag' --json -h --help ;;
     session/list)
       if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -l --local -a --all --wait -h --help; fi ;;
+      else _values 'flag' -r --remote -l --local -a --all -w --wait -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)

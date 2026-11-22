@@ -50,14 +50,14 @@ def control_rows(parts, width, selected=(), compact=False, color=False, selected
                            for part in line) for line in lines]
 
 
-def sort_rows(mode, width, enabled=True, compact=False, color=False, include_turn=True, include_closed=False):
+def sort_rows(mode, width, enabled=True, compact=False, color=False, include_turn=True, include_closed=False, selected_role='active'):
     """The open/resume sort block: current choice, then cycling and choices."""
     choices = {name: ('turn' if compact and name == 'turn' else label)
                for name, (_, label) in (_SORT['SAVED_SORTS'] if include_closed else _SORT['RESUME_SORTS']).items()
                if (include_turn or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = 'Sort: ' + (_SORT['sort_label'](mode, compact) if enabled else 'OFF')
     return (control_rows([label, 'Ctrl-S toggle'], width, [label] if enabled else [], compact, color,
-                         selected_role='selected' if include_closed else 'active')
+                         selected_role='selected' if include_closed else selected_role)
             + control_rows(['Ctrl-Y next'] + ([] if compact else list(choices.values())), width,
                            [choices[mode]] if enabled and mode in choices and not compact else [], compact, color))
 

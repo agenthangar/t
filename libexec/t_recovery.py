@@ -1,11 +1,13 @@
 """Local recovery menus for t's terminal clients; no model or network dependency."""
 
 import fcntl
+import array
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import shutil
 import signal
@@ -13,13 +15,18 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import termios
 import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNTIME_PROTOCOL = 1
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 BACKGROUND = "Cannot use the background server"
 DEAD = "Agent pane has exited"
+STALLED = "Agent is not reading terminal input"
+REQUESTED = "Recovery requested"
+STALL_SECONDS = 12
 INVALID_CWD = "Failed to start turn: turn/start failed in TUI: turn/start failed: invalid cwd: No such file or directory (os error 2) (code -32600)"
 # Match final CLI error lines, not generic mentions of errors or retry counters.
 FAILURES = {
@@ -103,11 +110,13 @@ def failure(agent, screen):
 
 
 def panes(socket):
-    keys = ("session", "pane", "pane_pid", "cwd", "pane_dead", "pane_dead_time")
-    result = tmux(socket, "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{session_path}\t#{pane_dead}\t#{pane_dead_time}")
+    keys = ("session", "pane", "pane_pid", "pane_dead", "pane_dead_time", "cwd")
+    # Some tmux builds rewrite literal tabs in format strings. The path is
+    # last so separators in a workspace name do not change the field count.
+    result = tmux(socket, "list-panes", "-a", "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_time}|#{session_path}")
     groups = {}
     for line in result.stdout.splitlines():
-        fields = line.split("\t")
+        fields = line.split("|", 5)
         if len(fields) == len(keys) and fields[0].startswith(("dev-", "t-cursor-")):
             groups.setdefault(fields[0], []).append(dict(zip(keys, fields)))
     return [rows[0] for rows in groups.values() if len(rows) == 1]
@@ -216,9 +225,61 @@ def current(target):
 
 
 def clients(socket, pane):
-    result = tmux(socket, "list-clients", "-F", "#{client_name}\t#{pane_id}")
+    result = tmux(socket, "list-clients", "-F", "#{client_name}|#{pane_id}")
     return [fields[0] for line in result.stdout.splitlines()
-            if len(fields := line.split("\t")) == 2 and fields[1] == pane]
+            if len(fields := line.split("|")) == 2 and fields[1] == pane]
+
+
+def input_state(socket, pane, viewer=None):
+    """Observe tmux input routing; absent/unsupported fields stay unknown."""
+    result = tmux(socket, "display-message", "-p", "-t", pane,
+                  "#{pane_tty}|#{pane_input_off}|#{pane_in_mode}|#{pane_mode}")
+    fields = result.stdout.rstrip("\r\n").split("|")
+    if result.returncode or len(fields) != 4:
+        return {}
+    state = dict(zip(("tty", "input_off", "in_mode", "mode"), fields))
+    result = tmux(socket, "list-clients", "-F",
+                  "#{client_name}|#{pane_id}|#{client_readonly}|#{client_control_mode}|#{client_tty}|#{client_key_table}")
+    if result.returncode:
+        return state
+    viewers = []
+    for line in result.stdout.splitlines():
+        row = line.split("|")
+        if len(row) != 6 or row[1] != pane or (viewer is not None and row[0] != viewer):
+            continue
+        if row[2] == "1":
+            state["readonly"] = True
+        if row[2:4] == ["0", "0"] and row[4].startswith("/dev/") and row[5] == "root":
+            viewers.append(row[0])
+    state["viewers"] = viewers
+    return state
+
+
+def unread_input(tty):
+    """Read only a raw PTY's pending-byte count, never its input contents."""
+    if not isinstance(tty, str) or not tty.startswith("/dev/"):
+        return None
+    fd = None
+    try:
+        fd = os.open(tty, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
+        if termios.tcgetattr(fd)[3] & termios.ICANON:
+            return None
+        count = array.array("i", [0])
+        fcntl.ioctl(fd, termios.FIONREAD, count, True)
+        return count[0] if count[0] >= 0 else None
+    except (OSError, ValueError, AttributeError, termios.error):
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def pending_input(socket, pane, viewer=None):
+    state = input_state(socket, pane, viewer)
+    if state.get("input_off") != "0" or state.get("in_mode") != "0" or not state.get("viewers"):
+        return None, None
+    count = unread_input(state.get("tty"))
+    return count, state["viewers"][0]
 
 
 def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None, closed=None):
@@ -259,7 +320,7 @@ def recovery_menu(socket, pane, viewer, title, lines, actions, cleanup=None, clo
     return tmux(socket, "run-shell", "-b", command).returncode == 0
 
 
-def offer(target, error, viewer=None):
+def offer(target, error, viewer=None, force=False):
     socket = target["socket"]
     viewers = clients(socket, target["pane"])
     if not viewers or (viewer is not None and viewer not in viewers):
@@ -267,13 +328,25 @@ def offer(target, error, viewer=None):
     viewer = viewer or viewers[0]
     token = uuid.uuid4().hex
     path = cache(socket) / (token + ".offer")
-    write_json(path, {**target, "viewer": viewer, "error": error, "created": time.time()})
+    write_json(path, {**target, "viewer": viewer, "error": error, "created": time.time(), "force": force})
     callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "accept", socket, token,
                           target["pane"], viewer])
     dismiss = shlex.join([sys.executable, str(Path(__file__).resolve()), "dismiss", socket, token])
     # One menu, on a client actually viewing this pane. No keystrokes enter the
     # agent and no action runs until the user chooses Restart.
-    if error == DEAD:
+    if force:
+        title, choice = "t: AGENT STILL RUNNING", "Force stop and restart"
+        lines = ["This agent did not stop after the restart request.",
+                 "Force stop this terminal client and restart the same conversation?",
+                 "An unsaved turn may be lost.",
+                 "The visible draft was saved. Other sessions stay running."]
+    elif error in (STALLED, REQUESTED):
+        title = "t: TERMINAL INPUT WAITING" if error == STALLED else "t: SESSION RECOVERY"
+        choice = "Save draft and restart"
+        lines = ["The agent may have stopped reading terminal input." if error == STALLED else
+                 "Restart this conversation if its input is not responding.",
+                 "Your visible draft will be saved first."]
+    elif error == DEAD:
         title, choice = "t: AGENT EXITED", "Save draft and restart"
         lines = ["The agent's terminal process has exited.",
                  "Restart to continue this conversation.", "Your visible draft will be saved first."]
@@ -291,8 +364,8 @@ def offer(target, error, viewer=None):
         lines = ["The agent connection has stopped.",
                  "Restart to continue this conversation.", "Your visible draft will be saved first."]
     shown = recovery_menu(socket, target["pane"], viewer, title, lines, [
-        (choice, "r", "run-shell -b " + shlex.quote(callback)),
-        ("Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)),
+        (choice, "" if error == STALLED else "r", "run-shell -b " + shlex.quote(callback)),
+        ("Cancel" if force else "Dismiss", "q", "run-shell -b " + shlex.quote(dismiss)),
     ], closed=path.with_suffix(".closed"))
     if not shown:
         path.unlink(missing_ok=True)
@@ -310,7 +383,7 @@ def unverified_notice(socket, pane, viewer=None):
     path = notice_path(socket, pane)
     write_json(path, {})
     shown = recovery_menu(socket, pane, viewer or viewers[0], "t: RECOVERY NEEDS ATTENTION", [
-        "t detected an agent error.",
+        "This pane needs recovery.",
         "t cannot verify this conversation.",
         "Copy your draft before quitting, then relaunch.",
     ], [("Dismiss", "q", "")], cleanup=path)
@@ -431,13 +504,18 @@ def reopen(socket, pane_id, viewer):
         return 1
     notice_path(socket, pane_id).unlink(missing_ok=True)
     unreadable_view = clear_callback_view(socket, pane_id)
+    state = input_state(socket, pane_id, viewer)
+    reason = ("Input to this pane is disabled in tmux." if state.get("input_off") == "1" else
+              "This tmux client is read-only." if state.get("readonly") else
+              "Close tmux copy or output mode with q to return to the agent."
+              if state.get("in_mode") == "1" or unreadable_view else "")
+    if reason:
+        return 0 if recovery_menu(socket, pane_id, viewer, "t: INPUT PAUSED", [reason],
+                                  [("Dismiss", "q", "")]) else 1
     error = pane_failure(socket, pane)
     if not error:
-        clear_hint(socket, pane_id)
-        message = ("t: close tmux output with q to return to the agent" if unreadable_view else
-                   "t: this pane no longer needs recovery")
-        tmux(socket, "display-message", "-c", viewer, message)
-        return 0
+        # The shortcut is the user's report. A screen error is not required.
+        error = REQUESTED
     target = owner(socket, pane, startup=True) if error == BACKGROUND else owner(socket, pane)
     shown = offer(target, error, viewer=viewer) if target else unverified_notice(socket, pane_id, viewer=viewer)
     return 0 if shown else 1
@@ -450,6 +528,27 @@ class Watcher:
         self.unverified = set()
         self.generations = {}
         self.key = None
+        self.stalled = {}
+
+    def input_failure(self, pane):
+        pane_id = pane["pane"]
+        count, viewer = pending_input(self.socket, pane_id)
+        if not count:
+            self.stalled.pop(pane_id, None)
+            return "", None, None
+        target = owner(self.socket, pane)
+        if (not target or target.get("agent") != "codex" or target.get("pane_dead") == "1"
+                or not descendant(target["pid"], pane["pane_pid"])):
+            self.stalled.pop(pane_id, None)
+            return "", None, None
+        identity = tuple(target.get(key) for key in ("pid", "start", "sid", "cwd", "pane_pid"))
+        previous, since = self.stalled.get(pane_id, (None, time.monotonic()))
+        if previous != identity:
+            since = time.monotonic()
+            if previous is not None:
+                self.seen.pop(pane_id, None)
+        self.stalled[pane_id] = (identity, since)
+        return (STALLED if time.monotonic() - since >= STALL_SECONDS else ""), target, viewer
 
     def poll(self):
         rows = panes(self.socket)
@@ -471,13 +570,23 @@ class Watcher:
         self.seen = {key: value for key, value in self.seen.items() if key in active}
         self.unverified.intersection_update(active)
         self.generations = {key: value for key, value in self.generations.items() if key in active}
+        self.stalled = {key: value for key, value in self.stalled.items() if key in active}
+        # Make the existing prefix shortcut available even before an error.
+        if rows and self.key is None:
+            self.key = recovery_key(self.socket)
         for pane in rows:
             generation = (pane["pane_pid"], pane.get("pane_dead_time", ""))
             if self.generations.get(pane["pane"]) != generation:
                 self.seen.pop(pane["pane"], None)
                 self.unverified.discard(pane["pane"])
+                self.stalled.pop(pane["pane"], None)
             self.generations[pane["pane"]] = generation
             error = pane_failure(self.socket, pane)
+            input_target, input_viewer = None, None
+            if not error:
+                error, input_target, input_viewer = self.input_failure(pane)
+            else:
+                self.stalled.pop(pane["pane"], None)
             old_error, offered = self.seen.get(pane["pane"], ("", False))
             if not error:
                 clear_hint(self.socket, pane["pane"])
@@ -487,16 +596,17 @@ class Watcher:
                 status_hint(self.socket, pane, self.key)
             if error != old_error:
                 self.unverified.discard(pane["pane"])
-            if error and error == old_error and not offered:
-                target = owner(self.socket, pane, startup=True) if error == BACKGROUND else owner(self.socket, pane)
+            if error and (error == old_error or error == STALLED) and not offered:
+                target = (input_target or (owner(self.socket, pane, startup=True) if error == BACKGROUND
+                                          else owner(self.socket, pane)))
                 if target:
                     # tmux will not open a second menu over the notice. Wait for
                     # its close callback, including Escape, then offer recovery.
                     if pane["pane"] not in self.unverified or not notice_path(self.socket, pane["pane"]).exists():
-                        offered = offer(target, error)
+                        offered = offer(target, error, viewer=input_viewer) if input_viewer else offer(target, error)
                 elif pane["pane"] not in self.unverified and unverified_notice(self.socket, pane["pane"]):
                     self.unverified.add(pane["pane"])
-            self.seen[pane["pane"]] = (error, offered if error == old_error else False)
+            self.seen[pane["pane"]] = (error, offered if error == old_error or error == STALLED else False)
         return bool(rows)
 
 
@@ -510,7 +620,7 @@ def source_version():
     return stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size
 
 
-def watch(socket):
+def watch(socket, token=None):
     loaded = source_version()
     with (cache(socket) / "watch.lock").open("w") as lock:
         try:
@@ -518,7 +628,26 @@ def watch(socket):
         except BlockingIOError:
             return 0
         watcher = Watcher(socket)
+        try:
+            runtime = runpy.run_path(str(ROOT / 'libexec/t_runtime.py'))
+            runtime_path = cache(socket) / 'watch.runtime.json'
+            reload_path = cache(socket) / 'watch.reload.json'
+            record = runtime['publish'](runtime_path, 'recoverywatcher', socket, token=token)
+            runtime['complete_migration']('recoverywatcher', socket, 'server', record,
+                                          (runtime_path, socket, None))
+        except (OSError, ValueError, TypeError, SyntaxError):
+            runtime, record = None, None
         while True:
+            if record and reload_path.exists():
+                try:
+                    request = runtime['replacement'](reload_path, record, 'recoverywatcher')
+                    if request:
+                        # Existing recovery self-exec semantics release/reacquire
+                        # its singleton lock; no agent or job receives a signal.
+                        os.execv(sys.executable, [sys.executable, str(runtime['dispatcher']()),
+                                 request['source'], 'libexec/t_recovery.py', 'watch-resume', socket, record['token']])
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+                    reload_path.unlink(missing_ok=True)
             # t update replaces this source, but a long-lived Python process
             # otherwise keeps the old module in memory indefinitely. exec drops
             # the close-on-exec flock; the replacement reacquires it or exits if
@@ -540,13 +669,38 @@ def watch(socket):
     return 0
 
 
-def start(session):
+def start(session, socket=None):
     if os.environ.get("T_RECOVERY_DISABLE"):
         return 0
-    result = run(["tmux", "display-message", "-p", "-t", "=" + session + ":", "#{socket_path}"])
-    socket = result.stdout.strip()
-    if result.returncode or not socket.startswith("/"):
+    result = run(["tmux", "display-message", "-p", "-t", "=" + session + ":", "#{socket_path}"]) if not socket else None
+    socket = result.stdout.strip() if result else socket
+    if (result and result.returncode) or not socket.startswith("/"):
         return 1
+    runtime = runpy.run_path(str(ROOT / 'libexec/t_runtime.py'))
+    try:
+        socket = runtime['canonical_socket'](socket)
+    except (OSError, ValueError):
+        return 1
+    paths = runtime['worker_paths']('recoverywatcher', socket)
+    if sum(runtime['lock_held'](runtime['worker_lock'](path, 'recoverywatcher')) for path in paths) > 1:
+        runtime['defer_migration']('recoverywatcher', socket, 'server', 'multiple historical recovery owners are preserved')
+        return 0
+    for alias in runtime['socket_aliases'](socket):
+        lockpath = cache(alias) / 'watch.lock'
+        if not lockpath.exists():
+            continue
+        with os.fdopen(os.open(lockpath, os.O_RDWR | os.O_NOFOLLOW), 'r+') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                path = cache(alias) / 'watch.runtime.json'
+                record = runtime['read'](path)
+                adopted = runtime['adopt_worker_record']('recoverywatcher', socket, path)
+                record = runtime['read'](path)
+                if not adopted or not runtime['complete_migration']('recoverywatcher', socket, 'server', record, (path, socket, None)):
+                    runtime['defer_migration']('recoverywatcher', socket, 'server',
+                                             'waiting for the existing recovery watcher safe boundary')
+                return 0
     env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "watch", socket],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -617,7 +771,8 @@ def install_cursor_hook():
 def cursor_launch(cwd, sid):
     helper = __import__('runpy').run_path(str(ROOT / 'libexec/t_workflow_cursor.py'))
     args = helper['prepare'](cwd)
-    return 'exec ' + shlex.join(['cursor-agent', '--resume=' + sid, *args])
+    recovery = __import__('runpy').run_path(str(ROOT / 'libexec/t_auto_recovery.py'))
+    return 'exec ' + shlex.join([*recovery['prefix']('cursor'), 'cursor-agent', '--resume=' + sid, *args])
 
 
 def cursor_resume(sid, cwd):
@@ -718,6 +873,23 @@ def response_message(socket, target, message):
              "-t", target["pane"], message)
 
 
+def capture_stop(target):
+    immutable = tmux(target["socket"], "display-message", "-p", "-t", target["pane"],
+                     "#{session_id}").stdout.strip()
+    if not re.fullmatch(r"\$[0-9]+", immutable):
+        raise ValueError("could not verify the terminal session for force stop")
+    result = subprocess.run([sys.executable, str(ROOT / "libexec/t_client_stop.py"), "capture",
+                             target["session"], target["cwd"], immutable, target["pid"], target["agent"]],
+                            env=dict(os.environ, TMUX=target["socket"] + ",0,0"),
+                            capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL, cwd="/")
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "could not verify the client for force stop")
+    token = json.loads(result.stdout)
+    if not isinstance(token, dict):
+        raise ValueError("could not verify the client for force stop")
+    return token
+
+
 def respond(socket, token, accept, pane=None, viewer=None):
     if not re.fullmatch(r"[0-9a-f]{32}", token):
         return 1
@@ -737,7 +909,11 @@ def respond(socket, token, accept, pane=None, viewer=None):
     try:
         if target.get("socket") != socket or not current(target):
             raise ValueError("the conversation changed; reopen recovery using the status shortcut")
-        if target["error"] != DEAD:
+        if target["error"] == STALLED and not target.get("force"):
+            count, _ = pending_input(socket, target["pane"], target.get("viewer"))
+            if not count:
+                raise ValueError("terminal input is no longer stalled")
+        elif target["error"] not in (DEAD, REQUESTED) and not target.get("force"):
             screen = tmux(socket, "capture-pane", "-p", "-J", "-t", target["pane"])
             if failure(target["agent"], screen.stdout) != target["error"]:
                 raise ValueError("the connection failure is no longer visible")
@@ -751,11 +927,18 @@ def respond(socket, token, accept, pane=None, viewer=None):
             args = ["_t_restart_slot", target["session"], target["cwd"], target["sid"], target["agent"], mode, target["pid"]]
             if mode == "restart-dead":
                 args.append(" ".join(target[key] for key in ("pane", "pane_pid", "pane_dead_time", "pane_dead")))
+            elif target.get("force"):
+                args.extend(["", json.dumps(target["stop_token"], separators=(",", ":"))])
             env = dict(os.environ, TMUX=socket + ",0,0")
             result = subprocess.run(["zsh", "-lic", "setopt no_monitor no_notify; " + shlex.join(args)],
                                     env=env, text=True, capture_output=True, timeout=30,
                                     stdin=subprocess.DEVNULL, cwd="/")
             if result.returncode:
+                if result.returncode == 75 and not target.get("force") and current(target):
+                    stop_token = capture_stop(target)
+                    if current(target) and offer({**target, "stop_token": stop_token}, target["error"],
+                                                 viewer=target.get("viewer"), force=True):
+                        return 1
                 raise ValueError(result.stderr.strip() or "restart failed")
             message = result.stdout.strip()
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
@@ -771,7 +954,7 @@ def main(argv):
         action, *args = argv
         if action == "start":
             return start(*args)
-        if action == "watch":
+        if action in ("watch", "watch-resume"):
             return watch(*args)
         if action == "reopen":
             # These are tmux UI callbacks, not shell-facing success codes.
@@ -787,7 +970,7 @@ def main(argv):
             respond(*args[:2], action == "accept", *args[2:])
             return 0  # Includes callbacks from old menus whose offer is gone.
         raise ValueError("unknown recovery action")
-    except (OSError, ValueError, TypeError) as error:
+    except (OSError, ValueError, TypeError, SyntaxError) as error:
         print("t recovery: " + str(error), file=sys.stderr)
         return 1
 

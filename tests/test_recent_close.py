@@ -175,7 +175,9 @@ def test_real_recent_close_marker_keeps_focus(picker, width, height, plain):
     assert '↶' in next(line for line in screen.splitlines() if 'Older api' in line)
     keys('-l', 'Older')
     screen = wait('1/1 (0)', focused='Older api')
-    assert next(line for line in screen.splitlines() if 'Older api' in line).index('Older api') == before
+    matched = next(line for line in screen.splitlines() if 'Older api' in line)
+    assert '↶' in matched
+    assert matched.index('Older api') == before
     finish('Escape', 130)
 
 

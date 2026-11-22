@@ -513,3 +513,24 @@ def test_history_sort_block_matches_open_and_preserves_section_spacing(history, 
         assert chrome.startswith('HOTKEYS\n')
         assert '\n\n' in chrome
     assert all(history.display_width(line) <= width for line in chrome.splitlines())
+
+
+@pytest.mark.parametrize('strip_color', [False, True])
+def test_last_closed_selection_accepts_fzf_marker_styling(history, app, monkeypatch, strip_color):
+    data = rows(1)
+    data[0]['associations'][0].update(evidence='close', observed=300)
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    monkeypatch.setattr(history.sys.stderr, 'isatty', lambda: True)
+
+    def choose(argv, **kwargs):
+        rendered = Path(argv[6]).read_text()
+        marker = history._THEME['paint']('↶', 'heading')
+        assert marker in rendered and marker != '↶'
+        if strip_color:
+            rendered = rendered.replace(marker, '↶')
+        return SimpleNamespace(returncode=0, stdout='\nenter\n' + rendered)
+
+    monkeypatch.setattr(history.subprocess, 'run', choose)
+    selected, key, _ = app.pick(data, 'repo 1')
+    assert key == 'enter' and selected['sid'] == data[0]['sid']

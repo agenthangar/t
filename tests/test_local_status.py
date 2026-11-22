@@ -42,6 +42,11 @@ def test_ownership_and_read_only_render(status, tmp_path, monkeypatch):
     before = path.stat().st_mtime_ns
     assert m.render('right', tmp_path, '/socket', '%1') == 'local Qwen##test · inferring '
     assert path.stat().st_mtime_ns == before
+    path.write_text(json.dumps(dict(row, state='waiting', memory={'shortfall_bytes':5*1024**3},
+                                    verification='Verified on this Mac at 32K', controls=True)))
+    rendered=m.render('right',tmp_path,'/socket','%1')
+    assert 'Waiting for memory · 5.0 GiB short' in rendered
+    assert 'Verified here · 32K' in rendered and 'Prefix F6' in rendered
     for change in ({'pane_pid':124}, {'updated':time.time()-20}, {'updated':time.time()+20}, {'state':'invalid'}):
         path.write_text(json.dumps(dict(row, **change)))
         assert m.render('right', tmp_path, '/socket', '%1') == ''

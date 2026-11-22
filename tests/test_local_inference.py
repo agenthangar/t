@@ -427,7 +427,7 @@ def test_outage_policy_and_routing(local,monkeypatch):
         with pytest.raises(ValueError):m.policy(value)
     assert 'connection' in m.instructions({'mode':'automatic','on_cloud_failure':'local'})
     calls=[]
-    monkeypatch.setattr(m,'helper',lambda n:{'supervise':lambda *a:calls.append(a) or 7, 'launch_options':lambda *a:None})
+    monkeypatch.setattr(m,'helper',lambda n:({'enabled':lambda:False} if n=='t_auto_recovery' else {'supervise':lambda *a:calls.append(a) or 7, 'launch_options':lambda *a:None}))
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'local'})==7
     assert calls[0][2]=='/repo'
     assert m.lead(['codex'],cwd='/repo',chosen={'mode':'automatic','on_cloud_failure':'ask'})==7
@@ -771,7 +771,7 @@ def test_cloud_recovery_staging_and_readiness(local, monkeypatch):
 
 def test_pause_launch_compatibility(local, monkeypatch, capsys):
     def reject(*args): raise ValueError('unsupported launch')
-    monkeypatch.setattr(local, 'helper', lambda name: {'launch_options': reject})
+    monkeypatch.setattr(local, 'helper', lambda name: {'enabled': lambda: False} if name == 't_auto_recovery' else {'launch_options': reject})
     calls=[]
     monkeypatch.setattr(local.subprocess, 'call', lambda args: calls.append(args) or 0)
     assert local.lead(['codex','--profile','saved'], chosen={'on_cloud_failure':'pause'}) == 0
@@ -779,7 +779,7 @@ def test_pause_launch_compatibility(local, monkeypatch, capsys):
     assert 'using native tool retries' in capsys.readouterr().err
     with pytest.raises(ValueError, match='unsupported launch'):
         local.lead(['codex','--profile','saved'], chosen={'on_cloud_failure':'local'})
-    monkeypatch.setattr(local, 'helper', lambda name: {'launch_options':lambda *args:None, 'supervise':lambda *args:9})
+    monkeypatch.setattr(local, 'helper', lambda name: {'enabled':lambda:False} if name == 't_auto_recovery' else {'launch_options':lambda *args:None, 'supervise':lambda *args:9})
     assert local.lead(['codex'], chosen={'on_cloud_failure':'pause'}) == 9
 
 
@@ -882,3 +882,18 @@ def test_mlx_readiness_is_provider_specific(local, monkeypatch):
     assert m.report(m.artifact(name), hardware(), provider='mlx-vlm')['ready']
     assert not m.report(m.artifact(name), hardware(), 65536, provider='mlx-vlm')['ready']
     assert m.policy({'provider': 'mlx-vlm'})['provider'] == 'mlx-vlm'
+
+
+@pytest.mark.parametrize('recovery', ['pause', 'ask', 'local'])
+def test_enabled_host_recovery_preserves_exact_saved_native_resume(local, monkeypatch, tmp_path, recovery):
+    argv = ['/native/codex', 'resume', 'selected', '--model', 'sample-model', '--no-daemon']
+    original = local.helper
+    calls = []
+    def helper(name):
+        if name == 't_auto_recovery':
+            return {'enabled': lambda: True,
+                    'launch': lambda agent, args, chosen=None: calls.append((agent, args, chosen)) or 7}
+        return original(name)
+    monkeypatch.setattr(local, 'helper', helper)
+    assert local.lead(argv, cwd=str(tmp_path), chosen={'on_cloud_failure': recovery}) == 7
+    assert calls == [('codex', argv, None)]

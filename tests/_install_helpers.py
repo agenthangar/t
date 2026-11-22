@@ -8,6 +8,7 @@ import subprocess
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "install.sh"
 ASSETS = (
+    "libexec/t_config_path.py", "libexec/t_runtime.py", "libexec/t_runtime_dispatch.py", "libexec/t_terminal_close.py",
     "libexec/t_nightr.py", "libexec/nightr_install.py",
     "libexec/t_workflow_install.py", "libexec/t_workflow_context.py", "libexec/t_watch.py", "libexec/t_recovery.py",
     ".t-install-version", "install.sh", "t.plugin.zsh", "local.zsh.example",
@@ -53,12 +54,16 @@ def run_install(cwd, home, **extra_env):
         "ZDOTDIR": str(home),
         "XDG_CONFIG_HOME": str(Path(home) / ".config"),
         "XDG_DATA_HOME": str(Path(home) / ".local" / "share"),
+        "XDG_STATE_HOME": str(Path(home) / ".local" / "state"),
+        "XDG_CACHE_HOME": str(Path(home) / ".cache"),
         "T_NO_MCP": "1",  # Never run the developer's actual Claude CLI.
         "T_NO_PERMISSIONS": "1",
         "T_NO_TRUST": "1",
         "TMUX": "",
+        "TMUX_TMPDIR": str(Path(home) / "tmux"),
     }
     env.update(extra_env)
+    Path(env["TMUX_TMPDIR"]).mkdir(parents=True, exist_ok=True)
     return subprocess.run(
         ["./install.sh"], cwd=str(cwd), env=env,
         capture_output=True, text=True,

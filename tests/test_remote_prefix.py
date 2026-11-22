@@ -142,6 +142,15 @@ def test_aggregate_queries_are_sorted_deduplicated_and_noninteractive(t_mod, rem
         assert out.index('alias:') < out.index('alpha:')
 
 
+def test_remote_session_list_forwards_wait_in_long_form(t_mod, remote, cfg, monkeypatch):
+    def run(host, target, path, tail, context, **kwargs):
+        assert path == ('session', 'list') and tail == ['--wait']
+        return host, 0, 'rows\n', ''
+    monkeypatch.setitem(remote['execute'].__globals__, 'run_host', run)
+    args = SimpleNamespace(rest=['--host', 'alpha', 'session', 'list', '-w'])
+    assert remote['execute'](cfg, args, mock_api(t_mod, cfg)) == 0
+
+
 def test_partial_failures_and_single_output(remote, capsys):
     assert remote['render_results']([('a', 0, 'ok\n', ''), ('b', 255, '', 'offline')]) == 1
     out = capsys.readouterr()

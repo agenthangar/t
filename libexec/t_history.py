@@ -27,6 +27,7 @@ _CODEX_STORE = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))
 _codex_rows = _CODEX_STORE["rows"]
 
 _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
+_CLIENT_STOP = runpy.run_path(str(Path(__file__).with_name('t_client_stop.py')))
 
 VERSION = 1
 PARSER_VERSION = 8
@@ -56,6 +57,15 @@ class HistoryError(ValueError):
 
 class HistoryCancelled(HistoryError):
     """The user left a history selection without choosing work."""
+
+
+class UnknownWorkspaceWriter(HistoryError):
+    """Ownership of a sibling writer could not be resolved at this workspace."""
+
+    def __init__(self, error, workspace):
+        super().__init__(str(error))
+        self.workspace = workspace
+        self.fingerprint = error.fingerprint
 
 
 def clean(value):
@@ -901,6 +911,9 @@ def details(row, alias='', width=None, compact=False):
               f'Summary evidence: {row.get("summary_source") or "unknown"}']
     if compact:
         fields = [f'Model: {display["model"]}', f'UI: {display["interface"]}', f'Status: {display["status"]} · {display["context"]}', *fields]
+    recovery = runpy.run_path(str(Path(__file__).with_name('t_auto_recovery.py')))['detail'](row['agent'], row['sid'])
+    if recovery:
+        fields += [f"Recovery: {'paused' if recovery['paused'] else recovery['phase']} · {recovery['reason'] or ''}"]
     fields += ['', 'Workspace history']
     for association in row.get('associations', []):
         fields.extend([f'  Workspace: {association.get("workspace")}',
@@ -929,6 +942,7 @@ class HistoryCommand:
         self.host = socket.gethostname().split('.')[0]
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
+        self.repair_writer = None
         self.discovery_identities = dict(getattr(self.store, 'identities', {}))
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
@@ -1771,16 +1785,26 @@ class HistoryCommand:
             if settings['query'] != query:
                 return None, 'retry', query
             selected, identities = [], set()
+            closures = closure_records(rows)
             for line in lines[2:]:
+                fields = line.split('\t', 2)
                 try:
-                    index = int(line.split('\t')[0])
+                    index = int(fields[0])
                 except ValueError as error:
                     raise HistoryError('invalid selection') from error
                 if not 0 <= index < len(rows):
                     raise HistoryError('invalid selection')
                 row = rows[index]
-                expected = f'{index}\t{picker_row(row, rows, settings.get("width", 80), settings.get("notice", ""))}\t{clean(json.dumps(row, ensure_ascii=False))}'
-                if row not in matching or line != expected:
+                # fzf may return the terminal-colored marker verbatim or strip
+                # its ANSI styling. In either case verify the full identity.
+                payload = clean(json.dumps(row, ensure_ascii=False))
+                if (row not in matching or len(fields) != 3 or fields[0] != str(index)
+                        or fields[2] != payload):
+                    return None, 'retry', query
+                displays = (picker_row(row, rows, settings.get('width', 80),
+                                       settings.get('notice', ''), closures, color=color)
+                            for color in (False, True))
+                if fields[1] not in displays:
                     return None, 'retry', query
                 identity = (row['repo'], row['agent'], row['sid'])
                 if identity in identities:
@@ -1912,7 +1936,7 @@ class HistoryCommand:
                    (owner['slot'] in names or os.path.realpath(owner['cwd']) in paths)
                    for owner in owners)
 
-    def destination(self, alias, row, revision, owners):
+    def destination(self, alias, row, revision, owners, *, fresh_source=None):
         if not self.worktree_enabled(alias):
             raise HistoryError('repository opts out of worktree-per-session; no workspace was created')
         directory = self.cfg.repos[alias]
@@ -1928,14 +1952,14 @@ class HistoryCommand:
             historical_path = None
         busy = self.destination_busy(alias, historical_slot, candidates, owners)
         latest = []
-        if historical_path:
+        if historical_path and fresh_source is None:
             for conversation in self.store.records():
                 for a in conversation.get('associations', []):
                     if a.get('host') == 'local' and os.path.realpath(a['workspace']) == os.path.realpath(historical_path) and a.get('evidence') in ('launch', 'resume', 'close', 'handoff'):
                         latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
         current_identity = max(latest, default=(0, '', ''))[1:]
         # Reuse only when both revision and provenance match, never by branch name alone.
-        if historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and not busy:
+        if fresh_source is None and historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and not busy:
             head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
             actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
             if head == revision and actual == association.get('branch'):
@@ -1958,7 +1982,12 @@ class HistoryCommand:
             except FileExistsError:
                 continue
             self.reservation = marker
+            if fresh_source is not None:
+                _LIFECYCLE['begin_fresh_resume'](row['sid'], str(fresh_source), str(path),
+                                                 token=self.reservation_token)
             run(['git', '-C', directory, 'worktree', 'add', '-b', branch, str(path), revision])
+            if fresh_source is not None:
+                _LIFECYCLE['finish_fresh_resume'](self.reservation_token, row['sid'], str(path))
             return str(path), str(slot), True
         raise HistoryError('no free slot is available')
 
@@ -1991,12 +2020,19 @@ class HistoryCommand:
             # This probe returns no stdout data. Let its shared wait spinner
             # use the terminal while the shell captures the eventual owner.
             with redirect_stdout(sys.stderr) if terminal else nullcontext():
-                helper['assert_released']('Codex', row['sid'], value['associations'][0]['workspace'], self.api['_run'],
+                creation = value['associations'][0]['workspace']
+                probe_cwd = workspace or creation
+                previous = self.repair_writer
+                options = ({'unresolved_fingerprint': previous.fingerprint}
+                           if previous and previous.workspace == probe_cwd else {})
+                helper['assert_released']('Codex', row['sid'], creation, self.api['_run'],
                     ownership_cwd=workspace,
                     codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
                     rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                    retry='Retry: t session resume, then select the conversation again.')
+                    retry='Retry: t session resume, then select the conversation again.', **options)
         except ValueError as error:
+            if isinstance(error, helper.get('UnresolvedWriterError', ())):
+                raise UnknownWorkspaceWriter(error, probe_cwd) from error
             raise HistoryError(str(error)) from error
 
     def codex_target(self, row, default):
@@ -2108,6 +2144,8 @@ class HistoryCommand:
 
     def resume_with_repair(self, alias, row, **options):
         """Repair retries the selected conversation, never a slot's latest one."""
+        previous = None
+        stranded = None
         try:
             return self.resume(alias, row, **options)
         except HistoryCancelled:
@@ -2120,18 +2158,73 @@ class HistoryCommand:
                            (sys.stdout.isatty() or os.environ.get('T_RESUME_REPAIR') == '1'))
             if not interactive:
                 raise
+            if isinstance(error, UnknownWorkspaceWriter):
+                previous = error
             print('t resume: ' + str(error), file=sys.stderr)
             ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
+            if row.get('agent') == 'codex' and row.get('associations'):
+                association, _ = self.revision(row)
+                if association.get('host') == 'local' and association.get('workspace'):
+                    stranded = _CLIENT_STOP['stranded'](association['workspace'], row['sid'])
+            note = ('Stop the stranded Codex client (pid ' + str(stranded['process']['pid']) +
+                    ') and resume this exact conversation after verifying writer release.' if stranded else
+                    'Retry the selected conversation after checking ownership.')
             with redirect_stdout(sys.stderr):
-                if not ask(self.api, 'Could not resume ' + alias,
-                           'Retry the selected conversation after checking ownership.', 'Repair'):
+                if not ask(self.api, 'Could not resume ' + alias, note, 'Repair'):
                     raise HistoryCancelled('resume repair cancelled') from error
+        if stranded:
+            try:
+                _CLIENT_STOP['stop_stranded'](stranded)
+            except _CLIENT_STOP['ClientStopPending']:
+                with redirect_stdout(sys.stderr):
+                    if not _CLIENT_STOP['confirm']('Agent did not exit',
+                               'Force stop only the verified stranded Codex client, then resume the selected conversation.',
+                               'Force stop', api=self.api):
+                        raise HistoryCancelled('stranded writer repair cancelled')
+                _CLIENT_STOP['stop_stranded'](stranded, force=True)
+            _LIFECYCLE['wait_released']('codex', row['sid'])
         _CACHE_REQUEST('event', {'targets': ['local']})
         # The failed resume has released its reservations and claims. Repeat
         # every live ownership/source check once; do not loop or force a launch.
-        return self.resume(alias, row, **options)
+        self.repair_writer = previous
+        try:
+            return self.resume(alias, row, **options)
+        except UnknownWorkspaceWriter as error:
+            if options.get('prepare_only'):
+                raise
+            offer = self.fresh_resume_offer(alias, row, error.workspace)
+            if offer is None:
+                raise
+            revision, source = offer
+            print('t resume: ' + str(error), file=sys.stderr)
+            with redirect_stdout(sys.stderr):
+                if not ask(self.api, 'Resume in a fresh worktree?',
+                           f'Resume the selected conversation at saved commit {revision[:12]}. '
+                           f'Local edits stay in {error.workspace}.', 'Resume in fresh worktree'):
+                    raise HistoryCancelled('fresh worktree resume cancelled') from error
+            return self.resume(alias, row, fresh=(revision, source), **options)
+        finally:
+            self.repair_writer = None
 
-    def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False):
+    def fresh_resume_offer(self, alias, row, workspace):
+        if row.get('agent') != 'codex':
+            return None
+        directory = self.cfg.repos.get(alias)
+        association, revision = self.revision(row)
+        if (not directory or not revision or association.get('host') != 'local' or not Path(workspace).is_dir()
+                or os.path.realpath(association.get('workspace', '')) != os.path.realpath(workspace)):
+            return None
+        if run(['git', '-C', directory, 'rev-parse', '--verify', revision + '^{commit}'],
+               optional=True).strip() != revision:
+            return None
+        local = {**row, 'sources': [s for s in row['sources'] if s.get('host') == 'local']}
+        source = self.source(local, required=False)
+        if source is None:
+            return None
+        _LIFECYCLE['verify_fresh_resume_source'](row['sid'], str(source), workspace=workspace)
+        return revision, source
+
+    def resume(self, alias, row, *, detached=False, prepare_only=False, return_owner=False, fresh=None):
         expected_close = os.environ.get('T_RESUME_LAST_CLOSED')
         if expected_close:
             if expected_close == '-':
@@ -2152,7 +2245,7 @@ class HistoryCommand:
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
             raise HistoryError('conversation has multiple reported owners; resolve ownership before resuming')
-        if matches and detached:
+        if matches and (detached or fresh is not None):
             raise HistoryError('conversation became live; select its current owner again')
         if matches:
             return matches[0] if return_owner else self.attach(matches[0])
@@ -2160,13 +2253,19 @@ class HistoryCommand:
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
         self.strict_identity = True
-        source = self.source(row)
+        source = self.source(row) if fresh is None else fresh[1]
         alias = self.materialize_repository(row['repo']) if alias not in self.cfg.repos else alias
         if not self.same_repository(self.identity(alias), row['repo']):
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
-        revision = self.reconcile_source(alias, row) or revision
+        if fresh is None:
+            revision = self.reconcile_source(alias, row) or revision
+        elif (prepare_only or row['agent'] != 'codex' or revision != fresh[0]
+              or not self.verify_source(transcript(source, 'codex'), row)):
+            raise HistoryError('saved conversation or revision changed; no fresh worktree created')
         if not revision or run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--verify', revision + '^{commit}'], optional=True).strip() != revision:
+            if fresh is not None:
+                raise HistoryError('saved revision is unavailable; no fresh worktree created')
             revision = self.fallback(alias)
         common = run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--git-common-dir']).strip()
         common = Path(self.cfg.repos[alias]) / common
@@ -2177,7 +2276,8 @@ class HistoryCommand:
             if matches:
                 raise HistoryError('conversation became live while selecting; rerun t resume to attach to its owner')
             try:
-                destination, slot, created = self.destination(alias, row, revision, owners)
+                allocation = {'fresh_source': source} if fresh is not None else {}
+                destination, slot, created = self.destination(alias, row, revision, owners, **allocation)
                 print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
@@ -2192,20 +2292,30 @@ class HistoryCommand:
                         raise HistoryError('repository identity changed before restore')
                     # The rollout retains its creation cwd even after that slot
                     # is reused. Check sibling writers in our claimed destination.
-                    self.codex_released(row, source, workspace=destination)
+                    launch_args = [f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history']
+                    if fresh is None:
+                        self.codex_released(row, source, workspace=destination)
+                    else:
+                        _LIFECYCLE['native_preflight']('codex', row['sid'], destination, rollout=str(source),
+                                                       fresh_resume=self.reservation_token)
+                        launch_args.append(self.reservation_token)
                     self.install_transcript(row, source, destination)
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.
-                    snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join([f'dev-{alias}-{slot}', destination, row['sid'], row['agent'], 'history'])
+                    snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join(launch_args)
                     if not prepare_only:
                         # Allow the final ownership guard's startup settling
                         # window plus native readiness and shell startup.
                         run(self.shell(snippet), timeout=90, launch_diagnostics=True)
                 self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
-                if self.reservation:
-                    self.reservation.unlink(missing_ok=True)
-                    self.reservation = None
+                try:
+                    if fresh is not None:
+                        _LIFECYCLE['discard_fresh_resume'](self.reservation_token)
+                finally:
+                    if self.reservation:
+                        self.reservation.unlink(missing_ok=True)
+                        self.reservation = None
         if prepare_only:
             return f'dev-{alias}-{slot}\t{destination}'
         if detached:

@@ -69,6 +69,9 @@ The test suite runs on macOS and Linux with Python 3.12.
 To try a fresh install and worktree session in a disposable Docker container, see
 the [playground guide](docs/playground.md).
 
+On macOS, the [rnnr menu-bar companion](apps/rnnr/README.md) shows detached
+sessions and opens the existing Terminal flows. Build it from this checkout.
+
 With Homebrew:
 
 ```sh
@@ -305,7 +308,7 @@ closed conversation, or run `t session resume --last --wait` directly.
 Use `t session resume api 3 --last` to scope the search to one slot, or
 `--all` to search every repository. Exact selection requires a unique verified
 close and complete discovery. Session open, close, resume, move and list accept
-`--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves the
+`-w` (`--wait`) to observe discovery for at most 30 seconds. Ctrl-C leaves the
 refresh running. Redirected waits stay silent and prompt-free.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
@@ -407,8 +410,8 @@ Use `t system diagnose` when something is missing.
 ## Commands
 
 Run `t` or `t help` for a short overview, then `t help <noun>` or
-`t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form,
-with `t share` as the context sharing command.
+`t <noun> <verb> --help` for details. Commands use the `t <noun> <verb>` form.
+`t share` opens context sharing and `t ideate` opens the idea menu.
 Contributors can find the behavior, keyboard, and appearance rules in the
 [command and terminal contract](ui/README.md).
 
@@ -463,6 +466,9 @@ for a host's login shell.
 | `t issue status [repo] <number>` | Inspect existing work without starting an agent |
 | `t issue start [repo] [number ...]` | Continue or start work on one or several issues |
 | `t issue open [repo] [number ...]` | Open one or several GitHub issues in your browser |
+| `t ideate` / `t idea start [title]` | Open the idea menu or start brainstorming in a private workspace |
+| `t idea list` / `t idea show <id>` | Find saved idea IDs and see workspace and publication details |
+| `t idea resume <id>` / `t idea publish <id>` | Continue brainstorming or turn reviewed files into a GitHub repository |
 | `t share` / `t share --to claude` | Review captured conversation context and start a new agent session; `--to` also works without a terminal when the source is known |
 | `t share --to agent:id [--file summary.md] [--attach history.md]` | Share context with an exact existing conversation; `--file` supplies your own text |
 | `t share targets` / `t share inbox` / `t share read <message-id>` | Find conversations and read received shares |
@@ -786,6 +792,14 @@ process identity, sole thread lock, and working directory must remain stable acr
 two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
 evidence remain blocked. This fallback never deletes a lock or stops its owner.
 
+For opt-in recovery after login or lost connections, use **`t config` → Recovery →
+Automatic recovery**, then review and save. Recovery restores managed CLI sessions
+in detached tmux and continues only verified interrupted work. Inspect it with
+`t system recovery status`; pause a session with `t session recovery pause <repo> <slot>`.
+It is disabled by default and configured separately on each Mac. See
+[automatic recovery](docs/automatic-recovery.md) for eligibility, SSH reconnect,
+and capability boundaries. `nosleep` remains manual.
+
 If a CLI cannot reconnect but its tmux slot is still live, run
 `t session restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
 first. Restart saves the pane text, including any visible unsent draft, to a
@@ -796,6 +810,8 @@ not submitted automatically. The old client must exit before the same conversati
 resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t session open <repo> <slot>` to attach. For a remote slot, use
 `t hosts run <host> t session restart <repo> <slot>`.
+After the pane exits, use `t session resume <repo> <slot>` to select the
+saved conversation. Resume reports the slot it actually opens.
 Every Codex recovery resumes with `--no-daemon` so relaunching one conversation
 does not reconnect through the shared server used by other windows. Recovery
 refuses to stop an `app-server` process or proceed without `--no-daemon` support.
@@ -805,9 +821,14 @@ and restart** or **Dismiss** when a recognized final connection error remains
 visible, or when tmux reports that the agent pane has exited (even if the screen
 still shows work in progress). An exited Codex or Claude pane offers to resume its
 verified conversation; an unverified pane shows the attention panel below.
+For a managed Codex pane, the monitor also offers recovery when terminal input
+stays queued for at least 12 seconds. It counts pending bytes without reading
+typed text. If typing stops drawing text without leaving queued input, open
+recovery with the same tmux shortcut.
 A bright, bordered panel appears in the center of the affected terminal,
-including over SSH, and works without a model connection. Press **r** to restart
-or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
+including over SSH, and works without a model connection. Use the arrow keys
+and **Enter** to choose an action, or **q** to dismiss. **Enter** defaults to
+Dismiss on the first screen. Offers are bound
 to the exact conversation and process or exited pane; a changed or recovered
 session is left alone. Completion and error messages stay in the window that
 opened recovery, and are skipped if that window has left the affected pane.
@@ -816,9 +837,9 @@ always rechecks the conversation and process before acting.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. While recovery is needed, the status bar shows a shortcut to
 reopen the menu: normally **Ctrl-b**, then **Shift-r** (uppercase **R**). It uses
-your configured tmux prefix and chooses another key if **R** is already bound;
-follow the shortcut shown in the status bar. Reopening checks the current pane
-again and does not restart anything until you choose **r** in the menu. The hint
+your configured tmux prefix and chooses another key if **R** is already bound.
+Follow the shortcut shown in the status bar. It checks the current pane and
+can explain tmux input restrictions or offer a verified restart. The hint
 disappears when the failure clears. Authentication and rate-limit errors do not
 trigger recovery.
 If the monitor cannot verify the conversation, a panel asks you to copy your draft
@@ -868,6 +889,22 @@ monitor startup. Native desktop apps and CLIs launched outside `t` are not monit
 The monitor runs from a stable directory and reloads its code after an update.
 Before opening another Cursor chat, `t` requires existing Cursor CLIs to have verified
 current chat IDs; close an untracked CLI first to avoid duplicate conversation owners.
+
+### Brainstorming before you have a repository
+
+`t ideate` opens the idea menu. `t idea start 'Neighborhood walks'` starts
+the configured Codex or Claude CLI in a private workspace outside Git. When
+the agent exits, choose **Save for later** or **Create repository**.
+Run `t idea list` to find a saved idea's ID and use it with
+`t idea resume ID` to continue the conversation or `t idea publish ID`
+to create the repository.
+
+Keep files you intend to publish under `publish/`. In the file checklist,
+Space marks a file and Ctrl-A marks all eligible files, including nested
+files. Review the first commit and choose **Private** or **Public**.
+After confirmation, `t` pushes the commit, registers the local checkout,
+and prints the repository URL and a `t open` command. The working notes
+and conversation history stay separate from the repository.
 
 ### Sharing context between agents
 
@@ -1663,6 +1700,31 @@ office: updated
 build: up to date
 ```
 
+Successful updates also reconcile existing private session-discovery helpers,
+including when t is already current. Obsolete helpers for the updated installation
+retire through a bounded revision handshake; current helpers, development
+worktrees and live sessions are preserved. No helper is started by this cleanup.
+`--check` remains read-only. The updater captures previous release and Homebrew
+source paths before relocation; the links-only installer also recognizes a prior
+sibling release when upgrading from an older client. Homebrew helpers use a
+stable opt-based identity across versions. Migration recovers attributable physical namespaces from retained kegs and bounded
+current-user process evidence, even after an older updater moved the opt link.
+Full and links-only integration reconcile helpers; direct `brew upgrade` also
+reconciles on the next discovery startup. Current helpers reject stale clients
+without exiting. Saved snapshots migrate lazily into the stable namespace.
+Helpers whose configuration identity cannot be attributed safely are left alone;
+unmodified older clients can still recreate their legacy helper.
+
+Runtime reconciliation inventories each verified tmux server once, retaining
+historical socket aliases for existing hooks, terminal locks and recovery state.
+Reserved hook slots containing custom commands and development-pinned helpers
+are preserved during both updates and ordinary attachment. Actionable runtime
+results identify the server/session and explain the next step. Legacy observers
+retain their original PTY, lock and pending event; eligible normal attachments
+retry adoption after that owner finishes. Recovery watchers use their own safe
+lifecycle boundary. Pending migration clears only after a verified live helper
+acknowledges the installed fingerprint, never from package installation alone.
+
 SSH authentication must already work without a password prompt. Unreachable
 hosts and failed updates are reported while the remaining hosts continue; any
 failure returns a nonzero status. Ctrl-C returns 130 and stops the remaining
@@ -1900,22 +1962,47 @@ macOS discovery permission setup, and hotspot passwords. Its live dashboard show
 the selected network's availability even when fallback is disabled.
 
 Session discovery is served from a shared in-memory cache with hourly expiry
-and asynchronous disk persistence. `t open` waits up to 30 seconds for a pending
-refresh before building its picker; fresh cached results open immediately. Failed
+and asynchronous disk persistence. Session open, close, resume, move, list and
+slot history wait up to 30 seconds when the requested scope is empty and refresh
+is pending; available scoped results and settled empty scans return immediately.
+Explicit `-w` (`--wait`) also observes refresh when results exist. Redirected and JSON
+results follow the same bound without prompting. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
 
 ### Nightr
 
-Install the optional macOS keep-awake app with `t system apps install nightr`
-(or `t install nightr`). Use `--dry-run` to review the acquisition path.
-After installation, `nightr setup` configures the helper and login behavior;
-`nightr config` edits preferences. `t config` includes a Nightr entry.
+Run `t install` on macOS and select the optional Nightr row under **Desktop Apps**.
+For a fresh install, the review shows the AgentHangar tap and the Nightr cask.
+When you confirm, `t` adds the tap if needed and installs the cask with Homebrew.
+For an existing verified installation, the review shows `nightr update`, which
+uses the existing package owner. Both paths opt in to `t system update` after
+success. The Homebrew path requires Homebrew and a published, verified Nightr
+release and cask.
+
+To install manually with Homebrew after the cask is published, run these commands.
+
+```sh
+brew tap agenthangar/tap
+brew install --cask agenthangar/tap/nightr
+```
+
+Use `t system apps install nightr` (or `t install nightr`) to invoke the individual
+installer or opt an existing installation into updates. Add `--dry-run` to review
+its acquisition path. After installation, `nightr setup` configures the helper and
+login behavior. Use `nightr config` or the Nightr entry in `t config` to edit preferences.
 
 `t system apps status nightr --json` is read-only. `t system update` includes
 Nightr only after opting in, preserves its package owner, and never installs a
-missing app. Installation requires a published, verified Nightr release.
+missing app.
 
 Usage inspection: `t system usage show` selects a record with named columns and a compact
 session summary like `t ls`. Missing local/cloud token counts leave the percentage
 unavailable; `t system usage list --json` retains null measurements.
+
+Resume the most recently verified closed conversation with
+`t session resume --last -w`, or scope it with `t session resume api 3 --last`.
+`--all` searches every repository; `--last` considers all saved history and refuses
+missing, tied or incomplete close evidence. Session open, close, resume, move and
+list accept `-w` or `--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves
+refresh running; redirected waits stay silent and never prompt.

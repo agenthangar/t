@@ -263,6 +263,29 @@ def test_owned_supervisor(offline,tmp_path,monkeypatch,fake_codex,mode):
     if mode=='local_failure':assert json.loads((root/'status.json').read_text())['state']=='local_stopped'
 
 
+@pytest.mark.parametrize('native_resume', [True, False])
+def test_recovery_observes_native_resume_without_local_fallback(offline, tmp_path, monkeypatch, fake_codex, native_resume):
+    m = offline
+    monkeypatch.setenv('FIXTURE_ROOT', str(tmp_path))
+    monkeypatch.setenv('FIXTURE_MODE', 'auth')
+    monkeypatch.setenv('SOCKET_HELPER', str(ROOT/'libexec/t_codex_socket.py'))
+    real = m.subprocess.Popen
+    def popen(*a, **kw):
+        kw['env'] = {k:v for k,v in os.environ.items() if not k.startswith('COV_CORE_')}
+        return real(*a, **kw)
+    monkeypatch.setattr(m.subprocess, 'Popen', popen)
+    monkeypatch.setattr(m, 'inference', lambda: {'helper': lambda n: {'state_root': lambda: tmp_path/'state'}})
+    incoming, outgoing, notifications = [], [], []
+    observer = SimpleNamespace(client=incoming.append, server=outgoing.append)
+    argv = [str(fake_codex), 'resume', 'exact-thread', '--no-daemon'] if native_resume else [str(fake_codex), '--no-daemon']
+    chosen = None if native_resume else {'on_cloud_failure': 'pause'}
+    assert m.supervise(argv, chosen, str(tmp_path), observer=notifications.append, lifecycle_observer=observer) == 0
+    assert notifications == outgoing
+    assert any(message.get('method') == 'turn/start' for message in incoming)
+    assert any(message.get('method') == 'item/commandExecution/requestApproval' for message in outgoing)
+    assert json.loads((tmp_path/'approval.json').read_text())['result']['decision'] == 'accept'
+
+
 def test_owned_detached_descendant_stops(offline,tmp_path):
     m=offline
     code='import subprocess,sys,time; from pathlib import Path; p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"],start_new_session=True); Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)'
@@ -375,3 +398,16 @@ def test_new_input_invalidates_exhausted_outage(offline, tmp_path):
     event(c, 'turn/started', turn={})
     event(c, 'error', error=error())
     assert c.network_since is None
+
+
+@pytest.mark.parametrize('native_cwd', [None, 'relative', 'matching', 'different'])
+def test_checkpoint_saves_only_explicit_native_workspace(offline, tmp_path, native_cwd):
+    checkpoint = offline.Checkpoint(tmp_path, tmp_path)
+    checkpoint.client({'id': 1, 'method': 'thread/start', 'params': {}})
+    thread = {'id': 'main'}
+    if native_cwd is not None:
+        thread['cwd'] = str(tmp_path if native_cwd == 'matching' else tmp_path / 'other') if native_cwd != 'relative' else 'relative'
+    checkpoint.server({'id': 1, 'result': {'thread': thread}})
+    saved = json.loads((tmp_path / 'checkpoint.json').read_text())
+    expected = str(tmp_path if native_cwd == 'matching' else tmp_path / 'other') if native_cwd in ('matching', 'different') else None
+    assert saved['thread_workspace'] == expected

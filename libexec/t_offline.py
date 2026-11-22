@@ -17,6 +17,7 @@ from pathlib import Path
 import runpy
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -67,10 +68,11 @@ def private_write(path, value):
 
 
 class Checkpoint:
-    def __init__(self, directory, cwd, seed=None, handoff=None, retry_seconds=None):
+    def __init__(self, directory, cwd, seed=None, handoff=None, retry_seconds=None, allow_images=False):
         self.directory, self.cwd = directory, str(Path(cwd).resolve())
         self.retry_seconds = RETRY_WINDOW if retry_seconds is None else retry_seconds
         self.thread = self.turn = None
+        self.thread_workspace = None
         self.users, self.evidence, self.pending = [], deque(maxlen=8), {}
         self.invalid, self.network_since, self.failed = '', None, False
         self.model = None
@@ -83,16 +85,34 @@ class Checkpoint:
         self.declined = False
         self.notice = ''
         self.startup_failure = False
+        self.allow_images = allow_images
+        self.attachments = list(getattr(seed, 'attachments', []))
+        self.native_home = None
 
     def save(self):
         private_write(self.directory/'checkpoint.json', {
             'workspace': self.cwd, 'thread_id': self.thread, 'turn_id': self.turn,
+            'thread_workspace': self.thread_workspace,
             'cloud_model': self.model, 'requests': self.users, 'recent_evidence': list(self.evidence),
             'startup_failure': self.startup_failure,
+            'attachments': self.attachments,
+            'native_home': self.native_home,
             'unavailable_reason': self.invalid, 'updated_at': time.time()})
 
     def user(self, content):
         # Images and expanded mentions can carry context beyond the visible text.
+        if self.allow_images and isinstance(content, list):
+            try:
+                texts = []
+                for item in content:
+                    if item.get('type') == 'text':
+                        texts.append(item)
+                    else:
+                        self.capture_image(item)
+                content = texts or [{'type': 'text', 'text': '[Screenshot attached]'}]
+            except (OSError, ValueError, TypeError) as exc:
+                self.invalid = 'Attachment transfer unavailable: '+str(exc)
+                return
         if not isinstance(content, list) or any(item.get('type') != 'text' for item in content):
             self.invalid = 'The checkpoint contains non-text input; continue manually from the saved cloud session.'
             return
@@ -101,6 +121,49 @@ class Checkpoint:
             self.invalid = 'Task instructions exceed the local checkpoint budget; continue manually.'
         elif text:
             self.users.append(text)
+
+    def capture_image(self, item):
+        limit = 20 * 1024**2
+        if len(self.attachments) >= 8:
+            raise ValueError('too many screenshots for the bounded checkpoint')
+        if item.get('type') == 'localImage':
+            path = Path(item['path'])
+            if not path.is_absolute():
+                path = Path(self.cwd) / path
+            fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ValueError('screenshot must be a regular file')
+                data = stream.read(limit+1)
+        elif item.get('type') == 'image' and isinstance(item.get('url'), str) and item['url'].startswith('data:image/'):
+            header, encoded = item['url'].split(',', 1)
+            if not header.endswith(';base64') or len(encoded) > limit*2:
+                raise ValueError('unsupported screenshot encoding')
+            data = base64.b64decode(encoded, validate=True)
+        else:
+            raise ValueError('non-text input is not a supported local screenshot')
+        if len(data) > limit or sum(a['bytes'] for a in self.attachments)+len(data) > 32*1024**2:
+            raise ValueError('screenshot exceeds the checkpoint budget')
+        suffix = '.png' if data.startswith(b'\x89PNG\r\n\x1a\n') else '.jpg' if data.startswith(b'\xff\xd8\xff') else None
+        if suffix is None:
+            raise ValueError('only PNG and JPEG screenshots can be transferred')
+        digest = hashlib.sha256(data).hexdigest()
+        if any(a['sha256'] == digest for a in self.attachments):
+            return
+        path = self.directory / (uuid.uuid4().hex+suffix)
+        with path.open('xb') as stream:
+            os.chmod(path, 0o600)
+            stream.write(data)
+        self.attachments.append(dict(path=str(path), sha256=digest, bytes=len(data)))
+
+    def attachment_paths(self):
+        paths = []
+        for item in self.attachments:
+            path = Path(item['path'])
+            if path.is_symlink() or not path.is_file() or path.stat().st_size != item['bytes'] or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+                raise ValueError('Retained screenshot changed; source conversation preserved')
+            paths.append(str(path))
+        return paths
 
     def item(self, item, history=False):
         kind = item.get('type')
@@ -134,8 +197,17 @@ class Checkpoint:
                 self.model = params.get('model') or self.model
                 self.declined = False
                 content = params.get('input', [])
-                if not (self.handoff and isinstance(content, list) and len(content) == 1 and
-                        content[0].get('type') == 'text' and content[0].get('text') == self.handoff):
+                transferred = (self.handoff and isinstance(content, list) and
+                               [x.get('text') for x in content if x.get('type') == 'text'] == [self.handoff] and
+                               all(x.get('type') in ('text', 'image', 'localImage') for x in content))
+                if transferred and self.allow_images:
+                    try:
+                        for item in content:
+                            if item.get('type') != 'text':
+                                self.capture_image(item)
+                    except (OSError, ValueError, TypeError) as exc:
+                        self.invalid = 'Attachment transfer unavailable: '+str(exc)
+                elif not transferred or (not self.allow_images and len(content) != 1):
                     self.user(content)
                 self.handoff = None
                 self.save()
@@ -164,6 +236,9 @@ class Checkpoint:
                 if thread.get('id'):
                     self.startup_failure = False
                     self.thread, self.turn = thread['id'], None
+                    native_cwd = thread.get('cwd')
+                    self.thread_workspace = (str(Path(native_cwd).resolve())
+                        if isinstance(native_cwd, str) and os.path.isabs(native_cwd) else None)
                     self.users.clear(); self.evidence.clear()
                     if self.seed:
                         self.users.extend(self.seed.users)
@@ -228,6 +303,7 @@ class Checkpoint:
 
     def prompt(self, target='local'):
         with self.lock:
+            self.attachment_paths()
             if self.invalid or not self.users or not self.thread:
                 raise ValueError(self.invalid or 'No complete task checkpoint is available; keep the cloud session paused.')
             return ('Continue this task in a new '+target+' conversation after a user-authorized handoff. '
@@ -314,10 +390,13 @@ class WebSocket:
             fragmented = True
 
 
-def launch_options(argv, cwd):
+def launch_options(argv, cwd, *, recovery=False):
     server, local = [], [argv[0], '--no-daemon', '-C', str(Path(cwd).resolve())]
     args = iter(argv[1:])
     for arg in args:
+        if recovery and arg == 'resume':
+            next(args, None)
+            continue
         if arg in ('exec', 'e', 'review', 'resume', 'fork', '--remote', '--remote-auth-token-env', '--profile', '-p', '--oss', '--local-provider', '--worktree') or arg.startswith(('--remote=', '--profile=', '--local-provider=')):
             raise ValueError('Automatic local continuation supports fresh native CLI sessions without remote/profile/OSS/worktree overrides; select Then → Pause to use native retries for this invocation.')
         if arg == '--':
@@ -469,16 +548,16 @@ def stop_runtime(process):
         time.sleep(.05)
 
 
-def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None, env=None, server_options=None):
-    if chosen.get('on_cloud_failure') == 'ask' and monitor is None:
-        return recover(argv, chosen, cwd)
+def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None, env=None, server_options=None, lifecycle_observer=None):
+    if chosen and chosen.get('on_cloud_failure') == 'ask' and monitor is None:
+        return recover(argv, chosen, cwd, lifecycle_observer=lifecycle_observer)
     local = inference()
     if server_options is None:
-        server_options, continuation = launch_options(argv, cwd)
+        server_options, continuation = launch_options(argv, cwd, recovery=lifecycle_observer is not None and chosen is None)
     root = checkpoint.directory if checkpoint else local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     checkpoint = checkpoint or Checkpoint(root, cwd)
-    checkpoint.retry_seconds = chosen.get('cloud_retry_seconds', RETRY_WINDOW)
+    checkpoint.retry_seconds = (chosen or {}).get('cloud_retry_seconds', RETRY_WINDOW)
     checkpoint.save()
     backend = frontend = connection = None
     failures, handoff = [], None
@@ -542,7 +621,10 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                         with input_gate:
                             if stopping.is_set():
                                 return
-                            checkpoint.client(message)
+                            if chosen is not None:
+                                checkpoint.client(message)
+                            if lifecycle_observer is not None:
+                                lifecycle_observer.client(message)
                             send_backend(message)
                 except Exception as exc:
                     failures.append(str(exc))
@@ -563,7 +645,10 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                                 raise ValueError('Could not pause the owned cloud turn: '+str(message['error']))
                             paused(owned[0])
                             continue
-                        checkpoint.server(message)
+                        if chosen is not None:
+                            checkpoint.server(message)
+                        if lifecycle_observer is not None:
+                            lifecycle_observer.server(message)
                         if observer is not None:
                             observer(message)
                         channel.send(raw.rstrip(b'\n'))
@@ -598,7 +683,7 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                         checkpoint.notice = ''
                     if handoff is not None:
                         break
-                elif checkpoint.due():
+                elif chosen is not None and checkpoint.due():
                     outage = checkpoint.outage()
                     if chosen['on_cloud_failure'] == 'pause':
                         with checkpoint.lock:
@@ -656,6 +741,8 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
         private_write(root/'status.json', {'state': 'cancelled', 'reason': 'Cloud turn changed during shutdown.'})
         print('Local continuation cancelled: the cloud turn changed during shutdown. Checkpoint: '+str(root), file=sys.stderr)
         return 130
+    if lifecycle_observer is not None and lifecycle_observer.sid:
+        local['helper']('t_auto_recovery')['retire']('codex', lifecycle_observer.sid)
     handoff = checkpoint.prompt()  # Include completion evidence received while stopping the cloud runtime.
     print('\nCloud connection unavailable → Local only · '+chosen['provider']+' · '+chosen['model']+'\n'
           'Checkpoint: '+str(root)+'\nCloud runtime stopped. Local mode stays selected for this session; approvals require local user review.', flush=True)
@@ -788,32 +875,59 @@ def recovery_ui(frontend=None, terminal=None):
 
 def choose_local(ui, local, chosen, reason='Cloud connection lost', failed=False, blocked='', startup=False):
     """A ready model is the action: no details or confirmation screen in between."""
-    rows, values, disabled, selections = [], {}, {}, {}
+    values, disabled, notes = {}, {}, {}
     try:
         models = local['catalogue'](context=chosen['context_tokens'])['models']
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         models, reason = [], 'Model catalogue unavailable: '+str(exc)
-    models = sorted(models, key=lambda r: (r['provider'], r['model']) != (chosen['provider'], chosen['model']))
-    for index, row in enumerate(models):
-        key = str(index)
-        selections[key] = dict(chosen, provider=row['provider'], model=row['model'])
-        current = (row['provider'], row['model']) == (chosen['provider'], chosen['model'])
-        rows.append((key, row['model'].split('/')[-1]))
+    eligible = [row for row in models if row.get('ready') and row.get('fit') is True]
+    selected = next((i for i, row in enumerate(eligible)
+                     if (row['provider'], row['model']) == (chosen['provider'], chosen['model'])), 0)
+    action = 'Start locally' if startup else 'Continue locally'
+    rows = [('local', action)]
+    context = [reason, 'This session only.']
+    if blocked:
+        context.append(blocked)
+    unavailable = [row for row in models if row not in eligible]
+    configured_unavailable = next((row for row in unavailable
+        if (row['provider'], row['model']) == (chosen['provider'], chosen['model'])), None)
+    if unavailable:
+        context.append(f'{len(unavailable)} local model(s) unavailable.')
+    if configured_unavailable is not None:
+        row = configured_unavailable
         fit = '✓' if row.get('fit') is True else '✕' if row.get('fit') is False else '?'
-        ready = row.get('ready') and row.get('fit') is True
-        values[key] = f"Memory fit {fit} · " + ('Ready' if ready else 'Unavailable') + ' · ' + row['provider'] + (' · Default' if current else '')
-        if blocked or not ready:
-            disabled[key] = blocked or row.get('verification_error') or row.get('reason') or 'Install and verify this model before offline use.'
+        context.append(row['model'].split('/')[-1]+' · '+row['provider']+' · Unavailable · Memory fit '+fit+' · '+
+                       (row.get('verification_error') or row.get('reason') or
+                        'Install and verify this model before offline use.'))
+
+    def update(direction=0):
+        nonlocal selected
+        selected = (selected + direction) % len(eligible)
+        row = eligible[selected]
+        values['local'] = row['model'].split('/')[-1]
+        notes['local'] = row['provider']+' · Ready · Memory fit ✓'
+
+    if eligible:
+        update()
+    else:
+        values['local'] = 'No ready local models'
+        notes['local'] = 'Downloads require connectivity.'
+    if blocked or not eligible:
+        disabled['local'] = blocked or 'No ready local models. Install and verify a model before offline use.'
     if startup:
         rows.append(('retry', 'Retry cloud'))
     rows.append(('pause', 'Cancel startup' if startup else 'Keep task paused' if failed else 'Pause and retry cloud'))
-    result = ui.pick('Start locally' if startup else 'Continue locally', rows, values=values, disabled=disabled,
-                     sections={rows[0][0]: 'Local models' if models else 'Connection',
-                               'retry' if startup else 'pause': 'Connection'},
-                     context=[reason, 'Choose a ready model to continue immediately. This session only.'] +
-                             ([] if models else ['No ready local models. Downloads require connectivity.']),
-                     primary=('enter', 'Continue', 'with selected model'), back_label='pause')
-    return 'retry' if startup and result == 'retry' else selections.get(result)
+    result = ui.pick(action, rows, values=values, notes=notes, disabled=disabled,
+                     cycle={'local': update} if len(eligible) > 1 and not blocked else {},
+                     sections={'local': 'Local model', 'retry' if startup else 'pause': 'Connection'},
+                     context=context,
+                     primary=('enter', 'Select', 'this session only'), back_label='pause')
+    if startup and result == 'retry':
+        return 'retry'
+    if result == 'local' and eligible and not blocked:
+        row = eligible[selected]
+        return dict(chosen, provider=row['provider'], model=row['model'])
+    return None
 
 
 def choose_cloud(ui, previous):
@@ -936,11 +1050,13 @@ def local_server_options(argv):
     return options
 
 
-def recover(argv, chosen, cwd):
+def recover(argv, chosen, cwd, lifecycle_observer=None):
     """Prompted, bidirectional continuation, always with one owned writer runtime."""
     local = inference()
     _, continuation = launch_options(argv, cwd)
     if not (os.isatty(0) and os.isatty(1)):
+        if lifecycle_observer is not None:
+            return supervise(argv, None, cwd, lifecycle_observer=lifecycle_observer)
         # No hidden local choice in scripts; preserve the native cloud retry policy.
         return subprocess.call(argv, cwd=cwd)
     root = local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
@@ -970,7 +1086,7 @@ def recover(argv, chosen, cwd):
             return None
         if current == 'cloud':
             outcome = supervise(current_argv, dict(chosen, on_cloud_failure='pause'), cwd,
-                                checkpoint=checkpoint, monitor=cloud_monitor)
+                                checkpoint=checkpoint, monitor=cloud_monitor, lifecycle_observer=lifecycle_observer)
             if (isinstance(outcome, dict) and not outcome['action'] and checkpoint.startup_failure
                     and outcome['exit_code'] not in (0, 130)):
                 # A failed bootstrap has no conversation to hand off. The owned
@@ -995,6 +1111,9 @@ def recover(argv, chosen, cwd):
                     checkpoint.user([{'type': 'text', 'text': initial}])
                 checkpoint.save()
                 seed, handoff = checkpoint.seed or checkpoint, initial
+                if lifecycle_observer is not None and lifecycle_observer.sid:
+                    local['helper']('t_auto_recovery')['retire']('codex', lifecycle_observer.sid)
+                    lifecycle_observer = None
                 current = 'local'
                 continue
             if not isinstance(outcome, dict) or not outcome['action']:
@@ -1002,6 +1121,9 @@ def recover(argv, chosen, cwd):
             previous = checkpoint.model
             selected = outcome['action']
             seed, handoff = checkpoint, checkpoint.prompt()
+            if lifecycle_observer is not None and lifecycle_observer.sid:
+                local['helper']('t_auto_recovery')['retire']('codex', lifecycle_observer.sid)
+                lifecycle_observer = None
             current = 'local'
             continue
 

@@ -136,7 +136,7 @@ def state_label(profile, mask):
 
 def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=True, color=False,
            hide_merged=False, sort_enabled=True, show_legend=False, status=(),
-           filters_expanded=False, hidden_info=False, attached_results=False):
+           filters_expanded=False, hidden_info=False, attached_results=False, legend=''):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
     short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
@@ -148,10 +148,12 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
     def keys(parts, selected=()):
-        return control_rows(parts, width, selected, compact, color)
-    actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓',
+        return control_rows(parts, width, selected, compact, color, 'selected' if profile == 'open' else 'active')
+    actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab ✓',
                'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
     lines = [] if compact else [style('HOTKEYS', 'heading')]
+    if profile == 'open' and os.environ.get('T_PICKER_NEW_SESSION') == '1':
+        actions.append('Ctrl-N new')
     lines += keys(actions)
     if not compact:
         lines.append('')
@@ -173,12 +175,16 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
                  + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
-        lines += [style('Match highlighted row; repeat key to clear'), '']
-    lines += sort_rows(sort, width, sort_enabled, compact, color, profile == 'open')
+        lines += [''] if profile == 'open' else [style('Match highlighted row; repeat key to clear'), '']
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile == 'open',
+                       selected_role='selected' if profile == 'open' else 'active')
     if not compact:
         lines += ['']
+    if legend:
+        lines.append(style(clip_columns(legend, width)))
     if columns:
-        lines.append(style(clip_columns(columns, width)))
+        column_width = width + int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) if os.environ.get('T_PICKER_PAN') == '1' else width
+        lines.append(style(clip_columns(columns, column_width)))
     return '\n'.join(lines) + '\n'
 
 
@@ -547,11 +553,21 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
                                     fixed=RESUME_STATUS_WIDTH)
         columns = ' ' * pad + columns
         (directory / 'current').write_text(''.join(row + '\n' for row in selected))
+    legend = ''
+    if profile == 'open':
+        legend = '● attached · ○ unattached · ✓ context · ↻ work in progress'
+        if not selected:
+            status.append('No matching sessions' + (' · Ctrl-N new' if os.environ.get('T_PICKER_NEW_SESSION') == '1' else ''))
+        if os.environ.get('T_PICKER_NATIVE_FOOTER') == '1' and int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') > 14:
+            (directory / 'footer').write_text('\n'.join(pack(legend.split(' · '), width)) + '\n')
+            legend = ''
+        elif int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
+            legend = ''
     controls = header(profile, mask, filters, hidden, columns, width,
                       sort, enabled, color, hide_merged, sort_enabled, profile == 'resume',
                       status if profile == 'resume' else (), filters_expanded,
                       (directory / 'info-command').exists() and (directory / 'info-command').read_text() == '1',
-                      attached_results)
+                      attached_results, legend)
     (directory / 'current-header').write_text(('\n'.join(status) + '\n' if status and profile != 'resume' else '') + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))

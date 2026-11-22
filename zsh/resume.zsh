@@ -138,7 +138,7 @@ _t_resume() {
     if [[ -n $_expect_host ]]; then on_host=$a; _expect_host=; continue; fi
     case "$a" in
       --last) T_RESUME_LAST=1 ;;
-      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
+      -w|--wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       -f|--fg)     no_tmux=1 ;;
       --app) print -u2 -- "t: Codex Desktop support has been removed; use t session resume --cli"; return 2 ;;
       --cli)      cli=1 ;;
@@ -236,6 +236,8 @@ _t_resume() {
     return 1
   fi
 
+  local -x T_RESUME_CUTOFF=0
+  [[ $days != all ]] && T_RESUME_CUTOFF=$(( EPOCHSECONDS - days * 86400 ))
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
   local -A history_seen history_emitted live_titles live_work
@@ -399,8 +401,7 @@ _t_resume() {
   [[ ( -t 0 && -t 1 ) || -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]] && _PR_WITH_BADGES=1
   # Recency window (--days, default 30; 'all' disables) + this machine's short
   # hostname, to blank the origin column for locally-run conversations.
-  local cutoff=0 selfhost=$(hostname -s 2>/dev/null)
-  [[ $days != all ]] && cutoff=$(( EPOCHSECONDS - days * 86400 ))
+  local cutoff=$T_RESUME_CUTOFF selfhost=$(hostname -s 2>/dev/null)
   # origin → friendly $REMOTE_HOSTS key, via the hostname cache the -r pull
   # populates (~/.cache/t/hostnames/<alias> = that host's `hostname -s`).
   local -A host_alias; local _hcf
@@ -860,6 +861,15 @@ _t_resume() {
     visible=("${(@)cands}")
   else
     visible=("${(@)inactive}")
+  fi
+
+  if [[ $T_RESUME_LAST == 1 ]]; then
+    if (( $#visible != 1 )); then
+      print -u2 't resume: last closed selection changed; no conversation was resumed'
+      return 1
+    fi
+    f=("${(@ps:	:)visible[1]}")
+    [[ $f[8] == history && ${f[14]:--} != - ]] || { print -u2 't resume: no verified last close; no conversation was resumed'; return 1; }
   fi
 
   # Interactive explicit slots always pick. Otherwise a sole candidate can
@@ -1672,7 +1682,7 @@ _t_restart_client_only() {
 
 _t_restart_slot() {
   emulate -L zsh
-  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}"
+  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}" force_token="${8:-}"
   local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
@@ -1822,7 +1832,14 @@ _t_restart_slot() {
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
     tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
     tmux set-option -p -t "$pane" remain-on-exit on || return 1
-    if [[ -n $cpid ]]; then kill -TERM "$cpid" || return 1; fi
+    if [[ -n $cpid ]]; then
+      if [[ -n $force_token ]]; then
+        # Only the separately confirmed immutable client token authorizes KILL.
+        python3 "$T_HOME/libexec/t_client_stop.py" stop "$force_token" force || return $?
+      else
+        kill -TERM "$cpid" || return 1
+      fi
+    fi
     for attempt in {1..200}; do
       if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
          { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null ||
@@ -1837,7 +1854,7 @@ _t_restart_slot() {
       sleep 0.05
     done
     print -u2 -- 't restart: the old client or its pane has not exited; no second client was started. Inspect with t session open.'
-    return 1
+    return 75
   } always {
     rmdir "$lock" 2>/dev/null
   }
@@ -1847,6 +1864,73 @@ _t_restart_slot() {
 # CLAUDE_RESUME_ID stamp is intentionally insufficient: we write it before launch.
 _dev_resume_session() {
   _dev_with_launch_locks "$2" "$3" _dev_resume_session_claimed "$@"
+}
+
+# Automatic recovery uses the same strict ownership locks but never materializes
+# a missing worktree, changes trust, selects history, or types into a live pane.
+_t_auto_restore_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 repo slot immutable
+  if [[ -z $session ]]; then
+    read -r repo slot < <(_dev_slot_for_cwd "$dir")
+    [[ -n $repo && -n $slot ]] || return 1
+    session="dev-${repo}-${slot}"
+  fi
+  [[ -d $dir && $session == (dev-*|t-cursor-*) ]] || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  python3 "$T_HOME/libexec/t_auto_recovery.py" guard "$agent" "$sid" "$dir" || return $?
+  immutable=$(tmux new-session -d -P -F '#{session_id}' -s "$session" -c "$dir" sleep 86400) || return 1
+  [[ $immutable == \$<-> ]] || return 1
+  tmux set-environment -t "$immutable:" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "$immutable:"; return 1; }
+  tmux set-environment -t "$immutable:" DEV_AGENT "$agent" || { tmux kill-session -t "$immutable:"; return 1; }
+  _dev_start_session_command "$session" "$launch" /dev/null || { tmux kill-session -t "$immutable:"; return 1; }
+  _dev_recovery_watch "$session"
+}
+
+# A holding pane is display-only. Pin its entire tmux identity before exempting
+# it from owner checks; the exemption never applies to another local or remote row.
+_t_auto_holding_verified() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 socket=$4 pane=$5 snapshot marker
+  [[ -n $sid && $pane == \%<-> && -n $socket ]] || return 1
+  snapshot=$(tmux display-message -p -t "$pane" '#{socket_path}|#{session_name}|#{session_path}|#{session_windows}|#{window_panes}|#{pane_id}') || return 1
+  [[ $snapshot == "$socket|$session|$dir|1|1|$pane" ]] || return 1
+  marker=$(tmux show-options -qv -t "=$session:" @t_recovery_holding) || return 1
+  [[ $marker == "$sid" ]]
+}
+
+_t_auto_hold_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 immutable
+  local _T_RESUME_ALLOW_UNAVAILABLE=1
+  [[ -d $dir && $session == (dev-*|t-cursor-*) && -n $sid ]] || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  # Create an inert placeholder before publishing the marker; only this exact
+  # new session may be cleaned up if setup fails.
+  immutable=$(tmux new-session -d -P -F '#{session_id}' -s "$session" -c "$dir" sleep 86400) || return 1
+  [[ $immutable == \$<-> ]] || return 1
+  tmux set-option -t "$immutable:" @t_recovery_holding "$sid" &&
+    tmux set-environment -t "$immutable:" CLAUDE_RESUME_ID "$sid" &&
+    tmux set-environment -t "$immutable:" DEV_AGENT "$agent" &&
+    _dev_start_session_command "$session" "$launch" /dev/null && return 0
+  tmux kill-session -t "$immutable:" 2>/dev/null
+  return 1
+}
+
+_t_auto_resume_holding_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 socket=$6 pane=$7
+  local _T_AUTO_HOLD_SESSION=$session _T_AUTO_HOLD_SOCKET=$socket _T_AUTO_HOLD_PANE=$pane
+  _t_auto_holding_verified "$session" "$dir" "$sid" "$socket" "$pane" || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  python3 "$T_HOME/libexec/t_auto_recovery.py" guard "$agent" "$sid" "$dir" || return $?
+  _t_auto_holding_verified "$session" "$dir" "$sid" "$socket" "$pane" || return 1
+  # Preserve the session so attached viewers follow the replacement. Removing
+  # the marker and replacing the exact pane are one tmux command sequence.
+  tmux respawn-pane -k -t "$pane" -c "$dir" env SHELL_SESSIONS_DISABLE=1 \
+    zsh -lic "setopt no_monitor no_notify; $launch" \; \
+    set-option -u -t "=$session:" @t_recovery_holding || return 1
+  _dev_recovery_watch "$session"
 }
 
 _dev_foreground_resume_preflight() {
@@ -2362,6 +2446,7 @@ _tbeam_kill_owner() {
       [[ $(tmux display-message -p -t "=$s:" '#{session_id}') == "$immutable" ]] || {
         print -u2 't move: source owner changed; nothing was stopped'; return 2
       }
+      _dev_history_record "$sid" "$source_agent" "$source_dir" handoff || return 2
       if tmux kill-session -t "$immutable:" 2>/dev/null; then
         if [[ -n $pid ]]; then
           _t_wait_for_exit "$pid"
@@ -2455,7 +2540,10 @@ _t_move_pick() {
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   scope=${DEV_REPOS[$repo]:-}
   local -a fields candidates format_args chosen
-  rows=$(_t_discovery_rows --local --unprefixed --details) || return 1
+  local -a cache_scope=(--move-only)
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
+  [[ -n $slot ]] && cache_scope+=(--slot "$slot")
+  rows=$(_t_discovery_rows "${cache_scope[@]}" --local --unprefixed --details) || return $?
   for row in "${(@f)rows}"; do
     fields=("${(@ps:\t:)row}")
     (( $#fields >= 7 )) || continue

@@ -1,6 +1,10 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_ideate.py:launch:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The configured native agent owns the current terminal until it exits. The idea wizard restores cooked input before launch and resumes terminal rendering afterward."
+    },
     "libexec/t_terminal_close.py:run:subprocess.run": {
       "kind": "protocol",
       "reason": "Private tmux attachment and terminal-loss callbacks use bounded probes and lifecycle effects. Their output is retained privately; they must not paint over an agent or emit progress after its terminal has closed."
@@ -12,6 +16,10 @@
     "libexec/t_terminal_close.py:watch:time.sleep": {
       "kind": "background",
       "reason": "The detached observer waits for its exact client event and exits after detach or loss. It has no user-facing terminal and never waits for active work to become completed."
+    },
+    "libexec/t_terminal_close.py:stop_previews:time.sleep": {
+      "kind": "background",
+      "reason": "The private terminal-loss lifecycle worker has no usable terminal. After all guards pass, it waits at most five seconds per individually verified preview for TERM to take effect; diagnostics and partial cleanup remain in private receipts rather than painting over the retained agent."
     },
     "libexec/t_pane_identity.py:command:subprocess.run": {
       "kind": "protocol",
@@ -56,6 +64,34 @@
     "libexec/t_picker_filters.py:pick_value:subprocess.run": {
       "kind": "passthrough",
       "reason": "The shared column-value picker owns terminal input and rendering until selection or cancellation."
+    },
+    "libexec/t_picker_viewport.py:search:subprocess.run": {
+      "kind": "protocol",
+      "reason": "The active resume picker delegates canonical-row matching to the shared noninteractive fzf matcher and captures its output. The existing picker owns terminal rendering; a competing spinner would corrupt it."
+    },
+    "libexec/t_picker_viewport.py:relay.drain:select.select": {
+      "kind": "passthrough",
+      "reason": "The live fzf PTY drain polls output at ten-millisecond intervals during native input and reload barriers, keeping the picker responsive without another terminal renderer."
+    },
+    "libexec/t_picker_viewport.py:relay.synchronize:select.select": {
+      "kind": "protocol",
+      "reason": "The live terminal input barrier waits for PTY writability in ten-millisecond steps within its five-second deadline. fzf retains visible terminal ownership throughout synchronization."
+    },
+    "libexec/t_picker_viewport.py:relay.synchronize:time.sleep": {
+      "kind": "protocol",
+      "reason": "Five-millisecond polls await the native input acknowledgement and settled canonical rows under the input and picker API deadlines. The active fzf screen supplies the interaction; an added spinner would overwrite it."
+    },
+    "libexec/t_picker_viewport.py:relay.update:time.sleep": {
+      "kind": "protocol",
+      "reason": "Five-millisecond polls confirm the exact viewport reload and restored focus/mark identities within the picker API deadline. The existing fzf screen owns rendering while its PTY output continues draining."
+    },
+    "libexec/t_picker_viewport.py:relay:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "Starts the shared interactive fzf picker on its controlled PTY; fzf owns terminal input and rendering until selection or cancellation, with relay cleanup restoring the outer terminal."
+    },
+    "libexec/t_picker_viewport.py:relay:select.select": {
+      "kind": "passthrough",
+      "reason": "The live picker event loop polls terminal input and PTY output in forty-millisecond steps, forwarding fzf rendering and handling resize/paste events. A second progress renderer would corrupt the picker screen."
     },
     "bin/t:cmd_read:subprocess.Popen": {
       "kind": "passthrough",
@@ -365,6 +401,54 @@
       "kind": "passthrough",
       "reason": "The native security command owns the terminal password prompt, bounded to 120 seconds; nosleep never handles or renders the password."
     },
+    "libexec/t_auto_recovery.py:run:subprocess.run": {
+      "kind": "background",
+      "reason": "Bounded recovery probes run in a background supervisor or lifecycle hook; configuration save reports its service transition and reconnect reports the retry phase."
+    },
+    "libexec/t_auto_recovery.py:Runtime.stop:time.sleep": {
+      "kind": "background",
+      "reason": "Bounded old-runtime shutdown is performed by the opted-in background recovery service."
+    },
+    "libexec/t_auto_recovery.py:migrate:time.sleep": {
+      "kind": "protocol",
+      "reason": "The private updater child waits up to 12 seconds for its new worker to publish a heartbeat. The caller owns the terminal spinner."
+    },
+    "libexec/t_auto_recovery.py:watch:time.sleep": {
+      "kind": "background",
+      "reason": "The optional per-user supervisor waits between recovery polls without writing terminal output."
+    },
+    "libexec/t_auto_recovery.py:launch:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The native agent owns terminal rendering, input, progress and approval prompts."
+    },
+    "libexec/t_client_stop.py:run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership probes run in the private close and recovery workers. The callers own the terminal and render diagnostics."
+    },
+    "libexec/t_client_stop.py:stop:time.sleep": {
+      "kind": "protocol",
+      "reason": "The private stop worker polls for a verified client exit for up to three seconds. Its caller presents any force-stop confirmation."
+    },
+    "libexec/t_client_stop.py:stop_stranded:time.sleep": {
+      "kind": "protocol",
+      "reason": "The saved resume repair rail confirms the exact client before a bounded three-second exit wait. Any force stop requires a separate confirmation."
+    },
+    "libexec/t_recovery.py:capture_stop:subprocess.run": {
+      "kind": "background",
+      "reason": "The tmux menu callback verifies its exact session before offering escalation. tmux owns rendering and input for the affected client."
+    },
+    "libexec/t_auto_recovery.py:ssh_once:subprocess.Popen": {
+      "kind": "passthrough",
+      "reason": "OpenSSH and the attached remote terminal own interactive output and authentication."
+    },
+    "libexec/t_auto_recovery.py:reconnect:time.sleep": {
+      "kind": "phase",
+      "reason": "Each retry prints the target, delay and cancellation instruction before waiting."
+    },
+    "libexec/t_auto_recovery.py:internal:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The verified attach-only operation gives terminal control to tmux."
+    },
     "bin/t:_config_wizard:subprocess.call": {
       "kind": "passthrough",
       "reason": "The shared nosleep editor owns the cooked terminal until it returns to the hub."
@@ -641,6 +725,10 @@
       "kind": "phase",
       "reason": "The announced installation check resolves existing package ownership with a bounded read-only Homebrew query."
     },
+    "libexec/t_nightr.py:guided_update:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The verified Nightr CLI streams package update progress and keeps its terminal for administrator prompts."
+    },
     "libexec/nightr_install.py:run:subprocess.run": {
       "kind": "phase",
       "reason": "Announced package phases use bounded metadata, signature and receipt probes; interactive installers use the separate streamed path."
@@ -693,33 +781,29 @@
       "kind": "background",
       "reason": "The bounded discovery observer polls in the background while the active picker displays the refresh status."
     },
-    "libexec/t_picker_viewport.py:search:subprocess.run": {
-      "kind": "protocol",
-      "reason": "The active resume picker delegates canonical-row matching to the shared noninteractive fzf matcher and captures its output. The existing picker owns terminal rendering; a competing spinner would corrupt it."
-    },
-    "libexec/t_picker_viewport.py:relay.drain:select.select": {
+    "libexec/t_session_models.py:run:subprocess.call": {
       "kind": "passthrough",
-      "reason": "The live fzf PTY drain polls output at ten-millisecond intervals during native input and reload barriers, keeping the picker responsive without another terminal renderer."
+      "reason": "After reviewed same-worktree handoff and verified source shutdown, the native Claude CLI owns the interactive terminal and renders its own progress."
     },
-    "libexec/t_picker_viewport.py:relay.synchronize:select.select": {
+    "libexec/t_runtime.py:command:subprocess.run": {
       "kind": "protocol",
-      "reason": "The live terminal input barrier waits for PTY writability in ten-millisecond steps within its five-second deadline. fzf retains visible terminal ownership throughout synchronization."
+      "reason": "Private runtime reconciliation performs deadline-bounded tmux and native owner probes under the update spinner; machine acknowledgement output must remain clean."
     },
-    "libexec/t_picker_viewport.py:relay.synchronize:time.sleep": {
+    "libexec/t_runtime.py:Worker.verify:time.sleep": {
       "kind": "protocol",
-      "reason": "Five-millisecond polls await the native input acknowledgement and settled canonical rows under the input and picker API deadlines. The active fzf screen supplies the interaction; an added spinner would overwrite it."
+      "reason": "Bounded cooperative adoption acknowledgement inside the updater progress phase; only helper-owned safe boundaries reload code and no terminal animation may enter runtime protocol output."
     },
-    "libexec/t_picker_viewport.py:relay.update:time.sleep": {
+    "libexec/t_session_cache.py:retire_obsolete:time.sleep": {
       "kind": "protocol",
-      "reason": "Five-millisecond polls confirm the exact viewport reload and restored focus/mark identities within the picker API deadline. The existing fzf screen owns rendering while its PTY output continues draining."
+      "reason": "Optional runtime reconciliation verifies obsolete private discovery endpoint retirement within one shared 1.5-second deadline; the update coordinator owns progress and never starts or signals a daemon."
     },
-    "libexec/t_picker_viewport.py:relay:subprocess.Popen": {
-      "kind": "passthrough",
-      "reason": "Starts the shared interactive fzf picker on its controlled PTY; fzf owns terminal input and rendering until selection or cancellation, with relay cleanup restoring the outer terminal."
+    "libexec/t_session_cache.py:_brew_process_sources:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Read-only legacy Homebrew source discovery has a 200 ms deadline and bounded parsing. Update reconciliation owns progress; detached discovery startup has no terminal and must keep protocol output clean."
     },
-    "libexec/t_picker_viewport.py:relay:select.select": {
-      "kind": "passthrough",
-      "reason": "The live picker event loop polls terminal input and PTY output in forty-millisecond steps, forwarding fzf rendering and handling resize/paste events. A second progress renderer would corrupt the picker screen."
+    "libexec/t_terminal_close.py:attached:time.sleep": {
+      "kind": "background",
+      "reason": "Private attachment hooks wait at most two seconds for a scoped pending observer migration to publish its live fingerprint. They have no foreground terminal; verification must not paint over the attached agent."
     }
   },
   "shell": [
@@ -751,7 +835,7 @@
       "file": "zsh/lifecycle.zsh",
       "required": [
         "_t_with_progress \"Verifying conversation lifecycle\" _t_lifecycle_run_impl",
-        "_t_wait_for_exit \"$pid\"",
+        "python3 \"$T_HOME/libexec/t_client_stop.py\" stop \"$client_token\"",
         "_t_wait_for_exit \"$fgpid\""
       ]
     }

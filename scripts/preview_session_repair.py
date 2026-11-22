@@ -34,11 +34,16 @@ def main():
             history = recovery['HISTORY']
             target = object.__new__(history['HistoryCommand'])
             target.root, target.api = str(ROOT), api
+            target.fresh_resume_offer = lambda *_: ('a9db407' + '0' * 33, None)
             attempts = []
-            def resume(*_args, **_kwargs):
+            def resume(*_args, fresh=None):
                 attempts.append(True)
+                if fresh:
+                    return 'Opened the selected sample conversation in a fresh worktree.'
                 if len(attempts) == 1 or args.blocked:
-                    raise history['HistoryError']('Another writer has not published its worktree yet.')
+                    error = history['HistoryError']('Another writer has not published its worktree yet.')
+                    error.fingerprint = None
+                    raise history['UnknownWorkspaceWriter'](error, '~/code/.worktrees/api/api-3')
                 return 'Resumed the exact selected sample conversation.'
             target.resume = resume
             target.resume_with_repair.__globals__['_CACHE_REQUEST'] = lambda *a, **k: {}

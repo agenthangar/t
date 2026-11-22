@@ -212,7 +212,7 @@ def test_air_headers_preserve_keys_width_and_state(filters, monkeypatch, platfor
     assert all(theme.key_labels('Ctrl-' + letter, compact=compact) in plain for letter in 'FXG')
     assert '2 hidden' in plain and 'Filters ON' in plain
     if active:
-        assert '\x1b[1;4;96m' + theme.key_labels('Ctrl-G agent', compact=compact) in text
+        assert '\x1b[1;4;97;48;5;23m' + theme.key_labels('Ctrl-G agent', compact=compact) in text
     assert '\x1b[36m' in text
     if height <= 14:
         assert len(plain.splitlines()) <= 9

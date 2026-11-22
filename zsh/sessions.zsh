@@ -1387,7 +1387,16 @@ _dev_session_rows_cli() {
   # _dev_ps_snapshot); pass 2 prints, after ONE _transcript_meta_batch has read
   # every title at once rather than forking python3 per slot.
   local -a rows rowtx tpaths tx mrows f _PR_STALE
-  local -A title_of pr_of _PR_SPAWNED
+  local -A title_of pr_of _PR_SPAWNED holding_of
+  local recovery_row
+  local -a recovery_fields recovery_rows
+  if [[ -f $T_HOME/libexec/t_auto_recovery.py ]]; then
+    recovery_rows=("${(@f)$(python3 "$T_HOME/libexec/t_auto_recovery.py" holding-rows)}")
+    for recovery_row in "${recovery_rows[@]}"; do
+      recovery_fields=("${(@ps:\t:)recovery_row}")
+      [[ $#recovery_fields == 7 ]] && holding_of[dev-${recovery_fields[3]}]=$recovery_row
+    done
+  fi
   local s short sid psid dir state context summary agent i mr mrest REPLY
   _dev_ps_snapshot
   # tmux replaces literal tabs in -F with `_` on macOS 3.7c. Keep the
@@ -1395,6 +1404,7 @@ _dev_session_rows_cli() {
   while IFS='|' read -r s state dir; do
     [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
     short="${s#dev-}"
+    [[ -z ${holding_of[$s]:-} ]] || continue
     agent=$(_dev_agent_of_session "$s")
     # Authoritative id (current pane, registry, then cwd-validated stamp) —
     # not the raw CLAUDE_RESUME_ID stamp, which a reused slot can carry stale from a
@@ -1469,6 +1479,12 @@ _dev_session_rows_cli() {
     # Private enrichment input: retain the display transcript already validated
     # above, including the unknown-id fallback. Never export it as a targeting id.
     [[ ${1:-} == --transcripts ]] && printf '\t%s' "${rowtx[$i]}"
+    printf '\n'
+  done
+  for recovery_row in "${recovery_rows[@]}"; do
+    [[ -n $recovery_row ]] || continue
+    print -rn -- "$recovery_row"
+    [[ ${1:-} == --transcripts ]] && printf '\t-'
     printf '\n'
   done
   # plus any FOREGROUND (non-tmux) claudes on this machine, same row format.
@@ -1847,6 +1863,7 @@ _dev_kill_fg() {
       continue
     fi
     tsess=$(_dev_tmux_session_of_pid "$pid")
+    _dev_history_record "$sid" "$agent" "$cwd" close || continue
     if [[ -n $tsess ]]; then
       tmux kill-session -t "=$tsess:" 2>/dev/null && { echo "Killed $label (tmux session $tsess)"; killed=1; }
     else
@@ -1934,15 +1951,18 @@ _dev_kill_pick() {
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
   local rows
+  local -a cache_scope
+  [[ -n $repo ]] && cache_scope+=(--repo "$repo")
+
   if [[ -n $remote_only ]]; then
-    rows=$(_t_discovery_rows --details) || return $?
+    rows=$(_t_discovery_rows --remote-only "${cache_scope[@]}" --details) || return $?
   else
-    rows=$(_t_discovery_rows --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return $?
+    rows=$(_t_discovery_rows "${cache_scope[@]}" --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return $?
   fi
   if [[ -n $remote_only ]]; then
     rows=$(print -r -- "$rows" | awk -F'\t' '$1 != "local"')
   fi
-  if [[ -n $repo ]]; then
+  if [[ -n $repo && ${T_DISCOVERY_COLLECTOR:-} == 1 ]]; then
     local dir="${DEV_REPOS[$repo]:-}" root="${DEV_WORKTREE_ROOT:-}"
     if [[ -n $dir ]]; then
       rows=$(print -r -- "$rows" | awk -F'\t' \
@@ -2221,8 +2241,8 @@ _t_terminal_close_event() {
 }
 
 _t_terminal_close_guard() {
-  local session=$1 dir=$2 socket=$3 identity=$4 pane=$5 pane_pid=$6
-  local agent sid tx fresh clean=0 clear=0
+  local session=$1 dir=$2 socket=$3 identity=$4 pane=$5 pane_pid=$6 mode=${7:-check}
+  local agent sid tx fresh clean=0 clear=0 pid
   _DEV_PS_AT=0
   [[ $(tmux display-message -p -t "=$session:" '#{session_id}') == "$identity" ]] || return 1
   agent=$(_dev_agent_of_session "$session")
@@ -2232,39 +2252,28 @@ _t_terminal_close_guard() {
   [[ $agent == codex && -n $sid ]] && fresh=0
   _dev_kill_no_pending_work "$dir" && clean=1
   _t_terminal_processes_clear "$session" "$dir" && clear=1
-  python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
-    "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" >/dev/null
+  if [[ $mode == stop-previews ]]; then
+    pid=$(_dev_session_claude_pid "$session")
+    [[ -n $pid ]] || return 1
+    python3 "$T_HOME/libexec/t_terminal_close.py" stop-previews "$socket" "$identity" "$pane" "$pane_pid" \
+      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" "$pid" "$$" >/dev/null
+  else
+    python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
+      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" >/dev/null
+  fi
 }
 
 _t_terminal_processes_clear() {
-  local pending pid children child up
-  local -A allowed
+  local pid mode=processes
   _DEV_PS_AT=0
   _dev_ps_snapshot
   _dev_snap_ok || return 1
-  # Rooted detached work and agent children are both vetoes. Unknown process
-  # snapshots preserve the session. Auto-close never sweeps rooted processes.
   pid=$(_dev_session_claude_pid "$1")
   [[ -n $pid ]] || return 1
-  pending=$(_dev_cwd_pids "$2") || return 1
-  children=$(ps -A -o ppid= 2>/dev/null) || return 1
-  # The generic reaper protects all agent descendants from signals, but those
-  # descendants are precisely work that automatic closure must retain. Only
-  # this agent and its launcher ancestors are exempt here.
-  for up in "$pid" $$; do
-    while [[ $up == <-> ]] && (( up > 1 )); do
-      [[ -n ${allowed[$up]} ]] && break
-      allowed[$up]=1
-      up=${_DEV_PS_PPID[$up]:-}
-    done
-  done
-  for child in ${(f)pending}; do
-    [[ -n ${allowed[$child]} ]] || return 1
-  done
-  for child in ${(f)children}; do
-    [[ ${child//[[:space:]]/} == "$pid" ]] && return 1
-  done
-  return 0
+  [[ $3 != strict ]] || mode=processes-empty
+  # Read-only classification permits only exact static loopback Python previews
+  # directly owned by this agent. Rooted or descendant unknown work is a veto.
+  python3 "$T_HOME/libexec/t_terminal_close.py" "$mode" "$pid" "$2" "$$" >/dev/null
 }
 
 # _dev_new_session <session> <dir> [branch] [skip_prepare] — create a detached tmux
@@ -2296,6 +2305,10 @@ _dev_history_record() {
   # must freeze the revision now, without waiting for transcript discovery.
   [[ $mode == record-deferred ]] || tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
   python3 "$T_HOME/libexec/t_history.py" "$mode" "$sid" "$agent" "$dir" "$tx" "$event" "$interface" >/dev/null 2>&1 || true
+  if [[ $event == (close|handoff) && -f $T_HOME/libexec/t_auto_recovery.py ]]; then
+    python3 "$T_HOME/libexec/t_auto_recovery.py" retire "$agent" "$sid" || return 1
+  fi
+  return 0
 }
 
 _dev_with_launch_locks() {
@@ -2341,6 +2354,9 @@ _dev_launch_preflight() {
   _dev_ps_snapshot
   while IFS='|' read -r name owner_path; do
     [[ -n $name ]] || continue
+    if [[ $name == ${_T_AUTO_HOLD_SESSION:-} ]] && _t_auto_holding_verified "$_T_AUTO_HOLD_SESSION" "$dir" "$sid" "$_T_AUTO_HOLD_SOCKET" "$_T_AUTO_HOLD_PANE"; then
+      continue
+    fi
     if [[ $name == $session || ( -n $owner_path && ${owner_path:A} == $dir ) ]]; then
       print -u2 -- "t: a live tmux session already owns $session or $dir ($name)"
       return 1
@@ -2366,6 +2382,11 @@ _dev_launch_preflight() {
     return 1
   fi
   while IFS=$'\t' read -r host row_sid row_cwd row_name; do
+    if [[ $host == local && $row_name == ${_T_AUTO_HOLD_SESSION#dev-} &&
+          -n ${_T_AUTO_HOLD_SESSION:-} && ${row_cwd:A} == $dir ]] &&
+       _t_auto_holding_verified "$_T_AUTO_HOLD_SESSION" "$dir" "$sid" "$_T_AUTO_HOLD_SOCKET" "$_T_AUTO_HOLD_PANE"; then
+      continue
+    fi
     if [[ $row_sid == $sid ]]; then
       print -u2 -- "t: saved conversation is already live in $row_name on $host"
       return 1
@@ -2855,7 +2876,11 @@ _t_dev() {
   if [[ -z $slot && -z $no_tmux && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     local open_rc
     _t_open_picker "$repo" "" "" 1; open_rc=$?
-    (( open_rc == 2 )) || return $open_rc
+    if (( open_rc == 3 )); then
+      _t_open_new_local "$repo"
+      return $?
+    fi
+    return $open_rc
   fi
 
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
@@ -2871,7 +2896,12 @@ _t_dev() {
     local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet "$allow_unverified_new"); resolve_rc=$?
     (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
-      (( resolve_rc != 3 )) || print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
+      if (( resolve_rc == 3 )); then
+        print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
+        if [[ $slot == <-> ]]; then
+          print -u2 -r -- "Use t session resume ${(q)repo} $slot to select a saved conversation."
+        fi
+      fi
       return $resolve_rc
     fi
     if [[ -n $res ]]; then
@@ -3034,7 +3064,7 @@ _t_dev() {
     fi
     # resume logging if it stopped (e.g. after server restart)
     tmux pipe-pane -t "=$session:" -o "cat >> $logfile"
-    _dev_recovery_watch "$session"
+    [[ -n $(tmux show-options -qv -t "=$session:" @t_recovery_holding) ]] || _dev_recovery_watch "$session"
     _t_session_attach "$session" "$live_agent" || {
       print -u2 -- "t open: could not attach $session; inspect $logfile"
       return 1

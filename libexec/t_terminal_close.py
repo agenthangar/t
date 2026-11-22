@@ -3,14 +3,18 @@
 No keyboard input is read. A detached client with a usable terminal is deliberately
 ignored. Unknown agent/composer/Git/process evidence always retains the owner.
 """
+import ctypes
 import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import select
 import shlex
+import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -18,8 +22,10 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_PROTOCOL = 1
 HOOK = 'client-detached[50100]'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+PROCESS_FIELDS = ('argv', 'executable', 'cwd', 'birth', 'import_safe')
 
 
 def run(args, **kwargs):
@@ -40,35 +46,93 @@ def hung_up(fd):
     return any(events & select.POLLHUP for _, events in poll.poll(0))
 
 
-def install(session):
-    result = run(['tmux', 'display-message', '-p', '-t', '=' + session + ':',
-                  '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}'])
+def runtime():
+    return runpy.run_path(str(ROOT / 'libexec/t_runtime.py'))
+
+
+def hook_commands(socket, pane, source=None):
+    source = source or str(ROOT)
+    bridge = runtime()['dispatcher'](source)
+    if bridge == Path(source) / 'libexec/t_runtime_dispatch.py':
+        prefix = [sys.executable, str(Path(source) / 'libexec/t_terminal_close.py')]
+    else:
+        prefix = [sys.executable, str(bridge), source, 'libexec/t_terminal_close.py']
+    worker = shlex.join([*prefix, 'detached', socket, pane['identity'], pane['pane'], pane['pane_pid']])
+    worker += ' #{q:hook_client} >/dev/null 2>&1 || :'
+    attached = shlex.join([*prefix, 'attached', socket]) + ' #{q:hook_client} >/dev/null 2>&1 || :'
+    return {HOOK: shlex.join(['run-shell', '-b', worker]),
+            'client-attached[50100]': shlex.join(['run-shell', attached]),
+            'client-session-changed[50100]': shlex.join(['run-shell', attached])}
+
+
+def install(session, socket=None, expected=None, source=None):
+    result = (tmux(socket, 'display-message', '-p', '-t', '=' + session + ':',
+                   '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}')
+              if socket else run(['tmux', 'display-message', '-p', '-t', '=' + session + ':',
+                  '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}']))
     fields = result.stdout.strip().split('\t')
     if result.returncode or len(fields) != 5 or not fields[0].startswith('dev-'):
         return 1
     _, identity, socket, pane, pane_pid = fields
-    worker = shlex.join([sys.executable, str(Path(__file__).resolve()), 'detached',
-                        socket, identity, pane, pane_pid])
-    # Ordinary client formats can be gone by the time run-shell executes. The
-    # hook's saved client name is the terminal path; pin the owner at install.
-    worker += ' #{q:hook_client} >/dev/null 2>&1 || :'
-    # A private array element preserves the user's other session hooks. Hook
-    # expansion quotes event data, not executable shell fragments.
-    result = tmux(socket, 'set-hook', '-t', identity + ':', HOOK,
-                  shlex.join(['run-shell', '-b', worker]))
-    if result.returncode:
-        return result.returncode
-    attached = shlex.join([sys.executable, str(Path(__file__).resolve()), 'attached', socket])
-    # Older tmux hooks retain hook_client but not ordinary client formats.
-    # Resolve the PID from that saved terminal name while it is still attached.
-    # Hook failures must never put the agent pane into run-shell copy mode.
-    attached += ' #{q:hook_client} >/dev/null 2>&1 || :'
-    for hook in ('client-attached[50100]', 'client-session-changed[50100]'):
-        result = tmux(socket, 'set-hook', '-t', identity + ':', hook,
-                      shlex.join(['run-shell', attached]))
+    binding = dict(identity=identity, pane=pane, pane_pid=pane_pid)
+    if expected and any(binding[key] != expected[key] for key in binding):
+        return 1
+    utilities = runtime()
+    desired_source = source or str(ROOT)
+    commands = hook_commands(socket, binding, source)
+    installed = utilities['read'](utilities['private_root']() / 'installation.json')
+    roots = {str(ROOT), desired_source, *installed.get('sources', [])}
+    incarnation = utilities['socket_identity'](socket)
+    if incarnation is None:
+        return 1
+    initial_hooks = tmux(socket, 'show-hooks', '-t', identity + ':')
+    has_hooks = any(line.startswith(hook + ' ') for line in initial_hooks.stdout.splitlines() for hook in commands)
+    owner = expected
+    if owner is None and has_hooks:
+        owner = next((row for row in utilities['panes'](socket) if row['identity'] == identity), None)
+        if owner is None:
+            return 1
+    def preflight():
+        existing = tmux(socket, 'show-hooks', '-t', identity + ':')
+        if existing.returncode:
+            return False
+        for hook in commands:
+            rows = [line for line in existing.stdout.splitlines() if line.startswith(hook + ' ')]
+            if not rows:
+                continue
+            parsed = utilities['parsed_hook'](rows[0], socket, binding)
+            if parsed is None:
+                print('t runtime: ' + session + ' ' + hook +
+                      ': custom hook preserved; relocate it before retrying t update', file=sys.stderr)
+                return False
+            if (os.path.realpath(parsed['source']) != os.path.realpath(desired_source)
+                    and not utilities['source_owned'](parsed['source'], roots)):
+                print('t runtime: ' + session + ' ' + hook +
+                      ': pinned or unrelated runtime preserved', file=sys.stderr)
+                return False
+        return True
+    # Inspect all reserved slots before the first write, including ordinary attach.
+    if not preflight():
+        return 1
+    for hook, command in commands.items():
+        current = tmux(socket, 'display-message', '-p', '-t', '=' + session + ':',
+                       '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}')
+        if (current.returncode or current.stdout.strip().split('\t') != fields or not preflight()
+                or utilities['socket_identity'](socket) != incarnation
+                or (owner and not utilities['same_owner'](socket, owner, ROOT))):
+            return 1
+        existing = tmux(socket, 'show-hooks', '-t', identity + ':')
+        rows = [line for line in existing.stdout.splitlines() if line.startswith(hook + ' ')]
+        if not existing.returncode and len(rows) == 1 and shlex.split(rows[0])[1:] == shlex.split(command):
+            continue
+        result = tmux(socket, 'set-hook', '-t', identity + ':', hook, command)
         if result.returncode:
             return result.returncode
-    return result.returncode
+        verify = tmux(socket, 'show-hooks', '-t', identity + ':')
+        rows = [line for line in verify.stdout.splitlines() if line.startswith(hook + ' ')]
+        if verify.returncode or len(rows) != 1 or shlex.split(rows[0])[1:] != shlex.split(command):
+            return 1
+    return tmux(socket, 'set-option', '-t', identity + ':', '@t_runtime_source', desired_source).returncode
 
 
 def event_path(socket, tty):
@@ -92,6 +156,38 @@ def attached(socket, tty, pid=None):
         pid = matches[0]
     if not pid.isdigit():
         return 1
+    helper = runtime()
+    try:
+        socket = helper['canonical_socket'](socket)
+    except (OSError, ValueError):
+        return 1
+    if helper['socket_identity'](socket) is None or not helper['adopt_attachment'](socket, tty, pid):
+        return 1
+    paths = helper['worker_paths']('terminalobserver', socket, tty)
+    if sum(helper['lock_held'](helper['worker_lock'](path, 'terminalobserver')) for path in paths) > 1:
+        helper['defer_migration']('terminalobserver', socket, tty, 'multiple historical terminal owners are preserved')
+        return 0
+    # Historical socket spellings share the same original PTY owner. Never
+    # arm a second observer while any verified alias still holds that lock.
+    for alias in helper['socket_aliases'](socket):
+        historical = event_path(alias, tty)
+        lockpath = Path(str(historical) + '.lock')
+        if not lockpath.exists():
+            continue
+        with os.fdopen(os.open(lockpath, os.O_RDWR | os.O_NOFOLLOW), 'r+') as owned:
+            try:
+                fcntl.flock(owned, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                path = Path(str(historical) + '.runtime.json')
+                record = helper['read'](path)
+                if helper['complete_migration']('terminalobserver', socket, tty, record,
+                        (path, socket, dict(tty=tty, pid=pid))):
+                    return 0
+                helper['defer_migration']('terminalobserver', socket, tty, 'waiting for original terminal observer')
+                return 0
+        if Path(str(historical) + '.event').exists():
+            helper['defer_migration']('terminalobserver', socket, tty, 'pending original detach event is preserved')
+            return 0
     base = event_path(socket, tty)
     lock = os.open(str(base) + '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     fd = None
@@ -113,6 +209,19 @@ def attached(socket, tty, pid=None):
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          cwd='/', env=env)
         atomic_write(Path(str(base) + '.ready'), pid)
+        pending = helper['pending_path']('terminalobserver', socket, tty)
+        if pending.exists():
+            path = Path(str(base) + '.runtime.json')
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                record = helper['read'](path)
+                if helper['complete_migration']('terminalobserver', socket, tty, record,
+                        (path, socket, dict(tty=tty, pid=pid)), deadline):
+                    break
+                time.sleep(.05)
+        # Recovery has its own singleton and fresh binding verification.
+        if pending.exists():
+            return 0
         return 0
     finally:
         if fd is not None:
@@ -121,17 +230,78 @@ def attached(socket, tty, pid=None):
 
 
 def notify_detached(socket, identity, pane, pane_pid, tty):
-    base = event_path(socket, tty)
+    helper = runtime()
+    held = []
+    for alias in helper['socket_aliases'](socket):
+        candidate = event_path(alias, tty)
+        lockpath = Path(str(candidate) + '.lock')
+        if not lockpath.exists():
+            continue
+        with os.fdopen(os.open(lockpath, os.O_RDWR | os.O_NOFOLLOW), 'r+') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held.append(candidate)
+    if len(held) > 1:
+        return 1  # Ambiguous original PTYs must never receive synthetic events.
+    base = held[0] if held else event_path(socket, tty)
     atomic_write(Path(str(base) + '.event'), json.dumps([identity, pane, pane_pid]))
     return 0
 
 
-def watch(socket, tty, pid, descriptor, lock_descriptor):
+def watch(socket, tty, pid, descriptor, lock_descriptor, checkpoint=None):
     fd, lock = int(descriptor), int(lock_descriptor)
     event = Path(str(event_path(socket, tty)) + '.event')
     gone_at = None
+    helper, record = None, None
+    base = event_path(socket, tty)
+    runtime_path = Path(str(base) + '.runtime.json')
+    reload_path = Path(str(base) + '.reload.json')
+    try:
+        helper = runtime()
+        token = None
+        if checkpoint:
+            saved = json.loads(checkpoint)
+            if (saved['terminal_fd'] != helper['fd_identity'](fd)
+                    or saved['lock_fd'] != helper['fd_identity'](lock)
+                    or saved['socket'] != socket or saved['tty'] != tty or saved['client_pid'] != pid):
+                raise ValueError('observer descriptor handoff changed')
+            helper['validate_source'](ROOT, 'terminalobserver', saved['fingerprint'])
+            gone_at, token = saved['gone_at'], saved['token']
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.set_inheritable(fd, False)
+        os.set_inheritable(lock, False)
+        record = helper['publish'](runtime_path, 'terminalobserver', socket, token=token,
+                                  tty=tty, client_pid=pid, terminal_fd=helper['fd_identity'](fd),
+                                  lock_fd=helper['fd_identity'](lock), descriptor=fd, lock_descriptor=lock, gone_at=gone_at)
+        if checkpoint:
+            reload_path.unlink(missing_ok=True)
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+        if checkpoint:
+            raise  # Never acknowledge a successor that lost its original PTY.
+        helper, record = None, None  # Preserve ordinary observation if metadata is unavailable.
     try:
         while True:
+            # A reload is cooperative and precedes event consumption. The same
+            # open PTY and flock descriptions, pending event and elapsed loss
+            # deadline survive exec. The updater never generates detach events.
+            if helper and record and reload_path.exists():
+                try:
+                    request = helper['replacement'](reload_path, record, 'terminalobserver')
+                    if request:
+                        saved = dict(socket=socket, tty=tty, client_pid=pid, terminal_fd=record['terminal_fd'],
+                                     lock_fd=record['lock_fd'], token=record['token'], gone_at=gone_at,
+                                     fingerprint=request['fingerprint'])
+                        bridge = helper['dispatcher']()
+                        os.set_inheritable(fd, True)
+                        os.set_inheritable(lock, True)
+                        os.execv(sys.executable, [sys.executable, str(bridge), request['source'],
+                                 'libexec/t_terminal_close.py', 'watch-resume', socket, tty, pid,
+                                 str(fd), str(lock), json.dumps(saved)])
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+                    os.set_inheritable(fd, False)
+                    os.set_inheritable(lock, False)
+                    reload_path.unlink(missing_ok=True)
             if event.exists():
                 identity, pane, pane_pid = json.loads(event.read_text())
                 event.unlink(missing_ok=True)
@@ -147,6 +317,8 @@ def watch(socket, tty, pid, descriptor, lock_descriptor):
             time.sleep(.1)
     finally:
         Path(str(event_path(socket, tty)) + '.ready').unlink(missing_ok=True)
+        if record and helper['read'](runtime_path).get('token') == record['token']:
+            runtime_path.unlink(missing_ok=True)
         os.close(fd)
         os.close(lock)
 
@@ -344,6 +516,373 @@ def revision(workspace, transcript):
         return None
 
 
+def process_table(timeout=15):
+    result = run(['ps', '-axo', 'pid=,ppid=,uid=,stat=,lstart='],
+                 env={**os.environ, 'LC_ALL': 'C'}, timeout=timeout)
+    if result.returncode:
+        raise ValueError('unreadable process table')
+    table = {}
+    for line in result.stdout.splitlines():
+        fields = line.split(None, 4)
+        if len(fields) != 5:
+            raise ValueError('incomplete process table')
+        pid, parent, uid = map(int, fields[:3])
+        table[pid] = dict(parent=parent, uid=uid, state=fields[3], start=fields[4])
+    return table
+
+
+def import_environment_safe(entries):
+    # Keep only a verdict. Native environment values may contain secrets and
+    # never enter process plans, diagnostics, receipts or output.
+    unsafe = {b'PYTHONPATH', b'PYTHONHOME', b'PYTHONUSERBASE', b'PYTHONPLATLIBDIR',
+              b'PYTHONSTARTUP', b'PYTHONINSPECT'}
+    return not any(key in unsafe and value for entry in entries
+                   for key, _, value in [entry.partition(b'=')])
+
+
+def process_detail(pid, timeout=15):
+    """Read exact native argv, executable and cwd; never parse ps's display argv."""
+    if sys.platform == 'linux':
+        root = Path('/proc') / str(pid)
+        stat = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+        return dict(argv=os.fsdecode((root / 'cmdline').read_bytes()).rstrip('\0').split('\0'),
+                    executable=os.readlink(root / 'exe'), cwd=os.readlink(root / 'cwd'),
+                    import_safe=import_environment_safe((root / 'environ').read_bytes().split(b'\0')),
+                    birth=stat[19])  # starttime (field 22), not second-resolution ps
+    if sys.platform != 'darwin':
+        raise ValueError('unsupported process inspection')
+    libc = ctypes.CDLL(None, use_errno=True)
+    size = ctypes.c_size_t(1024 * 1024)
+    buffer = ctypes.create_string_buffer(size.value)
+    mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0):
+        raise ValueError('unreadable native process arguments')
+    raw = buffer.raw[:size.value]
+    argc = ctypes.c_int.from_buffer_copy(raw[:4]).value
+    executable, _, tail = raw[4:].partition(b'\0')
+    entries = tail.lstrip(b'\0').split(b'\0')
+    argv = entries[:argc]
+    if argc < 1 or len(argv) != argc:
+        raise ValueError('incomplete native process arguments')
+    lib = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+    lib.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    path = ctypes.create_string_buffer(4096)
+    if lib.proc_pidpath(pid, path, len(path)) <= 0:
+        raise ValueError('unreadable process executable')
+    # Public proc_bsdinfo layout, also used by t_offline.py.
+    class BSDInfo(ctypes.Structure):
+        _fields_ = [('header', ctypes.c_uint32*12), ('names', ctypes.c_char*48),
+                    ('tail', ctypes.c_uint32*6), ('seconds', ctypes.c_uint64),
+                    ('microseconds', ctypes.c_uint64)]
+    info = BSDInfo()
+    lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+        raise ValueError('unreadable process birth')
+    listing = run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'], timeout=timeout)
+    paths = [line[1:] for line in listing.stdout.splitlines() if line.startswith('n')]
+    if listing.returncode or len(paths) != 1:
+        raise ValueError('unreadable process cwd')
+    return dict(argv=[os.fsdecode(arg) for arg in argv], executable=os.fsdecode(path.value),
+                cwd=paths[0], birth=[info.seconds, info.microseconds],
+                import_safe=import_environment_safe(entries[argc:]))
+
+
+def rooted_processes(workspace):
+    root = os.path.realpath(workspace)
+    if root == '/':
+        raise ValueError('unsafe workspace')
+    if sys.platform == 'linux':
+        rows = []
+        for entry in Path('/proc').iterdir():
+            if entry.name.isdecimal():
+                try:
+                    rows.append((int(entry.name), os.readlink(entry / 'cwd')))
+                except (FileNotFoundError, PermissionError, ProcessLookupError):
+                    continue  # Same existing rooted-process visibility contract.
+    elif sys.platform == 'darwin':
+        listing = run(['lsof', '-a', '-d', 'cwd', '-Fpn'])
+        if listing.returncode:
+            raise ValueError('unreadable rooted processes')
+        rows, pid = [], None
+        for line in listing.stdout.splitlines():
+            if line.startswith('p'):
+                pid = int(line[1:])
+            elif line.startswith('n') and pid is not None:
+                rows.append((pid, line[1:]))
+    else:
+        raise ValueError('unsupported rooted-process inspection')
+    return {pid for pid, cwd in rows if cwd == root or cwd.startswith(root + '/')}
+
+
+def static_preview(detail):
+    argv = detail['argv']
+    if (detail.get('import_safe') is not True or len(argv) < 3 or not re.fullmatch(r'[Pp]ython(?:3(?:\.\d+)?)?', Path(detail['executable']).name)
+            or not re.fullmatch(r'[Pp]ython(?:3(?:\.\d+)?)?', Path(argv[0]).name)
+            or argv[1:3] != ['-m', 'http.server'] or not os.path.isabs(detail['cwd'])):
+        return False
+    # Only Python's static server with an explicit literal loopback bind. No CGI,
+    # TLS, custom modules, interpreter options, abbreviations or unknown flags.
+    options, positional, seen = argv[3:], [], set()
+    directory = detail['cwd']
+    index = 0
+    while index < len(options):
+        token = options[index]
+        if token in ('-b', '--bind', '-d', '--directory', '-p', '--protocol'):
+            key = {'-b': 'bind', '--bind': 'bind', '-d': 'directory', '--directory': 'directory',
+                   '-p': 'protocol', '--protocol': 'protocol'}[token]
+            index += 1
+            if index >= len(options) or key in seen:
+                return False
+            value = options[index]
+            seen.add(key)
+            if key == 'directory':
+                directory = os.path.join(detail['cwd'], value)
+            if ((key == 'bind' and value not in ('127.0.0.1', '::1', 'localhost'))
+                    or (key == 'directory' and (not value or value.startswith('-')))
+                    or (key == 'protocol' and value not in ('HTTP/1.0', 'HTTP/1.1'))):
+                return False
+        elif token.startswith('-'):
+            return False
+        else:
+            positional.append(token)
+        index += 1
+    return (os.path.isdir(directory) and not (Path(detail['cwd']) / 'http.py').exists()
+            and not (Path(detail['cwd']) / 'http').exists()
+            and 'bind' in seen and len(positional) <= 1 and
+            (not positional or positional[0].isascii() and positional[0].isdecimal()
+             and 0 <= int(positional[0]) <= 65535))
+
+
+def preview_listener(pid, detail):
+    """Positive socket ownership and actual loopback bind, independent of argv."""
+    if sys.platform == 'linux':
+        root = Path('/proc') / str(pid)
+        owned = set()
+        for fd in (root / 'fd').iterdir():
+            try:
+                link = os.readlink(fd)
+                if link.startswith('socket:['):
+                    owned.add(link[8:-1])
+            except FileNotFoundError:
+                continue
+        listeners = []
+        for name, family in (('tcp', socket.AF_INET), ('tcp6', socket.AF_INET6)):
+            for line in (root / 'net' / name).read_text().splitlines()[1:]:
+                fields = line.split()
+                if fields[3] != '0A' or fields[9] not in owned:
+                    continue
+                address, port = fields[1].split(':')
+                packed = b''.join(int(address[i:i+8], 16).to_bytes(4, sys.byteorder)
+                                  for i in range(0, len(address), 8))
+                listeners.append((socket.inet_ntop(family, packed), int(port, 16)))
+    elif sys.platform == 'darwin':
+        result = run(['lsof', '-nP', '-a', '-p', str(pid), '-iTCP', '-sTCP:LISTEN', '-Fn'])
+        if result.returncode:
+            return False
+        listeners = []
+        for line in result.stdout.splitlines():
+            if line.startswith('n'):
+                address, _, port = line[1:].rpartition(':')
+                listeners.append((address.strip('[]'), int(port)))
+    else:
+        return False
+    return bool(listeners) and all(address in ('127.0.0.1', '::1') and port > 0
+                                   for address, port in listeners)
+
+
+def process_candidates(table, agent_pid, workspace, inspector_pid):
+    if (agent_pid not in table or table[agent_pid]['uid'] != os.geteuid()
+            or table[agent_pid]['state'].startswith('Z')):
+        raise ValueError('agent process changed')
+    allowed = set()
+    for root in (agent_pid, inspector_pid, os.getpid()):
+        chain = set()
+        while root > 1:
+            if root in chain or root not in table:
+                raise ValueError('unverified process ancestry')
+            chain.add(root)
+            allowed.add(root)
+            root = table[root]['parent']
+    descendants = {agent_pid}
+    while True:
+        expanded = descendants | {pid for pid, item in table.items() if item['parent'] in descendants}
+        if expanded == descendants:
+            break
+        descendants = expanded
+    return {pid for pid in (descendants | rooted_processes(workspace)) - allowed
+            if pid not in table or not table[pid]['state'].startswith('Z')}
+
+
+def process_plan(agent_pid, workspace, inspector_pid):
+    """All blockers are checked before any preview receives a signal."""
+    table = process_table()
+    agent_pid, inspector_pid = int(agent_pid), int(inspector_pid)
+    candidates = process_candidates(table, agent_pid, workspace, inspector_pid)
+    previews = {}
+    for pid in candidates:
+        item = table.get(pid)
+        if (not item or item['uid'] != os.geteuid() or item['parent'] != agent_pid
+                or any(child['parent'] == pid for child in table.values())):
+            raise ValueError('background task or unknown process ancestry')
+        detail = process_detail(pid)
+        if not static_preview(detail) or not preview_listener(pid, detail):
+            raise ValueError('background task is not a verified static preview')
+        previews[pid] = dict(item, **detail)
+    # Exact native birth stamps also freeze the agent, never just a reusable PID.
+    agent = dict(table[agent_pid], **process_detail(agent_pid))
+    after = process_table()
+    if (process_candidates(after, agent_pid, workspace, inspector_pid) != candidates
+            or any(after.get(pid) != table.get(pid) for pid in candidates | {agent_pid})):
+        raise ValueError('process identity changed during inspection')
+    for pid, item in [(agent_pid, agent), *previews.items()]:
+        if process_detail(pid) != {key: item[key] for key in PROCESS_FIELDS}:
+            raise ValueError('native process identity changed during inspection')
+    return dict(agent=agent, previews=previews)
+
+
+def git_completed(workspace):
+    """Same read-only ancestry/squash/cache proof as _dev_kill_no_pending_work."""
+    def git(*args):
+        value = run(['git', '-C', workspace, *args])
+        if value.returncode:
+            return None
+        return value.stdout.strip()
+    if git('status', '--porcelain', '--untracked-files=all') != '':
+        return False
+    head = git('rev-parse', '--verify', 'HEAD')
+    if not head:
+        return False
+    target = git('symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD')
+    main = None
+    if target and target.startswith('refs/remotes/origin/') and target != 'refs/remotes/origin/HEAD':
+        main = git('rev-parse', '--verify', target + '^{commit}')
+    if not main:
+        for target in ('refs/remotes/origin/main', 'refs/remotes/origin/master'):
+            main = git('rev-parse', '--verify', target + '^{commit}')
+            if main:
+                break
+    if main:
+        if git('merge-base', '--is-ancestor', head, main) is not None:
+            return True
+        base, tree = git('merge-base', head, main), git('rev-parse', 'HEAD^{tree}')
+        trees = git('log', '--first-parent', '--format=%T', f'{base}..{main}') if base else None
+        if tree and trees and tree in trees.splitlines():
+            return True
+    origin = git('remote', 'get-url', 'origin') or ''
+    match = re.fullmatch(r'(?:git@github\.com:|https://github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?', origin)
+    if match:
+        cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
+        for file in cache.glob(match[1].replace('/', '#') + '#*.head'):
+            try:
+                if file.read_text().strip() == head and file.with_suffix('').read_text().strip() == 'MERGED':
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def preview_running(pid, birth):
+    """Nonblocking native exit check; subprocess timeouts cannot extend TERM wait."""
+    if sys.platform == 'linux':
+        try:
+            fields = (Path('/proc') / str(pid) / 'stat').read_text().rsplit(')', 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            return False
+        if fields[19] != birth:
+            raise ValueError('preview PID reused after TERM')
+        return fields[0] != 'Z'
+    if sys.platform == 'darwin':
+        class BSDInfo(ctypes.Structure):
+            _fields_ = [('header', ctypes.c_uint32*12), ('names', ctypes.c_char*48),
+                        ('tail', ctypes.c_uint32*6), ('seconds', ctypes.c_uint64),
+                        ('microseconds', ctypes.c_uint64)]
+        lib = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        info = BSDInfo()
+        result = lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        if not result and ctypes.get_errno() in (2, 3):  # ENOENT, ESRCH
+            return False
+        if result != ctypes.sizeof(info):
+            raise ValueError('unknown preview exit state')
+        if [info.seconds, info.microseconds] != birth:
+            raise ValueError('preview PID reused after TERM')
+        return info.header[1] != 5  # SZOMB
+    raise ValueError('unsupported preview exit inspection')
+
+
+def conversation_mark(socket, identity, pane, agent_pid):
+    """Freeze existing owner evidence; no new agent status or completion record."""
+    title = tmux(socket, 'display-message', '-p', '-t', pane, '#{pane_title}')
+    stamp = tmux(socket, 'show-environment', '-t', identity + ':', 'CLAUDE_RESUME_ID')
+    if title.returncode:
+        raise ValueError('unreadable conversation title')
+    registry = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions' / str(agent_pid)
+    try:
+        before = registry.stat()
+        with registry.open('rb') as stream:
+            data = stream.read(8193)
+        after = registry.stat()
+        stable = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if len(data) > 8192 or stable(before) != stable(after):
+            raise ValueError('owner registry changed during inspection')
+        registered = (after.st_ino, after.st_size, after.st_mtime_ns, hashlib.sha256(data).hexdigest())
+    except FileNotFoundError:
+        registered = None
+    return title.stdout, stamp.returncode, stamp.stdout, registered
+
+
+def stop_previews(check_args, agent_pid, inspector_pid):
+    socket, identity, pane, pane_pid, agent, transcript = check_args[:6]
+    stopped = []
+    try:
+        current = owner(socket, identity, pane, pane_pid)
+        if not current:
+            raise ValueError('owner changed before preview cleanup')
+        workspace = current['workspace']
+        baseline = revision(workspace, transcript)
+        conversation = conversation_mark(socket, identity, pane, agent_pid)
+        screen = tmux(socket, 'capture-pane', '-p', '-e', '-t', pane)
+        if baseline is None or screen.returncode:
+            raise ValueError('unknown task before preview cleanup')
+        planned = process_plan(agent_pid, workspace, inspector_pid)
+        def recheck(expected):
+            if not git_completed(workspace):
+                raise ValueError('pending or unverified Git work')
+            decision = eligibility(*check_args)
+            if decision['decision'] != 'terminate':
+                raise ValueError(decision['reason'])
+            live = process_plan(agent_pid, workspace, inspector_pid)
+            visible = tmux(socket, 'capture-pane', '-p', '-e', '-t', pane)
+            if (live != expected or owner(socket, identity, pane, pane_pid) != current
+                    or revision(workspace, transcript) != baseline or visible.returncode
+                    or visible.stdout != screen.stdout
+                    or conversation_mark(socket, identity, pane, agent_pid) != conversation):
+                raise ValueError('owner, task or process changed before preview cleanup')
+        for pid in list(planned['previews']):
+            recheck(planned)
+            # A final exact native read narrows the PID-reuse window after slow PR checks.
+            if process_detail(pid) != {key: planned['previews'][pid][key] for key in
+                                      PROCESS_FIELDS}:
+                raise ValueError('preview PID changed before TERM')
+            os.kill(pid, signal.SIGTERM)
+            stopped.append(pid)
+            deadline = time.monotonic() + 5
+            while preview_running(pid, planned['previews'][pid]['birth']):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ValueError('preview did not exit after TERM')
+                time.sleep(min(.05, remaining))
+            del planned['previews'][pid]
+        recheck(planned)
+        if planned['previews']:
+            raise ValueError('preview cleanup incomplete')
+        print(json.dumps(dict(reason='verified previews exited', preview_term_sent=stopped)), file=sys.stderr)
+        return 0
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
+        print(json.dumps(dict(reason=str(error), preview_term_sent=stopped)), file=sys.stderr)
+        return 1
+
+
 def eligibility(socket, identity, pane, pane_pid, agent, transcript, fresh, git_clean, processes_clear, sid=''):
     current = owner(socket, identity, pane, pane_pid)
     if not current:
@@ -437,6 +976,16 @@ def main(args):
         return attached(*args[1:])
     if len(args) == 6 and args[0] == 'watch':
         return watch(*args[1:])
+    if len(args) == 7 and args[0] == 'watch-resume':
+        return watch(*args[1:])
+    if len(args) == 4 and args[0] in ('processes', 'processes-empty'):
+        try:
+            planned = process_plan(*args[1:])
+            return int(args[0] == 'processes-empty' and bool(planned['previews']))
+        except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+            return 1
+    if len(args) == 13 and args[0] == 'stop-previews':
+        return stop_previews(args[1:11], *args[11:])
     if len(args) == 11 and args[0] == 'check':
         result = eligibility(*args[1:])
         print(json.dumps(result))

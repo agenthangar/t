@@ -1069,6 +1069,19 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     os.environ.pop('_T_LAUNCH_TRUST_DONE', None)
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
+        recovery = helper('t_auto_recovery')
+        if recovery['enabled']():
+            supervised = chosen
+            if chosen:
+                try:
+                    helper('t_offline')['launch_options'](argv, cwd or os.getcwd())
+                except ValueError:
+                    if argv[1:2] == ['resume']:
+                        print('Saved resume uses native cloud retries; automatic local continuation is unavailable.', file=sys.stderr)
+                    elif chosen['on_cloud_failure'] in ('local', 'ask'):
+                        raise
+                    supervised = None
+            return recovery['launch']('codex', argv, chosen=supervised)
         if chosen:
             offline = helper('t_offline')
             try:
@@ -1101,6 +1114,13 @@ def lead(argv, cwd=None, chosen=None, runner=None):
             raise ValueError('Choose an installed model from the catalog')
     if fit['fit'] is not True:
         raise ValueError(fit['reason'])
+    if runner is None and not leased and os.environ.get('TMUX_PANE') and os.isatty(0) and os.isatty(1):
+        try:
+            helper('t_offline')['launch_options'](argv, cwd or os.getcwd())
+        except ValueError:
+            print('Cross-provider controls unavailable for this invocation; using native model controls.', file=sys.stderr)
+        else:
+            return helper('t_session_models')['run'](argv, chosen, cwd or os.getcwd())
     w = helper('t_local_worker')
     with helper('t_local_status')['Activity'](chosen['model']) as activity, lead_client(chosen, activity, leased) as client:
         base, alias = client.base, leased['alias'] if leased else chosen['model']
@@ -1111,6 +1131,12 @@ def lead(argv, cwd=None, chosen=None, runner=None):
         except (OSError, ValueError):
             pass  # Telemetry must not block an otherwise valid local-only launch.
         env.update(CODEX_OSS_BASE_URL=base + '/v1')
+        if hasattr(client, 'info'):
+            env['T_LOCAL_CLIENT_ID'] = client.info.get('id', '')
+        verification = f"Verified on this Mac at {chosen['context_tokens']//1024}K" if fit.get('ready') else 'Verification unavailable'
+        env['T_LOCAL_VERIFICATION'] = verification
+        if hasattr(activity, 'update_memory'):
+            activity.update_memory(verification=verification)
         codex_home = Path(env['CODEX_HOME'])
         if trusted_workspace(cwd or os.getcwd()):
             (codex_home/'config.toml').write_text('[projects.'+json.dumps(str(Path(cwd or os.getcwd()).resolve()))+']\ntrust_level = "trusted"\n')
@@ -1183,7 +1209,7 @@ if __name__ == '__main__':
         if sys.argv[1:2] == ['--launch-prefix']:
             try:
                 selected = effective(sys.argv[2])
-                required = selected is not None
+                required = selected is not None or helper('t_auto_recovery')['enabled']()
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:
