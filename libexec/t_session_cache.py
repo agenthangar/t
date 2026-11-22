@@ -7,10 +7,13 @@ Collectors run outside the request loop and cannot publish across an invalidatio
 import copy
 import fcntl
 import hashlib
+import itertools
 import json
 import math
 import os
 import runpy
+import re
+import tempfile
 from pathlib import Path
 import socket
 import signal
@@ -34,8 +37,96 @@ SOURCE = Path(__file__).resolve().parents[1]
 _local_rc = runpy.run_path(str(SOURCE / 'libexec/t_config_path.py'))['local_rc']
 
 
+def _homebrew(source=None):
+    """Validated rack and stable opt identity; never trust a marker in a worktree."""
+    source = Path(source or SOURCE)
+    try:
+        if source != source.resolve() or (source / '.git').exists():
+            return None
+        if source.name != 'libexec' or source.parent.parent.name != 't' or source.parent.parent.parent.name != 'Cellar':
+            return None
+        for name in ('.t-homebrew', '.t-release-version'):
+            info = (source / name).lstat()
+            if not stat.S_ISREG(info.st_mode):
+                return None
+        marker = json.loads((source / '.t-homebrew').read_text())
+        opt = marker.get('opt_libexec', '')
+        if (marker.get('formula') != 'agenthangar/tap/t' or not isinstance(opt, str)
+                or not os.path.isabs(opt) or os.path.normpath(opt) != opt):
+            return None
+        active = Path(opt).resolve()
+        rack = source.parent.parent
+        if active.name != 'libexec' or active.parent.parent != rack:
+            return None
+        return dict(opt=opt, rack=rack, source=source)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def _brew_process_sources(brew):
+    """Read bounded process evidence, never signal a helper or inspect its env."""
+    try:
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(['ps', '-ww', '-u', str(os.getuid()), '-o', 'command='],
+                                    stdout=output, stderr=subprocess.DEVNULL, timeout=.2)
+            if result.returncode or output.tell() > 262144:
+                return []
+            output.seek(0)
+            lines = output.read(262144).decode(errors='replace').splitlines()
+        # ps does not preserve argv quoting. Only unambiguous Python invocations
+        # with a whitespace-free absolute script path can recover removed kegs.
+        pattern = re.compile(r'^(?:/\S*/)?(?:python[0-9.]*|Python) (' + re.escape(str(brew['rack'])) +
+                             r'/[^/\s]+/libexec)/libexec/t_session_cache\.py serve$')
+        return [Path(match.group(1)) for line in lines
+                if (match := pattern.fullmatch(line.strip()))][:64]
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+
+def _brew_sources(brew):
+    """Physical namespaces belonging to this rack, including pruned live kegs."""
+    sources = [brew['source']]
+    try:
+        # Version tuples give numerical newest-first order, independent of mtime.
+        kegs = list(itertools.islice(brew['rack'].iterdir(), 128))
+        kegs.sort(key=lambda p: tuple(int(n) for n in re.findall(r'\d+', p.name)), reverse=True)
+        for keg in kegs:
+            candidate = keg / 'libexec'
+            marker = _homebrew(candidate)
+            if marker and marker['opt'] == brew['opt'] and candidate not in sources:
+                sources.append(candidate)
+    except OSError:
+        pass
+    for candidate in _brew_process_sources(brew):
+        if candidate in sources or candidate.parent.parent != brew['rack']:
+            continue
+        if candidate.exists():
+            marker = _homebrew(candidate)
+            if not marker or marker['opt'] != brew['opt']:
+                continue
+        elif candidate.parent.exists() or candidate.parent.is_symlink():
+            # A partial/untrusted keg is not evidence of a removed package.
+            continue
+        sources.append(candidate)
+    previous = sorted(sources[1:], key=lambda p: (
+        tuple(int(n) for n in re.findall(r'\d+', p.parent.name)), str(p)), reverse=True)
+    return [sources[0], *previous][:128]
+
+
+def _snapshot_identities():
+    yield from _compatible_identities()
+    brew = _homebrew()
+    if brew:
+        for source in _brew_sources(brew):
+            yield from _compatible_identities(source)
+    canonical = _canonical_source()
+    if canonical is not None:
+        yield from _compatible_identities(canonical)
+
+
 def _identity():
-    return [str(SOURCE), os.path.expanduser('~'),
+    brew = _homebrew()
+    return [brew['opt'] if brew else str(SOURCE), os.path.expanduser('~'),
             os.environ.get('XDG_CACHE_HOME', ''), os.environ.get('XDG_STATE_HOME', ''),
             os.environ.get('XDG_CONFIG_HOME', ''),
             os.environ.get('CODEX_HOME', ''), os.environ.get('CLAUDE_CONFIG_DIR', ''),
@@ -173,7 +264,8 @@ def retire_obsolete(previous_sources=(), report=False):
             return dict(status='deferred', reason='development discovery is pinned', results=[]) if report else None
         revision = _revision()
         current = _identity()
-        sources = [SOURCE]
+        brew = _homebrew()
+        sources = ([Path(brew['opt']), *_brew_sources(brew)] if brew else [SOURCE])
         # Callers snapshot only the validated source they are updating. Its
         # files may already have been removed by the package manager.
         for source in previous_sources:
@@ -833,15 +925,9 @@ class _Persistence:
         try:
             db = self._open()
             row = None
-            # Prefer this source's normalized namespace, then its compatible raw
-            # identities. Only a cold worktree may seed from canonical.
-            canonical = _canonical_source()
-            for source in ([None, canonical] if canonical is not None else [None]):
-                for identity in _compatible_identities(source):
-                    row = db.execute('select payload from snapshots where namespace=? and version in (1,?)',
-                                     (_digest(identity), VERSION)).fetchone()
-                    if row is not None:
-                        break
+            for identity in _snapshot_identities():
+                row = db.execute('select payload from snapshots where namespace=? and version in (1,?)',
+                                 (_digest(identity), VERSION)).fetchone()
                 if row is not None:
                     break
             saved = json.loads(row[0]) if row else {'artifacts': _legacy_artifacts()}
@@ -882,8 +968,11 @@ class _Handler(socketserver.StreamRequestHandler):
             if len(raw) > LIMIT:
                 raise ValueError('session cache request too large')
             message = json.loads(raw)
-            if message.get('revision') != getattr(self.server, 'revision', _revision()):
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            if message.get('revision') != (getattr(self.server, 'revision', None) or _revision()):
+                brew = getattr(self.server, 'homebrew', None)
+                if (not brew or Path(brew['opt']).resolve() != brew['source']
+                        or _revision() != self.server.revision):
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
                 raise ValueError('session cache service version changed; restarting')
             result = self.server.memory.handle(message['operation'], message.get('payload') or {})
         except (ValueError, KeyError, TypeError, AttributeError, OSError) as error:
@@ -939,6 +1028,11 @@ def _serve():
                 if time.monotonic() >= deadline:
                     return
                 time.sleep(.05)
+        brew = _homebrew()
+        if brew and Path(brew['opt']).resolve() != SOURCE:
+            return  # A stale candidate must not claim the active opt namespace.
+        # One migration per elected generation, never a scan on every read.
+        retire_obsolete()
         address = root / 'service.sock'
         address.unlink(missing_ok=True)
         memory = _Memory()
@@ -949,6 +1043,7 @@ def _serve():
             address.chmod(0o600)
             server.memory = memory
             server.revision = _revision()
+            server.homebrew = _homebrew()
             def stop(*_args):
                 threading.Thread(target=server.shutdown, daemon=True).start()
             signal.signal(signal.SIGTERM, stop)

@@ -1661,9 +1661,14 @@ retire through a bounded revision handshake; current helpers, development
 worktrees and live sessions are preserved. No helper is started by this cleanup.
 `--check` remains read-only. The updater captures previous release and Homebrew
 source paths before relocation; the links-only installer also recognizes a prior
-sibling release when upgrading from an older client. An older Homebrew client
-cannot recover a previous Cellar path once its opt link has moved, and helpers
-whose configuration identity cannot be attributed safely are left alone.
+sibling release when upgrading from an older client. Homebrew helpers use a
+stable opt-based identity across versions. Migration recovers attributable physical namespaces from retained kegs and bounded
+current-user process evidence, even after an older updater moved the opt link.
+Full and links-only integration reconcile helpers; direct `brew upgrade` also
+reconciles on the next discovery startup. Current helpers reject stale clients
+without exiting. Saved snapshots migrate lazily into the stable namespace.
+Helpers whose configuration identity cannot be attributed safely are left alone;
+unmodified older clients can still recreate their legacy helper.
 
 SSH authentication must already work without a password prompt. Unreachable
 hosts and failed updates are reported while the remaining hosts continue; any
