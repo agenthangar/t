@@ -5,6 +5,7 @@ cooperative acknowledgements establish each target again on every update.
 """
 import fcntl
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = 1
+_SOCKET_ALIASES = {}
 FILES = {
     'terminalhooks': ('libexec/t_terminal_close.py', 'libexec/t_runtime_dispatch.py'),
     'terminalobserver': ('libexec/t_terminal_close.py', 'libexec/t_runtime.py', 'libexec/t_runtime_dispatch.py'),
@@ -174,15 +176,24 @@ def publish(path, component, socket, token=None, **extra):
     identity = native(os.getpid())
     value = dict(protocol=PROTOCOL, component=component, socket=socket,
                  source=str(ROOT), fingerprint=fingerprint(component), token=token or uuid.uuid4().hex,
+                 server_identity=list(socket_identity(socket) or ()),
                  pid=identity['pid'], birth=identity['birth'], **extra)
     write(path, value)
     return value
 
 
-def live_record(record, component, target=None, deadline=None):
+def live_record(record, component, target=None, deadline=None, allow_legacy=False):
     if record.get('protocol') != PROTOCOL or record.get('component') != component:
         return False
     try:
+        incarnation = socket_identity(record.get('socket', ''))
+        if incarnation is None:
+            return False
+        if record.get('server_identity') != list(incarnation):
+            if (not allow_legacy or 'server_identity' in record or not target
+                    or not same_socket(record.get('socket', ''), target[1])
+                    or (component == 'terminalobserver' and not target[2])):
+                return False
         identity = native(record['pid'], deadline)
         argv = identity['argv']
         if identity['birth'] != record['birth'] or len(argv) < 4:
@@ -199,7 +210,7 @@ def live_record(record, component, target=None, deadline=None):
         if os.path.realpath(source) != os.path.realpath(record['source']):
             return False
         socket = record['socket']
-        if target and socket != target[1]:
+        if target and not same_socket(socket, target[1]):
             return False
         if component == 'terminalobserver':
             expected = [socket, record['tty'], record['client_pid'], str(record['descriptor']), str(record['lock_descriptor'])]
@@ -291,6 +302,203 @@ def socket_hints():
     return sorted(hint for hint in hints if owned_socket(hint))
 
 
+def socket_identity(socket):
+    if not owned_socket(socket):
+        return None
+    try:
+        info = Path(socket).stat()
+        return info.st_dev, info.st_ino
+    except OSError:
+        return None
+
+
+def canonical_socket(socket):
+    result = tmux(socket, 'display-message', '-p', '#{socket_path}')
+    reported = result.stdout.strip()
+    if not result.returncode and socket_identity(socket) is not None and same_socket(socket, reported):
+        return reported
+    raise ValueError('tmux socket incarnation could not be verified')
+
+
+def worker_paths(component, socket, tty=''):
+    aliases = socket_aliases(socket)
+    if socket in aliases:
+        aliases.remove(socket)
+    aliases.insert(0, socket)
+    if component == 'terminalobserver':
+        terminal = module('t_terminal_close.py')
+        return [Path(str(terminal['event_path'](alias, tty)) + '.runtime.json') for alias in aliases]
+    recovery = module('t_recovery.py')
+    return [recovery['cache'](alias) / 'watch.runtime.json' for alias in aliases]
+
+
+def lock_held(path):
+    path = Path(path)
+    try:
+        info = path.lstat()
+        parent = path.parent.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022
+                or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.getuid() or parent.st_mode & 0o022):
+            raise ValueError('unsafe runtime lock')
+        with os.fdopen(os.open(path, os.O_RDWR | os.O_NOFOLLOW), 'r+') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+    except FileNotFoundError:
+        return False
+    return False
+
+
+def worker_lock(path, component):
+    return (Path(str(path).removesuffix('.runtime.json') + '.lock') if component == 'terminalobserver'
+            else Path(path).with_name('watch.lock'))
+
+
+def worker_path(component, socket, tty=''):
+    paths = worker_paths(component, socket, tty)
+    occupied = [path for path in paths if lock_held(worker_lock(path, component))]
+    return occupied[0] if occupied else paths[0]
+
+
+def same_socket(left, right):
+    if left == right:
+        return True
+    try:
+        identity = socket_identity(left)
+        return identity is not None and identity == socket_identity(right)
+    except OSError:
+        return False
+
+
+def server_inventory(hints):
+    """Choose tmux's spelling once per verified server; retain old namespaces."""
+    servers = {}
+    for hint in hints:
+        identity = socket_identity(hint)
+        if identity is None:
+            continue
+        if identity in servers:
+            servers[identity]['aliases'].add(hint)
+            continue
+        result = tmux(hint, 'display-message', '-p', '#{socket_path}')
+        reported = result.stdout.strip()
+        path = reported if not result.returncode and same_socket(hint, reported) else hint
+        servers[identity] = dict(socket=path, aliases={hint, path, os.path.realpath(path)}, identity=identity)
+    for identity, server in servers.items():
+        _SOCKET_ALIASES[identity] = server['aliases']
+    return list(servers.values())
+
+
+def socket_aliases(socket):
+    aliases = {socket, os.path.realpath(socket), *_SOCKET_ALIASES.get(socket_identity(socket), ())}
+    for path in private_root().glob('pending-*.json'):
+        pending = read(path)
+        if pending.get('server_identity') == list(socket_identity(socket) or ()):
+            aliases.update(alias for alias in pending.get('aliases', []) if isinstance(alias, str))
+    state = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 't/terminal-close'
+    recovery = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 't/recovery'
+    for path in itertools.chain(itertools.islice(state.glob('*.runtime.json'), 128),
+                                itertools.islice(recovery.glob('*/watch.runtime.json'), 128)):
+        alias = read(path).get('socket')
+        if isinstance(alias, str) and same_socket(alias, socket):
+            aliases.add(alias)
+    # macOS's standard /tmp alias is historical namespace data only after
+    # verifying both names resolve to this exact socket inode.
+    if socket.startswith('/private/tmp/'):
+        aliases.add(socket.removeprefix('/private'))
+    elif socket.startswith('/tmp/'):
+        aliases.add('/private' + socket)
+    return sorted(alias for alias in aliases if same_socket(alias, socket)) or [socket]
+
+
+def adopt_attachment(socket, tty, pid):
+    """Safe ordinary attachment boundary, independent of observer lock outcome."""
+    identity = socket_identity(socket)
+    if identity is None:
+        return False
+    clients = tmux(socket, 'list-clients', '-F', '#{client_tty}|#{client_pid}|#{session_id}')
+    matches = [line.split('|')[2] for line in clients.stdout.splitlines()
+               if line.split('|')[:2] == [tty, pid] and len(line.split('|')) == 3]
+    if clients.returncode or len(matches) != 1:
+        return False
+    pane = next((pane for pane in panes(socket) if pane['identity'] == matches[0]), None)
+    if not pane or not same_owner(socket, pane, ROOT):
+        return False
+    installed = read(private_root() / 'installation.json')
+    roots = {str(ROOT), stable_source(ROOT), *installed.get('sources', [])}
+    source = hook_source(socket, pane)
+    if source and not source_owned(source, roots) and os.path.realpath(source) != str(ROOT):
+        return False
+    adapter = Hooks()
+    before = adapter.inspect({}, (socket, pane))
+    if before['status'] == 'deferred':
+        return False
+    if before['status'] == 'updated':
+        adapter.apply({}, (socket, pane))
+        if not adapter.verify({}, (socket, pane), before):
+            return False
+    if socket_identity(socket) != identity or not same_owner(socket, pane, ROOT):
+        return False
+    observer = worker_path('terminalobserver', socket, tty)
+    adopt_worker_record('terminalobserver', socket, observer, dict(tty=tty, pid=pid), pane)
+    environment = tmux(socket, 'show-environment', '-t', pane['identity'] + ':')
+    values = dict(line.split('=', 1) for line in environment.stdout.splitlines() if '=' in line)
+    if not environment.returncode and not values.get('T_RECOVERY_DISABLE'):
+        recovery = worker_path('recoverywatcher', socket)
+        adopt_worker_record('recoverywatcher', socket, recovery, pane=pane)
+        module('t_recovery.py')['start'](pane['session'], socket=socket)
+    return True
+
+
+def adopt_worker_record(component, socket, path, client=None, pane=None):
+    """Only existing cooperative owners reload here; never start a candidate."""
+    record = read(path)
+    if not record:
+        return False
+    candidates = [pane] if pane else panes(socket)
+    verified = [row for row in candidates if same_owner(socket, row, ROOT)]
+    if not verified:
+        return False
+    installed = read(private_root() / 'installation.json')
+    context = dict(roots={str(ROOT), stable_source(ROOT), *installed.get('sources', [])},
+                   panes={socket: verified})
+    adapter = Worker(component)
+    target = (path, socket, client)
+    before = adapter.inspect(context, target)
+    if before['status'] == 'updated' and before.get('record'):
+        adapter.apply(context, target)
+        return adapter.verify(context, target, before)
+    return before['status'] == 'current'
+
+
+def pending_path(component, socket, target):
+    identity = socket_identity(socket)
+    key = hashlib.sha256(json.dumps([identity, component, str(target)]).encode()).hexdigest()
+    return private_root() / ('pending-' + key + '.json')
+
+
+def defer_migration(component, socket, target, reason, **scope):
+    path = pending_path(component, socket, target)
+    write(path, dict(protocol=PROTOCOL, component=component, socket=socket,
+                     server_identity=list(socket_identity(socket) or ()), target=str(target),
+                     source=stable_source(ROOT), fingerprint=fingerprint(component), reason=reason,
+                     aliases=socket_aliases(socket), **scope))
+    return path
+
+
+def complete_migration(component, socket, target, record, live_target, deadline=None):
+    paths = worker_paths(component, socket, record.get('tty', '') if component == 'terminalobserver' else '')
+    if sum(lock_held(worker_lock(path, component)) for path in paths) > 1:
+        return False
+    if (live_record(record, component, live_target, deadline)
+            and record.get('fingerprint') == fingerprint(component)
+            and os.path.realpath(record.get('source', '')) == str(ROOT)):
+        pending_path(component, socket, target).unlink(missing_ok=True)
+        return True
+    return False
+
+
 def panes(socket):
     result = tmux(socket, 'list-panes', '-a', '-F',
                   '#{session_id}|#{session_name}|#{pane_id}|#{pane_pid}|#{session_path}|#{pane_dead}')
@@ -331,8 +539,10 @@ def parsed_hook(line, socket, pane):
             source, rest = argv[2], argv[4:]
         else:
             return None
-        expected = (['detached', socket, pane['identity'], pane['pane'], pane['pane_pid']]
-                    if options else ['attached', socket])
+        if len(rest) < 2 or not same_socket(rest[1], socket):
+            return None
+        expected = (['detached', rest[1], pane['identity'], pane['pane'], pane['pane_pid']]
+                    if options else ['attached', rest[1]])
         return dict(key=key, source=source, argv=argv) if rest == expected else None
     except (ValueError, IndexError):
         return None
@@ -397,7 +607,13 @@ class Hooks:
         for hook, wanted in expected.items():
             rows = [line for line in current.stdout.splitlines() if line.startswith(hook + ' ')]
             if rows and parsed_hook(rows[0], socket, pane) is None:
-                return outcome('deferred', 'reserved hook index contains a user hook')
+                return outcome('deferred', 'reserved hook index contains a user hook: ' + hook,
+                               reason_code='user-hook-conflict', next_action='remove or relocate the custom hook, then run t update')
+            if rows:
+                parsed = parsed_hook(rows[0], socket, pane)
+                if (Path(parsed['source']) / '.git').is_file() and os.path.realpath(parsed['source']) != str(ROOT):
+                    return outcome('deferred', 'development runtime remains pinned',
+                                   reason_code='pinned-source', next_action='update from the owning development worktree')
             if not rows or shlex.split(rows[0])[1:] != shlex.split(wanted):
                 all_current = False
         if all_current:
@@ -423,12 +639,27 @@ class Worker:
     def inspect(self, context, target):
         path, socket, client = target
         record = read(path)
+        aliases = worker_paths(self.name, socket, client['tty'] if client else record.get('tty', ''))
+        held = [candidate for candidate in aliases if lock_held(worker_lock(candidate, self.name))]
+        if len(held) > 1:
+            return outcome('deferred', 'multiple historical runtime owners are preserved',
+                           reason_code='ambiguous-owner', next_action='wait for the original owners to finish, then attach normally')
         if record and live_record(record, self.name, target):
             if not source_owned(record.get('source'), context['roots']):
                 return outcome('deferred', 'runtime source is pinned or unrelated')
             if record.get('fingerprint') == fingerprint(self.name) and os.path.realpath(record['source']) == str(ROOT):
+                target_key = client['tty'] if client else record.get('tty', 'server')
+                if pending_path(self.name, socket, target_key).exists():
+                    complete_migration(self.name, socket, target_key, record, target)
                 return outcome('current', record=record)
             return outcome('updated', record=record)
+        if (record and 'server_identity' not in record
+                and live_record(record, self.name, target, allow_legacy=True)
+                and source_owned(record.get('source'), context['roots'])
+                and any(same_owner(socket, pane, ROOT) for pane in context.get('panes', {}).get(socket, []))):
+            defer_migration(self.name, socket, client['tty'] if client else 'server',
+                            'waiting for cooperative capability upgrade')
+            return outcome('updated', record=record, legacy_capable=True)
         if self.name == 'terminalobserver':
             base = Path(str(path).removesuffix('.runtime.json'))
             lockpath = Path(str(base) + '.lock')
@@ -438,14 +669,19 @@ class Worker:
                     try:
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
-                        return outcome('deferred', 'legacy observer retains its original terminal until normal attachment')
+                        defer_migration(self.name, socket, client['tty'] if client else record.get('tty', str(path)),
+                                        'legacy observer retains its original terminal', client=client or dict(tty=record.get('tty', '')))
+                        return outcome('deferred', 'legacy observer retains its original terminal until normal attachment',
+                                       reason_code='waiting-for-attachment', next_action='attach normally after the existing observer finishes')
                 finally:
                     os.close(fd)
-            if not client:
-                return outcome('deferred', 'original terminal descriptor is unavailable')
+            if not client or client.get('detached'):
+                return outcome('deferred', 'original terminal descriptor is unavailable',
+                               reason_code='waiting-for-attachment', next_action='attach normally with t session open')
         else:
             legacy = legacy_workers(socket)
             if legacy:
+                defer_migration(self.name, socket, 'server', 'legacy recovery watcher owns the server')
                 missing = any(not Path(arg).is_file() for item in legacy for arg in item['argv']
                               if arg.endswith('/libexec/t_recovery.py'))
                 return outcome('restart-required' if missing else 'deferred',
@@ -458,7 +694,11 @@ class Worker:
     def apply(self, context, target):
         path, socket, client = target
         record = read(path)
-        if record and live_record(record, self.name, target):
+        if record and not source_owned(record.get('source'), context['roots']):
+            raise ValueError('runtime source became pinned or unrelated')
+        if record and (live_record(record, self.name, target) or (
+                'server_identity' not in record and live_record(record, self.name, target, allow_legacy=True)
+                and any(same_owner(socket, pane, ROOT) for pane in context.get('panes', {}).get(socket, [])))):
             request_reload(Path(str(path).replace('.runtime.json', '.reload.json')), record, ROOT, self.name)
         elif self.name == 'terminalobserver':
             if not client:
@@ -482,12 +722,21 @@ class Worker:
                     and os.path.realpath(record['source']) == str(ROOT)
                     and (not before.get('record') or all(record.get(key) == before['record'].get(key)
                          for key in ('pid', 'birth', 'token', 'terminal_fd', 'lock_fd')))):
+                complete_migration(self.name, socket, client['tty'] if client else 'server', record, target, deadline)
                 return True
             time.sleep(.05)
         return False
 
 
 def legacy_workers(socket, component='recoverywatcher'):
+    found = {}
+    for alias in socket_aliases(socket):
+        for worker in _legacy_workers_one(alias, component):
+            found[(worker['pid'], worker['birth'])] = worker
+    return list(found.values())
+
+
+def _legacy_workers_one(socket, component='recoverywatcher'):
     filename = 't_recovery.py' if component == 'recoverywatcher' else 't_terminal_close.py'
     result = command(['ps', '-axo', 'pid=,uid=,args='])
     found = []
@@ -539,20 +788,39 @@ def reconcile(previous_sources=(), bootstrap_install=False):
     context = dict(roots=roots, previous_sources=list(previous_sources), panes={})
     targets = {adapter.name: [] for adapter in ADAPTERS}
     results = []
-    for socket in socket_hints():
+    for server in server_inventory(socket_hints()):
+        socket = server['socket']
         eligible = []
         try:
             observed = panes(socket)
         except ValueError:
             results.append(dict(component='inventory', target=socket, status='deferred',
-                                reason='unreachable private tmux socket was preserved', protocol=PROTOCOL))
+                                reason='unreachable private tmux socket was preserved', protocol=PROTOCOL, server=socket,
+                                reason_code='socket-unreachable', next_action='check the tmux server, then retry t update'))
             continue
         for pane in observed:
             source = hook_source(socket, pane)
             if not source:
                 results.append(dict(component='terminalhooks', target=pane['identity'], status='deferred',
-                                    reason='runtime source cannot be verified; use normal attachment', protocol=PROTOCOL))
-            if source_owned(source, roots) and same_owner(socket, pane, ROOT):
+                                    reason='runtime source cannot be verified; use normal attachment', protocol=PROTOCOL, server=socket, session=pane['session'],
+                                    reason_code='unverified-source', next_action='attach normally with t session open'))
+            if source and not source_owned(source, roots):
+                results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
+                    server=socket, session=pane['session'], status='deferred', protocol=PROTOCOL,
+                    reason='pinned or unrelated runtime source is preserved', reason_code='pinned-source',
+                    next_action='update from the owning development worktree'))
+            if source_owned(source, roots):
+                if not same_owner(socket, pane, ROOT):
+                    results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
+                        server=socket, session=pane['session'], status='deferred', protocol=PROTOCOL,
+                        reason='supported live session owner could not be verified', reason_code='unverified-owner',
+                        next_action='attach normally after the session owner is ready'))
+                    continue
+                preflight = Hooks().inspect(context, (socket, pane))
+                if preflight['status'] == 'deferred':
+                    results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
+                        server=socket, session=pane['session'], protocol=PROTOCOL, **preflight))
+                    continue
                 eligible.append(pane)
                 targets['terminalhooks'].append((socket, pane))
         if not eligible:
@@ -569,31 +837,32 @@ def reconcile(previous_sources=(), bootstrap_install=False):
                 native(parts[1])
             except (OSError, ValueError, TypeError, SyntaxError):
                 continue
-            base = terminal['event_path'](socket, parts[0])
-            path = Path(str(base) + '.runtime.json')
-            targets['terminalobserver'].append((path, socket, dict(tty=parts[0], pid=parts[1])))
+            path = worker_path('terminalobserver', socket, parts[0])
+            targets['terminalobserver'].append((path, socket, dict(tty=parts[0], pid=parts[1], session=parts[2],
+                session_name=next(pane['session'] for pane in eligible if pane['identity'] == parts[2]))))
             seen.add(path)
         state = terminal['event_path'](socket, '').parent
         for path in state.glob('*.runtime.json'):
             record = read(path)
-            if record.get('socket') == socket and path not in seen and source_owned(record.get('source'), roots):
+            if same_socket(record.get('socket', ''), socket) and path not in seen and source_owned(record.get('source'), roots):
                 targets['terminalobserver'].append((path, socket, None))
         # Detached legacy observers have no protocol record but may still own
         # the original terminal handle. Native exact watch argv is only a hint
         # to report deferral; it never authorizes takeover or a synthetic event.
         for legacy in legacy_workers(socket, 'terminalobserver'):
             if source_owned(legacy['source'], roots):
-                base = terminal['event_path'](socket, legacy['tty'])
-                path = Path(str(base) + '.runtime.json')
+                path = worker_path('terminalobserver', socket, legacy['tty'])
                 if path not in seen:
-                    targets['terminalobserver'].append((path, socket, None))
+                    targets['terminalobserver'].append((path, socket, dict(tty=legacy['tty'], pid=legacy['client_pid'], detached=True)))
                     seen.add(path)
         enabled = []
         for pane in eligible:
             environment = tmux(socket, 'show-environment', '-t', pane['identity'] + ':')
             if environment.returncode:
                 results.append(dict(component='recoverywatcher', target=socket, status='deferred',
-                                    reason='session recovery setting could not be verified', protocol=PROTOCOL))
+                                    reason='session recovery setting could not be verified', protocol=PROTOCOL, server=socket,
+                                    session=pane['session'], reason_code='unverified-recovery-policy',
+                                    next_action='check session recovery settings, then retry t update'))
                 continue
             values = dict(line.split('=', 1) for line in environment.stdout.splitlines() if '=' in line)
             if not values.get('T_RECOVERY_DISABLE'):
@@ -601,11 +870,15 @@ def reconcile(previous_sources=(), bootstrap_install=False):
         if not os.environ.get('T_RECOVERY_DISABLE') and enabled:
             context['panes'][socket] = enabled
             recovery = module('t_recovery.py')
-            targets['recoverywatcher'].append((recovery['cache'](socket) / 'watch.runtime.json', socket, None))
+            targets['recoverywatcher'].append((worker_path('recoverywatcher', socket), socket, None))
     targets['discoverydaemon'].append(None)
     for adapter in ADAPTERS:
         for target in targets[adapter.name]:
-            key = str(target[0]) if target else str(ROOT)
+            key = (str(target[0]) + ':' + target[1]['identity'] if adapter.name == 'terminalhooks'
+                   else str(target[0]) if target else str(ROOT))
+            server_name = (target[0] if adapter.name == 'terminalhooks' else target[1]) if target else ''
+            session_name = (target[1]['session'] if adapter.name == 'terminalhooks' else
+                (target[2] or {}).get('session_name', '') if target and adapter.name == 'terminalobserver' else '')
             try:
                 before = adapter.inspect(context, target)
                 status, reason = before['status'], before.get('reason', '')
@@ -618,9 +891,14 @@ def reconcile(previous_sources=(), bootstrap_install=False):
                     elif not verified:
                         status, reason = 'failed', 'runtime adoption was not acknowledged; retry t update'
                 results.append(dict(component=adapter.name, target=key, status=status, reason=reason,
-                                    fingerprint=fingerprint(adapter.name), protocol=PROTOCOL))
+                                    fingerprint=fingerprint(adapter.name), protocol=PROTOCOL, server=server_name, session=session_name,
+                                    tty=(target[2] or {}).get('tty', '') if target and adapter.name == 'terminalobserver' else '',
+                                    reason_code=before.get('reason_code', status),
+                                    next_action=before.get('next_action', 'retry t update' if status == 'failed' else
+                                        'attach normally with t session open' if status in ('deferred', 'restart-required') else '')))
             except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.SubprocessError) as error:
-                results.append(dict(component=adapter.name, target=key, status='failed', reason=str(error), protocol=PROTOCOL))
+                results.append(dict(component=adapter.name, target=key, status='failed', reason=str(error), protocol=PROTOCOL, server=server_name, session=session_name,
+                                    reason_code='verification-failed', next_action='retry t update'))
     value = dict(protocol=PROTOCOL, source=str(ROOT), results=results,
                  failed=any(result['status'] == 'failed' for result in results))
     write(private_root() / 'last-reconcile.json', value)

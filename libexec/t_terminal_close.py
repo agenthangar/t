@@ -77,21 +77,62 @@ def install(session, socket=None, expected=None, source=None):
     binding = dict(identity=identity, pane=pane, pane_pid=pane_pid)
     if expected and any(binding[key] != expected[key] for key in binding):
         return 1
-    for hook, command in hook_commands(socket, binding, source).items():
-        if expected:
-            # The updater revalidates the exact session/pane incarnation before
-            # every owned hook write; it never targets a recycled session name.
-            utilities = runtime()
-            if not utilities['same_owner'](socket, expected, ROOT):
-                return 1
-            existing = tmux(socket, 'show-hooks', '-t', identity + ':')
+    utilities = runtime()
+    desired_source = source or str(ROOT)
+    commands = hook_commands(socket, binding, source)
+    installed = utilities['read'](utilities['private_root']() / 'installation.json')
+    roots = {str(ROOT), desired_source, *installed.get('sources', [])}
+    incarnation = utilities['socket_identity'](socket)
+    if incarnation is None:
+        return 1
+    initial_hooks = tmux(socket, 'show-hooks', '-t', identity + ':')
+    has_hooks = any(line.startswith(hook + ' ') for line in initial_hooks.stdout.splitlines() for hook in commands)
+    owner = expected
+    if owner is None and has_hooks:
+        owner = next((row for row in utilities['panes'](socket) if row['identity'] == identity), None)
+        if owner is None:
+            return 1
+    def preflight():
+        existing = tmux(socket, 'show-hooks', '-t', identity + ':')
+        if existing.returncode:
+            return False
+        for hook in commands:
             rows = [line for line in existing.stdout.splitlines() if line.startswith(hook + ' ')]
-            if existing.returncode or (rows and utilities['parsed_hook'](rows[0], socket, expected) is None):
-                return 1
+            if not rows:
+                continue
+            parsed = utilities['parsed_hook'](rows[0], socket, binding)
+            if parsed is None:
+                print('t runtime: ' + session + ' ' + hook +
+                      ': custom hook preserved; relocate it before retrying t update', file=sys.stderr)
+                return False
+            if (os.path.realpath(parsed['source']) != os.path.realpath(desired_source)
+                    and not utilities['source_owned'](parsed['source'], roots)):
+                print('t runtime: ' + session + ' ' + hook +
+                      ': pinned or unrelated runtime preserved', file=sys.stderr)
+                return False
+        return True
+    # Inspect all reserved slots before the first write, including ordinary attach.
+    if not preflight():
+        return 1
+    for hook, command in commands.items():
+        current = tmux(socket, 'display-message', '-p', '-t', '=' + session + ':',
+                       '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}')
+        if (current.returncode or current.stdout.strip().split('\t') != fields or not preflight()
+                or utilities['socket_identity'](socket) != incarnation
+                or (owner and not utilities['same_owner'](socket, owner, ROOT))):
+            return 1
+        existing = tmux(socket, 'show-hooks', '-t', identity + ':')
+        rows = [line for line in existing.stdout.splitlines() if line.startswith(hook + ' ')]
+        if not existing.returncode and len(rows) == 1 and shlex.split(rows[0])[1:] == shlex.split(command):
+            continue
         result = tmux(socket, 'set-hook', '-t', identity + ':', hook, command)
         if result.returncode:
             return result.returncode
-    return tmux(socket, 'set-option', '-t', identity + ':', '@t_runtime_source', source or str(ROOT)).returncode
+        verify = tmux(socket, 'show-hooks', '-t', identity + ':')
+        rows = [line for line in verify.stdout.splitlines() if line.startswith(hook + ' ')]
+        if verify.returncode or len(rows) != 1 or shlex.split(rows[0])[1:] != shlex.split(command):
+            return 1
+    return tmux(socket, 'set-option', '-t', identity + ':', '@t_runtime_source', desired_source).returncode
 
 
 def event_path(socket, tty):
@@ -115,6 +156,38 @@ def attached(socket, tty, pid=None):
         pid = matches[0]
     if not pid.isdigit():
         return 1
+    helper = runtime()
+    try:
+        socket = helper['canonical_socket'](socket)
+    except (OSError, ValueError):
+        return 1
+    if helper['socket_identity'](socket) is None or not helper['adopt_attachment'](socket, tty, pid):
+        return 1
+    paths = helper['worker_paths']('terminalobserver', socket, tty)
+    if sum(helper['lock_held'](helper['worker_lock'](path, 'terminalobserver')) for path in paths) > 1:
+        helper['defer_migration']('terminalobserver', socket, tty, 'multiple historical terminal owners are preserved')
+        return 0
+    # Historical socket spellings share the same original PTY owner. Never
+    # arm a second observer while any verified alias still holds that lock.
+    for alias in helper['socket_aliases'](socket):
+        historical = event_path(alias, tty)
+        lockpath = Path(str(historical) + '.lock')
+        if not lockpath.exists():
+            continue
+        with os.fdopen(os.open(lockpath, os.O_RDWR | os.O_NOFOLLOW), 'r+') as owned:
+            try:
+                fcntl.flock(owned, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                path = Path(str(historical) + '.runtime.json')
+                record = helper['read'](path)
+                if helper['complete_migration']('terminalobserver', socket, tty, record,
+                        (path, socket, dict(tty=tty, pid=pid))):
+                    return 0
+                helper['defer_migration']('terminalobserver', socket, tty, 'waiting for original terminal observer')
+                return 0
+        if Path(str(historical) + '.event').exists():
+            helper['defer_migration']('terminalobserver', socket, tty, 'pending original detach event is preserved')
+            return 0
     base = event_path(socket, tty)
     lock = os.open(str(base) + '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     fd = None
@@ -136,6 +209,19 @@ def attached(socket, tty, pid=None):
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          cwd='/', env=env)
         atomic_write(Path(str(base) + '.ready'), pid)
+        pending = helper['pending_path']('terminalobserver', socket, tty)
+        if pending.exists():
+            path = Path(str(base) + '.runtime.json')
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                record = helper['read'](path)
+                if helper['complete_migration']('terminalobserver', socket, tty, record,
+                        (path, socket, dict(tty=tty, pid=pid)), deadline):
+                    break
+                time.sleep(.05)
+        # Recovery has its own singleton and fresh binding verification.
+        if pending.exists():
+            return 0
         return 0
     finally:
         if fd is not None:
@@ -144,7 +230,21 @@ def attached(socket, tty, pid=None):
 
 
 def notify_detached(socket, identity, pane, pane_pid, tty):
-    base = event_path(socket, tty)
+    helper = runtime()
+    held = []
+    for alias in helper['socket_aliases'](socket):
+        candidate = event_path(alias, tty)
+        lockpath = Path(str(candidate) + '.lock')
+        if not lockpath.exists():
+            continue
+        with os.fdopen(os.open(lockpath, os.O_RDWR | os.O_NOFOLLOW), 'r+') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held.append(candidate)
+    if len(held) > 1:
+        return 1  # Ambiguous original PTYs must never receive synthetic events.
+    base = held[0] if held else event_path(socket, tty)
     atomic_write(Path(str(base) + '.event'), json.dumps([identity, pane, pane_pid]))
     return 0
 
