@@ -379,7 +379,7 @@ def test_old_brew_client_installer_recovers_path_after_opt_moved(cache, tmp_path
     (home / 'bin/t').symlink_to(opt / 'libexec/bin/t')
     for key, value in dict(HOME=home, XDG_CONFIG_HOME=home / '.config',
                            CODEX_HOME=home / '.codex', CLAUDE_CONFIG_DIR=home / '.claude',
-                           XDG_RUNTIME_DIR='/tmp').items():
+                           XDG_RUNTIME_DIR='/tmp', TMUX_TMPDIR=home / 'tmux').items():
         monkeypatch.setenv(key, str(value))
     monkeypatch.delenv('T_LOCAL_RC', raising=False)
     monkeypatch.setattr(cache, 'SOURCE', new)
@@ -387,7 +387,9 @@ def test_old_brew_client_installer_recovers_path_after_opt_moved(cache, tmp_path
     root = cache._identity_runtime(identity)
     server, thread = listener(cache, identity, ['old'])
     try:
-        options = dict(T_NO_CODEX_HOOKS='1')
+        options = dict(T_NO_CODEX_HOOKS='1',
+                       XDG_STATE_HOME=os.environ['XDG_STATE_HOME'],
+                       XDG_CACHE_HOME=os.environ['XDG_CACHE_HOME'])
         if links_only:
             options['T_LINKS_ONLY'] = '1'
         outcome = run_install(new, home, **options)
