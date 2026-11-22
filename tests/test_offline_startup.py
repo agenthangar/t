@@ -194,8 +194,11 @@ def test_saved_pause_policy_uses_owned_supervisor(offline, monkeypatch):
     def supervise(argv, chosen, cwd):
         calls.append((argv, chosen))
         return 17
-    monkeypatch.setattr(local, 'helper', lambda name: {
-        'launch_options': lambda *args: None, 'supervise': supervise})
+    modules = {
+        't_auto_recovery': {'enabled': lambda: False},
+        't_offline': {'launch_options': lambda *args: None, 'supervise': supervise},
+    }
+    monkeypatch.setattr(local, 'helper', modules.__getitem__)
     assert local.lead(['codex'], chosen=dict(policy(), on_cloud_failure='pause')) == 17
     assert calls[0][0] == ['codex'] and calls[0][1]['on_cloud_failure'] == 'pause'
     assert calls[0][1]['cloud_retry_seconds'] == 300
