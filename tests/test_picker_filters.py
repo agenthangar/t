@@ -308,7 +308,7 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     else:
         sort_line = next(line for line in text.splitlines() if 'Sort:' in line)
         assert 'Ctrl-S toggle' in sort_line and 'Ctrl-Y next' in sort_line
-        assert len(text.splitlines()) <= 5
+        assert len([line for line in text.splitlines() if line]) <= 5
 
 
 def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
@@ -323,7 +323,7 @@ def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
         assert f'  \x1b[92m{shortcut}\x1b[0m' in line
 
 
-def test_resume_refresh_packs_timing_and_keeps_host_warnings_visible(filters, monkeypatch):
+def test_resume_refresh_separates_progress_timing_and_host_warnings(filters, monkeypatch):
     monkeypatch.delenv('NO_COLOR', raising=False)
     monkeypatch.setenv('TERM', 'xterm-256color')
     health = {'hosts': [
@@ -334,8 +334,8 @@ def test_resume_refresh_packs_timing_and_keeps_host_warnings_visible(filters, mo
     ]}
     lines = filters.resume_health(health, 80, True, True)
     assert lines[0].startswith('\x1b[1;96mRefreshing local\x1b[0m')
-    assert '\x1b[37mLast refresh ' in lines[0] and '\x1b[37mdev current\x1b[0m' in lines[0]
-    assert lines[1:] == ['\x1b[33mmini timed out  mac unreachable\x1b[0m']
+    assert lines[1].startswith('\x1b[37mLast refresh ') and lines[1].endswith('  dev current\x1b[0m')
+    assert lines[2:] == ['\x1b[33mmini timed out  mac unreachable\x1b[0m']
     monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '12')
     compact = filters.resume_health(health, 27, False, True)
     assert len(compact) == 2

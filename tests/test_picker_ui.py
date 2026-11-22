@@ -347,11 +347,12 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     assert 'Esc cancel' in action_line
     assert '● attached' in screen and '● live' not in screen
     lines = screen.splitlines()
-    columns = next(i for i, line in enumerate(lines) if 'PRS' in line and 'REPO' in line)
-    refresh = lines.index(refresh_line)
-    assert columns - refresh == 8
-    assert '↶ last closed' in next(line for line in lines if 'LEGEND' in line)
-    assert not lines[columns - 1].strip(' │')
+    for heading in ('Filters ON', 'Sort:', 'LEGEND', 'PRS'):
+        section = next(i for i, line in enumerate(lines) if heading in line)
+        assert not lines[section - 1].strip(' │'), heading
+    legend = next(i for i, line in enumerate(lines) if 'LEGEND' in line)
+    assert lines[legend].strip(' │') == 'LEGEND'
+    assert '↶ last closed' in lines[legend + 1]
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')
@@ -385,7 +386,7 @@ def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
     lines = screen.splitlines()
     status = next(i for i, line in enumerate(lines) if 'Refreshing local' in line)
     assert 'Ctrl-U refresh now' in lines[status]
-    assert 'Last refresh' in lines[status]
+    assert 'Last refresh' in lines[status + 1]
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')

@@ -183,6 +183,8 @@ def resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
         return control_rows(parts, width, selected, compact, color, role, separator=' ' if tight else '  ')
 
     lines = list(status[:2] if tight else status)
+    if lines and not compact:
+        lines.append('')
     toggle = 'Filters ON' if enabled else 'Filters OFF'
     lines += keys([toggle, 'Ctrl-F' if compact else 'Ctrl-F toggle',
                    'Ctrl-X' if compact else 'Ctrl-X reset', f'{hidden} hidden'],
@@ -203,11 +205,17 @@ def resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
         summary = clip_columns(summary, width)
         lines.append(paint(summary, 'heading') if color else summary)
 
+    if not compact:
+        lines.append('')
     current = 'Sort: ' + (sort_label(sort, compact) if sort_enabled else 'OFF')
     lines += keys([current, 'Ctrl-S' if compact else 'Ctrl-S toggle', 'Ctrl-Y' if compact else 'Ctrl-Y next'],
                   [current] if sort_enabled else [], 'selected')
+    if not compact:
+        lines.append('')
     if show_legend:
-        lines += resume_legend(width, short, color, heading=not compact)
+        if not compact:
+            lines.append(paint('LEGEND', 'heading') if color else 'LEGEND')
+        lines += resume_legend(width, short, color)
     lines += resume_action_rows(width, compact, color)
     if columns:
         if not compact:
@@ -496,17 +504,16 @@ def resume_mark(text):
     return paint(text, RESUME_MARK_ROLES[text[0]])
 
 
-def resume_legend(width, short, color, heading=False):
+def resume_legend(width, short, color):
     close = '↶ close' if short and width < 33 else '↶ last closed'
     work = '↻ WIP' if width < 64 or short else '↻ work in progress'
-    marks = pack((['LEGEND'] if heading else []) + [close, work, '● attached'], width, '  ')
+    marks = pack([close, work, '● attached'], width, '  ')
     prs = [] if short else pack([
         '↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '↗ preview',
         '? unknown', '— no PR'], width, '  ')
     if not color:
         return marks + prs
-    return (['  '.join(paint(part, 'heading') if part == 'LEGEND' else resume_mark(part)
-                      for part in line.split('  ')) for line in marks]
+    return (['  '.join(resume_mark(part) for part in line.split('  ')) for line in marks]
             + ['  '.join(pr_color(part, part[0]) for part in line.split('  ')) for line in prs])
 
 
@@ -556,28 +563,21 @@ def resume_health(health, width, color, refresh=False):
         shortcut = key_labels('Ctrl-U' if width <= 40 else 'Ctrl-U refresh now', compact=width <= 40)
     title_width = width - (display_width(shortcut) + 2 if shortcut else 0)
     title = clip_columns(title, title_width)
-    first = [(title, title_role)]
+    line = style(title, title_role)
     if shortcut:
-        first.append((shortcut, 'primary'))
-    details = []
+        line += '  ' + style(shortcut, 'primary')
+    neutral = []
     if pending and last:
-        details.append((timing.replace('Last refresh ', 'Last ', 1) if width <= 40 else timing, 'action'))
+        neutral.append(timing)
     if current:
-        details.append((current, 'action'))
-    alerts = [(warning, 'warning') for warning in warnings]
-    if short and alerts:
-        details = alerts
-    elif alerts and not pending:
-        details = alerts + details
-    rows = [first]
-    for part, role in details:
-        if display_width('  '.join([*(text for text, _ in rows[-1]), part])) <= width:
-            rows[-1].append((part, role))
+        if not pending and display_width(title + '  ' + current) <= title_width:
+            line += '  ' + style(current, 'action')
         else:
-            rows.append([(clip_columns(part, width), role)])
-    if pending and alerts and not short:
-        rows.extend([[(line, 'warning')] for line in pack(warnings, width, '  ')])
-    return ['  '.join(style(text, role) for text, role in row) for row in (rows[:2] if short else rows)]
+            neutral.append(current)
+    status_rows = [style(text, 'action') for text in pack(neutral, width, '  ')]
+    warning_rows = [style(text, 'warning') for text in pack(warnings, width, '  ')]
+    details = (warning_rows or status_rows)[:1] if short else status_rows + warning_rows
+    return [line, *details]
 
 
 def resume_gutters(records):

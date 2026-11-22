@@ -24,15 +24,14 @@ Slot history retains its pagination keys and uses Ctrl-S/Ctrl-Y for sorting.
 Reuse the shared control styles and two-space table gutters. Keep the focused
 result visible in short terminals.
 In the resume picker, place the green Ctrl-U refresh action beside the refresh
-status. Use bright cyan for an active refresh and group the previous refresh
-time and healthy hosts on that line as space allows. Use amber for host
-warnings and group them below an active refresh. Pack the filter state and
-shortcuts together. Put the current sort, toggle and cycle shortcuts on one
-row where they fit. Start the legend with LEGEND and the session markers on
-the same row. Give the PR legend its own row immediately above the result
-hotkeys. Show those hotkeys without a heading and leave one blank line before
-the columns when height permits. Separate
-legend entries with spaces. Use the same colors in the legend and rows. Label
+status. Use bright cyan for an active refresh, then show the previous refresh
+time and amber host warnings on separate rows when space permits. Pack the
+filter state and shortcuts together. Put the current sort, toggle and cycle
+shortcuts on one row where they fit. In the full header, put a blank row before
+filters, sort, LEGEND, and the columns. Give LEGEND its own heading row and put
+the PR symbols on a separate row immediately above the result hotkeys. Show
+those hotkeys without a heading. Separate legend entries with spaces. Use the
+same colors in the legend and rows. Label
 ↶ as last closed, ↻ as work in progress, and ● as attached. Highlight the
 written Return or Enter, Esc, and Tab labels. Put Ctrl-B for resuming the
 last verified close on the result hotkey row.
