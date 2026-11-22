@@ -14,6 +14,29 @@ Reuse these conventions and implementations when adding or improving commands.
 Workflow configuration and explicit task instructions determine preview timing,
 approval, and delivery; this entry point does not create additional approval gates.
 
+## CLI previews
+
+Build every preview against the current worktree's
+[command and terminal contract](ui/README.md) and the shared renderer used by the
+command. Match its layout, spacing, colors, focus and selection markers, footer
+hints, scrolling, and behavior at narrow widths and short heights. Use the same
+hotkeys, platform key labels, and interaction rules as the command, including
+any proposed changes to those bindings.
+
+Make the preview a complete, keyboard-operable TUI. Start at the real command or
+parent menu and support the full affected flow, including movement, selection,
+editing, review, confirmation, Back, and cancellation. Keep sibling navigation
+working and restore focus and selections when users go back or resize. Cover
+relevant empty, error, and retry states. Keep sample data, scenario controls, and
+simulated external effects clearly labeled and separate from the terminal UI.
+
+Before sharing, complete the flow using the documented keys at normal and
+compact terminal sizes. Verify that each advertised binding works, that the
+focused row and controls stay reachable when the viewport changes, and that
+review and cancellation behave as shown. Follow the
+[planning preview contract](ui/README.md#planning-previews) when a workflow
+calls for a planning prototype.
+
 ## Picker filters and sorting
 
 Interactive session filtering and sorting use the existing picker hotkeys.
