@@ -5521,7 +5521,7 @@ class _RailUI:
         self.out.write("\x1b[?25h")
         self.out.flush()
 
-    def read_key(self):
+    def read_key(self, horizontal=False):
         import select
         try:
             ch = os.read(self.fd, 1).decode(errors="replace")
@@ -5531,7 +5531,10 @@ class _RailUI:
             r, _, _ = select.select([self.fd], [], [], 0.05)
             if r:
                 seq = os.read(self.fd, 2).decode(errors="replace")
-                return {"[A": "up", "OA": "up", "[B": "down", "OB": "down"}.get(seq, "esc")
+                arrows = {"[A": "up", "OA": "up", "[B": "down", "OB": "down"}
+                if horizontal:
+                    arrows.update({"[C": "right", "OC": "right", "[D": "left", "OD": "left"})
+                return arrows.get(seq, "esc")
             return "esc"
         return {"\r": "enter", "\n": "enter", " ": "space", "\x03": "abort",
                 "\x04": "abort", "": "abort"}.get(ch, ch)
@@ -5602,13 +5605,15 @@ class _RailUI:
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
              on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
              columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite="",
-             refresh=None, refresh_interval=.5):
+             refresh=None, refresh_interval=.5, cycle=None):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
         Optional shortcuts return an action key. refresh may update context in
         place; True returns '__done__' without a keypress. Timed repaint retains
-        selection and marks and uses the same viewport as ordinary pickers."""
+        selection and marks and uses the same viewport as ordinary pickers.
+        Optional cycle maps row keys to direction callbacks; only these pickers
+        decode horizontal arrows, leaving every existing keyboard profile intact."""
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
         cells, notes = cells or {}, notes or {}
@@ -5623,6 +5628,8 @@ class _RailUI:
                 marks.add(empty_index)
         keys = "↑↓/jk move" + (" · space mark" if multi else "") + " · enter select"
         keys += (f" · q/esc {back_label} · ctrl-c cancel" if back_label else " · q back")
+        if cycle:
+            keys += " · ←→ model"
         if focused_shortcuts:
             keys += ' · ' + '/'.join(focused_shortcuts) + ' sources/tools'
         flash = ""
@@ -5688,6 +5695,9 @@ class _RailUI:
                 else:
                     display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
                                 mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
+                if key not in cells and key not in table_rows and notes.get(key):
+                    display.extend((f'{self.rail}    {self.st.y}{part}{self.st.r}', n if i < 2 else None)
+                                   for i, part in enumerate(_wrap_columns(notes[key], max(1, self.cols() - 7))))
                 if key in table_rows and n == cur and details:
                     display.append((self.rail, None))
                     for detail in details(key):
@@ -5704,7 +5714,12 @@ class _RailUI:
                 import select
                 if not select.select([sys.stdin], [], [], max(.05, refresh_interval))[0]:
                     continue
-            k = self.read_key()
+            k = self.read_key(horizontal=True) if cycle is not None else self.read_key()
+            if k in ("left", "right") and cycle is not None:
+                action = cycle.get(rows[cur][0])
+                if action is not None:
+                    action(-1 if k == "left" else 1)
+                continue
             if k in (focused_shortcuts or {}) and (rows[cur][0] in cells or rows[cur][0] in table_rows):
                 return focused_shortcuts[k], rows[cur][0]
             if k in (shortcuts or {}):
