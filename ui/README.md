@@ -2038,6 +2038,18 @@ and the native routing-discovery bootstrap failure use the same ready-model
 selection after verified runtime shutdown. Show Retry cloud and Cancel startup
 instead of offering to pause a conversation that does not exist. Selection starts
 locally immediately with the original text prompt or an empty conversation.
+Both recovery screens offer one **Continue locally** or **Start locally** action.
+Seed it with the configured workflow provider/model when ready and memory-fit,
+otherwise the first eligible pair. **Left/Right** cycles eligible pairs while this
+row is focused; cycling never launches. **Enter** immediately launches the exact
+selected pair. Hide the cycle hint with fewer than two eligible pairs and consume
+horizontal arrows without leaving recovery. **Up/Down** retains connection and
+pause/cancel navigation; **Esc** keeps its existing pause/cancel behavior. Display
+the model basename, provider, readiness and memory fit. Summarize unavailable
+models and show the configured unavailable model's reason without listing the
+whole catalogue. A blocked or empty local action explains why it cannot launch.
+Choices apply only to this session and preserve workflow settings.
+
 Incomplete startup input disables local selection. Preserve Pause passthrough;
 routing-discovery failure alone never authorizes automatic local fallback.
 

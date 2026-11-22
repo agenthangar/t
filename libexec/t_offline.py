@@ -864,32 +864,59 @@ def recovery_ui(frontend=None, terminal=None):
 
 def choose_local(ui, local, chosen, reason='Cloud connection lost', failed=False, blocked='', startup=False):
     """A ready model is the action: no details or confirmation screen in between."""
-    rows, values, disabled, selections = [], {}, {}, {}
+    values, disabled, notes = {}, {}, {}
     try:
         models = local['catalogue'](context=chosen['context_tokens'])['models']
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         models, reason = [], 'Model catalogue unavailable: '+str(exc)
-    models = sorted(models, key=lambda r: (r['provider'], r['model']) != (chosen['provider'], chosen['model']))
-    for index, row in enumerate(models):
-        key = str(index)
-        selections[key] = dict(chosen, provider=row['provider'], model=row['model'])
-        current = (row['provider'], row['model']) == (chosen['provider'], chosen['model'])
-        rows.append((key, row['model'].split('/')[-1]))
+    eligible = [row for row in models if row.get('ready') and row.get('fit') is True]
+    selected = next((i for i, row in enumerate(eligible)
+                     if (row['provider'], row['model']) == (chosen['provider'], chosen['model'])), 0)
+    action = 'Start locally' if startup else 'Continue locally'
+    rows = [('local', action)]
+    context = [reason, 'This session only.']
+    if blocked:
+        context.append(blocked)
+    unavailable = [row for row in models if row not in eligible]
+    configured_unavailable = next((row for row in unavailable
+        if (row['provider'], row['model']) == (chosen['provider'], chosen['model'])), None)
+    if unavailable:
+        context.append(f'{len(unavailable)} local model(s) unavailable.')
+    if configured_unavailable is not None:
+        row = configured_unavailable
         fit = '✓' if row.get('fit') is True else '✕' if row.get('fit') is False else '?'
-        ready = row.get('ready') and row.get('fit') is True
-        values[key] = f"Memory fit {fit} · " + ('Ready' if ready else 'Unavailable') + ' · ' + row['provider'] + (' · Default' if current else '')
-        if blocked or not ready:
-            disabled[key] = blocked or row.get('verification_error') or row.get('reason') or 'Install and verify this model before offline use.'
+        context.append(row['model'].split('/')[-1]+' · '+row['provider']+' · Unavailable · Memory fit '+fit+' · '+
+                       (row.get('verification_error') or row.get('reason') or
+                        'Install and verify this model before offline use.'))
+
+    def update(direction=0):
+        nonlocal selected
+        selected = (selected + direction) % len(eligible)
+        row = eligible[selected]
+        values['local'] = row['model'].split('/')[-1]
+        notes['local'] = row['provider']+' · Ready · Memory fit ✓'
+
+    if eligible:
+        update()
+    else:
+        values['local'] = 'No ready local models'
+        notes['local'] = 'Downloads require connectivity.'
+    if blocked or not eligible:
+        disabled['local'] = blocked or 'No ready local models. Install and verify a model before offline use.'
     if startup:
         rows.append(('retry', 'Retry cloud'))
     rows.append(('pause', 'Cancel startup' if startup else 'Keep task paused' if failed else 'Pause and retry cloud'))
-    result = ui.pick('Start locally' if startup else 'Continue locally', rows, values=values, disabled=disabled,
-                     sections={rows[0][0]: 'Local models' if models else 'Connection',
-                               'retry' if startup else 'pause': 'Connection'},
-                     context=[reason, 'Choose a ready model to continue immediately. This session only.'] +
-                             ([] if models else ['No ready local models. Downloads require connectivity.']),
-                     primary=('enter', 'Continue', 'with selected model'), back_label='pause')
-    return 'retry' if startup and result == 'retry' else selections.get(result)
+    result = ui.pick(action, rows, values=values, notes=notes, disabled=disabled,
+                     cycle={'local': update} if len(eligible) > 1 and not blocked else {},
+                     sections={'local': 'Local model', 'retry' if startup else 'pause': 'Connection'},
+                     context=context,
+                     primary=('enter', 'Select', 'this session only'), back_label='pause')
+    if startup and result == 'retry':
+        return 'retry'
+    if result == 'local' and eligible and not blocked:
+        row = eligible[selected]
+        return dict(chosen, provider=row['provider'], model=row['model'])
+    return None
 
 
 def choose_cloud(ui, previous):

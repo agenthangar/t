@@ -37,18 +37,21 @@ def models():
 
 def test_ready_model_is_immediate_action(offline):
     local={'catalogue':lambda **kw:{'models':models()}}
-    ui=UI(['1'])
+    ui=UI(['local'])
     selected=offline.choose_local(ui,local,policy())
-    assert selected['model']=='b' and selected['provider']=='ollama'
+    assert selected['model']=='a' and selected['provider']=='lmstudio'
     assert len(ui.calls)==1  # No second model details/confirmation screen.
     args,kwargs=ui.calls[0]
-    assert kwargs['disabled']=={'2':'Not downloaded'}
-    assert 'Memory fit ?' in kwargs['values']['2']
-    assert 'Default' in kwargs['values']['0']
+    assert kwargs['disabled']=={}
+    assert kwargs['values']['local']=='a'
+    assert 'Memory fit ✓' in kwargs['notes']['local']
+    assert '1 local model(s) unavailable.' in kwargs['context']
+    assert args[1]==[('local','Continue locally'),('pause','Pause and retry cloud')]
     for choice in ('pause',None):assert offline.choose_local(UI([choice]),local,policy()) is None
     ui=UI(['pause'])
     assert offline.choose_local(ui,{'catalogue':lambda **kw:{'models':[]}},policy(),failed=True) is None
-    assert ui.calls[0][0][1]==[('pause','Keep task paused')]
+    assert ui.calls[0][0][1]==[('local','Continue locally'),('pause','Keep task paused')]
+    assert 'local' in ui.calls[0][1]['disabled']
     ui=UI(['pause'])
     assert offline.choose_local(ui,{'catalogue':lambda **kw:(_ for _ in ()).throw(ValueError('missing'))},policy()) is None
     assert 'missing' in ui.calls[0][1]['context'][0]
@@ -57,10 +60,15 @@ def test_ready_model_is_immediate_action(offline):
 @pytest.mark.parametrize('width,height',[(80,24),(44,20),(32,12),(120,12)])
 def test_recovery_picker_uses_shared_viewport(offline,t_mod,width,height):
     from test_tui import make_ui
-    ui=make_ui(t_mod,['j','j','enter','esc'],width,height)
+    ui=make_ui(t_mod,['right','j','enter'],width,height)
     assert offline.choose_local(ui,{'catalogue':lambda **kw:{'models':models()}},policy()) is None
-    assert any('Not downloaded' in ''.join(frame) for frame in ui.frames)
+    assert any('ollama' in ''.join(frame) for frame in ui.frames)
+    assert all(sum(t_mod._term_rows(line,width) for line in frame)<=height for frame in ui.frames)
     assert all(len(frame)<=height for frame in ui.frames)
+    focused=ui.frames[1]
+    plain=''.join(t_mod._ANSI_RE.sub('',line) for line in focused)
+    assert 'Continue locally' in plain and 'b' in plain
+    assert 'ollama' in plain and 'Ready' in plain and '✓' in plain
 
 
 def test_cloud_choices_and_catalogue_failures(offline,monkeypatch):
@@ -260,7 +268,8 @@ def test_invalid_checkpoint_disables_local_selection(offline):
     ui=UI(['pause'])
     assert offline.choose_local(ui,{'catalogue':lambda **kw:{'models':models()}},policy(),
                                 failed=True,blocked='Non-text request needs manual continuation') is None
-    assert len(ui.calls[0][1]['disabled'])==3
+    assert ui.calls[0][1]['disabled']=={'local':'Non-text request needs manual continuation'}
+    assert ui.calls[0][1]['cycle']=={}
 
 
 @pytest.mark.parametrize('cancelled',[False,True])
@@ -428,3 +437,59 @@ def test_failed_local_checkpoint_is_retained_on_pause(offline,tmp_path,monkeypat
     assert len(stages)==2 and choices[-1]['failed']
     assert bool(choices[-1]['blocked'])==invalid
     assert list(tmp_path.glob('outage-*/1/status.json'))
+
+
+@pytest.mark.parametrize('keys,model,provider', [
+    (['enter'], 'a', 'lmstudio'), (['right','enter'], 'b', 'ollama'),
+    (['left','enter'], 'b', 'ollama'), (['right','right','enter'], 'a', 'lmstudio'),
+    (['right','left','enter'], 'a', 'lmstudio'),
+    (['down','right','up','enter'], 'a', 'lmstudio'),
+])
+def test_local_selector_cycles_only_focused_eligible_pairs(offline,t_mod,keys,model,provider):
+    from test_tui import make_ui
+    ui=make_ui(t_mod,keys)
+    selected=offline.choose_local(ui,{'catalogue':lambda **kw:{'models':models()}},policy())
+    assert (selected['model'],selected['provider'])==(model,provider)
+    assert selected['context_tokens']==32768
+    assert len(ui.frames)==len(keys)
+    assert any('←→ model' in ''.join(frame) for frame in ui.frames)
+
+
+@pytest.mark.parametrize('configured,provider,expected', [('b','ollama','b'),('c','lmstudio','a'),('missing','lmstudio','a')])
+def test_local_selector_seeds_eligible_workflow_or_first_ready(offline,configured,provider,expected):
+    ui=UI(['local'])
+    chosen=dict(policy(),model=configured,provider=provider)
+    selected=offline.choose_local(ui,{'catalogue':lambda **kw:{'models':models()}},chosen)
+    assert selected['model']==expected
+    context=ui.calls[0][1]['context']
+    assert any('Not downloaded' in line for line in context)==(configured=='c')
+
+
+def test_local_selector_keeps_same_model_provider_pairs_distinct(offline,t_mod):
+    from test_tui import make_ui
+    rows=[dict(row,model='namespace/same-model') for row in models()[:2]]
+    selected=offline.choose_local(make_ui(t_mod,['right','enter']),
+        {'catalogue':lambda **kw:{'models':rows}},dict(policy(),model='namespace/same-model'))
+    assert (selected['model'],selected['provider'])==('namespace/same-model','ollama')
+
+
+@pytest.mark.parametrize('count',[0,1])
+def test_local_selector_horizontal_is_inert_without_alternatives(offline,t_mod,count):
+    from test_tui import make_ui
+    ui=make_ui(t_mod,['right','left','enter'] if count else ['right','left','enter','down','enter'])
+    selected=offline.choose_local(ui,{'catalogue':lambda **kw:{'models':models()[:count]}},policy())
+    assert (selected['model'] if selected else None)==('a' if count else None)
+    assert not any('←→ model' in ''.join(frame) for frame in ui.frames)
+    if not count:
+        assert any('No ready local models' in ''.join(frame) for frame in ui.frames)
+
+
+def test_local_selector_catalogue_summary_is_bounded_and_reason_retained(offline):
+    rows=[dict(models()[2],model=f'not-installed-{i}') for i in range(60)]
+    ui=UI(['pause'])
+    offline.choose_local(ui,{'catalogue':lambda **kw:{'models':rows}},dict(policy(),model='not-installed-40'))
+    context=ui.calls[0][1]['context']
+    assert len(context)==4
+    assert '60 local model(s) unavailable.' in context
+    assert 'not-installed-40' in context[-1] and 'Not downloaded' in context[-1]
+    assert 'Memory fit ?' in context[-1]

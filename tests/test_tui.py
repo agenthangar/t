@@ -11,7 +11,7 @@ def make_ui(t, keys, width=80, height=24):
     ui.painted = [0]
     ui.cols, ui.lines = lambda: width, lambda: height
     events = iter(keys)
-    ui.read_key = lambda: next(events)
+    ui.read_key = lambda **kwargs: next(events)
     ui.raw = lambda: None
     ui.restored = False
     ui.restore = lambda: setattr(ui, 'restored', True)
@@ -321,3 +321,14 @@ def test_primary_enter_hint_preserves_action_on_narrow_terminal(t_mod, width, ke
     plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in footer)
     assert ui.labels('enter') in plain and 'SELECT' in plain
     assert all(t_mod._vis_len(line) <= width for line in footer)
+
+
+@pytest.mark.parametrize('sequence,expected',[('[C','right'),('OC','right'),('[D','left'),('OD','left')])
+def test_horizontal_arrow_decoding_is_opt_in(t_mod,monkeypatch,sequence,expected):
+    ui=t_mod._RailUI.__new__(t_mod._RailUI)
+    ui.fd=0
+    monkeypatch.setattr(t_mod.select,'select',lambda *a:([0],[],[]))
+    for enabled in (False,True):
+        reads=iter((b'\x1b',sequence.encode()))
+        monkeypatch.setattr(t_mod.os,'read',lambda *a:next(reads))
+        assert ui.read_key(horizontal=enabled)==(expected if enabled else 'esc')

@@ -12771,7 +12771,7 @@
             "review",
             "passthrough"
           ],
-          "behavior": "Shared RailUI ready-model selection immediately starts local handoff without a second screen; unavailable models disabled; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
+          "behavior": "Shared RailUI has one Continue locally/Start locally action seeded by the eligible configured provider/model or first ready pair. Scoped Left/Right cycles eligible pairs without launch; Enter launches the exact selection directly. Fewer than two pairs hides the cycle hint and horizontal arrows remain inert. Show basename/provider/readiness/memory fit, a bounded unavailable summary and configured-model reason. Blocked or empty actions stay disabled. Up/Down connection actions and Esc retain their behavior; failures retain recovery choices. Stable cloud reachability offers explicit reviewed return at a safe turn boundary. One writer, session-only choices, updated bounded checkpoints; nonterminals preserve native cloud behavior. Correlated pre-thread transport/routing-discovery failures offer Retry cloud, Cancel startup or immediate local selection after runtime shutdown, preserving a supplied text prompt or starting an empty conversation."
         },
         "local_controls": {
           "condition": "fresh local-only Codex in an owned interactive tmux pane",
@@ -12792,6 +12792,9 @@
         "tests/test_offline_recovery.py::test_ready_model_is_immediate_action",
         "tests/test_offline_recovery.py::test_recovery_round_trip_and_failure_retry",
         "tests/test_offline_recovery.py::test_recovery_picker_uses_shared_viewport",
+        "tests/test_offline_recovery.py::test_local_selector_cycles_only_focused_eligible_pairs",
+        "tests/test_offline_recovery.py::test_local_selector_horizontal_is_inert_without_alternatives",
+        "tests/test_offline_attachment.py::test_fresh_readiness_reaches_offline_model_picker",
         "tests/test_local_inference.py::test_cloud_retry_limits",
         "tests/test_local_inference.py::test_cloud_recovery_staging_and_readiness",
         "tests/test_offline.py::test_configured_retry_window_and_pause",
