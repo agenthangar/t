@@ -243,19 +243,25 @@ def _existing_status(root, revision, deadline):
         budget()
         # Both status and the expected revision-mismatch response are tiny. No
         # parsing, retries or service startup are needed to request retirement.
-        connection.recv(4096)
+        value = json.loads(connection.recv(4096))
+        if not isinstance(value, dict):
+            raise ValueError("invalid discovery status response")
+        return value
 
 
-def retire_obsolete(previous_sources=()):
+def retire_obsolete(previous_sources=(), report=False):
     """Best-effort update reconciliation, with a half-second total I/O budget.
 
     A current normalized endpoint receives its actual revision; obsolete raw-RC
     namespaces and previous package sources receive a guaranteed mismatch. Old
     identities that cannot prove the same effective config are left alone.
     """
+    evidence = []
+    pending = []
+    started = time.monotonic()
     try:
         if (SOURCE / '.git').is_file():
-            return
+            return dict(status='deferred', reason='development discovery is pinned', results=[]) if report else None
         revision = _revision()
         current = _identity()
         brew = _homebrew()
@@ -275,13 +281,40 @@ def retire_obsolete(previous_sources=()):
                     continue
                 seen.add(root)
                 if time.monotonic() >= deadline:
-                    return
+                    if report and _socket_identity(root / 'service.sock') is not None:
+                        evidence.append(dict(status='failed', reason='discovery retirement deadline reached'))
+                    continue
                 try:
-                    _existing_status(root, revision if identity == current else [], deadline)
-                except (OSError, ValueError):
-                    pass
-    except (OSError, ValueError, TypeError):
-        pass  # Optional maintenance must not change an update's result.
+                    address = root / 'service.sock'
+                    before = _socket_identity(address)
+                    if before is None and report:
+                        continue
+                    response = _existing_status(root, revision if identity == current else [], deadline)
+                    if response is None:
+                        evidence.append(dict(status='deferred', reason='foreign or unsupported discovery endpoint'))
+                    elif response.get('protocol') == VERSION and identity == current:
+                        evidence.append(dict(status='current'))
+                    elif response.get('error') == 'session cache service version changed; restarting':
+                        if report:
+                            pending.append((address, before))
+                    else:
+                        evidence.append(dict(status='failed', reason='unverified discovery retirement response'))
+                except (OSError, ValueError) as error:
+                    if report:
+                        evidence.append(dict(status='failed', reason=str(error)))
+    except (OSError, ValueError, TypeError) as error:
+        if report:
+            evidence.append(dict(status='failed', reason=str(error)))
+    if report:
+        for address, before in pending:
+            while _socket_identity(address) == before and time.monotonic() < started + 1.5:
+                time.sleep(.02)
+            evidence.append(dict(status='updated' if _socket_identity(address) != before else 'failed',
+                                 reason='obsolete listener retirement'))
+        status = next((value for value in ('failed', 'deferred', 'updated')
+                       if any(item['status'] == value for item in evidence)), 'current')
+        return dict(status=status, reason='; '.join(item.get('reason', '') for item in evidence
+                    if item.get('reason')), results=evidence)
 
 
 def _database():

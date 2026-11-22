@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import select
 import shlex
 import signal
@@ -21,6 +22,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_PROTOCOL = 1
 HOOK = 'client-detached[50100]'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 PROCESS_FIELDS = ('argv', 'executable', 'cwd', 'birth', 'import_safe')
@@ -44,35 +46,52 @@ def hung_up(fd):
     return any(events & select.POLLHUP for _, events in poll.poll(0))
 
 
-def install(session):
-    result = run(['tmux', 'display-message', '-p', '-t', '=' + session + ':',
-                  '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}'])
+def runtime():
+    return runpy.run_path(str(ROOT / 'libexec/t_runtime.py'))
+
+
+def hook_commands(socket, pane, source=None):
+    source = source or str(ROOT)
+    bridge = runtime()['dispatcher'](source)
+    if bridge == Path(source) / 'libexec/t_runtime_dispatch.py':
+        prefix = [sys.executable, str(Path(source) / 'libexec/t_terminal_close.py')]
+    else:
+        prefix = [sys.executable, str(bridge), source, 'libexec/t_terminal_close.py']
+    worker = shlex.join([*prefix, 'detached', socket, pane['identity'], pane['pane'], pane['pane_pid']])
+    worker += ' #{q:hook_client} >/dev/null 2>&1 || :'
+    attached = shlex.join([*prefix, 'attached', socket]) + ' #{q:hook_client} >/dev/null 2>&1 || :'
+    return {HOOK: shlex.join(['run-shell', '-b', worker]),
+            'client-attached[50100]': shlex.join(['run-shell', attached]),
+            'client-session-changed[50100]': shlex.join(['run-shell', attached])}
+
+
+def install(session, socket=None, expected=None, source=None):
+    result = (tmux(socket, 'display-message', '-p', '-t', '=' + session + ':',
+                   '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}')
+              if socket else run(['tmux', 'display-message', '-p', '-t', '=' + session + ':',
+                  '#{session_name}\t#{session_id}\t#{socket_path}\t#{pane_id}\t#{pane_pid}']))
     fields = result.stdout.strip().split('\t')
     if result.returncode or len(fields) != 5 or not fields[0].startswith('dev-'):
         return 1
     _, identity, socket, pane, pane_pid = fields
-    worker = shlex.join([sys.executable, str(Path(__file__).resolve()), 'detached',
-                        socket, identity, pane, pane_pid])
-    # Ordinary client formats can be gone by the time run-shell executes. The
-    # hook's saved client name is the terminal path; pin the owner at install.
-    worker += ' #{q:hook_client} >/dev/null 2>&1 || :'
-    # A private array element preserves the user's other session hooks. Hook
-    # expansion quotes event data, not executable shell fragments.
-    result = tmux(socket, 'set-hook', '-t', identity + ':', HOOK,
-                  shlex.join(['run-shell', '-b', worker]))
-    if result.returncode:
-        return result.returncode
-    attached = shlex.join([sys.executable, str(Path(__file__).resolve()), 'attached', socket])
-    # Older tmux hooks retain hook_client but not ordinary client formats.
-    # Resolve the PID from that saved terminal name while it is still attached.
-    # Hook failures must never put the agent pane into run-shell copy mode.
-    attached += ' #{q:hook_client} >/dev/null 2>&1 || :'
-    for hook in ('client-attached[50100]', 'client-session-changed[50100]'):
-        result = tmux(socket, 'set-hook', '-t', identity + ':', hook,
-                      shlex.join(['run-shell', attached]))
+    binding = dict(identity=identity, pane=pane, pane_pid=pane_pid)
+    if expected and any(binding[key] != expected[key] for key in binding):
+        return 1
+    for hook, command in hook_commands(socket, binding, source).items():
+        if expected:
+            # The updater revalidates the exact session/pane incarnation before
+            # every owned hook write; it never targets a recycled session name.
+            utilities = runtime()
+            if not utilities['same_owner'](socket, expected, ROOT):
+                return 1
+            existing = tmux(socket, 'show-hooks', '-t', identity + ':')
+            rows = [line for line in existing.stdout.splitlines() if line.startswith(hook + ' ')]
+            if existing.returncode or (rows and utilities['parsed_hook'](rows[0], socket, expected) is None):
+                return 1
+        result = tmux(socket, 'set-hook', '-t', identity + ':', hook, command)
         if result.returncode:
             return result.returncode
-    return result.returncode
+    return tmux(socket, 'set-option', '-t', identity + ':', '@t_runtime_source', source or str(ROOT)).returncode
 
 
 def event_path(socket, tty):
@@ -130,12 +149,59 @@ def notify_detached(socket, identity, pane, pane_pid, tty):
     return 0
 
 
-def watch(socket, tty, pid, descriptor, lock_descriptor):
+def watch(socket, tty, pid, descriptor, lock_descriptor, checkpoint=None):
     fd, lock = int(descriptor), int(lock_descriptor)
     event = Path(str(event_path(socket, tty)) + '.event')
     gone_at = None
+    helper, record = None, None
+    base = event_path(socket, tty)
+    runtime_path = Path(str(base) + '.runtime.json')
+    reload_path = Path(str(base) + '.reload.json')
+    try:
+        helper = runtime()
+        token = None
+        if checkpoint:
+            saved = json.loads(checkpoint)
+            if (saved['terminal_fd'] != helper['fd_identity'](fd)
+                    or saved['lock_fd'] != helper['fd_identity'](lock)
+                    or saved['socket'] != socket or saved['tty'] != tty or saved['client_pid'] != pid):
+                raise ValueError('observer descriptor handoff changed')
+            helper['validate_source'](ROOT, 'terminalobserver', saved['fingerprint'])
+            gone_at, token = saved['gone_at'], saved['token']
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.set_inheritable(fd, False)
+        os.set_inheritable(lock, False)
+        record = helper['publish'](runtime_path, 'terminalobserver', socket, token=token,
+                                  tty=tty, client_pid=pid, terminal_fd=helper['fd_identity'](fd),
+                                  lock_fd=helper['fd_identity'](lock), descriptor=fd, lock_descriptor=lock, gone_at=gone_at)
+        if checkpoint:
+            reload_path.unlink(missing_ok=True)
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+        if checkpoint:
+            raise  # Never acknowledge a successor that lost its original PTY.
+        helper, record = None, None  # Preserve ordinary observation if metadata is unavailable.
     try:
         while True:
+            # A reload is cooperative and precedes event consumption. The same
+            # open PTY and flock descriptions, pending event and elapsed loss
+            # deadline survive exec. The updater never generates detach events.
+            if helper and record and reload_path.exists():
+                try:
+                    request = helper['replacement'](reload_path, record, 'terminalobserver')
+                    if request:
+                        saved = dict(socket=socket, tty=tty, client_pid=pid, terminal_fd=record['terminal_fd'],
+                                     lock_fd=record['lock_fd'], token=record['token'], gone_at=gone_at,
+                                     fingerprint=request['fingerprint'])
+                        bridge = helper['dispatcher']()
+                        os.set_inheritable(fd, True)
+                        os.set_inheritable(lock, True)
+                        os.execv(sys.executable, [sys.executable, str(bridge), request['source'],
+                                 'libexec/t_terminal_close.py', 'watch-resume', socket, tty, pid,
+                                 str(fd), str(lock), json.dumps(saved)])
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+                    os.set_inheritable(fd, False)
+                    os.set_inheritable(lock, False)
+                    reload_path.unlink(missing_ok=True)
             if event.exists():
                 identity, pane, pane_pid = json.loads(event.read_text())
                 event.unlink(missing_ok=True)
@@ -151,6 +217,8 @@ def watch(socket, tty, pid, descriptor, lock_descriptor):
             time.sleep(.1)
     finally:
         Path(str(event_path(socket, tty)) + '.ready').unlink(missing_ok=True)
+        if record and helper['read'](runtime_path).get('token') == record['token']:
+            runtime_path.unlink(missing_ok=True)
         os.close(fd)
         os.close(lock)
 
@@ -348,9 +416,9 @@ def revision(workspace, transcript):
         return None
 
 
-def process_table():
+def process_table(timeout=15):
     result = run(['ps', '-axo', 'pid=,ppid=,uid=,stat=,lstart='],
-                 env={**os.environ, 'LC_ALL': 'C'})
+                 env={**os.environ, 'LC_ALL': 'C'}, timeout=timeout)
     if result.returncode:
         raise ValueError('unreadable process table')
     table = {}
@@ -372,7 +440,7 @@ def import_environment_safe(entries):
                    for key, _, value in [entry.partition(b'=')])
 
 
-def process_detail(pid):
+def process_detail(pid, timeout=15):
     """Read exact native argv, executable and cwd; never parse ps's display argv."""
     if sys.platform == 'linux':
         root = Path('/proc') / str(pid)
@@ -410,7 +478,7 @@ def process_detail(pid):
     lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
     if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
         raise ValueError('unreadable process birth')
-    listing = run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'])
+    listing = run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'], timeout=timeout)
     paths = [line[1:] for line in listing.stdout.splitlines() if line.startswith('n')]
     if listing.returncode or len(paths) != 1:
         raise ValueError('unreadable process cwd')
@@ -710,7 +778,7 @@ def stop_previews(check_args, agent_pid, inspector_pid):
             raise ValueError('preview cleanup incomplete')
         print(json.dumps(dict(reason='verified previews exited', preview_term_sent=stopped)), file=sys.stderr)
         return 0
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
         print(json.dumps(dict(reason=str(error), preview_term_sent=stopped)), file=sys.stderr)
         return 1
 
@@ -808,11 +876,13 @@ def main(args):
         return attached(*args[1:])
     if len(args) == 6 and args[0] == 'watch':
         return watch(*args[1:])
+    if len(args) == 7 and args[0] == 'watch-resume':
+        return watch(*args[1:])
     if len(args) == 4 and args[0] in ('processes', 'processes-empty'):
         try:
             planned = process_plan(*args[1:])
             return int(args[0] == 'processes-empty' and bool(planned['previews']))
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, SyntaxError):
             return 1
     if len(args) == 13 and args[0] == 'stop-previews':
         return stop_previews(args[1:11], *args[11:])

@@ -32,7 +32,15 @@ def listener(cache, identity, revision):
     server.revision = revision
     server.memory = cache._Memory(submit=lambda *a: pytest.fail('started collection'))
     server.memory.restore({})
-    thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01})
+    address = root / 'service.sock'
+    bound = cache._socket_identity(address)
+    def serve():
+        try:
+            server.serve_forever(poll_interval=.01)
+        finally:
+            if cache._socket_identity(address) == bound:
+                address.unlink(missing_ok=True)
+    thread = threading.Thread(target=serve)
     thread.start()
     return server, thread
 
@@ -193,7 +201,7 @@ def test_old_client_links_only_upgrade_retires_previous_release(cache, tmp_path,
     (home / 'bin/t').symlink_to(old / 'bin/t')
     for key, value in dict(HOME=home, XDG_CONFIG_HOME=home / '.config',
                            CODEX_HOME=home / '.codex', CLAUDE_CONFIG_DIR=home / '.claude',
-                           XDG_RUNTIME_DIR='/tmp').items():
+                           XDG_RUNTIME_DIR='/tmp', TMUX_TMPDIR=home / 'tmux').items():
         monkeypatch.setenv(key, str(value))
     monkeypatch.delenv('T_LOCAL_RC', raising=False)
     monkeypatch.setattr(cache, 'SOURCE', old)
@@ -202,7 +210,9 @@ def test_old_client_links_only_upgrade_retires_previous_release(cache, tmp_path,
     root = cache._identity_runtime(identity)
     server, thread = listener(cache, identity, cache._revision())
     try:
-        outcome = run_install(new, home, T_LINKS_ONLY='1', T_NO_CODEX_HOOKS='1')
+        outcome = run_install(new, home, T_LINKS_ONLY='1', T_NO_CODEX_HOOKS='1',
+                              XDG_STATE_HOME=os.environ['XDG_STATE_HOME'],
+                              XDG_CACHE_HOME=os.environ['XDG_CACHE_HOME'])
         assert outcome.returncode == 0, outcome.stderr
         thread.join(2)
         assert not thread.is_alive()

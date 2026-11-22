@@ -62,7 +62,8 @@ if __name__ == "__main__":
     _dev_source = Path(__file__).resolve().parent.parent
     _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
     try:
-        _dev_selected = _dev['select_root'](_dev_source, explicit=True)
+        _dev_selected = (_dev_source if sys.argv[1:2] == ['__runtime-reconcile']
+                         else _dev['select_root'](_dev_source, explicit=True))
     except KeyboardInterrupt:
         sys.exit(130)
     os.environ['T_DEV_CONTEXT'] = str(_dev_selected)
@@ -8524,19 +8525,57 @@ def _t_refs_refresh(repository):
         pass  # Ref freshness never changes a successful update/push result.
 
 
+def _t_runtime_report(value):
+    changed = [item for item in value['results'] if item['status'] != 'current']
+    if changed:
+        counts = {}
+        for item in changed:
+            label = item['status'] + ' ' + item['component']
+            counts[label] = counts.get(label, 0) + 1
+        print('t runtime: ' + '; '.join(label + (f' ({count})' if count > 1 else '')
+                                       for label, count in counts.items()), file=sys.stderr)
+        reported = set()
+        for item in changed:
+            key = (item['component'], item.get('reason', ''))
+            if item['status'] in ('failed', 'deferred', 'restart-required') and key[1] and key not in reported:
+                print('  ' + key[0] + ': ' + key[1], file=sys.stderr)
+                reported.add(key)
+
+
+def _t_reconcile_runtime(source, previous_sources=(), bootstrap=False):
+    """Dispatch through the newly installed binary, never old in-memory helpers."""
+    if not os.path.isfile(os.path.join(source, 'libexec', 't_runtime.py')):
+        return 0  # Older supported installations have no runtime capability yet.
+    payload = json.dumps(dict(previous_sources=list(previous_sources), bootstrap_install=bootstrap))
+    with _spinner("Refreshing running t helpers"):
+        result = subprocess.run([sys.executable, os.path.join(source, 'bin/t'), '__runtime-reconcile', payload],
+                                capture_output=True, text=True, cwd='/', timeout=45,
+                                env={key: value for key, value in os.environ.items()
+                                     if not key.startswith('COV_CORE_') and key not in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER')})
+    try:
+        value = json.loads(result.stdout)
+        changed = [item for item in value['results'] if item['status'] != 'current']
+    except (ValueError, KeyError, TypeError):
+        print('t runtime: refresh failed; retry t update' + (': ' + result.stderr.strip() if result.stderr else ''), file=sys.stderr)
+        return result.returncode or 1
+    _t_runtime_report(value)
+    return result.returncode
+
+
 def _t_update_result(args, status, source=None, previous_sources=()):
     args._update_status = status
+    runtime_result = 0
     if source:
         try:
-            helper = runpy.run_path(os.path.join(source, "libexec", "t_session_cache.py"))
-            helper["retire_obsolete"](previous_sources)
-        except (OSError, ValueError, KeyError, TypeError):
-            pass  # Discovery maintenance never changes successful update output.
+            runtime_result = _t_reconcile_runtime(source, previous_sources)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            print('t runtime: ' + str(error) + '; retry t update', file=sys.stderr)
+            runtime_result = 1
     if status == "updated":
         _t_refs_refresh(_t_source_root())
     if not getattr(args, "_update_batch", False):
         print(f"t: {status}", flush=True)
-    return 0
+    return runtime_result
 
 
 def _t_update_linked(root):
@@ -8772,7 +8811,7 @@ def _cmd_update_t(cfg, args):
     result = _t_relink(canonical, quiet=True)
     if result == 0:
         pending.unlink(missing_ok=True)
-        _t_update_result(args, "updated", canonical)
+        result = _t_update_result(args, "updated", canonical)
     if result == 0 and local is not None:
         print(f"t now uses local checkout {canonical}; future t update calls update its main branch.")
     return result
@@ -15041,6 +15080,20 @@ def _bare_entry():
 
 
 def _main(argv):
+    if len(argv) == 2 and argv[0] == '__runtime-reconcile':
+        try:
+            request = json.loads(argv[1])
+            if not isinstance(request, dict):
+                raise ValueError('invalid runtime reconciliation request')
+            display = request.pop('display', False)
+            value = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_runtime.py'))['reconcile'](**request)
+        except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
+            value = dict(protocol=1, results=[dict(component='dispatcher', status='failed', reason=str(error))], failed=True)
+        if locals().get('display', False):
+            _t_runtime_report(value)
+        else:
+            print(json.dumps(value))
+        return int(value['failed'])
     if argv == ['__remote-protocol']:
         print(_REMOTE['PROTOCOL'])
         return 0

@@ -275,10 +275,10 @@ def test_installer_pins_owner_and_preserves_other_hooks(close, monkeypatch, fail
     monkeypatch.setattr(close, 'run', command)
     assert close.install('dev-repo-1') == (0 if failure == 'none' else 1)
     if failure == 'none':
-        assert len(calls) == 4
+        assert len(calls) == 5
         assert all('-g' not in args and '-u' not in args for args in calls)
         assert "'$1' %1 123" in shlex.split(calls[1][-1])[-1]
-        assert all('>/dev/null 2>&1 || :' in shlex.split(args[-1])[-1] for args in calls[1:])
+        assert all('>/dev/null 2>&1 || :' in shlex.split(args[-1])[-1] for args in calls[1:4])
         assert '#{q:hook_client}' in calls[2][-1] and '#{q:client_pid}' not in calls[2][-1]
 
 
