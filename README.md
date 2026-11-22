@@ -69,6 +69,9 @@ The test suite runs on macOS and Linux with Python 3.12.
 To try a fresh install and worktree session in a disposable Docker container, see
 the [playground guide](docs/playground.md).
 
+On macOS, the [rnnr menu-bar companion](apps/rnnr/README.md) shows detached
+sessions and opens the existing Terminal flows. Build it from this checkout.
+
 With Homebrew:
 
 ```sh
