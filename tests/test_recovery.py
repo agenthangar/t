@@ -517,6 +517,14 @@ def test_start_and_singleton(recovery, target, monkeypatch):
     monkeypatch.delenv("T_RECOVERY_DISABLE")
     assert recovery.start("dev-api-1") == 1
     monkeypatch.setattr(recovery, "run", lambda a: result(target["socket"]))
+    original = recovery.runpy.run_path
+    def modules(path):
+        helper = original(path)
+        if str(path).endswith('/t_runtime.py'):
+            helper.update(canonical_socket=lambda socket: socket, socket_aliases=lambda socket: [socket],
+                          worker_paths=lambda *args: [])
+        return helper
+    monkeypatch.setattr(recovery.runpy, 'run_path', modules)
     calls = []
     monkeypatch.setenv("COV_CORE_SOURCE", "never propagate")
     monkeypatch.setattr(recovery.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw)))

@@ -14,6 +14,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import sys
 import time
 import uuid
@@ -50,7 +51,8 @@ def lifecycle(tmp_path):
     real_tmux = shutil.which("tmux")
     # Unix socket paths have a small kernel length limit on macOS. Use a unique
     # short /tmp name while keeping all server contents in the isolated HOME.
-    socket = Path("/tmp") / ("t-life-" + uuid.uuid4().hex[:12] + ".sock")
+    socket_directory = tempfile.TemporaryDirectory(prefix="t-life-", dir="/tmp")
+    socket = Path(socket_directory.name) / "server.sock"
     tmux = bindir / "tmux"
     tmux.write_text("#!/bin/sh\n" +
                     "case \"$1\" in attach-session) shift; exec " +
@@ -167,6 +169,7 @@ int main(int argc, char **argv) {
     finally:
         _run([str(tmux), "kill-server"], env=env, cwd=base, timeout=5)
         socket.unlink(missing_ok=True)
+        socket_directory.cleanup()
 
 
 def _shell(base, env, script, *, cwd=None):

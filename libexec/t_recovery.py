@@ -527,6 +527,8 @@ def watch(socket, token=None):
             runtime_path = cache(socket) / 'watch.runtime.json'
             reload_path = cache(socket) / 'watch.reload.json'
             record = runtime['publish'](runtime_path, 'recoverywatcher', socket, token=token)
+            runtime['complete_migration']('recoverywatcher', socket, 'server', record,
+                                          (runtime_path, socket, None))
         except (OSError, ValueError, TypeError, SyntaxError):
             runtime, record = None, None
         while True:
@@ -568,6 +570,31 @@ def start(session, socket=None):
     socket = result.stdout.strip() if result else socket
     if (result and result.returncode) or not socket.startswith("/"):
         return 1
+    runtime = runpy.run_path(str(ROOT / 'libexec/t_runtime.py'))
+    try:
+        socket = runtime['canonical_socket'](socket)
+    except (OSError, ValueError):
+        return 1
+    paths = runtime['worker_paths']('recoverywatcher', socket)
+    if sum(runtime['lock_held'](runtime['worker_lock'](path, 'recoverywatcher')) for path in paths) > 1:
+        runtime['defer_migration']('recoverywatcher', socket, 'server', 'multiple historical recovery owners are preserved')
+        return 0
+    for alias in runtime['socket_aliases'](socket):
+        lockpath = cache(alias) / 'watch.lock'
+        if not lockpath.exists():
+            continue
+        with os.fdopen(os.open(lockpath, os.O_RDWR | os.O_NOFOLLOW), 'r+') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                path = cache(alias) / 'watch.runtime.json'
+                record = runtime['read'](path)
+                adopted = runtime['adopt_worker_record']('recoverywatcher', socket, path)
+                record = runtime['read'](path)
+                if not adopted or not runtime['complete_migration']('recoverywatcher', socket, 'server', record, (path, socket, None)):
+                    runtime['defer_migration']('recoverywatcher', socket, 'server',
+                                             'waiting for the existing recovery watcher safe boundary')
+                return 0
     env = {key: value for key, value in os.environ.items() if not key.startswith("COV_CORE_")}
     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "watch", socket],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

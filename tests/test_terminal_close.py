@@ -207,7 +207,11 @@ def test_failed_observer_never_covers_the_agent(lifecycle, close, monkeypatch):
     broken.chmod(0o755)
     monkeypatch.setattr(close.sys, 'executable', str(broken))
     monkeypatch.setattr(close, 'run', lambda args, **kwargs: _run(args, env=env, cwd=base))
-    assert close.install('dev-repo-1') == 0
+    binding = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', '=dev-repo-1:',
+                    '#{session_id}|#{pane_id}|#{pane_pid}'], env=env, cwd=base).stdout.strip().split('|')
+    commands = close.hook_commands('/unused', dict(identity=binding[0], pane=binding[1], pane_pid=binding[2]))
+    for hook, command in commands.items():
+        assert _run([str(base / 'bin/tmux'), 'set-hook', '-t', '=dev-repo-1:', hook, command], env=env, cwd=base).returncode == 0
     socket = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', 'dev-repo-1', '#{socket_path}'], env=env, cwd=base).stdout.strip()
     master, slave = pty.openpty()
     process = subprocess.Popen([shutil.which('tmux'), '-S', socket, 'attach-session', '-t', 'dev-repo-1'],
@@ -264,27 +268,40 @@ def test_owner_never_follows_changed_identity(close, monkeypatch, row):
 
 @pytest.mark.parametrize('failure', ['none', 'unmanaged', 'detach-hook', 'attach-hook'])
 def test_installer_pins_owner_and_preserves_other_hooks(close, monkeypatch, failure):
+    helpers = close.runtime()
+    helpers['socket_identity'] = lambda socket: (1, 2)
+    monkeypatch.setattr(close, 'runtime', lambda: helpers)
     calls = []
+    hooks = {}
     def command(args, **kwargs):
         calls.append(args)
         if 'display-message' in args:
             return subprocess.CompletedProcess(args, 0, ('other' if failure == 'unmanaged' else 'dev-repo-1') + '\t$1\t/socket\t%1\t123\n', '')
+        if 'show-hooks' in args:
+            return subprocess.CompletedProcess(args, 0, '\n'.join(key + ' ' + value for key, value in hooks.items()), '')
+        if 'set-hook' in args:
+            hooks[args[-2]] = args[-1]
         code = int((failure == 'detach-hook' and close.HOOK in args) or
                    (failure == 'attach-hook' and 'client-attached[50100]' in args))
         return subprocess.CompletedProcess(args, code, '', '')
     monkeypatch.setattr(close, 'run', command)
     assert close.install('dev-repo-1') == (0 if failure == 'none' else 1)
     if failure == 'none':
-        assert len(calls) == 5
+        writes = [args for args in calls if 'set-hook' in args]
+        assert len(writes) == 3
         assert all('-g' not in args and '-u' not in args for args in calls)
-        assert "'$1' %1 123" in shlex.split(calls[1][-1])[-1]
-        assert all('>/dev/null 2>&1 || :' in shlex.split(args[-1])[-1] for args in calls[1:4])
-        assert '#{q:hook_client}' in calls[2][-1] and '#{q:client_pid}' not in calls[2][-1]
+        assert "'$1' %1 123" in shlex.split(writes[0][-1])[-1]
+        assert all('>/dev/null 2>&1 || :' in shlex.split(args[-1])[-1] for args in writes)
+        assert '#{q:hook_client}' in writes[1][-1] and '#{q:client_pid}' not in writes[1][-1]
 
 
 @pytest.mark.parametrize('closed', [False, True])
 def test_attachment_passes_original_fd_and_cleans_up(close, monkeypatch, tmp_path, closed):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    helpers = close.runtime()
+    helpers.update(canonical_socket=lambda value: value, socket_identity=lambda value: (1, 2),
+                   adopt_attachment=lambda *args: True)
+    monkeypatch.setattr(close, 'runtime', lambda: helpers)
     master, slave = pty.openpty()
     tty = os.ttyname(slave)
     calls = []
@@ -317,6 +334,10 @@ def test_attachment_passes_original_fd_and_cleans_up(close, monkeypatch, tmp_pat
 @pytest.mark.parametrize('listing', ['correct', 'missing', 'ambiguous', 'invalid'])
 def test_attachment_resolves_saved_hook_client(close, monkeypatch, tmp_path, listing):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    helpers = close.runtime()
+    helpers.update(canonical_socket=lambda value: value, socket_identity=lambda value: (1, 2),
+                   adopt_attachment=lambda *args: True)
+    monkeypatch.setattr(close, 'runtime', lambda: helpers)
     master, slave = pty.openpty()
     tty = os.ttyname(slave)
     text = tty + '|' + ('bad' if listing == 'invalid' else '123') + '\n'
@@ -336,6 +357,10 @@ def test_attachment_resolves_saved_hook_client(close, monkeypatch, tmp_path, lis
 @pytest.mark.parametrize('lost', [False, True])
 def test_watcher_uses_retained_fd_and_exact_event(close, monkeypatch, tmp_path, lost):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    helpers = close.runtime()
+    helpers.update(canonical_socket=lambda value: value, socket_identity=lambda value: (1, 2),
+                   adopt_attachment=lambda *args: True)
+    monkeypatch.setattr(close, 'runtime', lambda: helpers)
     master, slave = pty.openpty()
     tty = os.ttyname(slave)
     lock = os.open(tmp_path / 'lock', os.O_CREAT | os.O_RDWR, 0o600)
@@ -356,6 +381,10 @@ def test_watcher_uses_retained_fd_and_exact_event(close, monkeypatch, tmp_path, 
 @pytest.mark.parametrize('lost', [False, True])
 def test_watcher_missing_callback_never_cleans_up(close, monkeypatch, tmp_path, lost):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    helpers = close.runtime()
+    helpers.update(canonical_socket=lambda value: value, socket_identity=lambda value: (1, 2),
+                   adopt_attachment=lambda *args: True)
+    monkeypatch.setattr(close, 'runtime', lambda: helpers)
     master, slave = pty.openpty()
     lock = os.open(tmp_path / 'lock', os.O_CREAT | os.O_RDWR, 0o600)
     tty = os.ttyname(slave)
