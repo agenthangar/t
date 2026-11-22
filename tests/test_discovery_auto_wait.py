@@ -121,6 +121,17 @@ def test_private_open_close_move_waits_for_same_eligible_projection(routes, adap
     assert len(calls) == 2 and clock[0] == .25
 
 
+def test_open_returns_first_usable_scoped_rows_while_peer_refreshes(routes, adapter, monkeypatch, clock, capsys):
+    before = snapshot(rows=live('other', '/work/web'), pending=True)
+    after = snapshot(rows=live())
+    after['hosts'].append(snapshot(host='peer', pending=True)['hosts'][0])
+    calls = feed(adapter, monkeypatch, before, after)
+    assert routes.main(['__cache-rows', '--open', '--repo', 'api']) == 0
+    output = capsys.readouterr()
+    assert '\tafter\t' in output.out and 'refreshing in background' in output.err
+    assert len(calls) == 2 and clock[0] == .25
+
+
 def test_foreign_alias_uses_local_identity_before_wait_projection(adapter):
     data = snapshot()
     data['hosts'][0]['value']['catalog']['repositories'] = [dict(alias='ff', repo='org/formflow', path='/work/formflow')]
