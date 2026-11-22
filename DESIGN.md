@@ -14,6 +14,20 @@ Reuse these conventions and implementations when adding or improving commands.
 Workflow configuration and explicit task instructions determine preview timing,
 approval, and delivery; this entry point does not create additional approval gates.
 
+## Interactive CLI previews
+
+Build every CLI preview against the current shared picker or rail for the
+affected command. Use its layout, focus, navigation, hotkeys, search, selection,
+review, cancel/back behavior, and resize handling wherever those apply. A browser
+preview must accept terminal input directly and support the entire proposed flow
+with the keyboard. Browser controls can reset sample data or change scenarios;
+they cannot substitute for a command, selection, or confirmation inside the TUI.
+
+Before sharing a preview or revision, exercise the actual entry point with the
+keyboard through selection, review, completion, and back/cancel. Verify relevant
+picker shortcuts and a narrow terminal size. Use isolated sample state for
+external effects, and label those effects clearly.
+
 ## Picker filters and sorting
 
 Interactive session filtering and sorting use the existing picker hotkeys.
