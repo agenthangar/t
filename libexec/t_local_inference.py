@@ -1069,6 +1069,19 @@ def lead(argv, cwd=None, chosen=None, runner=None):
     os.environ.pop('_T_LAUNCH_TRUST_DONE', None)
     chosen = policy(chosen) if chosen is not None else effective(cwd or os.getcwd())
     if not chosen or chosen['mode'] != 'local-only':
+        recovery = helper('t_auto_recovery')
+        if recovery['enabled']():
+            supervised = chosen
+            if chosen:
+                try:
+                    helper('t_offline')['launch_options'](argv, cwd or os.getcwd())
+                except ValueError:
+                    if argv[1:2] == ['resume']:
+                        print('Saved resume uses native cloud retries; automatic local continuation is unavailable.', file=sys.stderr)
+                    elif chosen['on_cloud_failure'] in ('local', 'ask'):
+                        raise
+                    supervised = None
+            return recovery['launch']('codex', argv, chosen=supervised)
         if chosen:
             offline = helper('t_offline')
             try:
@@ -1196,7 +1209,7 @@ if __name__ == '__main__':
         if sys.argv[1:2] == ['--launch-prefix']:
             try:
                 selected = effective(sys.argv[2])
-                required = selected is not None
+                required = selected is not None or helper('t_auto_recovery')['enabled']()
             except (OSError, ValueError):
                 required = True  # Launch guard reports the invalid policy; never fall back.
             if required:

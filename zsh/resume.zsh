@@ -1727,6 +1727,73 @@ _dev_resume_session() {
   _dev_with_launch_locks "$2" "$3" _dev_resume_session_claimed "$@"
 }
 
+# Automatic recovery uses the same strict ownership locks but never materializes
+# a missing worktree, changes trust, selects history, or types into a live pane.
+_t_auto_restore_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 repo slot immutable
+  if [[ -z $session ]]; then
+    read -r repo slot < <(_dev_slot_for_cwd "$dir")
+    [[ -n $repo && -n $slot ]] || return 1
+    session="dev-${repo}-${slot}"
+  fi
+  [[ -d $dir && $session == (dev-*|t-cursor-*) ]] || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  python3 "$T_HOME/libexec/t_auto_recovery.py" guard "$agent" "$sid" "$dir" || return $?
+  immutable=$(tmux new-session -d -P -F '#{session_id}' -s "$session" -c "$dir" sleep 86400) || return 1
+  [[ $immutable == \$<-> ]] || return 1
+  tmux set-environment -t "$immutable:" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "$immutable:"; return 1; }
+  tmux set-environment -t "$immutable:" DEV_AGENT "$agent" || { tmux kill-session -t "$immutable:"; return 1; }
+  _dev_start_session_command "$session" "$launch" /dev/null || { tmux kill-session -t "$immutable:"; return 1; }
+  _dev_recovery_watch "$session"
+}
+
+# A holding pane is display-only. Pin its entire tmux identity before exempting
+# it from owner checks; the exemption never applies to another local or remote row.
+_t_auto_holding_verified() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 socket=$4 pane=$5 snapshot marker
+  [[ -n $sid && $pane == \%<-> && -n $socket ]] || return 1
+  snapshot=$(tmux display-message -p -t "$pane" '#{socket_path}|#{session_name}|#{session_path}|#{session_windows}|#{window_panes}|#{pane_id}') || return 1
+  [[ $snapshot == "$socket|$session|$dir|1|1|$pane" ]] || return 1
+  marker=$(tmux show-options -qv -t "=$session:" @t_recovery_holding) || return 1
+  [[ $marker == "$sid" ]]
+}
+
+_t_auto_hold_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 immutable
+  local _T_RESUME_ALLOW_UNAVAILABLE=1
+  [[ -d $dir && $session == (dev-*|t-cursor-*) && -n $sid ]] || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  # Create an inert placeholder before publishing the marker; only this exact
+  # new session may be cleaned up if setup fails.
+  immutable=$(tmux new-session -d -P -F '#{session_id}' -s "$session" -c "$dir" sleep 86400) || return 1
+  [[ $immutable == \$<-> ]] || return 1
+  tmux set-option -t "$immutable:" @t_recovery_holding "$sid" &&
+    tmux set-environment -t "$immutable:" CLAUDE_RESUME_ID "$sid" &&
+    tmux set-environment -t "$immutable:" DEV_AGENT "$agent" &&
+    _dev_start_session_command "$session" "$launch" /dev/null && return 0
+  tmux kill-session -t "$immutable:" 2>/dev/null
+  return 1
+}
+
+_t_auto_resume_holding_claimed() {
+  emulate -L zsh
+  local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 socket=$6 pane=$7
+  local _T_AUTO_HOLD_SESSION=$session _T_AUTO_HOLD_SOCKET=$socket _T_AUTO_HOLD_PANE=$pane
+  _t_auto_holding_verified "$session" "$dir" "$sid" "$socket" "$pane" || return 1
+  _dev_launch_preflight "$session" "$dir" "$sid" || return $?
+  python3 "$T_HOME/libexec/t_auto_recovery.py" guard "$agent" "$sid" "$dir" || return $?
+  _t_auto_holding_verified "$session" "$dir" "$sid" "$socket" "$pane" || return 1
+  # Preserve the session so attached viewers follow the replacement. Removing
+  # the marker and replacing the exact pane are one tmux command sequence.
+  tmux respawn-pane -k -t "$pane" -c "$dir" env SHELL_SESSIONS_DISABLE=1 \
+    zsh -lic "setopt no_monitor no_notify; $launch" \; \
+    set-option -u -t "=$session:" @t_recovery_holding || return 1
+  _dev_recovery_watch "$session"
+}
+
 _dev_foreground_resume_preflight() {
   _dev_launch_preflight "dev-foreground-$1" "$2" "$1" || return $?
   python3 "$T_HOME/libexec/t_lifecycle.py" preflight "${3:-claude}" "$1" "$2"
@@ -2240,6 +2307,7 @@ _tbeam_kill_owner() {
       [[ $(tmux display-message -p -t "=$s:" '#{session_id}') == "$immutable" ]] || {
         print -u2 't move: source owner changed; nothing was stopped'; return 2
       }
+      _dev_history_record "$sid" "$source_agent" "$source_dir" handoff || return 2
       if tmux kill-session -t "$immutable:" 2>/dev/null; then
         if [[ -n $pid ]]; then
           _t_wait_for_exit "$pid"

@@ -390,10 +390,13 @@ class WebSocket:
             fragmented = True
 
 
-def launch_options(argv, cwd):
+def launch_options(argv, cwd, *, recovery=False):
     server, local = [], [argv[0], '--no-daemon', '-C', str(Path(cwd).resolve())]
     args = iter(argv[1:])
     for arg in args:
+        if recovery and arg == 'resume':
+            next(args, None)
+            continue
         if arg in ('exec', 'e', 'review', 'resume', 'fork', '--remote', '--remote-auth-token-env', '--profile', '-p', '--oss', '--local-provider', '--worktree') or arg.startswith(('--remote=', '--profile=', '--local-provider=')):
             raise ValueError('Automatic local continuation supports fresh native CLI sessions without remote/profile/OSS/worktree overrides; select Then → Pause to use native retries for this invocation.')
         if arg == '--':
@@ -545,16 +548,16 @@ def stop_runtime(process):
         time.sleep(.05)
 
 
-def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None, env=None, server_options=None):
-    if chosen.get('on_cloud_failure') == 'ask' and monitor is None:
-        return recover(argv, chosen, cwd)
+def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None, env=None, server_options=None, lifecycle_observer=None):
+    if chosen and chosen.get('on_cloud_failure') == 'ask' and monitor is None:
+        return recover(argv, chosen, cwd, lifecycle_observer=lifecycle_observer)
     local = inference()
     if server_options is None:
-        server_options, continuation = launch_options(argv, cwd)
+        server_options, continuation = launch_options(argv, cwd, recovery=lifecycle_observer is not None and chosen is None)
     root = checkpoint.directory if checkpoint else local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     checkpoint = checkpoint or Checkpoint(root, cwd)
-    checkpoint.retry_seconds = chosen.get('cloud_retry_seconds', RETRY_WINDOW)
+    checkpoint.retry_seconds = (chosen or {}).get('cloud_retry_seconds', RETRY_WINDOW)
     checkpoint.save()
     backend = frontend = connection = None
     failures, handoff = [], None
@@ -618,7 +621,10 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                         with input_gate:
                             if stopping.is_set():
                                 return
-                            checkpoint.client(message)
+                            if chosen is not None:
+                                checkpoint.client(message)
+                            if lifecycle_observer is not None:
+                                lifecycle_observer.client(message)
                             send_backend(message)
                 except Exception as exc:
                     failures.append(str(exc))
@@ -639,7 +645,10 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                                 raise ValueError('Could not pause the owned cloud turn: '+str(message['error']))
                             paused(owned[0])
                             continue
-                        checkpoint.server(message)
+                        if chosen is not None:
+                            checkpoint.server(message)
+                        if lifecycle_observer is not None:
+                            lifecycle_observer.server(message)
                         if observer is not None:
                             observer(message)
                         channel.send(raw.rstrip(b'\n'))
@@ -674,7 +683,7 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                         checkpoint.notice = ''
                     if handoff is not None:
                         break
-                elif checkpoint.due():
+                elif chosen is not None and checkpoint.due():
                     outage = checkpoint.outage()
                     if chosen['on_cloud_failure'] == 'pause':
                         with checkpoint.lock:
@@ -732,6 +741,8 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
         private_write(root/'status.json', {'state': 'cancelled', 'reason': 'Cloud turn changed during shutdown.'})
         print('Local continuation cancelled: the cloud turn changed during shutdown. Checkpoint: '+str(root), file=sys.stderr)
         return 130
+    if lifecycle_observer is not None and lifecycle_observer.sid:
+        local['helper']('t_auto_recovery')['retire']('codex', lifecycle_observer.sid)
     handoff = checkpoint.prompt()  # Include completion evidence received while stopping the cloud runtime.
     print('\nCloud connection unavailable → Local only · '+chosen['provider']+' · '+chosen['model']+'\n'
           'Checkpoint: '+str(root)+'\nCloud runtime stopped. Local mode stays selected for this session; approvals require local user review.', flush=True)
@@ -1012,11 +1023,13 @@ def local_server_options(argv):
     return options
 
 
-def recover(argv, chosen, cwd):
+def recover(argv, chosen, cwd, lifecycle_observer=None):
     """Prompted, bidirectional continuation, always with one owned writer runtime."""
     local = inference()
     _, continuation = launch_options(argv, cwd)
     if not (os.isatty(0) and os.isatty(1)):
+        if lifecycle_observer is not None:
+            return supervise(argv, None, cwd, lifecycle_observer=lifecycle_observer)
         # No hidden local choice in scripts; preserve the native cloud retry policy.
         return subprocess.call(argv, cwd=cwd)
     root = local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
@@ -1046,7 +1059,7 @@ def recover(argv, chosen, cwd):
             return None
         if current == 'cloud':
             outcome = supervise(current_argv, dict(chosen, on_cloud_failure='pause'), cwd,
-                                checkpoint=checkpoint, monitor=cloud_monitor)
+                                checkpoint=checkpoint, monitor=cloud_monitor, lifecycle_observer=lifecycle_observer)
             if (isinstance(outcome, dict) and not outcome['action'] and checkpoint.startup_failure
                     and outcome['exit_code'] not in (0, 130)):
                 # A failed bootstrap has no conversation to hand off. The owned
@@ -1071,6 +1084,9 @@ def recover(argv, chosen, cwd):
                     checkpoint.user([{'type': 'text', 'text': initial}])
                 checkpoint.save()
                 seed, handoff = checkpoint.seed or checkpoint, initial
+                if lifecycle_observer is not None and lifecycle_observer.sid:
+                    local['helper']('t_auto_recovery')['retire']('codex', lifecycle_observer.sid)
+                    lifecycle_observer = None
                 current = 'local'
                 continue
             if not isinstance(outcome, dict) or not outcome['action']:
@@ -1078,6 +1094,9 @@ def recover(argv, chosen, cwd):
             previous = checkpoint.model
             selected = outcome['action']
             seed, handoff = checkpoint, checkpoint.prompt()
+            if lifecycle_observer is not None and lifecycle_observer.sid:
+                local['helper']('t_auto_recovery')['retire']('codex', lifecycle_observer.sid)
+                lifecycle_observer = None
             current = 'local'
             continue
 

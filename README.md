@@ -778,6 +778,14 @@ process identity, sole thread lock, and working directory must remain stable acr
 two live probes. Shared backends, cwd overrides, unsupported modes, and ambiguous
 evidence remain blocked. This fallback never deletes a lock or stops its owner.
 
+For opt-in recovery after login or lost connections, use **`t config` → Recovery →
+Automatic recovery**, then review and save. Recovery restores managed CLI sessions
+in detached tmux and continues only verified interrupted work. Inspect it with
+`t system recovery status`; pause a session with `t session recovery pause <repo> <slot>`.
+It is disabled by default and configured separately on each Mac. See
+[automatic recovery](docs/automatic-recovery.md) for eligibility, SSH reconnect,
+and capability boundaries. `nosleep` remains manual.
+
 If a CLI cannot reconnect but its tmux slot is still live, run
 `t session restart <repo> <slot>` from a separate terminal. `--dry-run` shows the target
 first. Restart saves the pane text, including any visible unsent draft, to a

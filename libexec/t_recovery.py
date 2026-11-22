@@ -105,11 +105,13 @@ def failure(agent, screen):
 
 
 def panes(socket):
-    keys = ("session", "pane", "pane_pid", "cwd", "pane_dead", "pane_dead_time")
-    result = tmux(socket, "list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{session_path}\t#{pane_dead}\t#{pane_dead_time}")
+    keys = ("session", "pane", "pane_pid", "pane_dead", "pane_dead_time", "cwd")
+    # Some tmux builds rewrite literal tabs in format strings. The path is
+    # last so separators in a workspace name do not change the field count.
+    result = tmux(socket, "list-panes", "-a", "-F", "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_time}|#{session_path}")
     groups = {}
     for line in result.stdout.splitlines():
-        fields = line.split("\t")
+        fields = line.split("|", 5)
         if len(fields) == len(keys) and fields[0].startswith(("dev-", "t-cursor-")):
             groups.setdefault(fields[0], []).append(dict(zip(keys, fields)))
     return [rows[0] for rows in groups.values() if len(rows) == 1]
@@ -636,7 +638,8 @@ def install_cursor_hook():
 def cursor_launch(cwd, sid):
     helper = __import__('runpy').run_path(str(ROOT / 'libexec/t_workflow_cursor.py'))
     args = helper['prepare'](cwd)
-    return 'exec ' + shlex.join(['cursor-agent', '--resume=' + sid, *args])
+    recovery = __import__('runpy').run_path(str(ROOT / 'libexec/t_auto_recovery.py'))
+    return 'exec ' + shlex.join([*recovery['prefix']('cursor'), 'cursor-agent', '--resume=' + sid, *args])
 
 
 def cursor_resume(sid, cwd):

@@ -96,11 +96,12 @@ def test_run_errors_and_normal(recovery, monkeypatch):
 
 def test_panes_and_clients(recovery, monkeypatch):
     monkeypatch.setattr(recovery, "tmux", lambda *a: result(
-        "dev-api-1\t%1\t11\t/tmp/api\t1\t123\nother\t%2\t12\t/tmp/no\t0\t\n"
-        "dev-split-1\t%3\t13\t/tmp/split\t0\t\ndev-split-1\t%4\t14\t/tmp/split\t0\t\n"
-        "t-cursor-chat\t%5\t15\t/tmp/cursor\t0\t\nbad\n"))
+        "dev-api-1|%1|11|1|123|/tmp/api|slot\nother|%2|12|0||/tmp/no\n"
+        "dev-split-1|%3|13|0||/tmp/split\ndev-split-1|%4|14|0||/tmp/split\n"
+        "t-cursor-chat|%5|15|0||/tmp/cursor\nbad\n"))
     assert [p["pane"] for p in recovery.panes("socket")] == ["%1", "%5"]
     assert recovery.panes("socket")[0]["pane_dead_time"] == "123"
+    assert recovery.panes("socket")[0]["cwd"] == "/tmp/api|slot"
     monkeypatch.setattr(recovery, "tmux", lambda *a: result("client1\t%1\nclient2\t%2\nbad\n"))
     assert recovery.clients("socket", "%2") == ["client2"]
 

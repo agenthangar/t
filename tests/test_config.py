@@ -428,7 +428,7 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert kwargs["values"]["repos"] == "api, t"
         assert [key for key, _ in rows] == [
             "tool", "trust", *t_mod.AGENTS, "local", "workflow", "runners",
-            "mcp", "repos", "worktrees", "hosts", "beam", "nosleep", "edit", "cancel",
+            "mcp", "repos", "worktrees", "hosts", "beam", "nosleep", "recovery", "edit", "cancel",
         ]
         assert kwargs["sections"] == {
             "tool": "Session defaults", t_mod.AGENTS[0]: "Agents", "workflow": "Workflows", "runners": "Runners",
@@ -437,12 +437,60 @@ def test_config_main_menu_shows_repo_aliases(t_mod, config_cli, monkeypatch):
         assert dict(rows)["workflow"] == "Workflows ›"
         assert kwargs['primary'][:2] == ('s', 'SAVE CHANGES')
         assert kwargs['shortcuts'] == {'s': 'save'}
-        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts", "nosleep"}
+        collections = {*t_mod.AGENTS, "local", "workflow", "runners", "mcp", "repos", "worktrees", "hosts", "nosleep", "recovery"}
         assert {key for key, text in rows if text.endswith(" ›")} == collections
         return "cancel"
     ui.pick = pick
     monkeypatch.setattr(t_mod, "_RailUI", lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 130
+
+
+@pytest.mark.parametrize('save', [True, False])
+def test_recovery_toggle_applies_only_after_config_review(t_mod, config_cli, monkeypatch, save):
+    cfg, local = config_cli
+    calls = []
+    helper = {'enabled': lambda: False, 'status': lambda: {'running': False},
+              'activation_error': lambda: '', 'setup_note': lambda: '',
+              'menu': lambda ui, value: not value,
+              'configure': lambda value, before: calls.append((value, before))}
+    monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: helper)
+    ui = Menu(['recovery', 'save'] if save else ['recovery', 'cancel', 'discard'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == (0 if save else 130)
+    assert calls == ([(True, False)] if save else [])
+    assert local.read_text() == '# keep me\n'
+
+
+def test_unavailable_recovery_activation_leaves_other_settings_unwritten(t_mod, config_cli, monkeypatch, capsys):
+    import copy
+    monkeypatch.setattr(t_mod.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    cfg, local = config_cli
+    edited = copy.deepcopy(cfg)
+    edited._recovery_initial, edited._recovery_enabled = False, True
+    edited.models['codex'] = 'another-model'
+    monkeypatch.setattr(t_mod, '_config_wizard', lambda cfg: edited)
+    monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: {'activation_error': lambda: 'preview activation unavailable'})
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 1
+    assert 'preview activation unavailable' in capsys.readouterr().err
+    assert local.read_text() == '# keep me\n'
+
+
+def test_recovery_save_rebinds_running_service_to_current_source(t_mod, config_cli, monkeypatch):
+    cfg, local = config_cli
+    calls, reviews = [], []
+    helper = {'enabled': lambda: True, 'status': lambda: {'running': True, 'source': '/old/source'},
+              'activation_error': lambda: '', 'setup_note': lambda: 'Run recovery from this worktree: /new/source.',
+              'menu': lambda ui, value: value,
+              'configure': lambda value, before: calls.append((value, before))}
+    monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: helper)
+    ui = Menu(['recovery', 'save'])
+    ui.page = lambda title, lines, *args, **kwargs: reviews.extend(lines) or 'y'
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
+    assert calls == [(True, True)]
+    assert any('Run recovery from this worktree' in line for line in reviews)
+    assert local.read_text() == '# keep me\n'
 
 
 def test_config_group_navigation_retains_focus(t_mod, config_cli, monkeypatch):

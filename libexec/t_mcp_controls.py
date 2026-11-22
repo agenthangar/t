@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 _resolve_repo = runpy.run_path(str(ROOT / 'libexec/t_repos.py'))['resolve_repo']
 READ_TOOLS = ('find_sessions', 'list_sessions', 'session_detail')
 SESSION_VERBS = ('open', 'list', 'close', 'restart', 'push', 'pop', 'resume', 'history',
-                 'cd', 'move', 'read', 'view-plan', 'paste', 'search', 'goal')
+                 'cd', 'move', 'read', 'view-plan', 'paste', 'search', 'goal', 'recovery')
 DESCRIPTIONS = {
     'open_session': 'Open or create an explicit local CLI slot, detached. Reuses t session open ownership and worktree checks. Does not open a terminal window.',
     'resume_session': 'Resume the newest saved conversation in a stopped local slot. Set new_window=true to view it in a separate Terminal/iTerm window; otherwise leave it detached. Window failure leaves the session available and reports its attach command. For a live or paused agent, use send_instructions to ask it to continue.',
@@ -209,6 +209,11 @@ def session_command(cfg, args, api):
         raise ValueError('MCP session actions require an explicit repository and slot')
     if verb == 'history' and '--json' not in arguments:
         argv.append('--json')
+    if verb == 'recovery':
+        if not parsed.repo:
+            raise ValueError('MCP recovery controls require an explicit conversation ID or repository and slot')
+        if parsed.action == 'status' and '--json' not in arguments:
+            argv.append('--json')
     if verb == 'read' and not any(s in arguments for s in ('--dump', '-d', '-n')):
         argv.append('--dump')
     result = subprocess.run([str(ROOT / 'bin/t'), *argv], stdin=subprocess.DEVNULL,
