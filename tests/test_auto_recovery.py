@@ -569,8 +569,6 @@ def test_ssh_reused_slot_and_cancel_stop_reconnect(auto, monkeypatch):
 def test_enrollment_preserves_identity_pause_and_detects_lossy_settings(auto, tmp_path, monkeypatch):
     row = session(auto, tmp_path, pid='42')
     auto.pause('claude:'+SID, True)
-    auto.enroll([row])
-    assert auto.detail('claude', SID)['paused']
     native = {'argv': ['claude', '--model', 'model with spaces'], 'executable': '/bin/claude',
               'cwd': row['cwd'], 'import_safe': True}
     recovery = {'process_detail': lambda pid: native, 'current': lambda row: True,
@@ -578,6 +576,8 @@ def test_enrollment_preserves_identity_pause_and_detects_lossy_settings(auto, tm
     monkeypatch.setattr(auto, 'helper', lambda name: recovery)
     monkeypatch.setattr(auto, 'run', lambda *a, **k: result('/tmp/socket\n'))
     assert auto.snapshot() == [row]
+    auto.enroll([row])
+    assert auto.detail('claude', SID)['paused']
     auto.update(lambda d: d['sessions'].clear())
     auto.enroll([{**row, 'pid': '42'}])
     enrolled = auto.status()['sessions'][0]
@@ -591,6 +591,32 @@ def test_enrollment_preserves_identity_pause_and_detects_lossy_settings(auto, tm
     native['import_safe'] = False
     auto.enroll([{**row, 'pid': '42'}])
     assert auto.status()['sessions'][0]['safe'] is False
+
+
+def test_legacy_boot_stamp_does_not_block_adopting_verified_live_owner(auto, tmp_path, monkeypatch):
+    row = session(auto, tmp_path, boot='{ sec = 1000, usec = 1 }', safe=False, phase='attention')
+    owner = {k: row[k] for k in ('agent', 'sid', 'cwd', 'session')}
+    owner.update(pid='42', start='current process')
+    native = {'argv': ['claude', '--model', 'test-model'], 'executable': '/bin/claude',
+              'cwd': row['cwd'], 'import_safe': True}
+    monkeypatch.setattr(auto, 'helper', lambda name: {'process_detail': lambda pid: native,
+                                                     'current': lambda row: True})
+    auto.enroll([owner])
+    enrolled = auto.status()['sessions'][0]
+    assert enrolled['boot'] == 'boot-one'
+    assert enrolled['safe'] and enrolled['argv_verified']
+    assert enrolled['phase'] == 'unknown'
+    assert enrolled['options'] == ['--model', 'test-model']
+    assert enrolled['generation'] == row['generation']
+
+
+def test_mac_boot_reads_stable_session_uuid(auto, monkeypatch):
+    native = load_script(REPO_ROOT/'libexec/t_auto_recovery.py', 't_native_boot')
+    monkeypatch.setattr(native.sys, 'platform', 'darwin')
+    seen = []
+    monkeypatch.setattr(native, 'run', lambda argv: seen.append(argv) or result(SID.upper()+'\n'))
+    assert native.boot() == SID
+    assert seen == [['sysctl', '-n', 'kern.bootsessionuuid']]
 
 
 def test_prior_boot_opens_multiple_distinct_detached_holding_panes(terminal, monkeypatch):
