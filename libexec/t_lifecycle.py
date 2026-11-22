@@ -1056,7 +1056,7 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                 automatic = verb == 'auto-close'
                 if 'stop' not in operation.value['receipts']:
                     owner = operation.step('inspect', lambda: adapter.call('auto-close-check' if automatic else 'close-check', *arguments), repeat=True)
-                    guard = [arguments[4], *arguments[6:], sid, agent] if automatic else []
+                    guard = [arguments[4], *arguments[6:], sid, agent] if automatic else ['', '', '', sid, agent]
                     operation.step('stop', lambda: adapter.call('stop', session, workspace, owner, *guard))
                 operation.step('released', lambda: wait_released(agent, sid), repeat=True)
                 operation.step('record', lambda: adapter.call('record', 'close', session, workspace, agent, sid))

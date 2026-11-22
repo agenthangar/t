@@ -421,6 +421,22 @@
       "kind": "passthrough",
       "reason": "The native agent owns terminal rendering, input, progress and approval prompts."
     },
+    "libexec/t_client_stop.py:run:subprocess.run": {
+      "kind": "protocol",
+      "reason": "Bounded ownership probes run in the private close and recovery workers. The callers own the terminal and render diagnostics."
+    },
+    "libexec/t_client_stop.py:stop:time.sleep": {
+      "kind": "protocol",
+      "reason": "The private stop worker polls for a verified client exit for up to three seconds. Its caller presents any force-stop confirmation."
+    },
+    "libexec/t_client_stop.py:stop_stranded:time.sleep": {
+      "kind": "protocol",
+      "reason": "The saved resume repair rail confirms the exact client before a bounded three-second exit wait. Any force stop requires a separate confirmation."
+    },
+    "libexec/t_recovery.py:capture_stop:subprocess.run": {
+      "kind": "background",
+      "reason": "The tmux menu callback verifies its exact session before offering escalation. tmux owns rendering and input for the affected client."
+    },
     "libexec/t_auto_recovery.py:ssh_once:subprocess.Popen": {
       "kind": "passthrough",
       "reason": "OpenSSH and the attached remote terminal own interactive output and authentication."
@@ -811,7 +827,7 @@
       "file": "zsh/lifecycle.zsh",
       "required": [
         "_t_with_progress \"Verifying conversation lifecycle\" _t_lifecycle_run_impl",
-        "_t_wait_for_exit \"$pid\"",
+        "python3 \"$T_HOME/libexec/t_client_stop.py\" stop \"$client_token\"",
         "_t_wait_for_exit \"$fgpid\""
       ]
     }

@@ -789,7 +789,21 @@ def retire(agent, sid):
     def change(data):
         row = data['sessions'].get(key(agent, sid))
         if row:
-            row.update(open=False, reason='Explicit close or transfer', updated=time.time())
+            updated = time.time()
+            receipt = dict(agent=agent, sid=sid, generation=row.get('generation'),
+                           updated=updated, reason=row.get('reason', '')) if row.get('open') else None
+            row.update(open=False, reason='Explicit close or transfer', updated=updated)
+            return receipt
+    return update(change)
+
+
+def restore_close(receipt):
+    """Restore enrollment only if this exact provisional retirement is current."""
+    def change(data):
+        row = data['sessions'].get(key(receipt['agent'], receipt['sid']))
+        if (row and row.get('open') is False and row.get('generation') == receipt['generation']
+                and row.get('updated') == receipt['updated'] and row.get('reason') == 'Explicit close or transfer'):
+            row.update(open=True, reason=receipt['reason'], updated=time.time())
     update(change)
 
 
@@ -1332,6 +1346,12 @@ if __name__ == '__main__':
             event(args[0], {'session_id': args[1], 'cwd': args[2], 'transcript_path': args[3], 'event': 'SessionStart'})
         elif action == 'retire':
             retire(*args)
+        elif action == 'prepare-close':
+            receipt = retire(*args)
+            if receipt is not None:
+                print(json.dumps(receipt))
+        elif action == 'restore-close':
+            restore_close(json.loads(args[0]))
         elif action == 'guard':
             guard(*args)
         elif action == 'reconnect':

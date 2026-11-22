@@ -174,6 +174,20 @@ def test_stop_never_targets_a_recycled_session_name(engine, tmp_path, recycle, p
     script = '''
 source "$TEST_ROOT/zsh/lifecycle.zsh"
 source "$TEST_ROOT/zsh/resume.zsh"
+# Process proof is tested in test_client_stop; this fixture isolates the shell's
+# immutable session-name guard without touching a real tmux server.
+python3() {
+  if [[ $1 == */t_client_stop.py ]]; then
+    case $2 in
+      capture) print -r -- "$5" ;;
+      stop) return 0 ;;
+      finalize) tmux kill-session -t "$3:" ;;
+    esac
+      elif [[ $1 == */t_auto_recovery.py ]]; then
+        return 0
+  else command python3 "$@"; fi
+}
+    _dev_history_record() { :; }
 tmux() {
   case $1 in
     list-sessions) print dev-repo-1 ;;

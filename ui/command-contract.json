@@ -739,6 +739,7 @@
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",
         "tests/test_host_resilience.py::test_remote_session_pickers_keep_reachable_rows_with_offline_peer",
         "tests/test_session_lifecycle.py::test_public_new_scopes_unindexed_writers",
+        "tests/test_recovery_tmux.py::test_stalled_input_menu_ignores_typing_then_restarts_on_keyboard_selection",
         "tests/test_session_cache.py::test_invalidation_detaches_without_cache_io_or_stale_live_rows",
         "tests/test_history_data.py::test_deferred_history_returns_while_database_is_locked",
         "tests/test_fresh_slot_allocation.py::test_new_uses_local_allocator_without_remote_probe",
@@ -1182,11 +1183,14 @@
           "read_only": false,
           "tests": [
             "tests/test_kill_multiselect.py::test_selected_local_close_disables_remote_fallback",
-            "tests/test_external_codex.py::test_external_app_close_never_reaches_process_or_remote_dispatch"
+            "tests/test_external_codex.py::test_external_app_close_never_reaches_process_or_remote_dispatch",
+            "tests/test_client_stop.py::test_graceful_stop_signals_client_before_pane_is_removed",
+            "tests/test_session_lifecycle.py::test_public_close_terminates_hup_resistant_client_before_removing_pane",
+            "tests/test_session_lifecycle.py::test_public_close_timeout_keeps_pane_and_never_forces_redirected_caller"
           ],
           "confirmation": "when_interrupting",
           "layout": "inherit",
-          "notes": "External <folder>:app-<thread-id> handles report individual app close unavailable without process lookup, signaling or host fallback. Terminal handles retain existing confirmation and exact-host routing."
+          "notes": "External <folder>:app-<thread-id> handles report individual app close unavailable without process lookup, signaling or host fallback. Terminal handles retain existing confirmation and exact-host routing. Managed close requests graceful exit before removing the pane. An interactive local timeout offers Force stop / Cancel for the verified client. Other timeouts keep the pane and return a failure. Record closure after verified client exit and writer release."
         },
         "bounded_wait": {
           "argv": [
@@ -1507,9 +1511,10 @@
           "read_only": false,
           "tests": [
             "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection",
+            "tests/test_client_stop.py::test_stranded_requires_native_sole_standalone_writer_without_terminal",
             "tests/test_resume_performance.py::test_numbered_resume_repair_offers_fresh_worktree"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Repair can stop a verified local CLI stranded by an earlier managed close. Require explicit approval and verify writer release before resuming that conversation. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "discovery_wait": {
@@ -1737,9 +1742,10 @@
           "read_only": false,
           "tests": [
             "tests/test_history_resume.py::test_saved_resume_offers_repair_for_exact_selection",
+            "tests/test_client_stop.py::test_stranded_requires_native_sole_standalone_writer_without_terminal",
             "tests/test_resume_performance.py::test_numbered_resume_repair_offers_fresh_worktree"
           ],
-          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
+          "notes": "Shared Repair / Cancel rail retries the exact selected conversation once after local discovery invalidation and fresh source/ownership checks. Repair can stop a verified local CLI stranded by an earlier managed close. Require explicit approval and verify writer release before resuming that conversation. A verified unchanged unresolved writer receives one settling wait across the two attempts. If the worktree stays unresolved and the exact Codex conversation is verified free, offer Resume in fresh worktree / Cancel with the saved commit and original edit location. Confirming opens the exact conversation automatically. Cancellation returns 130 and stops batches; redirected callers never prompt. Captured owner stdout remains free of terminal UI.",
           "layout": "inherit"
         },
         "bounded_wait": {

@@ -96,10 +96,13 @@ def lifecycle(tmp_path):
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <signal.h>
 int main(int argc, char **argv) {
   if (argc == 3 && !strcmp(argv[1], "resume") && !strcmp(argv[2], "--help")) {
     puts("--no-daemon"); return 0;
   }
+  if (getenv("T_TEST_IGNORE_HUP")) signal(SIGHUP, SIG_IGN);
+  if (getenv("T_TEST_IGNORE_TERM")) signal(SIGTERM, SIG_IGN);
   FILE *f = fopen(getenv("T_TEST_AGENT_LOG"), "a");
   if (!f) return 2;
   char cwd[4096];
@@ -396,6 +399,59 @@ def test_public_close_stops_owner_and_preserves_uncommitted_work(lifecycle, agen
     assert log.read_text().splitlines() == launches
 
 
+def test_public_close_terminates_hup_resistant_client_before_removing_pane(lifecycle):
+    base, env = lifecycle
+    env['T_TEST_IGNORE_HUP'] = '1'
+    opened = _shell(base, env, 't session open repo 1 --claude')
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    closed = _shell(base, env, 't session close repo 1 -y')
+    assert closed.returncode == 0, closed.stderr or closed.stdout
+    assert _run([str(base / 'bin/tmux'), 'has-session', '-t', '=dev-repo-1:'], env=env, cwd=base).returncode != 0
+
+
+def test_public_close_timeout_keeps_pane_and_never_forces_redirected_caller(lifecycle):
+    base, env = lifecycle
+    env.update(T_TEST_IGNORE_HUP='1', T_TEST_IGNORE_TERM='1')
+    opened = _shell(base, env, 't session open repo 1 --claude')
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    closed = _shell(base, env, 't session close repo 1 -y')
+    assert closed.returncode != 0
+    assert 'agent has not exited; pane retained' in closed.stderr
+    assert _run([str(base / 'bin/tmux'), 'has-session', '-t', '=dev-repo-1:'], env=env, cwd=base).returncode == 0
+    operations = list((base / 'state/t/lifecycle/operations').glob('*.json'))
+    closes = [json.loads(path.read_text()) for path in operations if json.loads(path.read_text()).get('verb') == 'close']
+    assert len(closes) == 1 and closes[0]['phase'] == 'failed'
+    assert 'record' not in closes[0]['receipts'] and 'released' not in closes[0]['receipts']
+
+
+@pytest.mark.parametrize('force', [False, True])
+def test_public_close_timeout_requires_separate_force_choice_on_original_terminal(lifecycle, force):
+    base, env = lifecycle
+    env.update(T_TEST_IGNORE_HUP='1', T_TEST_IGNORE_TERM='1', T_TEST_FRESH_SID=SID,
+               TERM='xterm-256color')
+    opened = _shell(base, env, 't session open repo 1 --codex')
+    assert opened.returncode == 0, opened.stderr or opened.stdout
+    journal = base / 'state/t/recovery/journal.json'
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    identity = 'codex:' + SID
+    journal.write_text(json.dumps({'sessions': {
+        identity: {'generation': 'example', 'open': True, 'reason': 'Waiting for connection'}
+    }}))
+    answered = []
+    def respond(screen):
+        if b'Force stop' in screen and not answered:
+            answered.append(True)
+            return b'\x1b[B\r' if force else b'\r'  # Cancel is initially focused.
+    closed = _shell_tty(base, env, 't session close repo 1 -y', respond=respond)
+    assert answered, closed.stdout
+    assert (closed.returncode == 0) == force, closed.stdout
+    alive = _run([str(base / 'bin/tmux'), 'has-session', '-t', '=dev-repo-1:'], env=env, cwd=base)
+    assert (alive.returncode != 0) == force
+    recorded = json.loads(journal.read_text())['sessions'][identity]
+    assert recorded['open'] is not force
+    assert recorded['reason'] == ('Explicit close or transfer' if force else 'Waiting for connection')
+
+
 @pytest.mark.parametrize("agent", ["codex", "claude"])
 def test_public_remote_open_uses_login_shell_and_reattaches(lifecycle, agent):
     base, env = lifecycle
@@ -498,3 +554,49 @@ def test_public_resume_revives_saved_thread_once(lifecycle, agent, leaf, swept):
     assert opened.returncode == 0, opened.stderr
     assert log.read_text().splitlines() == launches
     assert transcript.is_file()
+
+
+def test_legacy_failed_close_repairs_only_native_orphan_writer(lifecycle, monkeypatch):
+    """A real detached fake CLI holds one native lock after a legacy close."""
+    base, env = lifecycle
+    workspace = base / 'orphan-workspace'
+    workspace.mkdir()
+    pidfile = base / 'orphan.pid'
+    socket_directory = tempfile.TemporaryDirectory(prefix='t-orphan-', dir='/tmp')
+    orphan_socket = str(Path(socket_directory.name) / 'missing.sock')
+    env.update(T_TEST_FRESH_SID=SID, TMUX=orphan_socket + ',123,0')
+    for name in ('HOME', 'CODEX_HOME', 'XDG_STATE_HOME', 'PATH'):
+        monkeypatch.setenv(name, env[name])
+    launched = _run([sys.executable, '-c', '''
+import os,sys
+if os.fork(): os._exit(0)
+null = os.open(os.devnull, os.O_RDWR)
+for fd in (0, 1, 2): os.dup2(null, fd)
+os.close(null)
+with open(sys.argv[1], 'w') as stream: stream.write(str(os.getpid()))
+os.execv(sys.argv[2], [sys.argv[2], '--no-daemon'])
+''', str(pidfile), str(base / 'bin/codex')], env=env, cwd=workspace)
+    assert launched.returncode == 0, launched.stderr
+    helper = runpy.run_path(str(ROOT / 'libexec/t_client_stop.py'))
+    pid = int(_until(lambda: pidfile.read_text() if pidfile.exists() else None))
+    try:
+        _until(lambda: (base / 'codex/thread-writer-locks' / (SID + '.lock')).exists())
+        directory = base / 'state/t/lifecycle/operations'
+        directory.mkdir(parents=True)
+        path = directory / ('a' * 32 + '.json')
+        path.write_text(json.dumps(dict(verb='close', phase='failed', pending='stop',
+            started=time.time(), updated=time.time(), arguments=['dev-repo-1', str(workspace), SID, 'codex'],
+            receipts={'inspect': '$1'}, error='stop failed: t close: agent has not exited; no release recorded')))
+        path.chmod(0o600)
+        token = helper['stranded'](str(workspace), SID)
+        assert token is not None
+        assert token['process']['pid'] == pid and token['process']['parent'] == 1
+        assert token['receipt']['socket'] == orphan_socket
+        helper['stop_stranded'](token)
+        runpy.run_path(str(ROOT / 'libexec/t_lifecycle.py'))['wait_released']('codex', SID, timeout=1)
+        assert helper['process'](pid) is None
+        assert json.loads(path.read_text())['phase'] == 'failed'  # Never manufacture a close receipt.
+    finally:
+        if helper['process'](pid) is not None:
+            os.kill(pid, 9)
+        socket_directory.cleanup()

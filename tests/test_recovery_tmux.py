@@ -322,6 +322,64 @@ codex() {{ print -r -- "$PWD|$*" > "$HOME/resumed"; sleep 60; }}
 
 
 @pytest.mark.parametrize("width", [40, 80])
+def test_stalled_input_menu_ignores_typing_then_restarts_on_keyboard_selection(terminal, monkeypatch, width):
+    mod, tmux, command, env, home = terminal
+    (home / ".zshrc").write_text(f'''
+_dev_agent_of_session() {{ print codex; }}
+_dev_session_sid() {{ print {SID}; }}
+_dev_session_claude_pid() {{ tmux display-message -p -t '=dev-api-1:' '#{{pane_pid}}'; }}
+_t_restart_slot() {{ print -r -- "$*" > "$HOME/accepted"; print 'Visible draft saved'; }}
+''')
+    agent = home / "nonreading.py"
+    agent.write_text("import sys,time,tty\ntty.setraw(0)\nprint('ready',flush=True)\ntime.sleep(60)\n")
+    assert tmux("new-session", "-d", "-s", "dev-api-1", "-c", str(home),
+                sys.executable, str(agent)).returncode == 0
+    socket = tmux("display-message", "-p", "-t", "=dev-api-1:", "#{socket_path}").stdout.strip()
+    pane = mod.panes(socket)[0]
+    tmux("set-environment", "-t", "=dev-api-1", "DEV_AGENT", "codex")
+    until(lambda: "ready" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout)
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
+    client = subprocess.Popen(command + ["attach-session", "-t", "=dev-api-1"], env=env,
+                              stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    os.close(slave)
+    os.set_blocking(master, False)
+    visible = bytearray()
+    def showing(text):
+        if select.select([master], [], [], .05)[0]:
+            visible.extend(os.read(master, 65536))
+        return text in visible
+    try:
+        until(lambda: mod.pending_input(socket, pane["pane"])[0] == 0)
+        os.write(master, b"draft")
+        until(lambda: mod.pending_input(socket, pane["pane"])[0] == 5)
+        # Unit coverage checks the full 12s interval; exercise the real keyboard/menu here.
+        monkeypatch.setattr(mod, "STALL_SECONDS", 0)
+        watcher = mod.Watcher(socket)
+        watcher.poll()
+        until(lambda: showing(b"TERMINAL INPUT WAITING"))
+        os.write(master, b"ordinaryr")
+        time.sleep(.1)
+        assert not (home / "accepted").exists()
+        assert len(list(mod.cache(socket).glob("*.offer"))) == 1
+        assert mod.pending_input(socket, pane["pane"])[0] == 5
+        os.write(master, b"\x1b[A\r")
+        until(lambda: (home / "accepted").exists(), detail=lambda: repr(bytes(visible[-1000:])))
+        assert (home / "accepted").read_text().split() == [
+            "dev-api-1", str(home), SID, "codex", "restart", pane["pane_pid"]]
+        until(lambda: showing(b"Visible draft saved"))
+        watcher.poll()
+        assert not list(mod.cache(socket).glob("*.offer"))  # One offer per incident.
+    finally:
+        client.terminate()
+        try:
+            client.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            client.kill(); client.wait(timeout=5)
+        os.close(master)
+
+
+@pytest.mark.parametrize("width", [40, 80])
 @pytest.mark.parametrize("choice,restart_fails", [("q", False), ("r", False), ("\r", False), ("r", True)])
 def test_real_menu_dismiss_or_accept_without_typing_into_agent(terminal, width, choice, restart_fails):
     mod, tmux, command, env, home = terminal
@@ -495,15 +553,16 @@ _t_restart_slot() {{ touch "$HOME/accepted"; }}
         os.write(master, b"\x01\x1br" if custom else b"\x02R")
         if capture.returncode:
             assert "flag" in capture.stderr and "M" in capture.stderr
-            until(lambda: showing(b"close tmux output with q"))
+            until(lambda: showing(b"INPUT PAUSED"))
             assert tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "1"
-            # Clear the status message first; it consumes the next keystroke.
-            os.write(master, b" ")
+            # Dismiss the diagnosis before intentionally leaving tmux mode.
+            os.write(master, b"q")
             os.write(master, b"q")
         until(lambda: tmux("display-message", "-p", "-t", pane["pane"], "#{pane_in_mode}").stdout.strip() == "0",
               detail=lambda: tmux("capture-pane", "-p", "-M", "-t", pane["pane"]).stdout)
         if not capture.returncode:
-            until(lambda: showing(b"no longer needs recovery"))
+            until(lambda: showing(b"SESSION RECOVERY"))
+            os.write(master, b"q")
         assert mod.panes(socket)[0]["pane_pid"] == pid
         assert "healthy" in tmux("capture-pane", "-p", "-t", pane["pane"]).stdout
     finally:

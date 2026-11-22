@@ -1485,3 +1485,47 @@ def test_repair_rechecks_same_workspace_without_repeating_settle_wait(app, histo
     assert app.resume_with_repair('repo', row) == 'selected'
     assert probes == [None, Unresolved.fingerprint, None]
     assert app.repair_writer is None
+
+
+@pytest.mark.parametrize('decision', ['repair', 'cancel', 'force', 'force-cancel', 'changed'])
+def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(app, history, tmp_path, monkeypatch, decision):
+    row = conversation(sid='selected', agent='codex', associations=[{'host': 'local', 'workspace': str(tmp_path)}])
+    token = {'process': {'pid': 123}}
+    events = []
+    monkeypatch.setattr(app, 'revision', lambda row: (row['associations'][0], 'revision'))
+    def resume(alias, selected, **options):
+        events.append(('resume', alias, selected['sid']))
+        if len(events) == 1:
+            raise history.HistoryError('selected writer still loaded')
+        return selected['sid']
+    monkeypatch.setattr(app, 'resume', resume)
+    def stop(selected, **options):
+        assert selected is token
+        events.append(('stop', options.get('force', False)))
+        if decision == 'changed':
+            raise ValueError('stranded writer identity changed')
+        if decision.startswith('force') and not options.get('force'):
+            raise history._CLIENT_STOP['ClientStopPending']('still running')
+    monkeypatch.setitem(history._CLIENT_STOP, 'stranded', lambda workspace, sid: token)
+    monkeypatch.setitem(history._CLIENT_STOP, 'stop_stranded', stop)
+    monkeypatch.setitem(history._CLIENT_STOP, 'confirm', lambda *a, **k: decision == 'force')
+    monkeypatch.setitem(history._LIFECYCLE, 'wait_released', lambda agent, sid: events.append(('released', agent, sid)))
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *a: events.append(('refresh',)))
+    original = history.runpy.run_path
+    monkeypatch.setattr(history.runpy, 'run_path', lambda path, *a, **k: {'ask': lambda *a: decision != 'cancel'} if str(path).endswith('t_open_recovery.py') else original(path, *a, **k))
+    monkeypatch.setattr(history.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(history.sys.stderr, 'isatty', lambda: True)
+    monkeypatch.setenv('T_RESUME_REPAIR', '1')
+    if decision in ('cancel', 'force-cancel'):
+        with pytest.raises(history.HistoryCancelled):
+            app.resume_with_repair('repo', row)
+        assert not any(event[0] == 'released' for event in events)
+        assert len([event for event in events if event[0] == 'resume']) == 1
+    elif decision == 'changed':
+        with pytest.raises(ValueError, match='identity changed'):
+            app.resume_with_repair('repo', row)
+        assert not any(event[0] == 'released' for event in events)
+    else:
+        assert app.resume_with_repair('repo', row) == 'selected'
+        assert events == [('resume', 'repo', 'selected'), ('stop', False), *([('stop', True)] if decision == 'force' else []),
+                          ('released', 'codex', 'selected'), ('refresh',), ('resume', 'repo', 'selected')]

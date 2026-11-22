@@ -78,3 +78,17 @@ def test_verified_local_cli_attach_does_not_scan_offline_host(zsh):
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Reattaching dev-api-3' in result.stdout
     assert 'UNEXPECTED_SCAN' not in result.stderr
+
+
+def test_unverified_numbered_open_points_to_saved_resume(zsh):
+    (zsh.home / 'code/api').mkdir(parents=True)
+    result = zsh(r'''
+      REMOTE_HOSTS[offline]=offline
+      _dev_local_slot_live() { return 1; }
+      _dev_remote_resolve() { return 3; }
+      _dev_new_session() { print UNEXPECTED_LAUNCH; }
+      _t_open api 3 --cli
+    ''')
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert 't session resume api 3' in result.stderr
+    assert 'UNEXPECTED_LAUNCH' not in result.stdout
