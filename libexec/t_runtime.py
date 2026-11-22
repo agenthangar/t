@@ -732,8 +732,12 @@ def legacy_workers(socket, component='recoverywatcher'):
     found = {}
     for alias in socket_aliases(socket):
         for worker in _legacy_workers_one(alias, component):
-            found[(worker['pid'], worker['birth'])] = worker
-    return list(found.values())
+            # Darwin publishes [seconds, microseconds]; Linux publishes a
+            # start-tick string. Keep the native evidence intact and normalize
+            # only this private index, rather than assuming births are hashable.
+            key = (worker['pid'], json.dumps(worker['birth'], sort_keys=True, separators=(',', ':')))
+            found[key] = worker
+    return [found[key] for key in sorted(found)]
 
 
 def _legacy_workers_one(socket, component='recoverywatcher'):

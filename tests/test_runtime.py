@@ -569,3 +569,20 @@ def test_disappearing_hook_target_retains_scoped_receipt_and_reconciles_other_co
     deferred = next(row for row in result['results'] if row['component'] == 'terminalhooks')
     assert deferred['server'] == '/private/server' and deferred['session'] == 'dev-r-1'
     assert deferred['reason_code'] == 'session-unavailable'
+
+
+@pytest.mark.parametrize('birth', [[1795309000, 123456], '123456789'])
+def test_legacy_alias_scan_deduplicates_native_darwin_and_linux_births(runtime, monkeypatch, birth):
+    socket, alias = '/private/tmp/server', '/tmp/server'
+    args = ['python3', str(runtime.ROOT / 'libexec/t_terminal_close.py'), 'watch', socket,
+            '/dev/pts/1', '456', '7', '8']
+    monkeypatch.setattr(runtime, 'socket_aliases', lambda *a: [alias, socket, socket])
+    monkeypatch.setattr(runtime, 'command', lambda *a, **k: subprocess.CompletedProcess(a, 0,
+        f'123 {os.getuid()} ' + ' '.join(args) + '\n', ''))
+    monkeypatch.setattr(runtime, 'native', lambda *a: dict(pid=123, birth=deepcopy(birth), argv=list(args)))
+    found = runtime.legacy_workers(socket, 'terminalobserver')
+    assert len(found) == 1
+    assert found[0]['birth'] == birth
+    assert found[0]['pid'] == 123
+    monkeypatch.setattr(runtime, 'socket_aliases', lambda *a: [socket, alias, socket])
+    assert runtime.legacy_workers(socket, 'terminalobserver') == found
