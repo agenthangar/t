@@ -35,18 +35,18 @@ def paint(text, role='hint'):
     return '\033[' + code + 'm' + text + '\033[0m' if text else ''
 
 
-def control_rows(parts, width, selected=(), compact=False, color=False, selected_role='active'):
+def control_rows(parts, width, selected=(), compact=False, color=False, selected_role='active', separator=' · '):
     """Pack whole key labels with the same spacing in every session picker."""
     active = {key_labels(part, compact=compact) for part in selected}
     lines = []
     for part in parts:
         part = _DISPLAY['clip_columns'](key_labels(part, compact=compact), width)
-        if lines and _DISPLAY['display_width'](lines[-1] + ' · ' + part) <= width:
-            lines[-1] += ' · ' + part
+        if lines and _DISPLAY['display_width'](separator.join([*lines[-1], part])) <= width:
+            lines[-1].append(part)
         else:
-            lines.append(part)
-    return [' · '.join(paint(part, selected_role if part in active else 'action') if color else part
-                      for part in line.split(' · ')) for line in lines]
+            lines.append([part])
+    return [separator.join(paint(part, selected_role if part in active else 'action') if color else part
+                           for part in line) for line in lines]
 
 
 def sort_rows(mode, width, enabled=True, compact=False, color=False, include_turn=True, include_closed=False):

@@ -300,13 +300,15 @@ def test_resume_header_retains_sort_controls_and_row_space(filters, width):
     text = filters.header('resume', 0, dict.fromkeys(['agent', 'host', 'repo']), 2, '', width)
     assert all(filters.display_width(line) <= width for line in text.splitlines())
     assert 'Alt-' not in text and 'M-' not in text
-    if width > 36:
-        assert all(label in text for label in ('last turn', 'repo', 'agent', 'host', 'session'))
     for letter in ('F', 'X', 'G', 'S', 'Y', '/'):
         assert ('^' if width <= 36 else 'Ctrl-') + letter in text
     assert ('Sort: turn' if width <= 36 else 'Sort: last turn') in text
     if width <= 36:
         assert len(text.splitlines()) <= 10
+    else:
+        sort_line = next(line for line in text.splitlines() if 'Sort:' in line)
+        assert 'Ctrl-S toggle' in sort_line and 'Ctrl-Y next' in sort_line
+        assert len(text.splitlines()) <= 5
 
 
 def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
@@ -321,7 +323,7 @@ def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
         assert f'  \x1b[92m{shortcut}\x1b[0m' in line
 
 
-def test_resume_refresh_separates_timing_and_host_status(filters, monkeypatch):
+def test_resume_refresh_packs_timing_and_keeps_host_warnings_visible(filters, monkeypatch):
     monkeypatch.delenv('NO_COLOR', raising=False)
     monkeypatch.setenv('TERM', 'xterm-256color')
     health = {'hosts': [
@@ -332,9 +334,8 @@ def test_resume_refresh_separates_timing_and_host_status(filters, monkeypatch):
     ]}
     lines = filters.resume_health(health, 80, True, True)
     assert lines[0].startswith('\x1b[1;96mRefreshing local\x1b[0m')
-    assert lines[1].startswith('\x1b[37mLast refresh ')
-    assert lines[2] == '\x1b[33mmini timed out  mac unreachable\x1b[0m'
-    assert lines[3] == '\x1b[37mdev current\x1b[0m'
+    assert '\x1b[37mLast refresh ' in lines[0] and '\x1b[37mdev current\x1b[0m' in lines[0]
+    assert lines[1:] == ['\x1b[33mmini timed out  mac unreachable\x1b[0m']
     monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '12')
     compact = filters.resume_health(health, 27, False, True)
     assert len(compact) == 2

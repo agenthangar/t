@@ -9,7 +9,7 @@ import sys
 
 from t_session_details import clip_columns, display_width, enrich, format_last_turn
 from t_picker_theme import key_labels, paint, control_rows, sort_rows
-from t_session_sort import RESUME_SORTS, SAVED_SORTS, natural, turn_epoch, latest_closed
+from t_session_sort import RESUME_SORTS, SAVED_SORTS, natural, turn_epoch, latest_closed, sort_label
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
           'host': ('Ctrl-O', 'host'), 'repo': ('Ctrl-R', 'repo')}
@@ -136,37 +136,27 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         return list_header(filters, hidden, columns, width, sort, color)
     short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
     compact = width <= 40 or short
-    tight_resume = profile == 'resume' and short and width <= 32
+    if profile == 'resume':
+        return resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
+                             hide_merged, sort_enabled, show_legend, status, compact, short)
     key = lambda text: key_labels(text, compact=compact)
     style = lambda text, role='hint': paint(text, role) if color else text
-    def keys(parts, selected=(), filled=False):
-        return control_rows(parts, width, selected, compact, color, 'selected' if filled else 'active')
-    resume = profile == 'resume'
-    lines = list(status[:2] if tight_resume else status)
-    if not resume:
-        actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓',
-                   'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
-        if not compact:
-            lines.append(style('HOTKEYS', 'heading'))
-        lines += keys(actions)
-    if not compact and lines:
+    def keys(parts, selected=()):
+        return control_rows(parts, width, selected, compact, color)
+    actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab✓',
+               'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
+    lines = [] if compact else [style('HOTKEYS', 'heading')]
+    lines += keys(actions)
+    if not compact:
         lines.append('')
     lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle',
-                   'Ctrl-X' if tight_resume else 'Ctrl-X reset'], ['Filters ON'] if enabled else [], filled=resume)
-    controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for name, (shortcut, label) in FACETS.items()
-                                  if profile != 'resume' or name != 'interface']
+                   'Ctrl-X reset'], ['Filters ON'] if enabled else [])
+    controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
     active = [f'{FACETS[name][0]} {FACETS[name][1]}' for name, value in filters.items()
               if enabled and value is not None and name in FACETS]
     state_active = enabled and mask != (3 if profile == 'kill' else 1)
     if state_active:
         active.append('Ctrl-T state')
-    if profile == 'resume':
-        controls.append('Ctrl-D merged')
-        if enabled and hide_merged:
-            active.append('Ctrl-D merged')
-    if tight_resume:
-        controls = [part.split()[0] for part in controls]
-        active = [part.split()[0] for part in active]
     lines += keys(controls, active)
     summary = ', '.join(f'{name}={value}' for name, value in filters.items() if value is not None)
     summary = state_label(profile, mask) + (' · ' + summary if summary else '')
@@ -174,30 +164,56 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         summary = key('Ctrl-T ') + summary
     suffix = f' · {hidden} hidden'
     summary = clip_columns(summary if enabled else 'Saved filters paused', width - display_width(suffix))
-    if not tight_resume or len(lines) < 6:
-        lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
-                     + style(suffix, 'heading' if enabled else 'hint'))
+    lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
+                 + style(suffix, 'heading' if enabled else 'hint'))
     if not compact:
-        lines += [''] if resume else [style('Match highlighted row; repeat key to clear'), '']
-    sort_lines = sort_rows(sort, width, sort_enabled, compact, color, profile in ('resume', 'open'),
-                           include_closed=resume)
-    if resume and short:
-        sort_name = 'last closed' if sort == 'closed' else sort
-        current = f'Sort: {sort_name}' if sort_enabled else 'Sort OFF'
-        sort_lines = keys([current, 'Ctrl-S', 'Ctrl-Y'], [current] if sort_enabled else [], filled=True)
-    lines += sort_lines
+        lines += [style('Match highlighted row; repeat key to clear'), '']
+    lines += sort_rows(sort, width, sort_enabled, compact, color, profile == 'open')
     if not compact:
         lines += ['']
-    if show_legend:
-        if not compact:
-            lines.append(style('LEGEND', 'heading'))
-        lines += resume_legend(width, short, color)
-    if resume:
-        lines += resume_action_rows(width, compact, color)
-        if columns and not compact:
-            lines.append('')
     if columns:
-        lines.append(style(clip_columns(columns, width), 'action' if resume else 'hint'))
+        lines.append(style(clip_columns(columns, width)))
+    return '\n'.join(lines) + '\n'
+
+
+def resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
+                  hide_merged, sort_enabled, show_legend, status, compact, short):
+    tight = short and width <= 32
+    def keys(parts, selected=(), role='active'):
+        return control_rows(parts, width, selected, compact, color, role, separator=' ' if tight else '  ')
+
+    lines = list(status[:2] if tight else status)
+    toggle = 'Filters ON' if enabled else 'Filters OFF'
+    lines += keys([toggle, 'Ctrl-F' if compact else 'Ctrl-F toggle',
+                   'Ctrl-X' if compact else 'Ctrl-X reset', f'{hidden} hidden'],
+                  [toggle] if enabled else [], 'selected')
+    state = 'Ctrl-T ' + state_label('resume', mask)
+    facets = {'state': state, **{name: f'{key} {label}' for name, (key, label) in FACETS.items()
+                                if name != 'interface'}, 'merged': 'Ctrl-D merged'}
+    if tight:
+        facets.update({name: part.split()[0] for name, part in facets.items() if name != 'state'})
+    active = [facets[name] for name in filters if name in facets and filters[name] is not None]
+    if not mask:
+        active.append(state)
+    if hide_merged:
+        active.append(facets['merged'])
+    lines += keys(facets.values(), active if enabled else [])
+    summary = ', '.join(f'{name}={value}' for name, value in filters.items() if value is not None)
+    if enabled and summary and not short:
+        summary = clip_columns(summary, width)
+        lines.append(paint(summary, 'heading') if color else summary)
+
+    current = 'Sort: ' + (sort_label(sort, compact) if sort_enabled else 'OFF')
+    lines += keys([current, 'Ctrl-S' if compact else 'Ctrl-S toggle', 'Ctrl-Y' if compact else 'Ctrl-Y next'],
+                  [current] if sort_enabled else [], 'selected')
+    if show_legend:
+        lines += resume_legend(width, short, color, heading=not compact)
+    lines += resume_action_rows(width, compact, color)
+    if columns:
+        if not compact:
+            lines.append('')
+        columns = clip_columns(columns, width)
+        lines.append(paint(columns, 'action') if color else columns)
     return '\n'.join(lines) + '\n'
 
 
@@ -465,6 +481,8 @@ def resume_action_rows(width, compact, color):
     if os.environ.get('T_PICKER_RESUME_LAST') == '1':
         shortcut = key_labels('Ctrl-B', compact=compact)
         actions.append(f'{shortcut} ↶' if compact else f'{shortcut} resume last closed')
+        if not compact and display_width('  '.join(actions)) > width:
+            actions[-1] = f'{shortcut} last closed'
     lines = pack(actions, width, '  ')
     if not color:
         return lines
@@ -478,16 +496,17 @@ def resume_mark(text):
     return paint(text, RESUME_MARK_ROLES[text[0]])
 
 
-def resume_legend(width, short, color):
+def resume_legend(width, short, color, heading=False):
     close = '↶ close' if short and width < 33 else '↶ last closed'
     work = '↻ WIP' if width < 64 or short else '↻ work in progress'
-    marks = pack([close, work, '● attached'], width, '  ')
+    marks = pack((['LEGEND'] if heading else []) + [close, work, '● attached'], width, '  ')
     prs = [] if short else pack([
         '↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '↗ preview',
         '? unknown', '— no PR'], width, '  ')
     if not color:
         return marks + prs
-    return (['  '.join(resume_mark(part) for part in line.split('  ')) for line in marks]
+    return (['  '.join(paint(part, 'heading') if part == 'LEGEND' else resume_mark(part)
+                      for part in line.split('  ')) for line in marks]
             + ['  '.join(pr_color(part, part[0]) for part in line.split('  ')) for line in prs])
 
 
@@ -537,18 +556,28 @@ def resume_health(health, width, color, refresh=False):
         shortcut = key_labels('Ctrl-U' if width <= 40 else 'Ctrl-U refresh now', compact=width <= 40)
     title_width = width - (display_width(shortcut) + 2 if shortcut else 0)
     title = clip_columns(title, title_width)
-    line = style(title, title_role)
+    first = [(title, title_role)]
     if shortcut:
-        line += '  ' + style(shortcut, 'primary')
-    details = [(text, 'warning') for text in pack(warnings, width, '  ')]
-    if pending and last and (not short or not details):
-        details.insert(0, (clip_columns(timing, width), 'action'))
+        first.append((shortcut, 'primary'))
+    details = []
+    if pending and last:
+        details.append((timing.replace('Last refresh ', 'Last ', 1) if width <= 40 else timing, 'action'))
     if current:
-        if not pending and display_width(title + '  ' + current) <= title_width:
-            line += '  ' + style(current, 'action')
+        details.append((current, 'action'))
+    alerts = [(warning, 'warning') for warning in warnings]
+    if short and alerts:
+        details = alerts
+    elif alerts and not pending:
+        details = alerts + details
+    rows = [first]
+    for part, role in details:
+        if display_width('  '.join([*(text for text, _ in rows[-1]), part])) <= width:
+            rows[-1].append((part, role))
         else:
-            details.append((clip_columns(current, width), 'action'))
-    return [line, *(style(text, role) for text, role in (details[:1] if short else details))]
+            rows.append([(clip_columns(part, width), role)])
+    if pending and alerts and not short:
+        rows.extend([[(line, 'warning')] for line in pack(warnings, width, '  ')])
+    return ['  '.join(style(text, role) for text, role in row) for row in (rows[:2] if short else rows)]
 
 
 def resume_gutters(records):

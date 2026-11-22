@@ -1032,9 +1032,13 @@ text whose source cannot be verified.
 A bare command outside a registered repository browses all repos, as does
 `t session resume --all`. HOST appears when results span hosts.
 LAST TURN shows the local date and time to the minute. Green Ctrl-U sits next
-to the refresh status. Filters and sort come before the LEGEND heading. The PR
-legend occupies its own row above the unheaded result hotkeys when height permits.
-Leave a blank line before the column headings when height permits. Use
+to the refresh status. The previous refresh time and healthy hosts share the
+status row when they fit. Amber warnings are grouped below active refresh.
+Group filter controls with the hidden count and state. Show the current sort
+with Ctrl-S toggle and Ctrl-Y next on one row when they fit. Put LEGEND beside
+the session markers and keep the PR legend on its own row above the result
+hotkeys when height permits. Leave one blank line before the column headings
+when height permits. Use
 matching colors in the legend and rows for last closed (↶, cyan), work in
 progress (↻, amber), attached (●, green), and PR states. Attached identifies an
 existing session that opens in place. Separate legend entries with spaces.

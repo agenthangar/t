@@ -21,15 +21,17 @@ For `t open` and `t resume`, extend those controls and preserve every existing
 filter and sort choice. Ctrl-F toggles filters, Ctrl-X resets filters, Ctrl-S
 toggles sorting, and Ctrl-Y cycles sort choices; use native Mac labels when appropriate.
 Slot history retains its pagination keys and uses Ctrl-S/Ctrl-Y for sorting.
-Match `t open` visually: reuse its shared sort block, blank rows between header
-sections, and two-space table gutters when space permits. Compact layouts may
-remove those gaps to keep the focused result visible.
+Reuse the shared control styles and two-space table gutters. Keep the focused
+result visible in short terminals.
 In the resume picker, place the green Ctrl-U refresh action beside the refresh
-status. Use bright cyan for an active refresh and put its previous refresh time
-and host outcomes on separate lines when height permits. Use amber for host
-warnings. Put filters and sort above the LEGEND heading. Give the PR legend its
-own row immediately above the result hotkeys. Show those hotkeys without a
-heading and leave a blank line before the columns when height permits. Separate
+status. Use bright cyan for an active refresh and group the previous refresh
+time and healthy hosts on that line as space allows. Use amber for host
+warnings and group them below an active refresh. Pack the filter state and
+shortcuts together. Put the current sort, toggle and cycle shortcuts on one
+row where they fit. Start the legend with LEGEND and the session markers on
+the same row. Give the PR legend its own row immediately above the result
+hotkeys. Show those hotkeys without a heading and leave one blank line before
+the columns when height permits. Separate
 legend entries with spaces. Use the same colors in the legend and rows. Label
 ↶ as last closed, ↻ as work in progress, and ● as attached. Highlight the
 written Return or Enter, Esc, and Tab labels. Put Ctrl-B for resuming the
