@@ -816,7 +816,14 @@ def reconcile(previous_sources=(), bootstrap_install=False):
                         reason='supported live session owner could not be verified', reason_code='unverified-owner',
                         next_action='attach normally after the session owner is ready'))
                     continue
-                preflight = Hooks().inspect(context, (socket, pane))
+                try:
+                    preflight = Hooks().inspect(context, (socket, pane))
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.SubprocessError) as error:
+                    results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
+                        server=socket, session=pane['session'], protocol=PROTOCOL, status='deferred',
+                        reason='session changed during hook preflight: ' + str(error),
+                        reason_code='session-unavailable', next_action='retry t update after the session settles'))
+                    continue
                 if preflight['status'] == 'deferred':
                     results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
                         server=socket, session=pane['session'], protocol=PROTOCOL, **preflight))

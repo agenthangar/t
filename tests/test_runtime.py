@@ -549,3 +549,23 @@ def test_attachment_cooperatively_adopts_old_format_held_observer(runtime, sourc
         os.close(master)
         if process.poll() is None: process.terminate()
         process.wait(timeout=5)
+
+
+def test_disappearing_hook_target_retains_scoped_receipt_and_reconciles_other_components(runtime, monkeypatch):
+    pane = dict(identity='$1', session='dev-r-1', pane='%1', pane_pid='123', workspace='/work', dead='0')
+    monkeypatch.setattr(runtime, 'server_inventory', lambda *a: [dict(socket='/private/server')])
+    monkeypatch.setattr(runtime, 'socket_hints', lambda: [])
+    monkeypatch.setattr(runtime, 'panes', lambda *a: [pane])
+    monkeypatch.setattr(runtime, 'hook_source', lambda *a: str(runtime.ROOT))
+    monkeypatch.setattr(runtime, 'same_owner', lambda *a: True)
+    monkeypatch.setattr(runtime.Hooks, 'inspect', lambda *a: (_ for _ in ()).throw(ValueError('session disappeared')))
+    class Discovery:
+        name = 'discoverydaemon'
+        def inspect(self, *a): return runtime.outcome('current')
+    monkeypatch.setattr(runtime, 'ADAPTERS', (Discovery(),))
+    result = runtime.reconcile()
+    assert not result['failed']
+    assert any(row['component'] == 'discoverydaemon' for row in result['results'])
+    deferred = next(row for row in result['results'] if row['component'] == 'terminalhooks')
+    assert deferred['server'] == '/private/server' and deferred['session'] == 'dev-r-1'
+    assert deferred['reason_code'] == 'session-unavailable'
