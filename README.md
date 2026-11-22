@@ -796,6 +796,8 @@ not submitted automatically. The old client must exit before the same conversati
 resumes in the same pane; worktree edits and dev servers stay in place. Use
 `t session open <repo> <slot>` to attach. For a remote slot, use
 `t hosts run <host> t session restart <repo> <slot>`.
+After the pane exits, use `t session resume <repo> <slot>` to select the
+saved conversation. Resume reports the slot it actually opens.
 Every Codex recovery resumes with `--no-daemon` so relaunching one conversation
 does not reconnect through the shared server used by other windows. Recovery
 refuses to stop an `app-server` process or proceed without `--no-daemon` support.
@@ -805,9 +807,14 @@ and restart** or **Dismiss** when a recognized final connection error remains
 visible, or when tmux reports that the agent pane has exited (even if the screen
 still shows work in progress). An exited Codex or Claude pane offers to resume its
 verified conversation; an unverified pane shows the attention panel below.
+For a managed Codex pane, the monitor also offers recovery when terminal input
+stays queued for at least 12 seconds. It counts pending bytes without reading
+typed text. If typing stops drawing text without leaving queued input, open
+recovery with the same tmux shortcut.
 A bright, bordered panel appears in the center of the affected terminal,
-including over SSH, and works without a model connection. Press **r** to restart
-or **q** to dismiss; **Enter** defaults to Dismiss. Offers are bound
+including over SSH, and works without a model connection. Use the arrow keys
+and **Enter** to choose an action, or **q** to dismiss. **Enter** defaults to
+Dismiss on the first screen. Offers are bound
 to the exact conversation and process or exited pane; a changed or recovered
 session is left alone. Completion and error messages stay in the window that
 opened recovery, and are skipped if that window has left the affected pane.
@@ -816,9 +823,9 @@ always rechecks the conversation and process before acting.
 Detached sessions get the offer when you return. Dismissal suppresses repeats until
 the error clears. While recovery is needed, the status bar shows a shortcut to
 reopen the menu: normally **Ctrl-b**, then **Shift-r** (uppercase **R**). It uses
-your configured tmux prefix and chooses another key if **R** is already bound;
-follow the shortcut shown in the status bar. Reopening checks the current pane
-again and does not restart anything until you choose **r** in the menu. The hint
+your configured tmux prefix and chooses another key if **R** is already bound.
+Follow the shortcut shown in the status bar. It checks the current pane and
+can explain tmux input restrictions or offer a verified restart. The hint
 disappears when the failure clears. Authentication and rate-limit errors do not
 trigger recovery.
 If the monitor cannot verify the conversation, a panel asks you to copy your draft

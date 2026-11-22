@@ -100,7 +100,8 @@ _t_lifecycle_run() {
                                       "capture_failed", "race", "still_running", "pane_alive", "respawn_failed",
                                       "locked", "term_failed", "multiple_panes", "stopped_dead",
                                       "zombie", "unknown_state", "stat_failed", "shared_server",
-                                      "shared_server_race", "unreadable_process", "unsupported"])
+                                      "shared_server_race", "unreadable_process", "unsupported",
+                                      "force", "force_refused"])
 def test_restart_shell_safety(tmp_path, scenario):
     log = tmp_path / "actions"
     lock = tmp_path / "cache/t/restart/dev-api-1.lock"
@@ -157,13 +158,22 @@ kill() {{
      $scenario == unknown_state || $scenario == stat_failed ]]
 }}
 sleep() {{ :; }}
+python3() {{
+  if [[ $1 == */t_client_stop.py ]]; then
+    print -r -- "stop-helper ${{*:2}}" >> "$log"
+    [[ $scenario != force_refused ]]; return
+  fi
+  command python3 "$@"
+}}
 [[ $scenario == unsupported ]] && print '#!/bin/sh\nexit 0' > "$HOME/restart-help/codex"
 _t_restart_slot dev-api-1 "$dir" {SID} codex restart
 '''
     if scenario == "dry":
         code = code.rsplit("_t_restart_slot", 1)[0] + f'_t_restart_slot dev-api-1 "$dir" {SID} codex dry-run\n'
+    if scenario in ("force", "force_refused"):
+        code = code.rsplit("_t_restart_slot", 1)[0] + f'_t_restart_slot dev-api-1 "$dir" {SID} codex restart 99999 "" verified-token\n'
     result = run_shell(tmp_path, code)
-    assert (result.returncode == 0) == (scenario in ("normal", "dry", "stopped_dead", "zombie")), result.stderr
+    assert (result.returncode == 0) == (scenario in ("normal", "dry", "stopped_dead", "zombie", "force")), result.stderr
     actions = log.read_text() if log.exists() else ""
     if scenario in ("normal", "still_running", "pane_alive", "respawn_failed", "term_failed",
                     "zombie", "unknown_state", "stat_failed"):
@@ -173,9 +183,14 @@ _t_restart_slot dev-api-1 "$dir" {SID} codex restart
         assert len(saved) == 1
         assert saved[0].read_text() == "unsent draft\n"
         assert saved[0].stat().st_mode & 0o777 == 0o600
-    else:
+    elif scenario != "force":
         assert "signal" not in actions
-    assert ("respawn-pane" in actions) == (scenario in ("normal", "respawn_failed", "stopped_dead", "zombie"))
+    if scenario in ("force", "force_refused"):
+        assert actions.index("capture-pane") < actions.index("stop-helper stop verified-token force")
+        assert "signal -TERM" not in actions
+    if scenario in ("still_running", "pane_alive", "unknown_state", "stat_failed"):
+        assert result.returncode == 75
+    assert ("respawn-pane" in actions) == (scenario in ("normal", "respawn_failed", "stopped_dead", "zombie", "force"))
     assert "respawn-pane -k" not in actions
     if "respawn-pane" in actions:
         assert "--no-daemon" in actions

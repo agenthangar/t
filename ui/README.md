@@ -97,7 +97,10 @@ once, including source and owner validation. Failures preserve a bounded shell
 cause and identify which readiness field changed (session, workspace, agent or
 conversation). They never relax ownership checks. It never switches to the latest
 conversation in that slot or force-opens a fresh context. A second failure retains
-the diagnostic. When Repair finds the same unresolved lock and holder again, it
+the diagnostic. When a failed managed close left a verified local Codex writer
+without its terminal, the rail identifies the stranded client and offers to stop
+it. Repair checks the owner again and waits for writer release before retrying
+the selected conversation. When Repair finds the same unresolved lock and holder again, it
 reports it after a fresh scan without a second settling wait. If ownership of the
 original worktree is still unclear and the selected Codex writer is verified free,
 offer **Resume in fresh worktree / Cancel** when its saved commit and transcript
@@ -1111,6 +1114,12 @@ The kill multi-picker's Enter action confirms every marked session (or the
 focused row), including live local and remote agents; do not prompt again per
 target. Explicit close targets retain live-agent confirmation unless `-y` is
 supplied.
+
+Managed close requests a graceful client exit before removing its tmux session.
+If the client outlives the wait, keep its pane available. An interactive local
+close can then offer **Force stop / Cancel** for the verified client. A timed-out
+automatic or noninteractive close reports the incomplete stop. The close is
+recorded only after the client exits and its conversation writer releases.
 
 The close picker includes standalone terminal clients and verified loaded Codex
 app conversations. Its existing default still hides attached or uncertain work;

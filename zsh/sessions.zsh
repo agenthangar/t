@@ -2896,7 +2896,12 @@ _t_dev() {
     local res resolve_rc; res=$(_dev_remote_resolve "$repo" "$slot" multi quiet "$allow_unverified_new"); resolve_rc=$?
     (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
-      (( resolve_rc != 3 )) || print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
+      if (( resolve_rc == 3 )); then
+        print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
+        if [[ $slot == <-> ]]; then
+          print -u2 -r -- "Use t session resume ${(q)repo} $slot to select a saved conversation."
+        fi
+      fi
       return $resolve_rc
     fi
     if [[ -n $res ]]; then

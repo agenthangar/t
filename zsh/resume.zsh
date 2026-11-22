@@ -1550,7 +1550,7 @@ _t_restart_client_only() {
 
 _t_restart_slot() {
   emulate -L zsh
-  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}"
+  local session="$1" dir="$2" sid="$3" agent="$4" mode="$5" expected_pid="${6:-}" expected_dead="${7:-}" force_token="${8:-}"
   local pane cpid up attempt snapshot old_remain actual_dir launch screen invalid_cwd=0
   local cache="${XDG_CACHE_HOME:-$HOME/.cache}/t/restart" lock
   # Do not reuse a process snapshot captured by another command in this shell.
@@ -1700,7 +1700,14 @@ _t_restart_slot() {
     tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || return 1
     tmux set-environment -t "=$session" DEV_AGENT "$agent" || return 1
     tmux set-option -p -t "$pane" remain-on-exit on || return 1
-    if [[ -n $cpid ]]; then kill -TERM "$cpid" || return 1; fi
+    if [[ -n $cpid ]]; then
+      if [[ -n $force_token ]]; then
+        # Only the separately confirmed immutable client token authorizes KILL.
+        python3 "$T_HOME/libexec/t_client_stop.py" stop "$force_token" force || return $?
+      else
+        kill -TERM "$cpid" || return 1
+      fi
+    fi
     for attempt in {1..200}; do
       if [[ $(tmux display-message -p -t "$pane" '#{pane_dead}') == 1 ]] &&
          { [[ -z $cpid ]] || ! kill -0 "$cpid" 2>/dev/null ||
@@ -1715,7 +1722,7 @@ _t_restart_slot() {
       sleep 0.05
     done
     print -u2 -- 't restart: the old client or its pane has not exited; no second client was started. Inspect with t session open.'
-    return 1
+    return 75
   } always {
     rmdir "$lock" 2>/dev/null
   }

@@ -13632,6 +13632,8 @@ SELECTION
 """,
         help_details="""SESSION TARGETS
   A lone slot number targets the current repo: t open 3.
+  After a session exits, use `t session resume <repo> <slot>` to select its
+  saved conversation.
   Use a SESSION name from `t session list` to open a foreground session:
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
@@ -13799,8 +13801,9 @@ REMOTE SESSIONS
   Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
   repo.
 
-  Tab marks multiple rows and Enter confirms and closes the selection without
-  further prompts; ownership checks still apply.
+  Tab marks multiple rows and Enter confirms the selection. Managed close waits
+  for the client to exit before removing the tmux session. If a local client
+  does not exit, an interactive close can offer Force stop or Cancel.
 
   Initially shows only unattached sessions with clean, merged work; pending or
   uncertain work stays hidden. Ctrl-F reveals standalone terminal sessions and

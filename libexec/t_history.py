@@ -26,6 +26,7 @@ _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["res
 _codex_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))["rows"]
 
 _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
+_CLIENT_STOP = runpy.run_path(str(Path(__file__).with_name('t_client_stop.py')))
 
 VERSION = 1
 PARSER_VERSION = 6
@@ -1887,6 +1888,7 @@ class HistoryCommand:
     def resume_with_repair(self, alias, row, **options):
         """Repair retries the selected conversation, never a slot's latest one."""
         previous = None
+        stranded = None
         try:
             return self.resume(alias, row, **options)
         except HistoryCancelled:
@@ -1903,10 +1905,27 @@ class HistoryCommand:
                 previous = error
             print('t resume: ' + str(error), file=sys.stderr)
             ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
+            if row.get('agent') == 'codex' and row.get('associations'):
+                association, _ = self.revision(row)
+                if association.get('host') == 'local' and association.get('workspace'):
+                    stranded = _CLIENT_STOP['stranded'](association['workspace'], row['sid'])
+            note = ('Stop the stranded Codex client (pid ' + str(stranded['process']['pid']) +
+                    ') and resume this exact conversation after verifying writer release.' if stranded else
+                    'Retry the selected conversation after checking ownership.')
             with redirect_stdout(sys.stderr):
-                if not ask(self.api, 'Could not resume ' + alias,
-                           'Retry the selected conversation after checking ownership.', 'Repair'):
+                if not ask(self.api, 'Could not resume ' + alias, note, 'Repair'):
                     raise HistoryCancelled('resume repair cancelled') from error
+        if stranded:
+            try:
+                _CLIENT_STOP['stop_stranded'](stranded)
+            except _CLIENT_STOP['ClientStopPending']:
+                with redirect_stdout(sys.stderr):
+                    if not _CLIENT_STOP['confirm']('Agent did not exit',
+                               'Force stop only the verified stranded Codex client, then resume the selected conversation.',
+                               'Force stop', api=self.api):
+                        raise HistoryCancelled('stranded writer repair cancelled')
+                _CLIENT_STOP['stop_stranded'](stranded, force=True)
+            _LIFECYCLE['wait_released']('codex', row['sid'])
         _CACHE_REQUEST('event', {'targets': ['local']})
         # The failed resume has released its reservations and claims. Repeat
         # every live ownership/source check once; do not loop or force a launch.

@@ -47,6 +47,14 @@ def session(auto, tmp_path, **values):
     return row
 
 
+def test_cancelled_close_cannot_restore_a_replaced_recovery_enrollment(auto, tmp_path):
+    session(auto, tmp_path)
+    receipt = auto.retire('claude', SID)
+    replacement = session(auto, tmp_path, generation='replacement', open=False)
+    auto.restore_close(receipt)
+    assert auto.read(auto.root()/'journal.json')['sessions'][auto.key('claude', SID)] == replacement
+
+
 class FakeRuntime:
     def __init__(self, owners=(), available=True, error=None):
         self.owners, self.online, self.error = list(owners), available, error
