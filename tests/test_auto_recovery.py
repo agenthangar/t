@@ -391,6 +391,26 @@ def test_install_migrates_legacy_service_without_erasing_the_journal(auto, tmp_p
     assert auto.status()['sessions'] == [row]
 
 
+def test_installed_runtime_dispatch_migrates_for_older_updater(t_mod, monkeypatch, capsys):
+    calls = []
+
+    def migrate():
+        calls.append('migration')
+        raise ValueError('previous service restored')
+
+    def reconcile(**request):
+        calls.append(request['previous_sources'])
+        return dict(protocol=1, results=[], failed=False)
+
+    monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: {'migrate': migrate})
+    monkeypatch.setattr(t_mod.runpy, 'run_path', lambda *args: {'reconcile': reconcile})
+    assert t_mod._main(['__runtime-reconcile', '{"previous_sources":["/old"]}']) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert calls == ['migration', ['/old']]
+    assert result['failed']
+    assert result['results'][0]['reason'] == 'previous service restored'
+
+
 def test_background_identity_failure_and_symlink_leave_service_untouched(auto, tmp_path, monkeypatch):
     monkeypatch.setattr(auto.sys, 'platform', 'darwin')
     with pytest.raises(ValueError, match='register t Recovery'):

@@ -8594,7 +8594,7 @@ def _t_reconcile_runtime(source, previous_sources=(), bootstrap=False):
     payload = json.dumps(dict(previous_sources=list(previous_sources), bootstrap_install=bootstrap))
     with _spinner("Refreshing running t helpers"):
         result = subprocess.run([sys.executable, os.path.join(source, 'bin/t'), '__runtime-reconcile', payload],
-                                capture_output=True, text=True, cwd='/', timeout=45,
+                                capture_output=True, text=True, cwd='/', timeout=90,
                                 env={key: value for key, value in os.environ.items()
                                      if not key.startswith('COV_CORE_') and key not in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER')})
     try:
@@ -8613,17 +8613,6 @@ def _t_update_result(args, status, source=None, previous_sources=()):
     if source:
         try:
             runtime_result = _t_reconcile_runtime(source, previous_sources)
-            recovery = os.path.join(source, 'libexec', 't_auto_recovery.py')
-            if os.path.isfile(recovery):
-                with _spinner("Refreshing automatic recovery"):
-                    migrated = subprocess.run(
-                        [sys.executable, os.path.join(source, 'bin/t'), '__auto-recovery', 'migrate'],
-                        cwd='/', timeout=90, capture_output=True, text=True,
-                        env={key: value for key, value in os.environ.items()
-                             if not key.startswith('COV_CORE_') and key not in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER')})
-                if migrated.returncode and migrated.stderr.strip():
-                    print(migrated.stderr.strip(), file=sys.stderr)
-                runtime_result = runtime_result or migrated.returncode
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             print('t runtime: ' + str(error) + '; retry t update', file=sys.stderr)
             runtime_result = 1
@@ -15177,7 +15166,15 @@ def _main(argv):
             if not isinstance(request, dict):
                 raise ValueError('invalid runtime reconciliation request')
             display = request.pop('display', False)
+            recovery_failure = None
+            try:
+                _automatic_recovery()['migrate']()
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                recovery_failure = dict(component='automatic recovery', status='failed', reason=str(error))
             value = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_runtime.py'))['reconcile'](**request)
+            if recovery_failure:
+                value['results'].append(recovery_failure)
+                value['failed'] = True
         except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
             value = dict(protocol=1, results=[dict(component='dispatcher', status='failed', reason=str(error))], failed=True)
         if locals().get('display', False):

@@ -621,7 +621,7 @@ def service_app(enable):
     executable.write_text('#!/bin/sh\nexec ' + shlex.join([
         sys.executable, str(ROOT/'libexec/t_auto_recovery.py'), 'watch']) + '\n')
     executable.chmod(0o700)
-    result = run([LSREGISTER, '-f', str(app)])
+    result = run([LSREGISTER, '-f', str(app)], timeout=5)
     if result.returncode:
         raise ValueError('could not register t Recovery background identity: ' + result.stderr.strip())
     return executable
@@ -674,8 +674,8 @@ def configure(value, expected, *, enroll_live=True):
     if enroll_live:
         enroll(snapshot())
     write(settings_path(), {'enabled': True, 'source': str(ROOT)})
-    run(['launchctl', 'bootout', target])
-    result = run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(path)])
+    run(['launchctl', 'bootout', target], timeout=5)
+    result = run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(path)], timeout=5)
     if result.returncode:
         raise ValueError('Recovery saved as enabled but service did not start; log in and save Recovery again. ' + result.stderr.strip())
 
@@ -715,7 +715,7 @@ def migrate():
             time.sleep(.2)
         raise ValueError('installed recovery worker did not confirm startup')
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        run(['launchctl', 'bootout', target + '/' + LABEL])
+        run(['launchctl', 'bootout', target + '/' + LABEL], timeout=5)
         preserved = {p for p, _, _ in backups}
         for path in files:
             if path not in preserved:
@@ -730,7 +730,7 @@ def migrate():
             finally:
                 Path(temp).unlink(missing_ok=True)
         if service_path() in preserved:
-            result = run(['launchctl', 'bootstrap', target, str(service_path())])
+            result = run(['launchctl', 'bootstrap', target, str(service_path())], timeout=5)
             if result.returncode:
                 raise ValueError('recovery migration failed and previous launch registration could not be restarted') from error
         raise ValueError('recovery migration rolled back: ' + str(error)) from error
