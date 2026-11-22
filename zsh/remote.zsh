@@ -1209,7 +1209,7 @@ _t_remote() {
     for kill_arg in "$@"; do
       case $kill_arg in
         -y|--yes) force=1 ;;
-        --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
+        -w|--wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
         -*) print -u2 "t remote kill: unknown flag $kill_arg"; return 2 ;;
         *) kill_targets+=("$kill_arg") ;;
       esac
@@ -1262,7 +1262,7 @@ _t_remote() {
       -r|--remote) [[ $action == move ]] || return 2; remote=1 ;;
       -p|--pick) [[ $action == move ]] || return 2; pick=1 ;;
       --last) [[ $action == resume ]] || return 2; flags+=(--last) ;;
-      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
+      -w|--wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       --new) [[ $action == open ]] || return 2; flags+=(--new) ;;
       -d|--detach|-f|--fg) [[ $action == move ]] || return 2; flags+=("$arg") ;;
       -*) print -u2 "t remote $action: unknown flag $arg"; return 2 ;;

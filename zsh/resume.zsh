@@ -138,7 +138,7 @@ _t_resume() {
     if [[ -n $_expect_host ]]; then on_host=$a; _expect_host=; continue; fi
     case "$a" in
       --last) T_RESUME_LAST=1 ;;
-      --wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
+      -w|--wait) local -x T_DISCOVERY_EXPLICIT_WAIT=1 ;;
       -f|--fg)     no_tmux=1 ;;
       --app) print -u2 -- "t: Codex Desktop support has been removed; use t session resume --cli"; return 2 ;;
       --cli)      cli=1 ;;

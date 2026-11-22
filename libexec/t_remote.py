@@ -291,6 +291,10 @@ def execute(cfg, args, api):
                 worker = 'T_NO_UPDATE_CHECK=1 _t_remote ' + shlex.join(argv)
                 return subprocess.call(['zsh', '-lic', worker])
         parsed = child_args(api, path, tail)
+        if path[0] == 'session' and getattr(parsed, 'wait', False):
+            # Use the long spelling on the wire for older peers.
+            option_end = tail.index('--') if '--' in tail else len(tail)
+            tail[:option_end] = ['--wait' if word == '-w' else word for word in tail[:option_end]]
         context = repository_context(api, cfg, path, tail, parsed)
         if mode != 'query' and not host:
             if not cfg.hosts:

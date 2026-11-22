@@ -154,9 +154,9 @@ def test_wait_sees_refresh_queued_behind_another_context(engine):
     assert not memory.handle('discover', second)['hosts'][0]['refreshing']
 
 
-@pytest.mark.parametrize('wait', [False, True])
+@pytest.mark.parametrize('wait_flag', [None, '-w', '--wait'])
 @pytest.mark.parametrize('terminal', [False, True])
-def test_list_wait_is_explicit_and_readonly(t_mod, adapter, monkeypatch, capsys, wait, terminal):
+def test_list_wait_is_explicit_and_readonly(t_mod, adapter, monkeypatch, capsys, wait_flag, terminal):
     monkeypatch.delenv('T_DISCOVERY_COLLECTOR')
     monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: terminal)
     monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: terminal)
@@ -174,21 +174,21 @@ def test_list_wait_is_explicit_and_readonly(t_mod, adapter, monkeypatch, capsys,
                   announce=adapter.announce, rows=adapter.rows)
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: helper)
     cfg = SimpleNamespace(hosts={}, repos={}, worktree_root='/tmp/fixture-worktrees')
-    args = t_mod.build_parser().parse_args(['ls', '--local'] + (['--wait'] if wait else []))
+    args = t_mod.build_parser().parse_args(['ls', '--local'] + ([wait_flag] if wait_flag else []))
     assert t_mod.cmd_ls(cfg, args) == 0
     output = capsys.readouterr()
     assert 'api-1' in output.out and 'STATUS' in output.out
-    assert calls == ([{'local': True}] if wait else [])
+    assert calls == ([{'local': True}] if wait_flag else [])
     if not terminal:
         assert '\x1b' not in output.out + output.err
     for prefix in (['ls'], ['list'], ['session', 'list'], ['session', 'ls']):
-        assert t_mod._command_readonly(prefix + ['--wait'], terminal=terminal)
+        assert t_mod._command_readonly(prefix + ([wait_flag] if wait_flag else []), terminal=terminal)
 
 
 def test_list_wait_completion(zsh):
     result = zsh('_values() { print -l -- "$@"; }; words=(t session list --); CURRENT=4; _t')
     assert result.returncode == 0
-    assert '--wait' in result.stdout.splitlines()
+    assert {'-w', '--wait'} <= set(result.stdout.splitlines())
 
 
 @pytest.mark.parametrize('missing', [False, True])

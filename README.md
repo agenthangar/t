@@ -1928,7 +1928,7 @@ Session discovery is served from a shared in-memory cache with hourly expiry
 and asynchronous disk persistence. Session open, close, resume, move, list and
 slot history wait up to 30 seconds when the requested scope is empty and refresh
 is pending; available scoped results and settled empty scans return immediately.
-Explicit `--wait` also observes refresh when results exist. Redirected and JSON
+Explicit `-w` (`--wait`) also observes refresh when results exist. Redirected and JSON
 results follow the same bound without prompting. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
@@ -1964,8 +1964,8 @@ session summary like `t ls`. Missing local/cloud token counts leave the percenta
 unavailable; `t system usage list --json` retains null measurements.
 
 Resume the most recently verified closed conversation with
-`t session resume --last --wait`, or scope it with `t session resume api 3 --last`.
+`t session resume --last -w`, or scope it with `t session resume api 3 --last`.
 `--all` searches every repository; `--last` considers all saved history and refuses
 missing, tied or incomplete close evidence. Session open, close, resume, move and
-list accept `--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves
+list accept `-w` or `--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves
 refresh running; redirected waits stay silent and never prompt.
