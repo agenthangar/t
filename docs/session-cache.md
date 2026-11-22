@@ -53,7 +53,9 @@ background refresh. Incomplete views retain their warning and require selection.
 
 When the requested repository/host/slot/session scope has no eligible results
 and refresh is pending, session open, close, resume, move, list and slot history
-automatically observe one bounded refresh for up to 30 seconds. This also applies
+automatically observe one bounded refresh for up to 30 seconds. The automatic
+wait ends as soon as an observation contains eligible scoped results, even
+while another host or the local history catalog is still refreshing. This also applies
 to redirected output and history JSON. Available scoped results and settled
 empty/failure results return immediately. Explicit `--wait` observes refresh even
 when results exist. Presentation-only picker filters/search never start discovery.
