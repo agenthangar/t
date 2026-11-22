@@ -33,7 +33,7 @@ def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline
                                          for host, target in targets.items()]}, **options)
 
 
-def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=None):
+def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=None, usable=None):
     """Observe the shared refresh without changing expiry, ownership or workers."""
     deadline = time.monotonic() + timeout
     with _spinner('Refreshing sessions'):
@@ -51,6 +51,8 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
                 return dict(view, wait_timed_out=True) if time.monotonic() >= deadline else dict(
                     view, wait_unavailable=True)
             view = latest
+            if usable is not None and usable(view):
+                break
     return view
 
 
@@ -61,7 +63,7 @@ def bounded_snapshot(cfg, *, initial=None, explicit=True, usable=None, **options
     usable = usable or (lambda value: _usable(value, options['fields']))
     pending = view.get('loading') or any(host.get('refreshing') for host in view.get('hosts', []))
     if explicit or (pending and not view.get('unavailable') and not usable(view)):
-        view = wait_for_refresh(cfg, view, **options)
+        view = wait_for_refresh(cfg, view, usable=None if explicit else usable, **options)
     return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
 
 

@@ -873,10 +873,10 @@ def test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks(picker, 
         row = next(i for i, line in enumerate(frame.splitlines(), 1) if '▸' in line)
         keys('-l', f'\x1b[<{code};12;{row}M')
     for _ in range(10): wheel(65)
-    screen = wait('FAR-RIGHT', focused='FAR-RIGHT')
+    # Legacy fzf renders the reloaded rows before restoring their marks.
+    screen = wait('(1)', focused='FAR-RIGHT')
     assert any('<' in line for line in screen.splitlines() if '▸' in line)
     assert 'Filters' in screen and 'Sort' in screen
-    assert '(1)' in screen
     capture('right')
     for _ in range(10): wheel(64)
     wait('[OPEN]', focused='[OPEN]')
