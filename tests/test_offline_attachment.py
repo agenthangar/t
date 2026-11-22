@@ -15,8 +15,11 @@ from conftest import load_script
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('choice', ['Enter', 'Escape'])
-def test_fresh_readiness_reaches_offline_model_picker(choice):
+@pytest.mark.parametrize('keys,expected', [(['Enter'], 'fixture-local'),
+    (['Right', 'Enter'], 'fixture-other'), (['Left', 'Enter'], 'fixture-other'),
+    (['Right', 'Left', 'Enter'], 'fixture-local'), (['Escape'], None),
+    (['Down', 'Down', 'Enter'], None)])
+def test_fresh_readiness_reaches_offline_model_picker(keys, expected):
     tmux, zsh = shutil.which('tmux'), shutil.which('zsh')
     if not tmux or not zsh:
         pytest.skip('tmux and zsh required')
@@ -50,11 +53,14 @@ def cloud(argv, chosen, cwd, **kwargs):
 def lead(argv, **kwargs):
  assert not subprocess.check_output(['tmux', 'show-options', '-pqv', '@t_recovery_ui'], text=True).strip()
  (root/'selected').write_text(kwargs['chosen']['model'])
+ (root/'selected-provider').write_text(kwargs['chosen']['provider'])
  return 0
 g['supervise'] = cloud
 g['RecoveryProbe'] = lambda: nullcontext(SimpleNamespace(ready=threading.Event()))
 g['inference'] = lambda: {'helper': lambda name: {'state_root': lambda: root},
- 'catalogue': lambda **kw: {'models': [{'model': 'fixture-local', 'provider': 'lmstudio', 'ready': True, 'fit': True}]}, 'lead': lead}
+ 'catalogue': lambda **kw: {'models': [{'model': 'fixture-local', 'provider': 'lmstudio', 'ready': True, 'fit': True},
+  {'model': 'fixture-other', 'provider': 'ollama', 'ready': True, 'fit': True},
+  {'model': 'unavailable-fixture', 'provider': 'ollama', 'ready': False, 'fit': False, 'reason': 'Not downloaded'}]}, 'lead': lead}
 chosen = dict(mode='automatic', provider='lmstudio', model='fixture-local', context_tokens=32768, timeout_seconds=300, on_cloud_failure='ask')
 result = m['recover'](['codex'], chosen, str(root))
 (root/'result').write_text(str(result))
@@ -78,13 +84,19 @@ result = m['recover'](['codex'], chosen, str(root))
             ready = subprocess.run([zsh, '-fc', script], env=env, capture_output=True, text=True, timeout=22)
             assert ready.returncode == 0, ready.stderr
             assert ready.stdout.strip().endswith('|'+str(root))
-            mux('send-keys', '-t', '=dev-fixture-1:', choice)
+            for key in keys[:-1]:
+                mux('send-keys', '-t', '=dev-fixture-1:', key)
+            assert not (root/'selected').exists()  # Navigation never starts inference.
+            mux('send-keys', '-t', '=dev-fixture-1:', keys[-1])
             deadline = time.monotonic()+5
             while not (root/'result').exists():
                 assert time.monotonic() < deadline, mux('capture-pane', '-p').stdout
                 time.sleep(.05)
-            assert (root/'result').read_text() == ('0' if choice == 'Enter' else '1')
-            assert (root/'selected').exists() == (choice == 'Enter')
+            assert (root/'result').read_text() == ('0' if expected else '1')
+            assert (root/'selected').exists() == bool(expected)
+            if expected:
+                assert (root/'selected').read_text() == expected
+                assert (root/'selected-provider').read_text() == ('ollama' if expected == 'fixture-other' else 'lmstudio')
             assert not mux('show-options', '-pqv', '@t_recovery_ui').stdout.strip()
         finally:
             mux('kill-server', check=False)

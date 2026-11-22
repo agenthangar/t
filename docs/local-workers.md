@@ -267,7 +267,12 @@ The checks are bounded and report failures directly. No model download or
 inference is required. Choose **Ask which local model** in the workflow to test
 the recovery picker; `-l` itself selects the local machine, not local inference.
 If cloud startup fails before creating a conversation, `t open` attaches to the
-owned **Start locally** picker. Selecting a ready model starts it directly;
+owned **Start locally** picker. The local action starts with the workflow's
+ready, memory-fit model, or the first eligible model. Use Left/Right on that row
+to choose another eligible model/provider pair, then Enter to start it directly.
+Provider, readiness and memory fit remain visible; unavailable models show a
+summary and the configured model's reason. Up/Down reaches Retry cloud and
+Cancel startup. These choices apply to this session only;
 cancelling starts no local model. Reaching the picker does not mark a model or
 conversation as running.
 Use the separate headless acceptance test below for an automated model task.
