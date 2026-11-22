@@ -8276,7 +8276,7 @@ def _t_offer_update(installation=None):
 
 def _plain_slot_resume(words):
     """Match the public shell shim's option-free slot history shortcut."""
-    words = [word for word in words if word != "--wait"]
+    words = [word for word in words if word not in ("-w", "--wait")]
     return (len(words) in (2, 3) and words[0] == "resume" and
             re.fullmatch(r"[0-9]+", words[-1]) is not None and
             not words[1].startswith("-"))
@@ -13456,7 +13456,7 @@ TARGETS
   Legacy repository-only targets that could be mistaken for hosts require --host.
   Selection requires a terminal and fzf; scripts must provide explicit targets.
   Cancellation returns 130.""")
-        leaf.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery")
+        leaf.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery")
         if action != "move":
             leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
@@ -13499,7 +13499,7 @@ EXAMPLES
     remote_kill.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session")
     remote_kill.add_argument("slot", nargs="?", help="slot number or all; a lone slot uses the current repository")
     remote_kill.add_argument("kill_slot", nargs="?", help=argparse.SUPPRESS)
-    remote_kill.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery")
+    remote_kill.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery")
     remote_kill.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     remote_kill.set_defaults(remote=True)
 
@@ -13664,7 +13664,7 @@ REMOTE SESSIONS
     location.add_argument("-r", "--remote", action="store_true", help="attach remotely; --new starts a session")
     location.add_argument("--host", help="open or attach on this host")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
         description='List cached live sessions across repositories and registered hosts without prompting. '
@@ -13685,7 +13685,7 @@ REMOTE SESSIONS
   the view to this machine. -r retains the default.
 
   Available scoped results return immediately. Empty pending discovery waits up
-  to 30 seconds automatically, then prints the available snapshot. --wait also
+  to 30 seconds automatically, then prints the available snapshot. -w / --wait also
   observes refresh when results exist. Settled empty results return immediately.
   Ctrl-C returns 130 and leaves refresh running. Redirected waits never prompt.
 
@@ -13709,7 +13709,7 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", dest="remote", action="store_false",
                           help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
@@ -13756,7 +13756,7 @@ REMOTE SESSIONS
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
         description='Restart a stuck local CLI in the same conversation, pane, and worktree. Infer the current '
@@ -13858,7 +13858,7 @@ REMOTE SESSIONS
     sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
@@ -13869,7 +13869,7 @@ REMOTE SESSIONS
         epilog="""EXAMPLES
   %(prog)s                   Browse the current repository
   %(prog)s api 2             Open conversation history for api slot 2
-  %(prog)s --last --wait     Resume the most recently closed conversation
+  %(prog)s --last -w        Resume the most recently closed conversation
   In the repository resume picker, Ctrl-D hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
 
@@ -13881,7 +13881,7 @@ REMOTE SESSIONS
   Missing, tied or incomplete close evidence refuses without launching.
   --last cannot be combined with --live or an explicit --days.
 
-  --wait observes discovery for up to 30 seconds, then uses the retained snapshot;
+  -w / --wait observes discovery for up to 30 seconds, then uses the retained snapshot;
   --last refuses if it is still incomplete. Ctrl-C returns 130 and leaves refresh
   running. Redirected waits show no spinner and never prompt.
 
@@ -14019,7 +14019,7 @@ REQUIREMENTS AND DISCOVERY
     sp.add_argument("--host", metavar="H",
         help="send selected local history and worktree edits to host H, resume there, and attach")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp.add_argument("--last", action="store_true", help="resume the unique most recently closed saved conversation without a picker")
 
@@ -14120,7 +14120,7 @@ EXAMPLES
     sp.add_argument("-a", "--all", action="store_true", help="picker across every project")
     sp.add_argument("-s", "--session", help="target a session by id or unique prefix")
 
-    sp.add_argument("--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
 
     sp = sub.add_parser("read", help="read a dev slot's scrollable tmux log",
         description='Read a slot’s captured tmux output with less. Infer the current repository; read remote slots on '
