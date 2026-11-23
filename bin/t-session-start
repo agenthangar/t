@@ -156,6 +156,13 @@ if [[ -n ${TMUX:-} && -n ${TMUX_PANE:-} ]]; then
   if [[ $target == \$* && ( $agent != codex || $pane_cwd == "$cwd" ) ]]; then
     tmux set-environment -t "$target" CLAUDE_RESUME_ID "$sid" 2>/dev/null || true
     tmux set-environment -t "$target" DEV_AGENT "$agent" 2>/dev/null || true
+    appearance_helper="${history_helper%/*}/t_session_appearance.py"
+    if [[ -f $appearance_helper && $pid =~ ^[0-9]+$ ]]; then
+      socket=$(tmux display-message -p -t "$TMUX_PANE" '#{socket_path}' 2>/dev/null) || socket=""
+      if [[ -n $socket ]]; then
+        python3 "$appearance_helper" refresh "$socket" "$TMUX_PANE" "$sid" "$pid" </dev/null >/dev/null 2>&1 &
+      fi
+    fi
   fi
 fi
 # Supply the same scoped context for direct launches, resumes and compaction.

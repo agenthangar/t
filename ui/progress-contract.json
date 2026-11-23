@@ -681,6 +681,10 @@
       "kind": "protocol",
       "reason": "Bounded read-only Git identity lookup for native hook and JSON context output."
     },
+    "libexec/t_workflow.py:save:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Refreshes registered tmux status rows in a detached process after publishing workflow settings."
+    },
     "libexec/t_workflow_install.py:repositories:subprocess.run": {
       "kind": "phase",
       "reason": "Bounded local worktree inventory before listing the affected files for installer confirmation."

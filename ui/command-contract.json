@@ -5994,7 +5994,8 @@
           "terminal": true,
           "tests": [
             "tests/test_workflow_tui.py::test_workflow_bare_entry",
-            "tests/test_workflow_tui.py::test_workflow_tui_save_discard"
+            "tests/test_workflow_tui.py::test_workflow_tui_save_discard",
+            "tests/test_workflow_tui.py::test_stage_background_picker_save_discard"
           ],
           "layout": "inherit"
         },

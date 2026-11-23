@@ -151,6 +151,31 @@ Group the main workflow editor into Models, Behavior and Manage using shared
 RailUI sections. Use this workflow stays above the groups. Keep focus on the
 selected row when returning, including after a reset; headings are not selectable.
 
+Return expands the selected stage and shows its Standard and Priority controls.
+Each control shows its current swatch next to the label. Session colors groups
+No active stage and Waiting on you by palette. Both views stage edits for the
+shared review and save flow. Swatches use terminal defaults when requested and
+retain readable text with color disabled. At narrow widths the swatch appears
+on the following line when it does not fit.
+
+The first managed tmux status row pairs the blue session name with the conversation
+title and places the plum Priority control on the right. Click `☆ Mark priority`
+to apply the priority palette or `★ Clear priority` to restore the standard
+palette. Keep the whole control clickable and update it immediately while
+verifying the conversation for the save. Restore the previous state if the
+change fails. Omit the stock clock and shorten long titles with an ellipsis.
+The second row lists the workflow stages with teal model names. A shaded,
+underlined pair identifies the active stage. Waiting has its own label, and
+idle leaves all stages unhighlighted. Narrow terminals omit effort and use
+short stage and control labels. Pre-PR review appears when enabled, and
+Delivery uses the main conversation's model. Use tmux's light or dark
+theme when available, with dark status colors as the fallback.
+The tmux prefix followed by Shift-P toggles Priority and appears in tmux key
+help. The prefix followed by lowercase a opens Session appearance for choosing
+the active stage. Priority is stored with the conversation.
+Clearing the stage returns to the palette's idle background. Preserve existing
+user bindings, other status content, and pane style attributes.
+
 Named workflow editors include Repositories directly below Use this workflow.
 Group registered repositories into Using this workflow and Other repositories,
 including inherited global assignments without materializing them. Distinguish
@@ -1968,7 +1993,16 @@ No prompts or credentials are stored. Outside tmux inference is unchanged.
 
 The session name and worktree sit at the left; existing custom tmux content is
 retained. Codex's native model, effort and context footer remains unchanged.
-Long labels are bounded, and the full artifact remains in local-worker details.
+Use the Field blocks presentation: a bold cyan name and active local activity,
+light text on dark cyan for worktree, watcher and idle context, amber for queued,
+waiting, cancelling or stale activity, and a light red failure block. Each block
+sets both foreground and background and restores the enclosing tmux style;
+never change the user's global status style. States always have text labels.
+`NO_COLOR` and dumb terminals retain padding and labels without colour.
+Below 100 columns, omit the worktree and model name before shortening the title
+or activity. Reserve room for the local state when a watcher is also present.
+Clip long labels by terminal cell width with an ellipsis before escaping tmux
+markup. The full artifact remains in local-worker details.
 This adds no public command and does not select or install a model.
 
 Development preview: `python3 scripts/preview_local_status.py` from this

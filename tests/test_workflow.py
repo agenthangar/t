@@ -763,8 +763,11 @@ def test_workflow_stage_controls_preserve_launch_settings(workflow, t_mod, monke
             raise OSError('offline')
         return [{'model': 'catalog-model', 'supportedReasoningEfforts': []}]
     monkeypatch.setattr(t_mod, '_config_live_models', discover)
-    ui = Menu(['customize', 'stages_enabled', ['planning', 'implementation', 'review'], 'planning', 'model', '__custom__', 'planning', 'effort', 'ultra',
-               'implementation', 'model', '__refresh__', 'catalog-model', 'review', 'effort', 'low',
+    ui = Menu(['customize', 'stages_enabled', ['planning', 'implementation', 'review'],
+               ('palette_stage', 'workflow', 'planning'), ('stage_model', 'planning'), 'model', '__custom__',
+               ('stage_model', 'planning'), 'effort', 'ultra',
+               'implementation', 'model', '__refresh__', 'catalog-model',
+               ('palette_stage', 'workflow', 'review'), ('stage_model', 'review'), 'effort', 'low',
                'enabled', '0', 'back', 'back'], inputs=['custom-model'])
     t_mod._config_workflow_tool(ui, cfg)
     policy = cfg._workflow_document['workflows']['standard']
@@ -1093,7 +1096,7 @@ def test_behavior_menu_narrow_screens(workflow, t_mod, monkeypatch, width, heigh
     cfg = SimpleNamespace(repos={})
     t_mod._workflow_session(cfg)
     # Disable stages, choose automatic PR creation and return through the nested menus.
-    keys = ['j', 'j', 'enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'j', 'enter',
+    keys = ['j'] * 5 + ['enter', 'space', 'enter', 'j', 'j', 'j', 'j', 'j', 'j', 'enter',
             'enter', 'j', 'enter', 'j', 'enter', 'q', 'q', 'q']
     ui = make_ui(t_mod, keys, width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')

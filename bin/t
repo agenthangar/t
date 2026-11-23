@@ -2977,9 +2977,98 @@ def _workflow_speed(ui, cfg, policy, agent, stage=None):
     return changed
 
 
+_WORKFLOW_PALETTE_LABELS = {'standard': 'Standard', 'priority': 'Priority'}
+_WORKFLOW_COLOR_PRESETS = (
+    ('Navy', '#17283b'), ('Steel blue', '#344d6a'), ('Dark plum', '#3b2733'),
+    ('Plum', '#613c53'), ('Dark teal', '#163233'), ('Deep teal', '#2a5558'),
+    ('Dark amber', '#3b2d18'), ('Amber', '#72532a'), ('Violet', '#452563'),
+)
+
+
+def _workflow_color_label(color):
+    return 'Terminal default' if color == 'default' else color.upper()
+
+
+def _workflow_background_picker(ui, helper, policy, section, stage, title, palette):
+    current = helper['stage_background'](policy, section, stage, palette)
+    recommended = helper['stage_background_default'](section, stage, palette)
+    rows = [('keep', 'Keep current'), *((color, name) for name, color in _WORKFLOW_COLOR_PRESETS),
+            ('recommended', 'Use recommended color'), ('default', 'Use terminal default'),
+            ('hex', 'Enter hex color ›'), ('back', 'Back')]
+    swatches = {'keep': current, 'recommended': recommended, 'default': 'default',
+                **{color: color for _, color in _WORKFLOW_COLOR_PRESETS}}
+    while True:
+        choice = ui.pick(f'{title} · {_WORKFLOW_PALETTE_LABELS[palette]} background', rows,
+                         swatches=swatches, sections={'recommended': 'Defaults', 'hex': 'Custom'})
+        if choice in (None, 'keep', 'back'):
+            return policy
+        if choice == 'hex':
+            choice = ui.cooked_input('Hex color (#RRGGBB): ', prefill=None if current == 'default' else current)
+            if not choice:
+                continue
+            if not helper['BACKGROUND_HEX'].fullmatch(choice):
+                ui.done('invalid', 'Enter a six-digit color such as #344D6A.')
+                continue
+        if choice != 'recommended' and choice.lower() == current:
+            return policy
+        return helper['update_stage_background'](
+            policy, section, stage, palette, None if choice == 'recommended' else choice)
+
+
+def _workflow_palette_stages(helper, policy):
+    """Adapt the workflow catalogue's built-in roles and named stage entries."""
+    if 'stage_plan' in helper:
+        entries = helper['stage_plan'](policy, 'workflow')
+    else:
+        # Older workflow catalogues keep model selection separate from these colors.
+        entries = ('planning', 'review')
+    return [(entry['id'], entry['name']) if isinstance(entry, dict) else
+            (entry, 'Plan' if entry == 'planning' else _workflow_stage_title(entry)) for entry in entries]
+
+
+def _workflow_background_rows(helper, policy, entries, section, expanded):
+    rows, swatches = [], {}
+    for stage, title in entries:
+        key = ('palette_stage', section, stage)
+        rows.append((key, title + (' ▾' if expanded == key else ' ›')))
+        if expanded == key:
+            for palette, label in _WORKFLOW_PALETTE_LABELS.items():
+                setting = ('background', section, stage, palette)
+                rows.append((setting, f'    {label} background ›'))
+                swatches[setting] = helper['stage_background'](policy, section, stage, palette)
+    return rows, swatches
+
+
+def _workflow_session_backgrounds(ui, helper, policy):
+    titles = {'idle': 'No active stage', 'waiting': 'Waiting on you'}
+    focus = None
+    changed = policy
+    try:
+        while True:
+            rows, swatches, sections = [], {}, {}
+            for palette, label in _WORKFLOW_PALETTE_LABELS.items():
+                sections['idle', palette] = label
+                for stage, title in titles.items():
+                    key = stage, palette
+                    rows.append((key, title + ' ›'))
+                    swatches[key] = helper['stage_background'](changed, 'session', stage, palette)
+            rows.append(('back', 'Back'))
+            choice = ui.pick('Session colors', rows, swatches=swatches, sections=sections,
+                             default=next((index for index, (key, _) in enumerate(rows) if key == focus), 0))
+            if choice in (None, 'back'):
+                return changed
+            focus = choice
+            stage, palette = choice
+            changed = _workflow_background_picker(ui, helper, changed, 'session', stage, titles[stage], palette)
+    except KeyboardInterrupt as exc:
+        exc.workflow_policy = changed
+        raise
+
+
 def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
     title = f"Workflow · {name}" if name else "Customize only this repository"
     focus = 'enabled'
+    expanded_stage = None
     cleared_text = None
     try:
         while True:
@@ -2996,10 +3085,18 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             rows = [("enabled", "Use this workflow")]
             if name:
                 rows.append(('repositories', 'Repositories ›'))
+            palette_stages = _workflow_palette_stages(helper, policy)
+            stage_rows, swatches = _workflow_background_rows(helper, policy, palette_stages, 'workflow', expanded_stage)
+            rows.extend(stage_rows)
+            if expanded_stage and expanded_stage[2] in stages:
+                stage_index = next((index for index, (key, _) in enumerate(rows) if key == expanded_stage), None)
+                if stage_index is not None:
+                    rows.insert(stage_index + 3, (('stage_model', expanded_stage[2]), '    Model settings ›'))
+            rows.append(('session_backgrounds', 'Session colors ›'))
             if not local_only:
                 rows.append(("stages_enabled", "Use multiple models"))
             rows += [(stage, _workflow_stage_title(stage))
-                     for stage in ("planning", "implementation", "review") if stage in stages]
+                     for stage in stages if stage not in dict(palette_stages)]
             if "implementation" not in stages and not local_only:
                 rows += [("main_model", "Lead model")]
                 if agent != "cursor":
@@ -3024,6 +3121,8 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                       for stage in ("planning", "implementation", "review")}
             if helper["pr_review_skipped"](policy):
                 values["review"] = "Skipped before PR"
+            if expanded_stage and ('stage_model', expanded_stage[2]) in dict(rows):
+                values['stage_model', expanded_stage[2]] = values[expanded_stage[2]]
             values["inference"] = policy.get("inference", {}).get("mode", "manual")
             values["enabled"] = "enabled" if policy["enabled"] else "disabled"
             if name:
@@ -3046,14 +3145,30 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
             values['reset'] = _workflow_reset_value(policy, reset)
             model_key = next((key for key, _ in rows if key in ('stages_enabled', 'inference')), None)
             sections = {'frontend_design': 'Behavior', 'edit': 'Manage'}
+            if stage_rows:
+                sections[stage_rows[0][0]] = 'Stages'
             if model_key:
                 sections[model_key] = 'Models'
             choice = ui.pick(title, rows, values=values, accents={"delete": "w"}, sections=sections,
+                             swatches=swatches,
                              default=next((i for i, row in enumerate(rows) if row[0] == focus), 0))
             if choice in (None, "back"):
                 return
             focus = choice
             changed = copy.deepcopy(policy)
+            if isinstance(choice, tuple):
+                action, *target = choice
+                if action == 'palette_stage':
+                    expanded_stage = None if expanded_stage == choice else choice
+                    continue
+                if action == 'background':
+                    section, stage, palette = target
+                    changed = _workflow_background_picker(ui, helper, policy, section, stage,
+                                                          dict(palette_stages)[stage], palette)
+                    if changed != policy:
+                        cfg._workflow_document = helper['update'](document, changed, repository, name)
+                    continue
+                choice = target[0]
             if choice == 'repositories':
                 _workflow_repositories_menu(ui, cfg, helper, name)
                 continue  # Assignments and source edits already share the staged document.
@@ -3067,7 +3182,9 @@ def _workflow_policy_menu(ui, cfg, helper, repository=None, name=None):
                 if action == 'clear' and not policy.get('instructions'):
                     continue
                 choice = 'clear_instructions' if action == 'clear' else 'undo_clear' if action == 'undo' else 'instructions'
-            if choice == 'reset':
+            if choice == 'session_backgrounds':
+                changed = _workflow_session_backgrounds(ui, helper, policy)
+            elif choice == 'reset':
                 changed = reset
             elif choice == "stages_enabled":
                 backed = []
@@ -3920,6 +4037,8 @@ def _workflow_changed_review(helper, document, before, activate=False):
     lines = ['Activate recommended workflow settings'] if activate else []
 
     def value_text(path, value, policy):
+        if path[0] == 'stage_backgrounds' and len(path) == 4:
+            return _workflow_color_label(helper['stage_background'](policy, *path[1:]) if value is missing else value)
         if value is missing:
             if path[0] == 'mcp':
                 return 'Inherit client settings'
@@ -3950,6 +4069,11 @@ def _workflow_changed_review(helper, document, before, activate=False):
         return str(value)
 
     def path_label(path):
+        if path[0] == 'stage_backgrounds' and len(path) == 4:
+            _, section, stage, palette = path
+            title = {'planning': 'Plan', 'review': 'Review',
+                     'idle': 'No active stage', 'waiting': 'Waiting on you'}.get(stage, stage)
+            return f'{section.title()} · {title} · {_WORKFLOW_PALETTE_LABELS[palette]} background'
         if path[:2] == ('mcp', 'servers') and len(path) == 3:
             return 'MCP · ' + path[2]
         if path[:2] == ('mcp', 'plugins') and len(path) == 4:
@@ -5655,6 +5779,28 @@ class _RailUI:
             lines.append(f"{self.rail}      " + styled(detail, style))
         return lines
 
+    def swatch_row(self, label, color, *, selected=False):
+        """Use an independently styled swatch next to its label."""
+        width = self.cols()
+        text = _workflow_color_label(color)
+        chip = self.swatch(color, text)
+        if 12 + _display_width(label) + len(text) > width:
+            return self.row(label, selected=selected) + [f"{self.rail}      {chip}"]
+        pointer = f"{self.st.c}▸{self.st.r}" if selected else " "
+        focus = self.st.focus if selected else ""
+        return [f"{self.rail}  {pointer} {focus}{label}{self.st.r}  {chip}"]
+
+    def swatch(self, color, text):
+        if not self.st.r or color == 'default':
+            return f"[{text}]"
+        red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+        channels = [channel / 255 for channel in (red, green, blue)]
+        linear = [channel / 12.92 if channel <= .04045 else ((channel + .055) / 1.055) ** 2.4
+                  for channel in channels]
+        luminance = sum(weight * channel for weight, channel in zip((.2126, .7152, .0722), linear))
+        foreground = 30 if luminance > .179 else 97
+        return f"[\033[48;2;{red};{green};{blue}m\033[{foreground}m{text}{self.st.r}]"
+
     def frame(self, label, display, current, keys, primary=None, flash=""):
         """Window a [(styled line, item key)] body; headings have no item key.
         Used by simple pickers and editable setup/install lists alike."""
@@ -5772,7 +5918,7 @@ class _RailUI:
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
              on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
              columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite="",
-             refresh=None, refresh_interval=.5, cycle=None):
+             refresh=None, refresh_interval=.5, cycle=None, swatches=None):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
@@ -5784,6 +5930,7 @@ class _RailUI:
         values, sections, accents = values or {}, sections or {}, accents or {}
         disabled = disabled or {}
         cells, notes = cells or {}, notes or {}
+        swatches = swatches or {}
         cur = max(0, min(default or 0, len(rows) - 1))
         marks = set(marked or ())
         empty_index = next((i for i, (key, _) in enumerate(rows) if key == empty_choice), None) if multi and empty_choice is not None else None
@@ -5859,6 +6006,9 @@ class _RailUI:
                         for detail in details(key):
                             display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
                         display.append((self.rail, None))
+                elif key in swatches:
+                    lines = self.swatch_row(text, swatches[key], selected=n == cur)
+                    display.extend((line, n if i == 0 else None) for i, line in enumerate(lines))
                 else:
                     display += [(line, n) for line in self.row(text, values.get(key), selected=n == cur,
                                 mark=mark, label_width=label_width, accent="y" if key in disabled else accents.get(key, ""))]
@@ -14623,6 +14773,8 @@ EXAMPLES
   Workflow Permissions sets Codex and Claude access for new/resumed CLI sessions.
   Text instructions offers Edit or Clear; clearing stays pending until review/save.
   Use multiple models offers stage checkboxes and Use lead model for all stages.
+  Enter a stage to see and edit its Standard and Priority backgrounds.
+  Session colors shows both palettes, including idle and waiting backgrounds.
   Unchecked Implementation uses session defaults;
   unchecked helpers use the lead model.
   Run t workflow directly to edit, review and save workflow changes.
