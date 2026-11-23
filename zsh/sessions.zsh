@@ -2903,6 +2903,26 @@ _t_dev() {
     return $open_rc
   fi
 
+  # A recorded local occupant can reopen from this machine alone. Only a
+  # missing record falls through to the ordinary remote-slot lookup.
+  if [[ $slot == <-> && -z $no_tmux && -z $agent_over && -z $local_only &&
+        -z ${T_OPEN_RECOVERY_ACTIVE:-} ]] && (( ! ${pos[(Ie)new]} )) &&
+     _dev_worktree_enabled "$repo" && ! _dev_local_slot_live "$repo" "$slot"; then
+    local saved_path saved_receipt saved_rc=0
+    saved_path=$(_dev_worktree_path "$repo" "$slot") || return 1
+    if [[ -d "$saved_path" ]]; then
+      saved_receipt=$(T_RESUME_OWNER_RECEIPT=1 python3 "$T_HOME/bin/t" __open-local-slot "$repo" "$slot" "$saved_path") || saved_rc=$?
+      if (( saved_rc != 3 )); then
+        _T_OPEN_FAILED_REPO=
+        (( saved_rc == 0 )) || return $saved_rc
+        local -a owner=("${(@ps:\t:)saved_receipt}")
+        (( $#owner == 5 )) || { print -u2 't open: incomplete local session receipt'; return 1; }
+        _t_history_attach "${owner[3]#dev-}" "$owner[1]" "$owner[4]" "$owner[2]" "$owner[5]"
+        return $?
+      fi
+    fi
+  fi
+
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
   # fg adoption already returned, so a slot that is NOT live HERE but IS live on a
   # $REMOTE_HOSTS host gets attached IN PLACE there (host inferred) — a live LOCAL slot
@@ -2917,6 +2937,16 @@ _t_dev() {
     (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
       if (( resolve_rc == 3 )); then
+        if [[ $slot == <-> && -z $agent_over && -z ${T_OPEN_RECOVERY_ACTIVE:-} &&
+              ${T_MCP_DETACHED:-0} != 1 && -t 0 && -t 1 && -t 2 ]] &&
+           _dev_worktree_enabled "$repo" && command -v fzf >/dev/null 2>&1; then
+          resolve_rc=0
+          _T_OPEN_SAVED_ONLY=1 _t_resume "$repo" "$slot" --cli || resolve_rc=$?
+          # Resume already handled selection and recovery. A failed or canceled
+          # selection must never fall through to the open repair or fresh launch.
+          _T_OPEN_FAILED_REPO=
+          return $resolve_rc
+        fi
         print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
         if [[ $slot == <-> ]]; then
           print -u2 -r -- "Use t session resume ${(q)repo} $slot to select a saved conversation."

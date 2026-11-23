@@ -1708,3 +1708,26 @@ def test_startup_error_has_no_repair_prompt(app, history, monkeypatch):
     monkeypatch.setattr(history.runpy, 'run_path', lambda *_: pytest.fail('unexpected retry prompt'))
     with pytest.raises(history.HistoryError, match='Permission overrides'):
         app.resume_with_repair('repo', conversation())
+
+
+def test_open_local_slot_honors_cached_remote_writer(app, history, store, git_repo, monkeypatch, t_mod):
+    monkeypatch.setitem(app.cfg.hosts, 'peer', 'peer.invalid')
+    path = Path(app.cfg.worktree_root) / 'repo/1'
+    row = store.merge(saved_row(app, git_repo, path))
+    view = {'hosts': [{'host': 'peer', 'value': {'rows':
+        f'{row["sid"]}\t/remote/work\trepo-9\tdetached\tactive\tTask\tcodex\n'}}]}
+    discovery = t_mod._session_discovery()
+
+    def observe(cfg, *, fields, observe):
+        assert observe and fields == ['rows']
+        return view
+
+    monkeypatch.setitem(discovery, 'discover', observe)
+    monkeypatch.setitem(app.api, '_session_discovery', lambda: discovery)
+    monkeypatch.setitem(app.api, '_parse_rows', t_mod._parse_rows)
+    monkeypatch.setattr(app, 'shell', lambda snippet: ['true'] if '_dev_session_rows --ownership' in snippet
+                        else pytest.fail(f'unexpected shell operation: {snippet}'))
+    monkeypatch.setenv('T_RESUME_OWNER_RECEIPT', '1')
+    with pytest.raises(history.HistoryError, match='live on peer'):
+        app.open_local_slot('repo', '1', str(path))
+    assert not path.exists()

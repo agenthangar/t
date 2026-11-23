@@ -413,7 +413,7 @@ _t_open_impl() {
   # Bare means every repo across local/remote hosts; a named repo filters.
   # Explicit slots, fresh sessions, agent flags and foreground requests retain
   # their direct paths. Resolve the picker before starting a fresh session.
-  local picker_ok=1 picker_repo= picker_rc picker_remote=1
+  local picker_ok=1 picker_repo= picker_rc picker_remote=1 picker_alias
   [[ -n $local_only ]] && picker_remote=
   if [[ -z $host && -z $isnew && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     for arg in "${rest[@]}"; do
@@ -421,7 +421,7 @@ _t_open_impl() {
         --cli|--attached|-l|--local|--here|-r|--remote) ;;
         -*) picker_ok= ;;
         *)
-          local picker_alias; picker_rc=1
+          picker_rc=1
           if [[ $arg != <-> || -n ${DEV_REPOS[$arg]:-} ]]; then
             picker_alias=$(_dev_resolve_repo "$arg"); picker_rc=$?
           fi

@@ -967,6 +967,7 @@ class HistoryCommand:
         self.host = socket.gethostname().split('.')[0]
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
+        self.local_open = False
         self.repair_writer = None
         self.prepared_destination = None
         self.discovery_identities = dict(getattr(self.store, 'identities', {}))
@@ -1069,7 +1070,7 @@ class HistoryCommand:
     def same_repository(self, left, right):
         if left == right:
             return True
-        if getattr(self, 'discovery_view', None) is not None:
+        if self.local_open or getattr(self, 'discovery_view', None) is not None:
             return False
         one, two = self.repository_proof(left), self.repository_proof(right)
         return bool(one and two and one['id'] == two['id'])
@@ -1590,7 +1591,37 @@ class HistoryCommand:
                     raise HistoryError(f'{host} metadata unavailable; last close cannot be verified') from error
                 print(f't resume: {host} unavailable; retained cached history', file=sys.stderr)
 
+    def open_local_slot(self, alias, slot, path):
+        """Return the verified original conversation's attach receipt, or None for an unknown slot."""
+        if alias not in self.cfg.repos or not re.fullmatch(r'[1-9][0-9]*', slot):
+            raise HistoryError('invalid local slot')
+        records = self.store.records()
+        occupants = self.workspace_occupants(path, records)
+        if not occupants:
+            return None
+        if len(occupants) != 1:
+            raise HistoryError('local slot has conflicting conversation records; select one with t session resume')
+        sid, agent = occupants.pop()
+        identity = self.identity(alias)
+        rows = [row for row in records if (row['sid'], row['agent'], row['repo']) == (sid, agent, identity)]
+        if len(rows) != 1:
+            raise HistoryError('local slot repository identity changed; select the saved conversation again')
+        row = bind_workspace(rows[0], slot, path, 'local')
+        row['sources'] = [s for s in row['sources'] if s.get('host') == 'local']
+        self.local_open = True
+        try:
+            receipt = self.resume(alias, row, detached=True)
+        finally:
+            self.local_open = False
+        return f'{sid}\t{agent}\t{receipt}'
+
     def owners(self, all_hosts=False):
+        if self.local_open:
+            local = run(self.shell('_DEV_PS_AT=0; _DEV_PS_COMM=(); _dev_session_rows --ownership'))
+            discovery = self.api['_session_discovery']()
+            snapshot = discovery['discover'](self.cfg, fields=['rows'], observe=True)
+            remote = discovery['rows'](snapshot, remote_only=True)
+            return self.api['_parse_rows'](local) + self.api['_parse_rows'](remote, host_prefixed=True)
         all_rows = '_dev_rows_all --ownership' if os.environ.get('T_RESUME_LAST_CLOSED') else '_dev_rows_all --best-effort --ownership'
         snippet = '_DEV_PS_AT=0; _DEV_PS_COMM=(); ' + (all_rows if all_hosts else "_dev_session_rows --ownership | awk 'NF {print \"local\\t\" $0}'")
         text = run(self.shell(snippet))
@@ -2368,6 +2399,8 @@ class HistoryCommand:
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
         original_tip, reason = self.original_workspace(alias, row, owners)
+        if self.local_open and not original_tip:
+            raise HistoryError(reason + ' Select the saved conversation with t session resume.')
         retry = row.get('_retry_destination') if fresh is None else None
         if retry:
             revision = retry['revision']
@@ -2457,6 +2490,10 @@ class HistoryCommand:
                     # Python holds the same POSIX cwd/SID locks as the zsh wrapper;
                     # use the claimed helper, never recursively acquire those locks.
                     snippet = '_T_RESUME_ALLOW_UNAVAILABLE=1 T_HISTORY_TOKEN=' + shlex.quote(self.reservation_token) + ' _dev_resume_session_claimed ' + shlex.join(launch_args)
+                    if self.local_open:
+                        # The claimed launch runs in a dedicated login shell. Its final
+                        # preflight still scans all local writers and tmux workspaces.
+                        snippet = 'REMOTE_HOSTS=(); ' + snippet
                     if not prepare_only:
                         # Allow the final ownership guard's startup settling
                         # window plus native readiness and shell startup.
