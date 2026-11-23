@@ -131,7 +131,7 @@ def test_resume_history_selects_inactive_conversation_from_busy_slot(zsh):
                  FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
     assert result.returncode == 0, result.stdout
     assert 'HISTORY api saved codex' in result.stdout
-    assert 'attach-session -t $99:' in zsh.log.read_text()
+    assert 'attach-session -t %99' in zsh.log.read_text()
     assert 'send-keys' not in zsh.log.read_text()
 
 
@@ -317,7 +317,7 @@ def test_explicit_slot_saved_selection_preserves_busy_owner(zsh):
     assert 'HISTORY api saved codex' in result.stdout
     assert 'UNEXPECTED_ATTACH' not in result.stdout
     log = zsh.log.read_text()
-    assert 'attach-session -t $99:' in log
+    assert 'attach-session -t %99' in log
     assert 'respawn-pane' not in log and 'kill-session' not in log
 
 
