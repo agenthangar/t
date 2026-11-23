@@ -776,11 +776,11 @@ session, retaining an explicit `--codex` or `--claude` choice. If repair fails,
 the existing **Force open** option resets only that session's t records. It still
 requires verified ownership and preserves worktree files and native transcripts.
 
-Saved `t resume api 3` selections also offer **Repair / Cancel** after failure.
-Repair retries that exact conversation once. Native writers that have not yet
-published their worktree metadata get a bounded 30-second settling wait; normal
-launches do not wait. A writer that remains unknown or owns the target still
-blocks the launch. Cancel stops any remaining batch selections.
+After quitting a session, run `t resume api 3` and select the conversation.
+If it still belongs to that worktree, it reopens there with the current branch,
+staged changes, and working files intact. If recovery needs another worktree,
+the interactive command shows the reason and proposed slot first. **Wait for release**
+rechecks a busy writer. A startup failure shows the native error from that attempt.
 
 Saved Codex resumes use native cloud retries when automatic local continuation
 cannot support resume, including workflows set to ask or continue locally.

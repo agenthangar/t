@@ -1438,7 +1438,7 @@
             "tests/test_resume_history.py::test_resume_options_keep_existing_route",
             "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association"
           ],
-          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated multi-selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes.",
+          "notes": "Plain public slot targets, including a lone inferred-repository slot, delegate to session history: paginated multi-selection of exact conversation identities, no default recency cutoff, no automatic single-result selection, and cancellation returns 130 without launch. Selection reopens the verified original worktree with its index and edits intact. Interactive relocation names the destination before allocation. Startup errors report the native cause. Nonterminal use lists history read-only. Explicit resume options and internal callers retain existing resume modes.",
           "layout": "inherit"
         },
         "cli": {

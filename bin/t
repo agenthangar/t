@@ -14149,9 +14149,9 @@ REMOTE SESSIONS
   report already-resumed conversations.
   Saved Codex resumes keep native cloud retries; automatic local continuation
   is unavailable. Startup failures retain the specific lifecycle diagnostic.
-  If Repair still can't verify the original worktree and the selected Codex
-  conversation is free, it can offer to open it in a fresh worktree at the
-  saved commit. Local edits stay in the original worktree.
+  Reopen the selected conversation in its verified worktree with staged and
+  unstaged edits intact. If recovery needs a fresh worktree, review the proposed
+  slot first. Wait for release rechecks a busy writer. Local edits stay in the original worktree.
 
   Tab marks conversations; Enter resumes marks or focus. Ctrl-F/B change page, Ctrl-R refreshes
   remote metadata, Ctrl-/ shows details, and Escape cancels.
@@ -14204,9 +14204,9 @@ REMOTE SESSIONS
   workspace. Another conversation in a reused original slot can keep running
   when the saved conversation resumes into a different workspace.
   Saved selections sharing an original slot get independent safe destinations.
-  If Repair still can't verify the original worktree and the selected Codex
-  conversation is free, it can offer to open it in a fresh worktree at the
-  saved commit. Local edits stay in the original worktree.
+  Reopen the selected conversation in its verified worktree with staged and
+  unstaged edits intact. If recovery needs a fresh worktree, review the proposed
+  slot first. Wait for release rechecks a busy writer. Local edits stay in the original worktree.
 
   Offers EVERY conversation associated with the repository across registered hosts,
   including swept and renamed workspaces and the canonical checkout (one global
@@ -15606,10 +15606,10 @@ def _main(argv):
                     with open(diagnostics_file, 'w') as stream:
                         stream.write(''.join(host + '\n' for host in history.diagnostic_hosts()))
             else:
-                if len(argv) not in (5, 6) or argv[4] not in ('launch', 'prepare'):
+                if len(argv) not in (5, 6, 8, 9) or argv[4] not in ('launch', 'prepare', 'transfer'):
                     raise helper['HistoryError']('invalid saved conversation selection')
                 alias, sid, agent = argv[1:4]
-                identity = argv[5] if len(argv) == 6 else alias
+                identity = argv[5] if len(argv) >= 6 else alias
                 if identity == '-':
                     identity = alias
                 # Local-only repositories have an exact path identity, not a
@@ -15622,7 +15622,13 @@ def _main(argv):
                 rows = [row for row in history.records(identity) if row['sid'] == sid and row['agent'] == agent]
                 if len(rows) != 1:
                     raise helper['HistoryError']('saved conversation changed; select it again')
-                print(history.resume_with_repair(alias, rows[0], detached=True, prepare_only=argv[4] == 'prepare'))
+                row = rows[0]
+                if len(argv) >= 8:
+                    host = argv[8] if len(argv) == 9 and argv[8] != '-' else None
+                    row = helper['bind_workspace'](row, argv[6], argv[7], host)
+                if argv[4] == 'transfer':
+                    row = {**row, '_transfer': True}
+                print(history.resume_with_repair(alias, row, detached=True, prepare_only=argv[4] != 'launch'))
             return 0
         except helper['HistoryCancelled']:
             return 130

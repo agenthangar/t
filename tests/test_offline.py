@@ -179,6 +179,10 @@ if role=='backend':
  for raw in sys.stdin:
   msg=json.loads(raw)
   if msg.get('method')=='thread/start':send({'id':1,'result':{'thread':{'id':'main','cwd':str(root)},'model':'cloud'}})
+  elif msg.get('method')=='thread/resume':
+   params=msg['params']
+   assert params['threadId']=='exact-thread' and params['sandbox']=='read-only' and params['approvalPolicy']=='never'
+   send({'id':msg['id'],'result':{'thread':{'id':'exact-thread','cwd':str(root)},'approvalPolicy':'never','sandbox':{'type':'readOnly'}}})
   elif msg.get('method')=='turn/start':
    send({'method':'turn/started','params':{'threadId':'main','turn':{'id':'turn'}}})
    send({'id':'approve','method':'item/commandExecution/requestApproval','params':{'threadId':'main','command':'fixture'}})
@@ -196,7 +200,9 @@ else:
  if mode=='quit':sys.exit(0)
  sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);sock.connect(sys.argv[2].removeprefix('unix://'))
  ws=runpy.run_path(os.environ['SOCKET_HELPER'])['WebSocket'](sock.makefile('rb'),sock.makefile('wb'),time.monotonic()+15)
- ws.handshake();ws.send(json.dumps({'id':1,'method':'thread/start','params':{}}).encode());ws.receive()
+ resume='resume' in sys.argv
+ if resume: assert '--sandbox' not in sys.argv and '--ask-for-approval' not in sys.argv
+ ws.handshake();ws.send(json.dumps({'id':1,'method':'thread/resume' if resume else 'thread/start','params':{'threadId':'exact-thread'} if resume else {}}).encode());ws.receive()
  ws.send(json.dumps({'id':2,'method':'turn/start','params':{'threadId':'main','input':[{'type':'text','text':'Fix fixture; preserve tests.'}]}}).encode())
  ws.receive();approval=json.loads(ws.receive())
  assert approval['id']=='approve'
@@ -277,7 +283,7 @@ def test_recovery_observes_native_resume_without_local_fallback(offline, tmp_pat
     monkeypatch.setattr(m, 'inference', lambda: {'helper': lambda n: {'state_root': lambda: tmp_path/'state'}})
     incoming, outgoing, notifications = [], [], []
     observer = SimpleNamespace(client=incoming.append, server=outgoing.append)
-    argv = [str(fake_codex), 'resume', 'exact-thread', '--no-daemon'] if native_resume else [str(fake_codex), '--no-daemon']
+    argv = [str(fake_codex), 'resume', 'exact-thread', '--sandbox', 'read-only', '--ask-for-approval', 'never', '--no-daemon'] if native_resume else [str(fake_codex), '--no-daemon']
     chosen = None if native_resume else {'on_cloud_failure': 'pause'}
     assert m.supervise(argv, chosen, str(tmp_path), observer=notifications.append, lifecycle_observer=observer) == 0
     assert notifications == outgoing
@@ -411,3 +417,86 @@ def test_checkpoint_saves_only_explicit_native_workspace(offline, tmp_path, nati
     saved = json.loads((tmp_path / 'checkpoint.json').read_text())
     expected = str(tmp_path if native_cwd == 'matching' else tmp_path / 'other') if native_cwd in ('matching', 'different') else None
     assert saved['thread_workspace'] == expected
+
+
+def test_supervised_resume_applies_and_verifies_the_selected_thread_policy(tmp_path):
+    policy = load_script(ROOT/'libexec/t_resume_permissions.py', 'resume_permissions_test').ResumePermissions
+    argv = ['codex', 'resume', 'selected', '--cd', str(tmp_path), '--sandbox', 'workspace-write',
+            '-a', 'on-request', '-c', 'approvals_reviewer="auto_review"', '--add-dir', 'extra dir',
+            '--model', 'test', '--no-daemon', '--', '--sandbox', 'prompt text']
+    route = policy(argv, tmp_path)
+    assert route.frontend == ['codex', 'resume', 'selected', '--cd', str(tmp_path), '--model', 'test',
+                              '--', '--sandbox', 'prompt text']
+    request = dict(method='thread/resume', id=3, params=dict(threadId='selected'))
+    route.client(request)
+    extra = str(tmp_path / 'extra dir')
+    assert request['params'] == dict(threadId='selected', approvalPolicy='on-request', sandbox='workspace-write',
+                                     approvalsReviewer='auto_review', runtimeWorkspaceRoots=[str(tmp_path), extra])
+    effective = dict(thread={'id': 'selected'}, approvalPolicy='on-request', approvalsReviewer='auto_review',
+                     sandbox=dict(type='workspaceWrite', writableRoots=[extra]), runtimeWorkspaceRoots=[str(tmp_path), extra])
+    route.server_reply(dict(id=12, result=effective))
+    assert not route.verified
+    with pytest.raises(ValueError, match='approvalPolicy'):
+        route.server_reply(dict(id=3, result={**effective, 'approvalPolicy': 'never'}))
+    with pytest.raises(ValueError, match='before verifying'):
+        route.client(dict(method='turn/start'))
+    route.server_reply(dict(id=3, result=effective))
+    assert route.verified
+
+
+@pytest.mark.parametrize('args, expected', [
+    (['-sread-only', '-anever'], {'sandbox': 'read-only', 'approvalPolicy': 'never'}),
+    (['--approve-for-me'], {'sandbox': 'workspace-write', 'approvalPolicy': 'on-request', 'approvalsReviewer': 'auto_review'}),
+    (['--dangerously-bypass-approvals-and-sandbox'], {'sandbox': 'danger-full-access', 'approvalPolicy': 'never'}),
+    (['-cdefault_permissions=":workspace"'], {'permissions': ':workspace'}),
+    (['--config=approval_policy=on-request'], {'approvalPolicy': 'on-request'}),
+])
+def test_resume_permission_spellings(tmp_path, args, expected):
+    policy = load_script(ROOT/'libexec/t_resume_permissions.py', 'resume_permissions_test').ResumePermissions
+    route = policy(['codex', 'resume', 'id', *args], tmp_path)
+    assert route.params == expected
+    assert route.frontend == ['codex', 'resume', 'id']
+
+
+@pytest.mark.parametrize('configured, add_dir', [([], False), (['selected'], False), ([], True)])
+def test_resume_explicit_writable_roots_replace_saved_roots(tmp_path, monkeypatch, configured, add_dir):
+    policy = load_script(ROOT/'libexec/t_resume_permissions.py', 'resume_permissions_test').ResumePermissions
+    monkeypatch.setenv('TMPDIR', str(tmp_path / 'temporary'))
+    args = ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps(configured)]
+    if add_dir:
+        args += ['--add-dir', 'additional']
+    route = policy(['codex', 'resume', 'selected', *args], tmp_path)
+    selected = [str((tmp_path / root).resolve()) for root in configured]
+    extra = [str((tmp_path / 'additional').resolve())] if add_dir else []
+    expected = [str(tmp_path.resolve()), *selected, *extra]
+    stale = str(tmp_path / 'saved-extra')
+    request = dict(method='thread/resume', id=3, params=dict(threadId='selected',
+                   runtimeWorkspaceRoots=[str(tmp_path), stale], config={'model': 'test'}))
+    route.client(request)
+    assert request['params']['config'] == {'model': 'test', 'sandbox_workspace_write.writable_roots': selected}
+    assert request['params']['runtimeWorkspaceRoots'] == expected
+    assert route.params['config']['sandbox_workspace_write.writable_roots'] == selected
+    effective = dict(thread={'id': 'selected'}, runtimeWorkspaceRoots=expected,
+                     sandbox=dict(type='workspaceWrite', writableRoots=[*selected, *extra]))
+    with pytest.raises(ValueError, match='workspace roots'):
+        route.server_reply(dict(id=3, result={**effective, 'runtimeWorkspaceRoots': [*expected, stale]}))
+    with pytest.raises(ValueError, match='writable roots'):
+        route.server_reply(dict(id=3, result={**effective, 'sandbox': dict(type='workspaceWrite',
+                                writableRoots=[*selected, *extra, stale])}))
+    assert not route.verified
+    # Built-in roots may be included in the legacy sandbox representation.
+    effective['sandbox']['writableRoots'] += [str(tmp_path.resolve()), '/tmp', str(tmp_path / 'temporary')]
+    route.server_reply(dict(id=3, result=effective))
+    assert route.verified
+
+
+@pytest.mark.parametrize('args', [
+    ['--sandbox'], ['--sandbox=unsupported'], ['--sandbox', 'read-only', '--permission-profile', ':workspace'],
+    ['-c', 'sandbox_mode=12'], ['-c', 'sandbox_mode=[]'], ['-c', 'sandbox_mode={}'],
+    ['-c', 'sandbox_workspace_write.writable_roots=true'],
+    ['-c', 'sandbox_workspace_write.network_access=true'], ['-c', 'approval_policy'],
+])
+def test_resume_rejects_unverifiable_permission_arguments(tmp_path, args):
+    policy = load_script(ROOT/'libexec/t_resume_permissions.py', 'resume_permissions_test').ResumePermissions
+    with pytest.raises(ValueError):
+        policy(['codex', 'resume', 'exact', *args], tmp_path)

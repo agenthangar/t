@@ -552,8 +552,14 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
     if chosen and chosen.get('on_cloud_failure') == 'ask' and monitor is None:
         return recover(argv, chosen, cwd, lifecycle_observer=lifecycle_observer)
     local = inference()
+    resume_policy = None
+    if lifecycle_observer is not None and chosen is None and len(argv) >= 3 and argv[1] == 'resume':
+        resume_policy = runpy.run_path(str(ROOT/'libexec/t_resume_permissions.py'))['ResumePermissions'](argv, cwd)
+        argv = resume_policy.frontend
     if server_options is None:
         server_options, continuation = launch_options(argv, cwd, recovery=lifecycle_observer is not None and chosen is None)
+    if resume_policy is not None:
+        server_options = [*server_options, *resume_policy.server]
     root = checkpoint.directory if checkpoint else local['helper']('t_local_worker')['state_root']() / ('outage-'+uuid.uuid4().hex)
     root.mkdir(parents=True, mode=0o700, exist_ok=True)
     checkpoint = checkpoint or Checkpoint(root, cwd)
@@ -621,6 +627,12 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                         with input_gate:
                             if stopping.is_set():
                                 return
+                            if resume_policy is not None:
+                                try:
+                                    resume_policy.client(message)
+                                except ValueError as error:
+                                    resume_policy.error = str(error)
+                                    raise
                             if chosen is not None:
                                 checkpoint.client(message)
                             if lifecycle_observer is not None:
@@ -645,6 +657,12 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                                 raise ValueError('Could not pause the owned cloud turn: '+str(message['error']))
                             paused(owned[0])
                             continue
+                        if resume_policy is not None:
+                            try:
+                                resume_policy.server_reply(message)
+                            except ValueError as error:
+                                resume_policy.error = str(error)
+                                raise
                         if chosen is not None:
                             checkpoint.server(message)
                         if lifecycle_observer is not None:
@@ -666,6 +684,8 @@ def supervise(argv, chosen, cwd, observer=None, *, monitor=None, checkpoint=None
                     # The frontend can exit before monitor runs. Retain the
                     # correlated failure and stop both owners before showing UI.
                     break
+                if resume_policy is not None and resume_policy.error:
+                    raise ValueError(resume_policy.error)
                 if failures or backend.poll() is not None:
                     try:
                         frontend.wait(timeout=.3)

@@ -2404,13 +2404,13 @@ _dev_launch_preflight() {
 }
 
 _dev_launch_startup_check() {
-  local session=$1 logfile=$2 pane_dead
+  local session=$1 logfile=$2 target=${3:-"=$1:"} pane_dead
   sleep 0.1
-  pane_dead=$(tmux display-message -p -t "=$session:" '#{pane_dead}' 2>/dev/null) || {
+  pane_dead=$(tmux display-message -p -t "$target" '#{pane_dead}' 2>/dev/null) || {
     print -u2 -- "t: $session exited during startup; inspect $logfile"
     return 1
   }
-  if [[ $pane_dead == 1 ]]; then
+  if [[ $pane_dead != 0 ]]; then
     print -u2 -- "t: $session exited during startup; inspect $logfile"
     return 1
   fi
@@ -2422,12 +2422,13 @@ _dev_foreground_new() {
 }
 
 # Stop only our newly created placeholder and wait for its PTY to be released.
+# The optional second argument pins a pane captured at session creation.
 # A force-respawn closes the master and immediately allocates another PTY while
 # the old child is still exiting. On macOS that can fail with ENXIO even below
 # the PTY limit. Keep the dead pane until normal respawn is safe.
 _dev_stop_session_placeholder() {
-  local session=$1 identity pane pid command_line dead old_remain current attempt
-  identity=$(tmux display-message -p -t "=$session:" '#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_dead}') || return 1
+  local session=$1 target=${2:-"=$1:"} identity pane pid command_line dead old_remain current attempt
+  identity=$(tmux display-message -p -t "$target" '#{pane_id}|#{pane_pid}|#{pane_start_command}|#{pane_dead}') || return 1
   IFS='|' read -r pane pid command_line dead <<< "$identity"
   [[ $pane == \%<-> && $pid == <-> && $pid -gt 1 && $command_line == 'sleep 86400' && $dead == 0 ]] || {
     print -u2 't: launch placeholder changed; no replacement started'; return 1
@@ -2457,7 +2458,7 @@ _dev_stop_session_placeholder() {
 # running process, and never retry a failed fork on a potentially broken pane.
 _dev_start_session_command() {
   local stopped pane old_remain
-  stopped=$(_dev_stop_session_placeholder "$1") || return 1
+  stopped=$(_dev_stop_session_placeholder "$1" "$4") || return 1
   IFS='|' read -r pane old_remain <<< "$stopped"
   # A normal pane exit closes its pipe, and pipe-pane refuses dead panes.
   # Queue respawn and logging in ONE tmux command sequence: both synchronous
@@ -2550,20 +2551,29 @@ _dev_new_session_effect() {
 _t_history_owner() {
   local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
   local wait_ready=$5 current owner_pid
+  local format='#{session_id}|#{session_path}' expected=${6:-} pane=
+  if [[ -n $expected || $wait_ready == receipt || ( $wait_ready == wait && -n ${T_HISTORY_TOKEN:-} ) ]]; then
+    format='#{session_id}:#{pane_id}|#{session_path}'
+  fi
   local -F SECONDS=0
   tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't resume: selected owner exited; rerun t resume'; return 1; }
   local identity
-  identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
+  identity=$(tmux display-message -p -t "=$session:" "$format" 2>/dev/null) || return 1
   immutable=${identity%%|*}; actual_dir=${identity#*|}
-  [[ $immutable == \$<-> ]] || { print -u2 't resume: could not verify selected owner identity'; return 1; }
+  if [[ -n $expected && $immutable != "$expected" ]]; then
+    print -u2 't resume: selected terminal was replaced before attach'; return 1
+  fi
+  [[ $immutable != *:%* ]] || pane=${immutable#*:}
+  [[ $immutable == \$<-> || $immutable == \$<->:%<-> ]] || { print -u2 't resume: could not verify selected owner identity'; return 1; }
   while true; do
     _DEV_PS_AT=0
     [[ $wait_ready != wait ]] || owner_pid=$(_dev_session_claude_pid "$session")
     actual_agent=$(_dev_agent_of_session "$session")
     actual_sid=$(_dev_session_sid "$session")
-    current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
+    current=$(tmux display-message -p -t "=$session:" "$format" 2>/dev/null) || {
       print -u2 't resume: selected owner exited; rerun t resume'; return 1
     }
+    [[ -n ${current%%|*} ]] || { print -u2 't resume: selected owner exited during startup'; return 1; }
     [[ ${current%%|*} == $immutable ]] || {
       print -u2 't resume: selected owner changed (session); rerun t resume'; return 1
     }
@@ -2572,7 +2582,7 @@ _t_history_owner() {
     }
     # An exited startup can lose its process identity. Report that failure before
     # comparing the fallback agent/SID, without following a replaced session.
-    if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
+    if [[ $wait_ready == wait && $(tmux display-message -p -t "${pane:-$immutable:}" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
       print -u2 -- "t resume: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
       return 1
     fi
@@ -2596,13 +2606,19 @@ _t_history_owner() {
 
 # Attach-only history action: no generic open path can create a replacement owner.
 _t_history_attach() {
-  local immutable agent=$4
-  immutable=$(_t_history_owner "$@") || return $?
+  local immutable target agent=$4
+  immutable=$(_t_history_owner "$1" "$2" "$3" "$4" attach "${5:-}") || return $?
+  target="${immutable%%:*}:"
+  [[ $immutable != *:%<-> ]] || target=${immutable#*:}
+  if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+    _t_session_attach "dev-$1" "$agent" fresh "$target"
+    return
+  fi
   _t_discovery_event local --activity
   _dev_workflow_attach "$agent"
   _t_terminal_close_install "dev-$1"
-  if [[ -n $TMUX ]]; then tmux switch-client -t "$immutable:"
-  else tmux attach-session -t "$immutable:"; fi
+  if [[ -n $TMUX ]]; then tmux switch-client -t "$target"
+  else tmux attach-session -t "$target"; fi
 }
 
 # t issue holds the repository allocation lock across prepare + launch. These
@@ -3097,6 +3113,7 @@ _t_dev() {
 
 # MCP lifecycle calls stay detached unless a separate viewer is requested.
 _t_session_attach() {
+  local target=${4:-"=$1:"}
   _t_terminal_close_install "$1"
   # Fresh lifecycle completion already queues discovery; its launch applied the
   # resolved policy, so the live-attach advisory has no pending work to report.
@@ -3105,9 +3122,9 @@ _t_session_attach() {
     _dev_workflow_attach "${2:-}"
   fi
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
-    tmux has-session -t "=$1:" || return 1
+    tmux has-session -t "$target" || return 1
     if [[ ${T_MCP_NEW_WINDOW:-0} == 1 ]]; then
-      local target="=$1:" attach_command
+      local attach_command
       attach_command="unset TMUX T_MCP_DETACHED T_MCP_NEW_WINDOW; tmux attach-session -t ${(q)target}"
       if ! _dev_open_window "$attach_command"; then
         print -u2 -r -- "t mcp: session $1 is available, but its window could not be opened. Attach with: tmux attach-session -t ${(q)target}"
@@ -3118,7 +3135,7 @@ _t_session_attach() {
     fi
     print -r -- "Available: $1 (detached control; existing viewers unchanged)"
   else
-    tmux attach-session -t "=$1:"
+    tmux attach-session -t "$target"
   fi
 }
 

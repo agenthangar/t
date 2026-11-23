@@ -176,20 +176,22 @@ _t_history_attach repo-1 selected /repo/1 codex
 
 
 @pytest.mark.parametrize('inside', [False, True])
-def test_shell_attach_success_uses_exact_target_and_switches_existing_client(history, tmp_path, inside):
+@pytest.mark.parametrize('pinned', [False, True])
+def test_shell_attach_success_uses_exact_target_and_switches_existing_client(history, tmp_path, inside, pinned):
     log = tmp_path / 'calls'
+    expected = "'$7:%11'" if pinned else ''
     script = f'''
 source {ROOT}/zsh/sessions.zsh
 _dev_session_claude_pid() {{ print 123; }}
 _dev_session_sid() {{ print selected; }}
 _dev_agent_of_session() {{ print codex; }}
 TMUX={'isolated' if inside else ''}
-tmux() {{ case $1 in has-session) return 0 ;; display-message) print '$7|/repo/1' ;; *) print "$*" >> {log} ;; esac }}
-_t_history_attach repo-1 selected /repo/1 codex
+tmux() {{ case $1 in has-session) return 0 ;; display-message) print '$7{':%11' if pinned else ''}|/repo/1' ;; *) print "$*" >> {log} ;; esac }}
+_t_history_attach repo-1 selected /repo/1 codex {expected}
 '''
     result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy())
     assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t $7:'
+    assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t {"%11" if pinned else "$7:"}'
 
 
 @pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'dead-missing-agent', 'timeout'])
@@ -561,7 +563,7 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     monkeypatch.setattr(app, 'destination', modified)
     with pytest.raises(history.HistoryError, match='generation changed'):
         app.resume('repo', row)
-    assert releases and all(Path(path) == workspace for path in releases)
+    assert not releases  # Revalidate generation before touching the native writer.
 
 
 @pytest.mark.parametrize('ready', [True, False])
@@ -580,7 +582,11 @@ _dev_stop_session_placeholder() {{ print -r -- "%1|off"; }}
 _t_history_owner() {{ print -r -- "READY $*" >> {commands}; return {0 if ready else 1}; }}
 _dev_history_record() {{ print RECORDED >> {commands}; }}
 _dev_recovery_watch() {{ return 0; }}
-tmux() {{ [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}; return 0; }}
+tmux() {{
+  [[ $1 == new-session ]] && print -r -- '$1:%1'
+  [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}
+  return 0
+}}
 _dev_resume_session_effect dev-repo-2 '{tmp_path}/destination 2' selected codex history || exit $?
 _t_lifecycle_effect ready dev-repo-2 '{tmp_path}/destination 2' codex selected || exit $?
 _t_lifecycle_effect record resume dev-repo-2 '{tmp_path}/destination 2' codex selected
@@ -747,7 +753,7 @@ def test_index_merge_retains_source_freshness(app, history, store):
 
 
 def test_history_failure_exits_without_reopening_picker(app, history, monkeypatch, capsys):
-    row = conversation()
+    row = conversation(associations=[dict(workspace='/repo/1', slot='1', host='local')])
     for method in ('discover', 'pr_states', 'branch_prs'):
         monkeypatch.setattr(app, method, lambda *a, **k: None)
     monkeypatch.setattr(app, 'owners', lambda *a: [])
@@ -1219,6 +1225,31 @@ def test_detached_saved_resume_refuses_new_live_owner(app, history, monkeypatch)
         app.resume('repo', conversation(sid='selected'), detached=True)
 
 
+@pytest.mark.parametrize('when,terminal', [('selected', '$7:%9'), ('allocation', '$7:%9'), ('selected', '$7')])
+def test_picker_saved_row_that_became_live_uses_verified_pane(
+        app, history, monkeypatch, git_repo, tmp_path, when, terminal):
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    row = saved_row(app, git_repo, workspace)
+    owner = dict(host='local', slot='repo-1', sid='selected', agent='codex', cwd=str(workspace))
+    scans = iter([[], [owner]] if when == 'allocation' else [[owner]])
+    monkeypatch.setattr(app, 'owners', lambda *a: next(scans))
+    monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
+    monkeypatch.setattr(app, 'destination', lambda *a, **k: pytest.fail('must attach only'))
+    monkeypatch.setenv('T_RESUME_OWNER_RECEIPT', '1')
+    run = history.run
+    def probe(argv, **kwargs):
+        if argv[0] == 'zsh':
+            assert argv[-1].endswith(f'_t_history_owner repo-1 selected {workspace} codex receipt')
+            return terminal
+        return run(argv, **kwargs)
+    monkeypatch.setattr(history, 'run', probe)
+    if ':' in terminal:
+        assert app.resume('repo', row, detached=True) == f'dev-repo-1\t{workspace}\t{terminal}'
+    else:
+        with pytest.raises(history.HistoryError, match='terminal identity'):
+            app.resume('repo', row, detached=True)
+
+
 @pytest.mark.parametrize('mode', ['candidates', 'slot-candidates', 'invalid-slot', 'missing-slot',
                                   'launch', 'prepare', 'missing', 'invalid', 'cancel'])
 def test_private_resume_bridge_dispatches_exact_identity_and_closes_store(
@@ -1457,7 +1488,7 @@ def test_saved_resume_offers_repair_for_exact_selection(
     def resume(alias, selected, **kwargs):
         calls.append((alias, selected['sid'], kwargs))
         if len(calls) == 1 or decision == 'still-blocked':
-            raise history.HistoryError('writer metadata is not available yet')
+            raise history.WriterBusy('writer metadata is not available yet')
         return 'dev-repo-7'
     monkeypatch.setattr(app, 'resume', resume)
     prompts = []
@@ -1506,7 +1537,7 @@ app.root=str(root); app.api=api
 calls=[]
 def resume(*a,**k):
     calls.append(1)
-    if len(calls)==1: raise h['HistoryError']('Waiting writer')
+    if len(calls)==1: raise h['WriterBusy']('Waiting writer')
     return 'dev-sample-3'
 app.resume=resume
 app.resume_with_repair.__globals__['_CACHE_REQUEST']=lambda *a,**k: {}
@@ -1522,12 +1553,12 @@ except h['HistoryCancelled']: sys.exit(130)
     screen = b''
     try:
         deadline = time.monotonic() + 10
-        while b'Repair' not in screen and time.monotonic() < deadline:
+        while b'Wait for release' not in screen and time.monotonic() < deadline:
             if select.select([master], [], [], .1)[0]:
                 screen += os.read(master, 65536)
             if process.poll() is not None:
                 break
-        assert b'Repair' in screen and b'Cancel' in screen, screen.decode(errors='replace')
+        assert b'Wait for release' in screen and b'Cancel' in screen, screen.decode(errors='replace')
         os.write(master, b'\x1b' if cancel else b'\r')
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:
@@ -1607,7 +1638,7 @@ def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(
     def resume(alias, selected, **options):
         events.append(('resume', alias, selected['sid']))
         if len(events) == 1:
-            raise history.HistoryError('selected writer still loaded')
+            raise history.WriterBusy('selected writer still loaded')
         return selected['sid']
     monkeypatch.setattr(app, 'resume', resume)
     def stop(selected, **options):
@@ -1640,3 +1671,40 @@ def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(
         assert app.resume_with_repair('repo', row) == 'selected'
         assert events == [('resume', 'repo', 'selected'), ('stop', False), *([('stop', True)] if decision == 'force' else []),
                           ('released', 'codex', 'selected'), ('refresh',), ('resume', 'repo', 'selected')]
+
+
+def test_prepared_workspace_reused_when_writer_releases(app, history, store, git_repo, monkeypatch, tmp_path):
+    original = Path(app.cfg.worktree_root) / 'repo/repo-74'
+    row = store.merge(saved_row(app, git_repo, original))
+    monkeypatch.setattr(app, 'source', lambda *_: tmp_path/'rollout')
+    monkeypatch.setattr(app, 'owners', lambda *_: [])
+    monkeypatch.setattr(app, 'install_transcript', lambda *_: None)
+    checked, choices = [], []
+    def check(*_, workspace):
+        checked.append(workspace)
+        if len(checked) == 1:
+            raise history.WriterBusy('selected thread still loaded')
+    monkeypatch.setattr(app, 'codex_released', check)
+    monkeypatch.setattr(history, 'repair_terminal', lambda: True)
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *_: {})
+    monkeypatch.setitem(history._CLIENT_STOP, 'stranded', lambda *_: None)
+    load = history.runpy.run_path
+    def helpers(path, **kwargs):
+        if str(path).endswith('t_open_recovery.py'):
+            return {'ask': lambda api, title, note, action: choices.append(action) is None}
+        return load(path, **kwargs)
+    monkeypatch.setattr(history.runpy, 'run_path', helpers)
+    target = app.resume_with_repair('repo', row, detached=True, prepare_only=True)
+    assert checked == [target.split('\t')[1]] * 2
+    assert choices == ['Resume in repo-1', 'Wait for release']
+    assert not (original.parent/'repo-2').exists()
+
+
+def test_startup_error_has_no_repair_prompt(app, history, monkeypatch):
+    def failed(*_):
+        raise history.HistoryError('Error: Permission overrides are not supported when resuming a remote task.')
+    monkeypatch.setattr(app, 'resume', failed)
+    monkeypatch.setattr(history, 'repair_terminal', lambda: True)
+    monkeypatch.setattr(history.runpy, 'run_path', lambda *_: pytest.fail('unexpected retry prompt'))
+    with pytest.raises(history.HistoryError, match='Permission overrides'):
+        app.resume_with_repair('repo', conversation())

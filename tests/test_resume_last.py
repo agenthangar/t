@@ -108,7 +108,8 @@ def test_last_shell_bypasses_picker_age_and_pending_slot(zsh, target):
     script = ('_t_resume_history_candidates() { print -r -- ' + shlex.quote(row) + '; '
               'print -r -- "local\tother-owner\t/other\tapi-3\tdetached\tactive\tOther\tcodex" > "$T_RESUME_ROWS_FILE"; }; '
               '_t_fzf_filtered() { print -u2 UNEXPECTED_PICKER; return 9; }; '
-              '_t_resume_history_launch() { print -u2 -- "EXACT $2 $3 $T_RESUME_LAST_CLOSED"; print dev-api-99; }; '
+              '_t_resume_history_launch() { print -u2 -- "EXACT $2 $3 $T_RESUME_LAST_CLOSED"; print -r -- ' +
+              shlex.quote('dev-api-99\t/sample/api-99\t$99:%99') + '; }; '
               '_t_resume ' + target + ' --last --wait')
     result = zsh(script, T_DISCOVERY_COLLECTOR='0')
     assert result.returncode == 0, result.stdout + result.stderr

@@ -46,7 +46,10 @@ def history_row(sid='saved', slot='3', workspace='/former/home/trees/old/old-3',
 
 
 def shell_candidates(rows):
-    return '_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(rows)) + '; }; '
+    # Model the private launch receipt. Public-command lifecycle tests use real tmux IDs.
+    return (r"""sample_receipt() { printf 'dev-api-%s\t/sample/api-%s\t$%s:%%%s\n' "$1" "$1" "$1" "$1"; };
+_t_history_owner() { [[ $6 == '$'${1##*-}':%'${1##*-} ]] && print -r -- "$6"; };
+""" + '_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(rows)) + '; }; ')
 
 
 @pytest.mark.parametrize('new_window,window_code', [(False, 0), (True, 0), (True, 1)])
@@ -54,7 +57,7 @@ def test_mcp_resume_window_uses_resolved_history_slot(zsh, new_window, window_co
     setup = shell_candidates([history_row()]) + f'''
       T_MCP_DETACHED=1
       T_MCP_NEW_WINDOW={int(new_window)}
-      _t_resume_history_launch() {{ print -u2 LAUNCH; print dev-api-99; }}
+      _t_resume_history_launch() {{ print -u2 LAUNCH; sample_receipt 99; }}
       _t_resume_history_registered() {{ return 0; }}
       _dev_open_window() {{ print -r -- "WINDOW $*"; return {window_code}; }}
     '''
@@ -63,7 +66,7 @@ def test_mcp_resume_window_uses_resolved_history_slot(zsh, new_window, window_co
     assert result.stderr.count('LAUNCH') == 1
     assert ('WINDOW ' in result.stdout) == new_window
     if new_window:
-        assert r'tmux attach-session -t \=dev-api-99:' in result.stdout
+        assert 'tmux attach-session -t %99' in result.stdout
         assert 'tmux attach-session -t =dev-api-3:' not in result.stdout
     else:
         assert 'detached control' in result.stdout
@@ -99,7 +102,7 @@ def test_local_transcripts_use_history_allocation_once_per_conversation(zsh, age
         + ('print -rl -- ' + ' '.join(map(shlex.quote, paths)) if agent == 'codex' else ':') + '; }; '
         '_t_fzf_filtered() { print -r -- "$1"; }; '
         '_t_resume_history_launch() { print -u2 -- "HISTORY $2 $3 $4"; '
-        '[[ $2 == *0001 ]] && print dev-api-98 || print dev-api-99; }; '
+        '[[ $2 == *0001 ]] && sample_receipt 98 || sample_receipt 99; }; '
         '_dev_resume_session() { print -u2 UNEXPECTED_LEGACY_LAUNCH; return 1; }; '
         '_dev_open_tab() { print -r -- "TAB $*"; }; '
     )
@@ -111,9 +114,9 @@ def test_local_transcripts_use_history_allocation_once_per_conversation(zsh, age
         assert result.stdout.count(f'HISTORY {sid} {agent} launch') == 1
     assert 'UNEXPECTED_LEGACY_LAUNCH' not in result.stdout
     assert 'slot already used' not in result.stdout
-    assert 'attach-session -t =dev-api-98:' in zsh.log.read_text()
+    assert 'attach-session -t %98' in zsh.log.read_text()
     if batch:
-        assert 'TAB t open api 99 --cli --local' in result.stdout
+        assert '_t_history_attach api-99' in result.stdout
 
 
 def test_resume_history_selects_inactive_conversation_from_busy_slot(zsh):
@@ -122,26 +125,26 @@ def test_resume_history_selects_inactive_conversation_from_busy_slot(zsh):
     setup = shell_candidates([history_row()]) + (
         f"_dev_session_rows() {{ print -r -- 'owner\t{wt}\tapi-3\tdetached\tactive\tCurrent work\tcodex'; }}; "
         '_t_fzf_filtered() { print -r -- "$1"; }; '
-        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print dev-api-99; }; '
+        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; sample_receipt 99; }; '
     )
     result = zsh(setup + '_t_resume api', _tty=True,
                  FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
     assert result.returncode == 0, result.stdout
     assert 'HISTORY api saved codex' in result.stdout
-    assert 'attach-session -t =dev-api-99:' in zsh.log.read_text()
+    assert 'attach-session -t %99' in zsh.log.read_text()
     assert 'send-keys' not in zsh.log.read_text()
 
 
 def test_resume_history_multiple_conversations_allocate_independent_slots(zsh):
     setup = shell_candidates([history_row('one'), history_row('two')]) + (
         '_t_fzf_filtered() { print -r -- "$1"; }; '
-        '_t_resume_history_launch() { [[ $2 == one ]] && print dev-api-98 || print dev-api-99; }; '
+        '_t_resume_history_launch() { [[ $2 == one ]] && sample_receipt 98 || sample_receipt 99; }; '
         '_dev_open_tab() { print -r -- "TAB $*"; }; '
     )
     result = zsh(setup + '_t_resume api', _tty=True)
     assert result.returncode == 0, result.stdout
     assert 'already revived' not in result.stdout
-    assert ('TAB t open api 98' in result.stdout or 'TAB t open api 99' in result.stdout)
+    assert ('_t_history_attach api-98' in result.stdout or '_t_history_attach api-99' in result.stdout)
 
 
 @pytest.mark.parametrize('failure_at,code', [('a', 1), ('b', 1), ('b', 130)])
@@ -151,7 +154,7 @@ def test_batch_failure_stops_later_launches_and_keeps_ready_hints(zsh, failure_a
       _t_resume_history_launch() {{
         print -u2 -- "ATTEMPT $2"
         [[ $2 == {failure_at} ]] && {{ print -u2 'exact writer diagnostic'; return {code}; }}
-        print dev-api-98
+        sample_receipt 98
       }}
       _t_resume_history_registered() {{ return 0; }}
       _dev_open_tab() {{ print UNEXPECTED_TAB; }}
@@ -170,7 +173,7 @@ def test_batch_failure_stops_later_launches_and_keeps_ready_hints(zsh, failure_a
 def test_batch_registration_failure_reports_already_launched_owner(zsh):
     setup = shell_candidates([history_row('a'), history_row('b')]) + '''
       _t_fzf_filtered() { print -r -- "$1"; }
-      _t_resume_history_launch() { print dev-api-98; }
+      _t_resume_history_launch() { sample_receipt 98; }
       _t_resume_history_registered() { return 1; }
       _dev_open_tab() { print UNEXPECTED_TAB; }
     '''
@@ -185,7 +188,7 @@ def test_batch_registration_failure_reports_already_launched_owner(zsh):
 def test_batch_tab_failure_never_hides_summary_behind_first_attachment(zsh):
     setup = shell_candidates([history_row('a'), history_row('b'), history_row('c')]) + '''
       _t_fzf_filtered() { print -r -- "$1"; }
-      _t_resume_history_launch() { [[ $2 == a ]] && print dev-api-98 || print dev-api-99; }
+      _t_resume_history_launch() { [[ $2 == a ]] && sample_receipt 98 || sample_receipt 99; }
       _t_resume_history_registered() { return 0; }
       _dev_open_tab() { print -u2 TAB_ATTEMPT; return 1; }
     '''
@@ -205,7 +208,7 @@ def test_resume_history_host_prepares_then_uses_selected_destination(zsh):
     )
     result = zsh('DEV_HANDOFF[codex]=t; ' + setup + '_t_resume api --host destination')
     assert result.returncode == 0, result.stderr
-    assert 'HISTORY api saved codex prepare' in result.stderr
+    assert 'HISTORY api saved codex transfer' in result.stderr
     assert 'LAND destination saved /prepared/api-99 codex detach' in result.stderr
     assert 'on destination' in result.stdout
 
@@ -225,12 +228,12 @@ def test_resume_history_cancel_and_days_do_not_launch(zsh):
 def test_resume_history_live_id_attaches_exact_owner(zsh):
     setup = shell_candidates([history_row()]) + (
         "_dev_session_rows() { print -r -- 'saved\t/current/tree\tapi-88\tdetached\tactive\tLive\tcodex'; }; "
-        '_t_dev() { print -r -- "ATTACH $*"; }; '
+        '_t_history_attach() { print -r -- "ATTACH $*"; }; '
         '_t_resume_history_launch() { print UNEXPECTED; }; '
     )
     result = zsh(setup + '_t_resume api --live', _tty=True)
     assert result.returncode == 0, result.stdout
-    assert 'ATTACH api 88' in result.stdout and 'UNEXPECTED' not in result.stdout
+    assert 'ATTACH api-88 saved /current/tree codex' in result.stdout and 'UNEXPECTED' not in result.stdout
 
 
 def test_resume_history_removed_app_rejects_before_preparing(zsh):
@@ -305,7 +308,7 @@ def test_explicit_slot_saved_selection_preserves_busy_owner(zsh):
     setup = shell_candidates([history_row()]) + (
         f"_dev_session_rows() {{ print -r -- 'owner\t{wt}\tapi-3\tdetached\tactive\tCurrent work\tcodex'; }}; "
         '_t_fzf_filtered() { print -r -- "$1"; }; '
-        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print dev-api-99; }; '
+        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; sample_receipt 99; }; '
         '_t_dev() { print UNEXPECTED_ATTACH; }; '
     )
     result = zsh(setup + 't resume api 3 --days all', _tty=True,
@@ -314,7 +317,7 @@ def test_explicit_slot_saved_selection_preserves_busy_owner(zsh):
     assert 'HISTORY api saved codex' in result.stdout
     assert 'UNEXPECTED_ATTACH' not in result.stdout
     log = zsh.log.read_text()
-    assert 'attach-session -t =dev-api-99:' in log
+    assert 'attach-session -t %99' in log
     assert 'respawn-pane' not in log and 'kill-session' not in log
 
 
@@ -322,11 +325,11 @@ def test_explicit_slot_live_selection_attaches_exact_owner(zsh):
     setup = shell_candidates([history_row()]) + '''
       _dev_session_rows() { printf 'saved\t/current/tree\tapi-88\tdetached\tactive\tLive\tcodex\n'; }
       _t_fzf_filtered() { print -r -- "$2"; }
-      _t_dev() { print -r -- "ATTACH $*"; }
+      _t_history_attach() { print -r -- "ATTACH $*"; }
       _t_resume_history_launch() { print UNEXPECTED_LAUNCH; }
     '''
     result = zsh(setup + 't session resume api 3 --days all', _tty=True)
-    assert result.returncode == 0 and 'ATTACH api 88' in result.stdout
+    assert result.returncode == 0 and 'ATTACH api-88 saved /current/tree codex' in result.stdout
     assert 'UNEXPECTED_LAUNCH' not in result.stdout
 
 
