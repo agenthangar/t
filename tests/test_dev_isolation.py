@@ -114,6 +114,8 @@ from pathlib import Path
 import signal
 import sys
 import time
+if sys.argv[1:] == ['--test-ready']:
+    sys.exit(0)
 marker = Path(os.environ['T_TEST_INTERRUPT_ONCE'])
 if not marker.exists():
     marker.touch()
@@ -125,6 +127,9 @@ if not marker.exists():
 os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])
 ''')
     stub.chmod(0o755)
+    # macOS can take longer than the selector's Git timeout to first execute a
+    # newly written script. Finish that setup before testing signal delivery.
+    subprocess.run([str(stub), '--test-ready'], env=env, check=True, timeout=30)
     env['T_TEST_INTERRUPT_ONCE'] = str(home / 'interrupted')
 
 
