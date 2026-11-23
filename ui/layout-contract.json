@@ -24,6 +24,9 @@
         "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
         "tests/test_picker_ui.py::test_open_discovery_notice_keeps_focused_row_visible",
         "tests/test_design_geometry.py::test_real_picker_columns_do_not_shift_on_search",
+        "tests/test_picker_reference.py::test_resume_reference_native_section_geometry",
+        "tests/test_picker_reference.py::test_picker_reference_uses_native_rows_and_marker_vocab",
+        "tests/test_picker_ui.py::test_shared_resume_reference_real_picker_spacing_and_marks",
         "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state",
         "tests/test_external_codex.py::test_external_picker_renders_and_reveals_hidden_sessions",
         "tests/test_picker_ui.py::test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks",
@@ -110,7 +113,8 @@
     "models": {
       "tests": [
         "tests/test_model_selection.py::test_comparison_picker_layout_navigation_and_source_keys",
-        "tests/test_model_selection.py::test_context_and_actions_align"
+        "tests/test_model_selection.py::test_context_and_actions_align",
+        "tests/test_model_display.py::test_local_model_reference_states_and_memory_match_rows_and_legend"
       ],
       "renderers": []
     },

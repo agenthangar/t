@@ -512,7 +512,7 @@ SH
     _t_picker_bind=
     _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo ctrl-s:toggle-sort ctrl-y:next-sort alt-s:toggle-sort'
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
-      _t_picker_specs="$_t_picker_specs ctrl-d:merged alt-f:edit-filters"
+      _t_picker_specs="$_t_picker_specs ctrl-d:merged"
     else
       _t_picker_specs="$_t_picker_specs ctrl-d:match-interface"
     fi
@@ -536,6 +536,9 @@ SH
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     set -- --no-sort "$@"
     if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
+      # Disclosure changes the header while retaining focus and marks.
+      # shellcheck disable=SC2016
+      _t_picker_bind="$_t_picker_bind,"'alt-f:execute-silent(sh "$T_PICKER_TOGGLE" edit-filters)+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
       _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
       if [ "${T_PICKER_RESUME_LAST:-}" = 1 ]; then
         # Unlike accepting a row, this action also works with no search matches.

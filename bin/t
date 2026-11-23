@@ -5744,7 +5744,7 @@ class _RailUI:
         text = title.upper() + separator + detail
         return f"{self.rail}   {st.b}{st.c}{self.clip(text, self.cols() - 6)}{st.r}"
 
-    def row(self, label, value=None, *, selected=False, mark=None, label_width=0, accent=""):
+    def row(self, label, value=None, *, selected=False, mark=None, label_width=0, accent="", styled_label=None):
         """Style only after clipping plain text: ANSI codes never count as columns."""
         st, width = self.st, self.cols()
         pre = f"{st.c}▸{st.r}" if selected else " "
@@ -5769,9 +5769,10 @@ class _RailUI:
             body = styled(left, color) + "   " + styled(right, st.c)
         else:
             plain = self.clip(label, avail)
-            body = styled(plain, color)
+            body = styled(plain if styled_label is None else styled_label, color)
         if selected:
-            body = styled(plain + ' ' * max(0, avail - _display_width(plain)), st.focus)
+            padded = (plain if styled_label is None else styled_label) + ' ' * max(0, avail - _display_width(plain))
+            body = styled(padded, st.focus)
         lines = [f"{self.rail}  {pre} {box}{body}"]
         if stacked:
             detail = self.clip(value, width - 10)
@@ -5958,7 +5959,10 @@ class _RailUI:
                 display.extend((line, None) for line in lines)
             if context:
                 display.append((self.rail, None))
-            table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
+            model_display = _model_display() if model_table else None
+            table_header, table_rows = model_display["table"](model_table, self.cols()-8) if model_table else ("", {})
+            colored_rows = (model_display["table"](model_table, self.cols()-8, color=True, focus=rows[cur][0])[1]
+                            if model_table and self.st.r else {})
             table_keys = [key for key, _ in rows if key in table_rows]
             label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
             widths = [max(len(title), max((len(str(cell[i])) for cell in cells.values()), default=0))
@@ -5977,7 +5981,9 @@ class _RailUI:
                     display.append((f"{self.rail}    {self.st.y}{table_header}{self.st.r}", None))
                 mark = ("◼" if n in marks else "◻") if multi else None
                 if key in table_rows:
-                    display += [(line, n) for line in self.row(table_rows[key], selected=n == cur, mark=mark, accent="y" if key in disabled else accents.get(key, ""))]
+                    display += [(line, n) for line in self.row(
+                        table_rows[key], selected=n == cur, mark=mark, styled_label=colored_rows.get(key),
+                        accent="y" if key in disabled else accents.get(key, ""))]
                 elif key in cells:
                     if table and first_cell:
                         heading = 'Model'.ljust(model_width) + '  ' + '  '.join(t.rjust(w) for t, w in zip(columns, widths))
@@ -6021,9 +6027,11 @@ class _RailUI:
                         display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
                 if table_keys and key == table_keys[-1]:
                     display.append((self.rail, None))
-                    display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None)
-                                   for line in _model_display()["legend"](model_table, benchmark_suite)
-                                   for part in _wrap_columns(line, self.cols()-8))
+                    legend_width = self.cols() - 8
+                    for line in model_display["legend"](model_table, benchmark_suite, columns=legend_width,
+                                                        color=bool(self.st.r)):
+                        parts = [line] if '\033[' in line else _wrap_columns(line, legend_width)
+                        display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None) for part in parts)
                     display.append((self.rail, None))
             self.frame(label, display, cur, keys, primary, flash)
             flash = ""

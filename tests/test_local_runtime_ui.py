@@ -215,7 +215,7 @@ def test_background_action_shows_result_without_refresh_key(ui_module,t_mod,monk
     result=m.run_model_action(ui,operation,'model')
     frames='\n'.join(line for frame in ui.frames for line in frame)
     assert ('Queue wait expired' in frames) if failed else result['ready']
-    assert ('Model action failed' if failed else 'Model test complete') in frames
+    assert ('Model action failed' if failed else 'Ready for offline use') in frames
 
 
 def test_hub_all_branches_and_command_errors(ui_module,monkeypatch,capsys):

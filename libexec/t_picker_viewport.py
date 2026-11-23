@@ -379,7 +379,13 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
                                 and any(c < 32 or c == 127 for c in event)):
                             if not barrier(): break
                         if event == b'\x1b[200~': pasted = True
-                        if event == b'\x1f' and not pasted: preview_visible = not preview_visible
+                        if event == b'\x1f' and not pasted:
+                            preview_visible = not preview_visible
+                            to_child.extend(event)
+                            # Settle the new pane geometry before the wheel
+                            # or resize that follows the toggle.
+                            if not barrier(): break
+                            continue
                         if event == b'\x1a' and not pasted:
                             suspend()
                         else:

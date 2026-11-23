@@ -499,7 +499,7 @@ def test_history_sort_block_matches_open_and_preserves_section_spacing(history, 
     saved = history.picker_header(rows(3), '', 50, 1, width).splitlines()
     def sort_block(lines):
         start = next(i for i, line in enumerate(lines) if line.startswith('Sort:'))
-        return lines[start:-1]  # Exclude column heading, retain the separating blank row.
+        return lines[start:start + 2]  # Sort summary and choices shared by open and history.
     assert [line.replace('last closed · ', '') for line in sort_block(saved)] == sort_block(opened)
     start = next(i for i, line in enumerate(saved) if line.startswith('Sort:'))
     if width > 40 and height > 14:
