@@ -63,8 +63,11 @@ class Recovery:
     def shell(self, *args, optional=False, timeout=90):
         env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
         env.update(T_OPEN_RECOVERY_ACTIVE='1', T_MCP_DETACHED='1', T_NO_UPDATE_CHECK='1')
+        # The parent owns the repair prompt. An interactive login shell can
+        # take its foreground process group even with captured output.
         result = subprocess.run(['zsh', '-lic', self.api['ZSH_PRELUDE'] + shlex.join(args)],
-                                env=env, capture_output=True, text=True, timeout=timeout)
+                                env=env, stdin=subprocess.DEVNULL, start_new_session=True,
+                                capture_output=True, text=True, timeout=timeout)
         if result.returncode and not optional:
             raise ValueError(result.stderr.strip() or result.stdout.strip() or 'session recovery failed')
         return result.stdout if not result.returncode else ''
