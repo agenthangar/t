@@ -5811,11 +5811,20 @@ class _RailUI:
         foreground = 30 if luminance > .179 else 97
         return f"[\033[48;2;{red};{green};{blue}m\033[{foreground}m{text}{self.st.r}]"
 
-    def frame(self, label, display, current, keys, primary=None, flash=""):
+    def frame(self, label, display, current, keys, primary=None, flash="", notice=""):
         """Window a [(styled line, item key)] body; headings have no item key.
         Used by simple pickers and editable setup/install lists alike."""
         st = self.st
         head, footer = self.chrome(label, keys, primary, flash)
+        if notice:
+            width = self.cols() - 5
+            parts = [part for line in textwrap.wrap(notice, width) for part in _wrap_columns(line, width)]
+            # Reserve rows for the focused action, scroll markers and key hints.
+            room = max(1, self.lines() - len(head) - len(footer) - 4)
+            if len(parts) > room:
+                parts = parts[:room]
+                parts[-1] = self.clip(parts[-1] + '…', width)
+            head.extend(f"    {st.w}{part}{st.r}" for part in parts)
         heights = [_term_rows(line, self.cols()) for line, _ in display]
         budget = max(2, self.lines() - sum(_term_rows(x, self.cols()) for x in head + footer) - 1)
         focused = [i for i, (_, key) in enumerate(display) if key == current and key is not None] or [0]
@@ -5928,7 +5937,7 @@ class _RailUI:
              values=None, sections=None, accents=None, primary=None, shortcuts=None,
              on_back=None, back_label=None, empty_choice=None, disabled=None, exclusive_choices=(), context=(),
              columns=(), cells=None, notes=None, details=None, focused_shortcuts=None, model_table=None, benchmark_suite="",
-             refresh=None, refresh_interval=.5, cycle=None, swatches=None):
+             refresh=None, refresh_interval=.5, cycle=None, swatches=None, notice=""):
         """Single/multiple selection on the shared row/frame template.
         Sections and unset-choice spacing are not selectable. An optional
         empty_choice makes that checklist row an exclusive reset selection.
@@ -6042,7 +6051,7 @@ class _RailUI:
                         parts = [line] if '\033[' in line else _wrap_columns(line, legend_width)
                         display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None) for part in parts)
                     display.append((self.rail, None))
-            self.frame(label, display, cur, keys, primary, flash)
+            self.frame(label, display, cur, keys, primary, flash, notice)
             flash = ""
             if refresh is not None:
                 import select

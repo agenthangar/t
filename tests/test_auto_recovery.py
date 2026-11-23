@@ -619,27 +619,34 @@ def test_mac_boot_reads_stable_session_uuid(auto, monkeypatch):
     assert seen == [['sysctl', '-n', 'kern.bootsessionuuid']]
 
 
-def test_prior_boot_opens_multiple_distinct_detached_holding_panes(terminal, monkeypatch):
+def test_holding_panes_resume_exact_conversation_with_offline_peer(terminal, monkeypatch):
     _, tmux, _, env, home = terminal
     auto = load_script(REPO_ROOT/'libexec/t_auto_recovery.py', 'holding_real')
     (home/'.zshrc').write_text(f'''
+export PATH="$HOME/bin:$PATH"
 export T_HOME={auto.shlex.quote(str(REPO_ROOT))}
 source "$T_HOME/zsh/sessions.zsh"
 source "$T_HOME/zsh/resume.zsh"
 _dev_fg_rows() {{ :; }}
-_dev_rows_all() {{ :; }}
 ''')
     bin_dir = home/'bin'
     bin_dir.mkdir()
     fake = bin_dir/'claude'
-    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/resumed"\nsleep 60\n')
+    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$TMUX_PANE" "$@" >> "$HOME/resumed"\nsleep 60\n')
     fake.chmod(0o755)
-    monkeypatch.setenv('PATH', str(bin_dir)+os.pathsep+os.environ['PATH'])
+    ssh = bin_dir/'ssh'
+    ssh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/ssh-scans"\n'
+                   'if [ -f "$HOME/known-owner" ]; then cat "$HOME/known-owner"; exit 0; fi\n'
+                   'echo "simulated SSH timeout" >&2\nexit 255\n')
+    ssh.chmod(0o755)
+    config = home/'hosts.zsh'
+    config.write_text('REMOTE_HOSTS[offline]=offline.invalid\n')
+    env.update(PATH=str(bin_dir)+os.pathsep+env['PATH'], T_LOCAL_RC=str(config))
+    monkeypatch.setenv('PATH', env['PATH'])
+    monkeypatch.setenv('T_LOCAL_RC', str(config))
     assert tmux('new-session', '-d', '-s', 'anchor', 'sleep', '60').returncode == 0
     socket = tmux('display-message', '-p', '-t', '=anchor:', '#{socket_path}').stdout.strip()
     monkeypatch.setenv('TMUX', socket+',0,0')
-    monkeypatch.setenv('T_LOCAL_RC', str(home/'empty.zsh'))
-    (home/'empty.zsh').touch()
     env['TMUX'] = socket+',0,0'
     enable(auto)
     for i in range(1, 4):
@@ -666,15 +673,34 @@ _dev_rows_all() {{ :; }}
         assert tmux('send-keys', '-t', holder[2], *keys).returncode == 0
 
     def wait_for(holder, title):
-        until(lambda: title in tmux('capture-pane', '-p', '-t', holder[2]).stdout)
+        until(lambda: title in tmux('capture-pane', '-p', '-t', holder[2]).stdout,
+              detail=lambda: tmux('capture-pane', '-p', '-t', holder[2]).stdout)
 
     keys(first, 'Enter')
     wait_for(first, 'Launch settings')
     keys(first, 'Enter')
     wait_for(first, 'Review resume')
+    scans = home/'ssh-scans'
+    scans.write_text('')
+    (home/'known-owner').write_text(f'{first[3]}\t/other/worktree\tdemo-9\tdetached\tactive\tExisting writer\tclaude\n')
+    keys(first, 'Up', 'Enter')
+    wait_for(first, 'This conversation is already open in demo-9 on offline.')
+    failed_frame = tmux('capture-pane', '-p', '-t', first[2]).stdout
+    assert 'Retry' in failed_frame
+    assert 'Traceback' not in failed_frame
+    assert not (home/'resumed').exists()
+    assert tmux('show-options', '-qv', '-t', '='+first[1]+':', '@t_recovery_holding').stdout.strip() == first[3]
+    (home/'known-owner').unlink()
+    keys(first, 'Enter')
+    wait_for(first, 'Launch settings')
+    retry_frame = tmux('capture-pane', '-p', '-t', first[2]).stdout
+    assert 'already open in demo-9' not in retry_frame
+    keys(first, 'Enter')
+    wait_for(first, 'Review resume')
     keys(first, 'Up', 'Enter')
     until(lambda: (home/'resumed').exists(), detail=lambda: tmux('capture-pane', '-p', '-t', first[2]).stdout)
-    assert (home/'resumed').read_text().splitlines() == ['--resume', first[3]]
+    assert 'offline.invalid' in scans.read_text()
+    assert (home/'resumed').read_text().splitlines() == [first[2], '--resume', first[3]]
     keys(second, 'Down', 'Enter')
     wait_for(second, 'Dismiss this holding pane?')
     keys(second, 'Down', 'Enter')
@@ -682,6 +708,18 @@ _dev_rows_all() {{ :; }}
     monkeypatch.setattr(auto.Runtime, 'live', lambda self: [dict(agent='claude', sid=first[3])])
     auto.Engine().tick()
     assert auto.holding_panes() == [third]
+
+
+def test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics(auto):
+    diagnostics = ('warning: dev: local session scan failed (rc=1)\n'
+                   'warning: dev: peer SSH diagnostic: connection timed out\n'
+                   'warning: t: saved conversation ownership is unknown because a local or configured host scan failed')
+    assert auto.holding_resume_notice(ValueError(diagnostics)) == (
+        'Couldn’t check whether this conversation is already open on this computer. '
+        'Choose Review launch settings to try again.')
+    assert auto.holding_resume_notice(ValueError('warning: dev: peer SSH diagnostic: timeout\n'
+                                                't recovery: workspace changed before recovery')) == (
+        'Couldn’t resume — workspace changed before recovery')
 
 
 def test_supervisor_inflight_and_changed_generation_prevent_second_launch(auto, tmp_path, monkeypatch):

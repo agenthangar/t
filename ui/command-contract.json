@@ -959,7 +959,7 @@
           ],
           "read_only": false,
           "tests": [
-            "tests/test_auto_recovery.py::test_prior_boot_opens_multiple_distinct_detached_holding_panes"
+            "tests/test_auto_recovery.py::test_holding_panes_resume_exact_conversation_with_offline_peer"
           ],
           "notes": "Attach the existing holding pane without starting another agent. Use the shared rail to inspect real recovery metadata and review launch settings before resuming.",
           "layout": "rail"

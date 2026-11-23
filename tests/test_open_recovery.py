@@ -1,5 +1,15 @@
 """Recovery resets only disposable target state and preserves source/context."""
+import fcntl
 import json
+import os
+import pty
+import select
+import signal
+import shutil
+import subprocess
+import sys
+import termios
+import time
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
@@ -403,3 +413,67 @@ def test_repair_rejects_invalid_agent_without_launch(recovery, monkeypatch):
     r.shell = lambda *a: pytest.fail('invalid agent must not launch')
     with pytest.raises(ValueError, match='unsupported recovery agent'):
         r.repair()
+
+
+@pytest.mark.skipif(not shutil.which('zsh'), reason='zsh required')
+def test_captured_recovery_shell_preserves_terminal_foreground(tmp_path):
+    home = tmp_path/'terminal-home'
+    home.mkdir()
+    (home/'.zshenv').write_text('skip_global_compinit=1\n')
+    (home/'.zshrc').write_text('')
+    script = tmp_path/'terminal.py'
+    script.write_text(f'''import json, os, runpy, sys
+m = runpy.run_path({str(REPO_ROOT/'libexec/t_open_recovery.py')!r})
+r = object.__new__(m['Recovery'])
+r.api = {{'ZSH_PRELUDE': ''}}
+before = os.tcgetpgrp(0)
+child = json.loads(r.shell(sys.executable, '-c',
+    'import json,os; print(json.dumps(dict(sid=os.getsid(0),pgrp=os.getpgrp(),stdin=os.isatty(0))))'))
+print(json.dumps(dict(before=before,after=os.tcgetpgrp(0),sid=os.getsid(0),child=child)), flush=True)
+# A stopped parent cannot service the repair menu. Keep the test bounded even
+# when the unfixed scanner leaves this process in a background process group.
+if os.tcgetpgrp(0) == os.getpgrp():
+    print('INPUT_READY', flush=True)
+    print('INPUT=' + sys.stdin.readline().strip(), flush=True)
+''')
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+    env.update(HOME=str(home), ZDOTDIR=str(home), XDG_CONFIG_HOME=str(home/'config'),
+               XDG_STATE_HOME=str(home/'state'), XDG_CACHE_HOME=str(home/'cache'), TERM='xterm-256color')
+    master, slave = pty.openpty()
+    def control_terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    process = subprocess.Popen([sys.executable, str(script)], env=env,
+                               stdin=slave, stdout=slave, stderr=slave,
+                               preexec_fn=control_terminal)
+    os.close(slave)
+    output = b''
+    sent = False
+    deadline = time.monotonic()+10
+    try:
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], .1)[0]:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+                if b'INPUT_READY' in output and not sent:
+                    os.write(master, b'retry\n')
+                    sent = True
+            elif process.poll() is not None:
+                break
+        assert process.wait(timeout=1) == 0, output.decode(errors='replace')
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        os.close(master)
+    text = output.decode(errors='replace')
+    report = next(json.loads(line) for line in text.splitlines() if line.startswith('{'))
+    assert report['after'] == report['before'], text
+    assert report['child']['sid'] != report['sid'], text
+    assert report['child']['stdin'] is False, text
+    assert 'INPUT=retry' in text, text

@@ -32,6 +32,10 @@ NODES = (
     'tests/test_session_lifecycle.py::test_public_remote_open_uses_login_shell_and_reattaches[codex]',
     'tests/test_session_lifecycle.py::test_public_resume_revives_saved_thread_once[codex-False-repo-1]',
     'tests/test_session_lifecycle.py::test_public_resume_revives_saved_thread_once[claude-True-1]',
+    'tests/test_auto_recovery.py::test_holding_panes_resume_exact_conversation_with_offline_peer',
+    'tests/test_auto_recovery.py::test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics',
+    'tests/test_open_recovery.py::test_captured_recovery_shell_preserves_terminal_foreground',
+    'tests/test_offline_open.py::test_interactive_numbered_open_on_incomplete_scan_uses_resume_picker[selected-0]',
     # Small policy checks keep the smoke/nightly and publication boundaries gated.
     'tests/test_ci_policy.py::test_routine_scope_ignores_changed_paths',
     'tests/test_ci_policy.py::test_required_gate_rejects_failures_and_skips',

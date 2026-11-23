@@ -320,10 +320,28 @@ def holding_rows():
                          'detached', 'idle', title + ' · Holding pane', row['agent']))
 
 
+def holding_resume_notice(error):
+    if isinstance(error, subprocess.TimeoutExpired):
+        return 'Resume timed out. Choose Review launch settings to try again.'
+    # The shell writes incidental scan warnings before the final blocking reason.
+    lines = str(error).strip().splitlines()
+    cause = display_text(lines[-1]) if lines else ''
+    if cause == 'warning: t: saved conversation ownership is unknown because a local or configured host scan failed':
+        return ('Couldn’t check whether this conversation is already open on this computer. '
+                'Choose Review launch settings to try again.')
+    owner_prefix = 't: saved conversation is already live in '
+    if cause.startswith(owner_prefix):
+        return f'This conversation is already open in {cause[len(owner_prefix):]}. Retry after that session closes.'
+    if not cause or cause.startswith('warning:') or cause == 'guarded session restore failed':
+        return 'Couldn’t resume this conversation. Choose Review launch settings to try again.'
+    return 'Couldn’t resume — ' + cause.removeprefix('t recovery: ').removeprefix('t: ')
+
+
 def holding(agent, sid, generation):
     identity = key(agent, sid)
     ui = runpy.run_path(str(ROOT/'bin/t'))['_RailUI']()
     runtime = Runtime()
+    notice = ''
     while True:
         row = read(root()/'journal.json').get('sessions', {}).get(identity)
         if not enabled() or not row or not row.get('open') or row['generation'] != generation:
@@ -341,11 +359,12 @@ def holding(agent, sid, generation):
         try:
             action = ui.pick(slot + ' · Recovery holding pane',
                              [('review', 'Review launch settings'), ('dismiss', 'Dismiss holding pane'),
-                              ('back', 'Detach')], context=context, back_label='detach')
+                              ('back', 'Detach')], context=context, back_label='detach', notice=notice)
+            notice = ''
             if action == 'review':
                 pane_menu = True
                 choices = {
-                    'codex': [('default', 'Current Codex defaults'), ('restricted', 'Read only · ask on request')],
+                    'codex': [('default', 'Current Codex defaults'), ('restricted', 'Read only')],
                     'claude': [('default', 'Current Claude defaults'), ('restricted', 'Plan mode')],
                 }.get(agent, [('default', 'Current native agent defaults')])
                 selection = ui.pick('Launch settings', choices, back_label='back')
@@ -377,7 +396,7 @@ def holding(agent, sid, generation):
             if (not enabled() or latest.get('paused') or not latest.get('open') or
                     latest.get('generation') != generation or not pane
                     or pane[1] != os.environ.get('TMUX_PANE')):
-                ui.done('unavailable', 'Recovery state changed. Reopen the slot to review it again.')
+                notice = 'Recovery state changed. Reopen the slot to review it again.'
                 continue
             if action == 'remove':
                 retire(agent, sid)
@@ -391,7 +410,7 @@ def holding(agent, sid, generation):
                                  'options': options}, '', pane=pane)
                 return 0
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
-                ui.done('unavailable', display_text(exc))
+                notice = holding_resume_notice(exc)
 
 
 def begin(agent, argv, cwd):
