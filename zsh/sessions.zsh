@@ -2345,7 +2345,7 @@ _dev_with_launch_locks() {
 }
 
 _dev_launch_preflight() {
-  local session=$1 dir=${2:A} sid=$3 name owner_path rows rc host row_sid row_cwd row_name
+  local session=$1 dir=${2:A} sid=$3 name owner_path rows rc host row_sid row_cwd row_name row_tail
   if [[ -z $sid ]] && _dev_legacy_workspace_reserved "$dir"; then
     print -u2 -- 't: this workspace has a retired integration reservation; use t session resume to resume its exact saved conversation safely'
     return 1
@@ -2385,7 +2385,7 @@ _dev_launch_preflight() {
     _t_warn 't: saved conversation ownership is unknown because a local or configured host scan failed'
     return 1
   fi
-  while IFS=$'\t' read -r host row_sid row_cwd row_name; do
+  while IFS=$'\t' read -r host row_sid row_cwd row_name row_tail; do
     if [[ $host == local && $row_name == ${_T_AUTO_HOLD_SESSION#dev-} &&
           -n ${_T_AUTO_HOLD_SESSION:-} && ${row_cwd:A} == $dir ]] &&
        _t_auto_holding_verified "$_T_AUTO_HOLD_SESSION" "$dir" "$sid" "$_T_AUTO_HOLD_SOCKET" "$_T_AUTO_HOLD_PANE"; then

@@ -1969,6 +1969,8 @@ _t_auto_hold_claimed() {
 _t_auto_resume_holding_claimed() {
   emulate -L zsh
   local session=$1 dir=$2 sid=$3 agent=$4 launch=$5 socket=$6 pane=$7
+  # The user confirmed this resume in the holding pane.
+  local _T_RESUME_ALLOW_UNAVAILABLE=1
   local _T_AUTO_HOLD_SESSION=$session _T_AUTO_HOLD_SOCKET=$socket _T_AUTO_HOLD_PANE=$pane
   _t_auto_holding_verified "$session" "$dir" "$sid" "$socket" "$pane" || return 1
   _dev_launch_preflight "$session" "$dir" "$sid" || return $?

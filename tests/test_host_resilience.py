@@ -213,7 +213,7 @@ def test_partial_resume_checks_selected_saved_writer_and_starts(zsh):
       _dev_ensure_session_cwd() { print -r -- "$1"; }
       _t_resume_history_launch() {
         _dev_resume_session dev-api-3 "$CWD" "$2" "$3" >&2 || return $?
-        print dev-api-3
+        printf '%s\t%s\t%s\n' dev-api-3 "$CWD" '$3:%3'
       }
       _t_resume api 3 --days all
     ''', CWD=str(cwd))

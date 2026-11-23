@@ -619,27 +619,32 @@ def test_mac_boot_reads_stable_session_uuid(auto, monkeypatch):
     assert seen == [['sysctl', '-n', 'kern.bootsessionuuid']]
 
 
-def test_prior_boot_opens_multiple_distinct_detached_holding_panes(terminal, monkeypatch):
+def test_holding_panes_resume_exact_conversation_with_offline_peer(terminal, monkeypatch):
     _, tmux, _, env, home = terminal
     auto = load_script(REPO_ROOT/'libexec/t_auto_recovery.py', 'holding_real')
     (home/'.zshrc').write_text(f'''
+export PATH="$HOME/bin:$PATH"
 export T_HOME={auto.shlex.quote(str(REPO_ROOT))}
 source "$T_HOME/zsh/sessions.zsh"
 source "$T_HOME/zsh/resume.zsh"
 _dev_fg_rows() {{ :; }}
-_dev_rows_all() {{ :; }}
 ''')
     bin_dir = home/'bin'
     bin_dir.mkdir()
     fake = bin_dir/'claude'
-    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/resumed"\nsleep 60\n')
+    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$TMUX_PANE" "$@" >> "$HOME/resumed"\nsleep 60\n')
     fake.chmod(0o755)
-    monkeypatch.setenv('PATH', str(bin_dir)+os.pathsep+os.environ['PATH'])
+    ssh = bin_dir/'ssh'
+    ssh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/ssh-scans"\necho "simulated SSH timeout" >&2\nexit 255\n')
+    ssh.chmod(0o755)
+    config = home/'hosts.zsh'
+    config.write_text('REMOTE_HOSTS[offline]=offline.invalid\n')
+    env.update(PATH=str(bin_dir)+os.pathsep+env['PATH'], T_LOCAL_RC=str(config))
+    monkeypatch.setenv('PATH', env['PATH'])
+    monkeypatch.setenv('T_LOCAL_RC', str(config))
     assert tmux('new-session', '-d', '-s', 'anchor', 'sleep', '60').returncode == 0
     socket = tmux('display-message', '-p', '-t', '=anchor:', '#{socket_path}').stdout.strip()
     monkeypatch.setenv('TMUX', socket+',0,0')
-    monkeypatch.setenv('T_LOCAL_RC', str(home/'empty.zsh'))
-    (home/'empty.zsh').touch()
     env['TMUX'] = socket+',0,0'
     enable(auto)
     for i in range(1, 4):
@@ -672,9 +677,12 @@ _dev_rows_all() {{ :; }}
     wait_for(first, 'Launch settings')
     keys(first, 'Enter')
     wait_for(first, 'Review resume')
+    scans = home/'ssh-scans'
+    scans.write_text('')
     keys(first, 'Up', 'Enter')
     until(lambda: (home/'resumed').exists(), detail=lambda: tmux('capture-pane', '-p', '-t', first[2]).stdout)
-    assert (home/'resumed').read_text().splitlines() == ['--resume', first[3]]
+    assert 'offline.invalid' in scans.read_text()
+    assert (home/'resumed').read_text().splitlines() == [first[2], '--resume', first[3]]
     keys(second, 'Down', 'Enter')
     wait_for(second, 'Dismiss this holding pane?')
     keys(second, 'Down', 'Enter')

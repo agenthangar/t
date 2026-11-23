@@ -32,6 +32,7 @@ NODES = (
     'tests/test_session_lifecycle.py::test_public_remote_open_uses_login_shell_and_reattaches[codex]',
     'tests/test_session_lifecycle.py::test_public_resume_revives_saved_thread_once[codex-False-repo-1]',
     'tests/test_session_lifecycle.py::test_public_resume_revives_saved_thread_once[claude-True-1]',
+    'tests/test_auto_recovery.py::test_holding_panes_resume_exact_conversation_with_offline_peer',
     # Small policy checks keep the smoke/nightly and publication boundaries gated.
     'tests/test_ci_policy.py::test_routine_scope_ignores_changed_paths',
     'tests/test_ci_policy.py::test_required_gate_rejects_failures_and_skips',
