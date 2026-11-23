@@ -140,8 +140,9 @@ attributes. See the [workflow appearance contract](ui/README.md#workflow-setting
 
 ## Required design adherence CI
 
-Every PR runs **Design adherence** on Linux with fzf 0.44.1 and 0.74.5, including
-fast validation. `ui/layout-contract.json` lists the required rendered fixtures
+Run **Design adherence** before opening a design-related PR and record both pinned
+fzf results in its description. Nightly CI and release validation run the same
+matrix against the pinned commit. See [CI validation](docs/ci.md#required-design-adherence). `ui/layout-contract.json` lists the required rendered fixtures
 for shared screen families and custom nested screens. Every command and
 conditional mode in the command inventory declares a layout profile; `inherit`
 means the mode uses its command's renderer guarantees. Machine-only modes and

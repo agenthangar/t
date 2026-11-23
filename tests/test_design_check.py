@@ -48,5 +48,9 @@ def test_design_job_is_required_on_both_pinned_fzf_versions():
     assert "fzf: ['0.44.1', '0.74.5']" in job
     assert 'ref: ${{ needs.scope.outputs.sha }}' in job
     assert 'python3 scripts/design_check.py run' in job
+    assert 'node tests/picker_preview.cjs' in job
+    script = (ROOT / 'scripts/check_design.sh').read_text()
+    assert 'python3 scripts/design_check.py run' in script
+    assert 'node tests/picker_preview.cjs' in script
     assert 'if: always()' in job
     assert 'design-adherence' in source.split('  ci:\n')[1]
