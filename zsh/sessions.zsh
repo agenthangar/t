@@ -2550,20 +2550,29 @@ _dev_new_session_effect() {
 _t_history_owner() {
   local label=$1 sid=$2 dir=${3:A} agent=$4 session="dev-$1" actual_sid actual_dir actual_agent immutable
   local wait_ready=$5 current owner_pid
+  local format='#{session_id}|#{session_path}' expected=${6:-} pane=
+  if [[ -n $expected || ( $wait_ready == wait && -n ${T_HISTORY_TOKEN:-} ) ]]; then
+    format='#{session_id}:#{pane_id}|#{session_path}'
+  fi
   local -F SECONDS=0
   tmux has-session -t "=$session:" 2>/dev/null || { print -u2 't resume: selected owner exited; rerun t resume'; return 1; }
   local identity
-  identity=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || return 1
+  identity=$(tmux display-message -p -t "=$session:" "$format" 2>/dev/null) || return 1
   immutable=${identity%%|*}; actual_dir=${identity#*|}
-  [[ $immutable == \$<-> ]] || { print -u2 't resume: could not verify selected owner identity'; return 1; }
+  if [[ -n $expected && $immutable != "$expected" ]]; then
+    print -u2 't resume: selected terminal was replaced before attach'; return 1
+  fi
+  [[ $immutable != *:%* ]] || pane=${immutable#*:}
+  [[ $immutable == \$<-> || $immutable == \$<->:%<-> ]] || { print -u2 't resume: could not verify selected owner identity'; return 1; }
   while true; do
     _DEV_PS_AT=0
     [[ $wait_ready != wait ]] || owner_pid=$(_dev_session_claude_pid "$session")
     actual_agent=$(_dev_agent_of_session "$session")
     actual_sid=$(_dev_session_sid "$session")
-    current=$(tmux display-message -p -t "=$session:" '#{session_id}|#{session_path}' 2>/dev/null) || {
+    current=$(tmux display-message -p -t "=$session:" "$format" 2>/dev/null) || {
       print -u2 't resume: selected owner exited; rerun t resume'; return 1
     }
+    [[ -n ${current%%|*} ]] || { print -u2 't resume: selected owner exited during startup'; return 1; }
     [[ ${current%%|*} == $immutable ]] || {
       print -u2 't resume: selected owner changed (session); rerun t resume'; return 1
     }
@@ -2572,7 +2581,7 @@ _t_history_owner() {
     }
     # An exited startup can lose its process identity. Report that failure before
     # comparing the fallback agent/SID, without following a replaced session.
-    if [[ $wait_ready == wait && $(tmux display-message -p -t "$immutable:" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
+    if [[ $wait_ready == wait && $(tmux display-message -p -t "${pane:-$immutable:}" '#{pane_dead}' 2>/dev/null) != 0 ]]; then
       print -u2 -- "t resume: resumed conversation exited during startup; inspect $HOME/.tmux-logs/$session.log"
       return 1
     fi
@@ -2597,7 +2606,8 @@ _t_history_owner() {
 # Attach-only history action: no generic open path can create a replacement owner.
 _t_history_attach() {
   local immutable agent=$4
-  immutable=$(_t_history_owner "$@") || return $?
+  immutable=$(_t_history_owner "$1" "$2" "$3" "$4" attach "${5:-}") || return $?
+  immutable=${immutable%%:*}
   _t_discovery_event local --activity
   _dev_workflow_attach "$agent"
   _t_terminal_close_install "dev-$1"
@@ -3105,9 +3115,10 @@ _t_session_attach() {
     _dev_workflow_attach "${2:-}"
   fi
   if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
-    tmux has-session -t "=$1:" || return 1
+    local target=${4:-"=$1:"}
+    tmux has-session -t "$target" || return 1
     if [[ ${T_MCP_NEW_WINDOW:-0} == 1 ]]; then
-      local target="=$1:" attach_command
+      local attach_command
       attach_command="unset TMUX T_MCP_DETACHED T_MCP_NEW_WINDOW; tmux attach-session -t ${(q)target}"
       if ! _dev_open_window "$attach_command"; then
         print -u2 -r -- "t mcp: session $1 is available, but its window could not be opened. Attach with: tmux attach-session -t ${(q)target}"

@@ -61,7 +61,7 @@ _t_resume_history_candidates() {
 # Resume a retained conversation through the exact-source verifier and fresh
 # workspace allocator. Stdout contains only the actual allocated tmux owner.
 _t_resume_history_launch() {
-  python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}" "${5:--}"
+  T_RESUME_OWNER_RECEIPT=1 python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}" "${5:--}" "${@:6}"
 }
 
 # Selected history may register a checkout in the Python worker. Make that exact
@@ -238,6 +238,7 @@ _t_resume() {
 
   local -x T_RESUME_CUTOFF=0
   [[ $days != all ]] && T_RESUME_CUTOFF=$(( EPOCHSECONDS - days * 86400 ))
+  local -A resume_hosts
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
   local -A history_seen history_emitted live_titles live_work
@@ -347,10 +348,11 @@ _t_resume() {
   # is running ANYWHERE becomes a live row pointing at its owner.
   # live_sid[sid] = loc \t alias \t slot \t summary \t agent, loc = here | <host>
   # | fg:<host> (a foreground owner: alias = its `t open` label, slot = -).
-  local -A live_sid live_sid_agent live_owner_sid
+  local -A live_sid live_sid_agent live_sid_cwd live_owner_sid
   local _lh _ls _lc _ln _lst _lctx _lsm _lag2
   while IFS=$'\t' read -r _lh _ls _lc _ln _lst _lctx _lsm _lag2; do
     [[ -n $_ls && $_ls != - && -n $_ln ]] || continue
+    live_sid_cwd[$_ls]=$_lc
     live_sid_agent[$_ls]=${_lag2:-claude}
     [[ $_lh == local ]] && _lh=here
     live_owner_sid[$_lh/$_ln]=$_ls
@@ -555,10 +557,11 @@ _t_resume() {
   done
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 16 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 17 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
+    resume_hosts[$history_fields[2]/$history_fields[9]/$history_fields[4]/$history_fields[5]]=${history_fields[17]:--}
     # Keep reopened-stamp eligibility when history takes over, without scanning
     # every pending transcript again for each history row.
     (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
@@ -708,6 +711,7 @@ _t_resume() {
       if [[ -n ${live_titles[$live_identity]:-} ]]; then
         f[6]=$live_titles[$live_identity]
       fi
+      [[ $f[7] != app:* ]] || f[6]="Codex desktop · $f[6]"
       [[ $live_host != here ]] || live_host=local
       if [[ ${live_work[$live_identity/$live_host]:-} == yes ]]; then
         f[16]=yes
@@ -957,7 +961,8 @@ _t_resume() {
       echo "t resume --fg resumes ONE conversation inline in this terminal — mark a single row (or drop --fg)." >&2
       return 1
     fi
-    local -A mp_taken
+    local -A mp_taken mp_attach mp_exact
+    local -a mp_owner
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
     local -a mp_rest mp_live mp_live_fields mp_ready
@@ -989,7 +994,7 @@ _t_resume() {
         continue
       fi
       if [[ $f[8] == history && -n $on_host ]]; then
-        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || {
+        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" transfer "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$mp_agent/$sid/$wt]:--}") || {
           mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation preparation failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
           return "$mp_rc"
         }
@@ -999,11 +1004,16 @@ _t_resume() {
           return 1
         }
       elif [[ $f[8] == history ]]; then
-        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}") || {
+        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$mp_agent/$sid/$wt]:--}") || {
           mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
           return "$mp_rc"
         }
+        mp_owner=("${(@ps:\t:)mp_session}")
+        (( $#mp_owner == 3 )) || { print -u2 't resume: incomplete terminal receipt'; return 1; }
+        mp_session=$mp_owner[1]
         slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
+        mp_exact[$repo/$slot]="${mp_session#dev-}"$'\t'"$sid"$'\t'"$mp_owner[2]"$'\t'"$mp_agent"$'\t'"$mp_owner[3]"
+        mp_attach[$repo/$slot]="source ${(q)T_HOME}/t.plugin.zsh; _t_history_attach ${(q)${mp_session#dev-}} ${(q)sid} ${(q)mp_owner[2]} ${(q)mp_agent} ${(q)mp_owner[3]}"
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
         _t_resume_history_registered "$repo" || {
           _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable after launch' "$mp_remaining" "${mp_ready[@]}"
@@ -1119,15 +1129,22 @@ _t_resume() {
     # Inside tmux / no TTY the first cannot attach here either, so it gets a
     # tab too.
     for mp_pair in "${(@)mp_rest}"; do
-      _dev_open_tab "t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --local" || {
+      mp_live_cmd=${mp_attach[${mp_pair%% *}/${mp_pair##* }]:-"t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --local"}
+      _dev_open_tab "$mp_live_cmd" || {
         _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
         return 1
       }
     done
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
-      tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
+      if [[ -n ${mp_attach[$mp_first_repo/$mp_first_slot]:-} ]]; then
+        mp_owner=("${(@ps:\t:)mp_exact[$mp_first_repo/$mp_first_slot]}")
+        _t_history_attach "${mp_owner[@]}"
+      else
+        tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
+      fi
     else
-      _dev_open_tab "t open ${(q)mp_first_repo} ${(q)mp_first_slot} --cli --local" \
+      mp_live_cmd=${mp_attach[$mp_first_repo/$mp_first_slot]:-"t open ${(q)mp_first_repo} ${(q)mp_first_slot} --cli --local"}
+      _dev_open_tab "$mp_live_cmd" \
         || {
           _t_resume_batch_stop 1 'terminal tab' 't session resume' 'could not open resumed session' 0 "${mp_ready[@]}"
           return 1
@@ -1142,8 +1159,9 @@ _t_resume() {
   [[ $T_RESUME_LAST == 1 ]] && T_RESUME_LAST_CLOSED=${f[14]:--}
 
   if [[ $lalias == history && ( -n $no_tmux || -n $on_host ) ]]; then
-    local prepared
-    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" prepare "${f[12]:--}") || return $?
+    local prepared preparation=prepare
+    [[ -z $on_host ]] || preparation=transfer
+    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" "$preparation" "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$agent/$sid/$wt]:--}") || return $?
     local prepared_session=${prepared%%$'\t'*}
     slot=${prepared_session##*-}; repo=${${prepared_session#dev-}%-*}; wt=${prepared#*$'\t'}; lalias=-
     _t_resume_history_registered "$repo" || return 1
@@ -1166,7 +1184,11 @@ _t_resume() {
   elif [[ $loc == here ]]; then
     [[ -n $lalias && $lalias != - ]] && repo=$lalias   # owner under another alias/slot
     echo "Slot $slot is live locally — attaching."
-    _t_dev "$repo" "$slot"
+    if [[ -n $sid && $sid != - ]]; then
+      _t_history_attach "$repo-$slot" "$sid" "${live_sid_cwd[$sid]:-$wt}" "$agent"
+    else
+      _t_dev "$repo" "$slot"
+    fi
     return
   elif [[ -n $loc && $loc != - ]]; then
     _dev_remote_attach "$loc"$'\t'"$lalias"$'\t'"$slot" ""
@@ -1175,13 +1197,18 @@ _t_resume() {
 
   if [[ $lalias == history ]]; then
     local history_session
-    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}") || return $?
+    local -a history_owner
+    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$agent/$sid/$wt]:--}") || return $?
+    history_owner=("${(@ps:\t:)history_session}")
+    (( $#history_owner == 3 )) || { print -u2 't resume: incomplete terminal receipt'; return 1; }
+    history_session=$history_owner[1]
     slot=${history_session##*-}; repo=${${history_session#dev-}%-*}
     _t_resume_history_registered "$repo" || return 1
     if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
-      _t_session_attach "$history_session" "$agent" fresh
+      _t_history_owner "${history_session#dev-}" "$sid" "$history_owner[2]" "$agent" attach "$history_owner[3]" >/dev/null || return $?
+      _t_session_attach "$history_session" "$agent" fresh "${history_owner[3]%%:*}:"
     elif [[ -z $TMUX && -t 0 && -t 1 ]]; then
-      tmux attach-session -t "=$history_session:"
+      _t_history_attach "${history_session#dev-}" "$sid" "$history_owner[2]" "$agent" "$history_owner[3]"
     else
       echo "Attach with: t session open $repo $slot"
     fi
@@ -1952,7 +1979,8 @@ _dev_resume_session_effect() {
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || {
+  local launched
+  launched=$(tmux new-session -P -F '#{session_id}:#{pane_id}' -d -s "$session" -c "$dir" sleep 86400) || {
     print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
     return 1
   }
@@ -1965,12 +1993,16 @@ _dev_resume_session_effect() {
   # Run without typing the internal command into the pane (see _dev_new_session).
   local resume_command; resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
-    resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
+    resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
   # Preserve a changed or failed pane for inspection; do not kill by a mutable
   # session name after the placeholder guard refused it.
   _dev_start_session_command "$session" "$resume_command" "$logfile" || return 1
   _dev_launch_startup_check "$session" "$logfile" || return 1
+  if [[ -n ${T_HISTORY_TOKEN:-} ]]; then
+    [[ $launched == \$<->:%<-> ]] || { print -u2 't resume: could not verify the launched terminal'; return 1; }
+    print -r -- "$launched"
+  fi
 }
 
 # _dev_slot_for_cwd <cwd> — map a transcript's working dir to a dev session slot.

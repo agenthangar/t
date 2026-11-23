@@ -561,7 +561,7 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     monkeypatch.setattr(app, 'destination', modified)
     with pytest.raises(history.HistoryError, match='generation changed'):
         app.resume('repo', row)
-    assert releases and all(Path(path) == workspace for path in releases)
+    assert not releases  # Revalidate generation before touching the native writer.
 
 
 @pytest.mark.parametrize('ready', [True, False])
@@ -747,7 +747,7 @@ def test_index_merge_retains_source_freshness(app, history, store):
 
 
 def test_history_failure_exits_without_reopening_picker(app, history, monkeypatch, capsys):
-    row = conversation()
+    row = conversation(associations=[dict(workspace='/repo/1', slot='1', host='local')])
     for method in ('discover', 'pr_states', 'branch_prs'):
         monkeypatch.setattr(app, method, lambda *a, **k: None)
     monkeypatch.setattr(app, 'owners', lambda *a: [])
@@ -1457,7 +1457,7 @@ def test_saved_resume_offers_repair_for_exact_selection(
     def resume(alias, selected, **kwargs):
         calls.append((alias, selected['sid'], kwargs))
         if len(calls) == 1 or decision == 'still-blocked':
-            raise history.HistoryError('writer metadata is not available yet')
+            raise history.WriterBusy('writer metadata is not available yet')
         return 'dev-repo-7'
     monkeypatch.setattr(app, 'resume', resume)
     prompts = []
@@ -1506,7 +1506,7 @@ app.root=str(root); app.api=api
 calls=[]
 def resume(*a,**k):
     calls.append(1)
-    if len(calls)==1: raise h['HistoryError']('Waiting writer')
+    if len(calls)==1: raise h['WriterBusy']('Waiting writer')
     return 'dev-sample-3'
 app.resume=resume
 app.resume_with_repair.__globals__['_CACHE_REQUEST']=lambda *a,**k: {}
@@ -1522,12 +1522,12 @@ except h['HistoryCancelled']: sys.exit(130)
     screen = b''
     try:
         deadline = time.monotonic() + 10
-        while b'Repair' not in screen and time.monotonic() < deadline:
+        while b'Wait for release' not in screen and time.monotonic() < deadline:
             if select.select([master], [], [], .1)[0]:
                 screen += os.read(master, 65536)
             if process.poll() is not None:
                 break
-        assert b'Repair' in screen and b'Cancel' in screen, screen.decode(errors='replace')
+        assert b'Wait for release' in screen and b'Cancel' in screen, screen.decode(errors='replace')
         os.write(master, b'\x1b' if cancel else b'\r')
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:
@@ -1607,7 +1607,7 @@ def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(
     def resume(alias, selected, **options):
         events.append(('resume', alias, selected['sid']))
         if len(events) == 1:
-            raise history.HistoryError('selected writer still loaded')
+            raise history.WriterBusy('selected writer still loaded')
         return selected['sid']
     monkeypatch.setattr(app, 'resume', resume)
     def stop(selected, **options):
@@ -1640,3 +1640,40 @@ def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(
         assert app.resume_with_repair('repo', row) == 'selected'
         assert events == [('resume', 'repo', 'selected'), ('stop', False), *([('stop', True)] if decision == 'force' else []),
                           ('released', 'codex', 'selected'), ('refresh',), ('resume', 'repo', 'selected')]
+
+
+def test_prepared_workspace_reused_when_writer_releases(app, history, store, git_repo, monkeypatch, tmp_path):
+    original = Path(app.cfg.worktree_root) / 'repo/repo-74'
+    row = store.merge(saved_row(app, git_repo, original))
+    monkeypatch.setattr(app, 'source', lambda *_: tmp_path/'rollout')
+    monkeypatch.setattr(app, 'owners', lambda *_: [])
+    monkeypatch.setattr(app, 'install_transcript', lambda *_: None)
+    checked, choices = [], []
+    def check(*_, workspace):
+        checked.append(workspace)
+        if len(checked) == 1:
+            raise history.WriterBusy('selected thread still loaded')
+    monkeypatch.setattr(app, 'codex_released', check)
+    monkeypatch.setattr(history, 'repair_terminal', lambda: True)
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *_: {})
+    monkeypatch.setitem(history._CLIENT_STOP, 'stranded', lambda *_: None)
+    load = history.runpy.run_path
+    def helpers(path, **kwargs):
+        if str(path).endswith('t_open_recovery.py'):
+            return {'ask': lambda api, title, note, action: choices.append(action) is None}
+        return load(path, **kwargs)
+    monkeypatch.setattr(history.runpy, 'run_path', helpers)
+    target = app.resume_with_repair('repo', row, detached=True, prepare_only=True)
+    assert checked == [target.split('\t')[1]] * 2
+    assert choices == ['Resume in repo-1', 'Wait for release']
+    assert not (original.parent/'repo-2').exists()
+
+
+def test_startup_error_has_no_repair_prompt(app, history, monkeypatch):
+    def failed(*_):
+        raise history.HistoryError('Error: Permission overrides are not supported when resuming a remote task.')
+    monkeypatch.setattr(app, 'resume', failed)
+    monkeypatch.setattr(history, 'repair_terminal', lambda: True)
+    monkeypatch.setattr(history.runpy, 'run_path', lambda *_: pytest.fail('unexpected retry prompt'))
+    with pytest.raises(history.HistoryError, match='Permission overrides'):
+        app.resume_with_repair('repo', conversation())

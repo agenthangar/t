@@ -74,3 +74,15 @@ def test_launch_findings_are_repeated_in_summary(t_mod):
     assert any('see Launch resources' in line for line in t_mod._doctor_findings(facts))
     assert not any('nothing suspicious' in line for line in t_mod._doctor_findings(facts))
 
+
+
+def test_resume_error_after_exiting_alternate_screen_is_scoped_to_attempt(tmp_path):
+    import runpy
+    lifecycle = runpy.run_path(str(Path(__file__).resolve().parents[1]/'libexec/t_lifecycle.py'))
+    log = tmp_path / '.tmux-logs/dev-repo-74.log'
+    log.parent.mkdir()
+    stale = b'Error: old failure\n'
+    log.write_bytes(stale + b'previous frame\x1b[?1049l\x1b[?25hError: rejected token=fixture-secret\r\n')
+    attempt = dict(verb='resume', arguments=['dev-repo-74', '/sample', 'test-id', 'codex'],
+                   log_start={'offset': len(stale)})
+    assert lifecycle['diagnostic_log'](attempt, tmp_path)['lines'] == ['Error: rejected token=[redacted]']

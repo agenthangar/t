@@ -515,7 +515,9 @@ def diagnostic_log(value, home=None, *, allow_shared=False):
     lines = []
     # Keep technical error lines, not the surrounding conversation or command argv.
     pattern = r'^(?:[■!⚠]\s*)?(?:t:|error\b|fatal\b|failed\b|panic\b|Traceback \(most recent call last\):|[\w.]+(?:Error|Exception):|(?:respawn pane|create window) failed:|zsh:|ssh:|tmux:)'
-    for line in diagnostic_text(raw, DIAGNOSTIC_BYTES).splitlines():
+    # Leaving the alternate screen starts a diagnostic line even if the
+    # previous terminal frame ended mid-row.
+    for line in diagnostic_text(raw.replace('\x1b[?1049l', '\n'), DIAGNOSTIC_BYTES).splitlines():
         line = line.strip()
         if re.match(pattern, line, re.I):
             lines.append(line[:300])
@@ -1048,7 +1050,11 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                         native_options['fresh_resume'] = arguments[5]
                     operation.step('ownership', lambda: native_preflight(agent, sid, workspace, **native_options), repeat=True)
                     operation.step('launch', lambda: adapter.call(verb, *arguments))
-                result = operation.step('ready', lambda: adapter.call('ready', session, workspace, agent, sid), repeat=True)
+                ready_args = [session, workspace, agent, sid]
+                launch = operation.value['receipts'].get('launch')
+                if verb == 'resume' and isinstance(launch, str) and re.fullmatch(r'\$[0-9]+:%[0-9]+', launch):
+                    ready_args.append(launch)
+                result = operation.step('ready', lambda: adapter.call('ready', *ready_args), repeat=True)
                 operation.step('writer-ready', lambda: verify_ready(agent, sid), repeat=True)
                 operation.step('record', lambda: adapter.call('record', verb, session, workspace, agent, sid))
             elif verb in ('close', 'auto-close'):
@@ -1067,6 +1073,10 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
             return result
         except (ValueError, OSError, sqlite3.Error) as error:
             operation.save('failed', error=diagnostic_error(error), error_code=getattr(error, 'code', 1))
+            if verb == 'resume' and operation.value.get('pending') in ('launch', 'ready'):
+                lines = operation.value.get('log_evidence', {}).get('lines', [])
+                if lines:
+                    print(f't resume: {agent} startup failed in {session}: {lines[-1]}', file=sys.stderr)
             if verb in ('move', 'restore'):
                 adapter.output('Transfer paused with work retained. Retry: t resume ' + arguments[5] + ' ' + arguments[6])
             raise
@@ -1159,7 +1169,9 @@ def main(argv):
                 result = execute_peer(json.loads(base64.b64decode(argv[2])), adapter)
                 adapter.output(json.dumps(result))
             else:
-                execute(argv[1], argv[2:], adapter, token=os.environ.get('T_LIFECYCLE_ID'))
+                ready = execute(argv[1], argv[2:], adapter, token=os.environ.get('T_LIFECYCLE_ID'))
+                if argv[1] == 'resume' and os.environ.get('T_HISTORY_TOKEN'):
+                    adapter.output(ready)
         except (ValueError, OSError, sqlite3.Error) as error:
             print('t: ' + str(error), file=sys.stderr)
             code = getattr(error, 'code', 1)

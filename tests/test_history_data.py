@@ -1019,7 +1019,7 @@ def test_resume_candidates_refresh_all_hosts_and_deduplicate_sources(app, store,
     assert len(rows) == 1
     fields = rows[0].split('\t')
     assert fields[1:5] == ['repo', '42', 'same-sid', '/different/home/trees/old/old-42']
-    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-', '-', '-', 'unknown']
+    assert fields[7:] == ['remote', 'codex', '-', 'org/repo', 'NONE', '-', '-', '-', 'unknown', 'remote']
     with pytest.raises(ValueError, match='unknown repository'):
         list(app.resume_candidates(['missing']))
 
@@ -1097,7 +1097,7 @@ def test_resume_history_reuses_legacy_pr_cache_and_keeps_numbers(app, store, his
 
 
 def test_cached_selection_returns_to_fresh_action_state(app, history, monkeypatch):
-    row = conversation()
+    row = conversation(associations=[dict(host='local', slot='1', workspace='/repo/1')])
     app.discovery_view = {'loading': False}
     app.discovery_identities = {'repo': 'cached/identity'}
     app.local_identities = {'repo': 'cached/identity'}

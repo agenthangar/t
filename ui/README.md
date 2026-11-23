@@ -91,13 +91,16 @@ checks, known conflicts and allocator-proven fresh workspaces retain their fast
 paths. Every retry reads live ownership, and saved resume rechecks its selected
 writer after the wait. Expiry never authorizes a conflicting launch.
 
-Failed interactive saved resumes also offer **Repair / Cancel** through the same
-rail. Repair refreshes local discovery and retries the exact selected conversation
-once, including source and owner validation. Failures preserve a bounded shell
-cause and identify which readiness field changed (session, workspace, agent or
-conversation). They never relax ownership checks. It never switches to the latest
-conversation in that slot or force-opens a fresh context. A second failure retains
-the diagnostic. When a failed managed close left a verified local Codex writer
+Interactive resume reopens the selected conversation in its original worktree
+when the repository, branch, generation and released ownership still match.
+It keeps HEAD, the Git index and working files intact. An advanced branch tip
+is valid when it descends from the recorded commit. If relocation is necessary,
+the recovery rail explains the reason and names the proposed destination before
+creating a checkpoint or worktree. Cancel returns 130.
+
+**Wait for release** rechecks a native writer in the same prepared workspace.
+A deterministic startup failure reports the current attempt’s sanitized native
+error and finishes. When a failed managed close left a verified local Codex writer
 without its terminal, the rail identifies the stranded client and offers to stop
 it. Repair checks the owner again and waits for writer release before retrying
 the selected conversation. When Repair finds the same unresolved lock and holder again, it
@@ -1057,13 +1060,13 @@ Ctrl-U refreshes the same discovery scope and preserves query, filters and
 sort. Ctrl-R filters by repository in the resume picker and refreshes plain
 slot history.
 
-After a saved selection, local and cross-host resumes reconcile the latest durable
+When a saved selection needs transfer, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
 branch, generation and released ownership, checkpoints eligible outstanding code
 with normal Git hooks, and transfers the verified tip privately into a fresh safe
 destination. Safety or checkpoint refusals stop launch; unreachable or unsupported
 source helpers warn and retain the locally available revision and transcript path.
-A valid local source carries its current branch tip and checkpoints eligible tracked
+A transfer from a valid local source carries its current branch tip and checkpoints eligible tracked
 and nonignored untracked changes before allocating a new worktree. Missing or
 recycled local workspaces retain historical fallback without copying replacement
 files. Local transfers do not require a bundle or inherit the remote size limit.
@@ -1294,8 +1297,7 @@ on every scan; `--remote` remains a compatibility option. The picker includes
 canonical checkouts, swept Codex rollouts and renamed roots whose recorded Git
 origin exactly matches the configured repository. Only the selected transcript
 is downloaded and verified. A different live conversation in the historical
-slot does not hide saved work: inactive selections receive a safely allocated
-workspace when their original workspace cannot be reused. Exact live IDs attach
+slot does not hide saved work: interactive resume offers a new workspace when its original cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
 A plain explicit slot (`t session resume api 2`, including `t resume api 2`
 and the inferred-repository `t resume 2`) opens the internal saved-conversation picker.
@@ -1306,7 +1308,7 @@ Without a terminal it lists history without launching. Tab marks conversations o
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
-Fresh saved launches wait up to 15 seconds for the exact conversation identity
+Saved launches bind attachment to the verified tmux session and pane. They wait up to 15 seconds for the exact conversation identity
 before attaching or reporting readiness. This covers Codex registering a resumed
 conversation in a new worktree. A changed or exited owner still fails immediately;
 an identity timeout keeps the launched session and prints `t open api 2` with its

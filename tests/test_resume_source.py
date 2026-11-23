@@ -331,17 +331,18 @@ def test_local_resume_preserves_current_code(app, source, history, protocol, mon
     result = app.resume('repo', row, detached=True, prepare_only=True)
     session, destination = result.split('\t')
     revision = history.run(['git', '-C', destination, 'rev-parse', 'HEAD']).strip()
-    assert (revision != tip) is dirty
-    assert session == ('dev-repo-2' if advanced else 'dev-repo-1')
+    assert revision == tip
+    assert session == 'dev-repo-1'
+    assert Path(destination) == path
     if advanced:
         assert revision != recorded
         assert Path(destination, 'committed.py').read_text() == 'new committed code\n'
     if dirty:
         assert Path(destination, 'tracked').read_text() == 'latest unstaged\n'
         assert Path(destination, 'untracked.py').read_text() == 'new untracked code\n'
-        assert not Path(destination, 'ignored').exists()
+        assert history.run(['git', '-C', destination, 'show', ':tracked']) == 'staged\n'
         assert Path(path, 'ignored').read_text() == 'ignored private data\n'
-    assert not history.run(['git', '-C', str(path), 'status', '--porcelain'])
+    assert bool(history.run(['git', '-C', str(path), 'status', '--porcelain'])) is dirty
     saved = next(r for r in app.store.records() if r['sid'] == row['sid'])
     assert any(a['workspace'] == destination and a['commit'] == revision and a['evidence'] == 'resume'
                for a in saved['associations'])
@@ -451,7 +452,7 @@ def test_local_unsafe_source_refuses_before_destination(app, source, history, pr
         monkeypatch.setattr(protocol.subprocess, 'run', mutate)
     monkeypatch.setattr(app, 'destination', lambda *a: pytest.fail('unsafe source must not allocate'))
     with pytest.raises(history.HistoryError):
-        app.resume('repo', row, detached=True, prepare_only=True)
+        app.resume('repo', {**row, '_transfer': True}, detached=True, prepare_only=True)
 
 
 def test_checkpoint_respects_existing_git_index_lock(app, source, history, protocol):

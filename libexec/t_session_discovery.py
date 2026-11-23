@@ -296,11 +296,13 @@ def candidates(view, aliases, slot=None):
     for host in view.get('hosts', []):
         for raw in (host.get('value') or {}).get('resume', []):
             fields = raw.split('\t')
-            if len(fields) not in (12, 13, 14, 15, 16) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
+            if len(fields) not in (12, 13, 14, 15, 16, 17) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
                 continue
             if slot is not None and fields[2] != slot:
                 continue
             fields[7] = host['host']
+            if len(fields) >= 17 and fields[16] == 'local':
+                fields[16] = host['host']
             key = (fields[10], fields[8], fields[3])
             if key not in seen:
                 seen.add(key)
