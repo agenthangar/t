@@ -66,6 +66,7 @@ jobs:
       - name: Long-running command progress contract
         run: python3 scripts/lint_progress.py
   design-adherence:
+    if: needs.scope.outputs.full == 'true'
     needs: scope
     name: Design adherence fzf ${{ matrix.fzf }}
     strategy:
@@ -108,6 +109,7 @@ jobs:
       - name: Shell syntax and lint
         run: |
           files=(install.sh)
+          if [[ -f scripts/check_design.sh ]]; then files+=(scripts/check_design.sh); fi
           for f in bin/* .githooks/* ui/*.sh scripts/playground/* scripts/agentcore-test-runtime/*.sh; do
             head -1 "$f" | grep -qE '^#!.*\b(bash|sh)$' && files+=("$f")
           done

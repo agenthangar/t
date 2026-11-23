@@ -10310,7 +10310,7 @@
           "tests": [
             "tests/test_usage.py::test_eval_list_show_same_picker"
           ],
-          "layout": "inherit"
+          "layout": "picker"
         }
       },
       "notes": "Explicitly approved exception: interactive list and targetless show share the run picker; JSON and redirected list remain static.",
@@ -10342,7 +10342,7 @@
           "tests": [
             "tests/test_eval.py::test_command_contract"
           ],
-          "layout": "inherit"
+          "layout": "picker"
         },
         "json": {
           "argv": [
@@ -13491,7 +13491,8 @@
         "tests/test_dev_isolation.py::test_version_uses_worktree_on_first_call_after_public_cd",
         "tests/test_dev_isolation.py::test_version_distinguishes_explicit_source_from_current_worktree"
       ],
-      "notes": "Preserve the release/revision first line; label the actual executable Source and current Git Worktree with absolute paths and branches, even when they differ. Packaged sources say release; detached checkouts say detached HEAD; outside Git is explicit. Escape control characters. Resolve metadata only on request, with no configuration load, network, picker, or update prompt."
+      "notes": "Preserve the release/revision first line; label the actual executable Source and current Git Worktree with absolute paths and branches, even when they differ. Packaged sources say release; detached checkouts say detached HEAD; outside Git is explicit. Escape control characters. Resolve metadata only on request, with no configuration load, network, picker, or update prompt.",
+      "layout": "plain"
     },
     "bare_t": {
       "renderer": "rail",
@@ -13515,7 +13516,8 @@
             "tests/test_onboarding_pty.py::test_setup_shows_authenticated_codex_without_requesting_login",
             "tests/test_onboarding.py::test_onboarding_verification_is_offered_after_saved_review"
           ],
-          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review. Authenticated agents have compact logged-in labels in agent selection, read-only context beside remaining login choices, and an Already logged in summary in review; they never become selectable login actions. After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect."
+          "notes": "Resolve native agent executables outside PATH for reviewed login steps; failed steps remain resumable. Choice q/Esc navigates back with current selections retained; review n/Esc returns to the last applicable choice. Review q, welcome q/Esc, and Ctrl-C cancel. Empty steps are skipped; completed GitHub install/login is not repeated. Agent sign-in uses a separate optional checklist with no initial marks; skipping sign-in still allows installation. Only chosen sign-ins run after review. Authenticated agents have compact logged-in labels in agent selection, read-only context beside remaining login choices, and an Already logged in summary in review; they never become selectable login actions. After reviewed registration is saved, offer Verify SSH now or Later for distinct added or changed target strings. Native OpenSSH owns the restored terminal and asks for host fingerprint confirmation; never auto-accept trust. Refused/unavailable checks warn and continue, preserving registration. Ctrl-C stops with 130 and retains saved changes; alias/default-only edits never connect.",
+          "layout": "inherit"
         },
         "returning": {
           "argv": [],
@@ -13528,7 +13530,8 @@
           "tests": [
             "tests/test_onboarding_entry.py::test_session_entry_reuses_guarded_shell_launcher"
           ],
-          "notes": "Choose an existing registered checkout or rerun discovery; reuse session ownership checks."
+          "notes": "Choose an existing registered checkout or rerun discovery; reuse session ownership checks.",
+          "layout": "inherit"
         },
         "nonterminal": {
           "argv": [],
@@ -13539,7 +13542,8 @@
           "read_only": true,
           "tests": [
             "tests/test_onboarding_entry.py::test_bare_nonterminal_stays_help_without_loading_config"
-          ]
+          ],
+          "layout": "plain"
         },
         "advisories_opt_in": {
           "argv": [],
@@ -13554,10 +13558,12 @@
             "tests/test_vulnerabilities.py::test_cache_repeated_startup_and_offline",
             "tests/test_vulnerabilities.py::test_disabled"
           ],
-          "notes": "Only T_VULNERABILITY_CHECK=1: print bounded cached repository-tool findings to stderr and schedule a detached refresh; never block on probes/network or remediate."
+          "notes": "Only T_VULNERABILITY_CHECK=1: print bounded cached repository-tool findings to stderr and schedule a detached refresh; never block on probes/network or remediate.",
+          "layout": "plain"
         }
       },
-      "notes": "Interactive startup optionally displays cached repository-tool advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free."
+      "notes": "Interactive startup optionally displays cached repository-tool advisories and schedules detached refresh when T_VULNERABILITY_CHECK=1; nonterminal bare t stays side-effect free.",
+      "layout": "rail"
     }
   },
   "progress_contract": "ui/progress-contract.json",
@@ -13747,7 +13753,8 @@
             "tests/test_nosleep_runtime.py::test_nosleep_battery_cutoff_runs_independently_and_cleans_up",
             "tests/test_dev_isolation.py::test_nosleep_follows_cd_immediately_and_keeps_normal_config"
           ],
-          "notes": "Observe configured-network availability independently of fallback and monitoring policy. Scans run asynchronously and never prompt; permission, Wi-Fi, association, absence and unknown states are distinct. Optional battery protection exits below the saved cutoff on battery power, independently of lid, checks and forever. Failed/unknown readings never reuse stale charge. Shell entry selects the current worktree on every invocation while retaining machine configuration."
+          "notes": "Observe configured-network availability independently of fallback and monitoring policy. Scans run asynchronously and never prompt; permission, Wi-Fi, association, absence and unknown states are distinct. Optional battery protection exits below the saved cutoff on battery power, independently of lid, checks and forever. Failed/unknown readings never reuse stale charge. Shell entry selects the current worktree on every invocation while retaining machine configuration.",
+          "layout": "plain"
         },
         "help": {
           "argv": [
@@ -13761,7 +13768,8 @@
           "terminal": false,
           "tests": [
             "tests/test_nosleep_standalone.py::test_clean_shell_help_and_defaults"
-          ]
+          ],
+          "layout": "plain"
         },
         "config": {
           "argv": [
@@ -13785,7 +13793,8 @@
             "tests/test_nosleep_credentials.py::test_entered_password_goes_through_pipe_not_arguments",
             "tests/test_nosleep_credentials.py::test_selected_saved_password_only_reused_on_save"
           ],
-          "notes": "Nested On close, Automatic checks, Battery protection, Hotspot fallback and Retries pages share reviewed save/discard. Choose fallback lists Wi-Fi-only Keychain metadata first without scanning or reading passwords; Nearby networks is separate and explicitly gates Location access. Inline Unicode filtering, Esc clears then backs, Ctrl-H optionally hides connected; connected networks are visible initially. Manual SSID immediately prompts privately for a password or matching saved credential; cancellation preserves previous selection. Secrets remain in memory until Save, which stores only the selected credential in the existing nosleep service. Clear fallback disables it without deleting Keychain or known networks. Duration retries default to 60 minutes, 300s between attempts, 30s attempt timeout; legacy enabled fallback keeps its attempt count. Battery cutoff overrides all holds."
+          "notes": "Nested On close, Automatic checks, Battery protection, Hotspot fallback and Retries pages share reviewed save/discard. Choose fallback lists Wi-Fi-only Keychain metadata first without scanning or reading passwords; Nearby networks is separate and explicitly gates Location access. Inline Unicode filtering, Esc clears then backs, Ctrl-H optionally hides connected; connected networks are visible initially. Manual SSID immediately prompts privately for a password or matching saved credential; cancellation preserves previous selection. Secrets remain in memory until Save, which stores only the selected credential in the existing nosleep service. Clear fallback disables it without deleting Keychain or known networks. Duration retries default to 60 minutes, 300s between attempts, 30s attempt timeout; legacy enabled fallback keeps its attempt count. Battery cutoff overrides all holds.",
+          "layout": "nosleep"
         },
         "show": {
           "argv": [
@@ -13800,7 +13809,8 @@
           "terminal": false,
           "tests": [
             "tests/test_nosleep_standalone.py::test_clean_shell_help_and_defaults"
-          ]
+          ],
+          "layout": "plain"
         },
         "edit": {
           "argv": [
@@ -13815,7 +13825,8 @@
           "terminal": false,
           "tests": [
             "tests/test_nosleep_config.py::test_editor_saves_and_rejects_requirement"
-          ]
+          ],
+          "layout": "mixed"
         },
         "hotspot": {
           "argv": [
@@ -13831,9 +13842,11 @@
           "tests": [
             "tests/test_nosleep_hotspot.py::test_setup_prompts_locally_and_only_enables_after_keychain_success"
           ],
-          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config \u2192 Nosleep or nosleep config."
+          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config \u2192 Nosleep or nosleep config.",
+          "layout": "plain"
         }
-      }
+      },
+      "layout": "mixed"
     }
   }
 }

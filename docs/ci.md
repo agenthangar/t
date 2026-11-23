@@ -13,7 +13,7 @@ There is no changed-path escalation. Dispatch **CI** with `run_full=true` for
 explicit complete Linux validation. Nightly/release runs always select full
 validation for the exact pinned commit, even without a pending release; a smoke
 result cannot authorize publication. Full validation enforces 97% coverage.
-Gitleaks, pip-audit, CodeQL, shell/CLI contracts, design adherence and install smoke
+Gitleaks, pip-audit, CodeQL, shell/CLI contracts and install smoke
 remain required. Scorecard and scheduled failure/recovery alerts are unchanged.
 
 ## Local publication gate
@@ -101,10 +101,22 @@ coverage stay in nightly or explicitly requested validation.
 
 ### Required design adherence
 
-The `design-adherence` matrix runs on every PR, against pinned fzf 0.44.1 and
-0.74.5. It validates `ui/layout-contract.json` references and every command/mode's
+Before opening a PR that changes visible behavior, shared rendering, design guidance
+or its reference, run both design checks on the proposed commit and include the
+results in the PR description. Activate the development Python environment,
+place each pinned fzf binary on PATH in turn, and run:
+
+```sh
+PATH="/path/to/fzf-0.44.1/bin:$PATH" scripts/check_design.sh 0.44.1
+PATH="/path/to/fzf-0.74.5/bin:$PATH" scripts/check_design.sh 0.74.5
+```
+
+The modern leg installs the pinned Playwright test dependency in a temporary
+directory and runs the HTML reference in its managed headless Chromium. Review
+the affected rendered states separately. Nightly, release and explicit full
+validation use the same `design-adherence` matrix. It validates `ui/layout-contract.json` references and every command/mode's
 layout declaration, then runs those rendered fixtures with a no-skips outcome
-audit. The aggregate `CI` gate requires both matrix jobs even on the smoke path.
+audit. The full `CI` gate requires both matrix jobs to succeed for the selected commit.
 Artifacts named `design-<version>` include JUnit, exact collected/outcome records,
 and failure output with rendered frames and coordinate comparisons. Tests use
 private tmux sockets and sandbox homes; no native desktop windows are opened.

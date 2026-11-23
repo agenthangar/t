@@ -35,7 +35,7 @@ def results(full=True, macos=False, reference=False):
     data = {key: {'result': 'success'} for key in (
         'scope', 'cli-contract', 'design-adherence', 'shell', 'pytest', 'smoke', 'fzf-legacy', 'coverage',
         'reference', 'verify-shards', 'macos', 'playground', 'gitleaks', 'pip-audit', 'codeql')}
-    skipped = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage'}
+    skipped = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage', 'design-adherence'}
     if not macos:
         skipped.add('macos')
     if not reference:
@@ -69,7 +69,7 @@ def test_workflow_modes_preserve_nightly_release_and_security_boundaries():
     assert 'ref: ${{ needs.scope.outputs.sha }}' in smoke
     assert '--ci-fast' not in workflow and 'PR_BASE:' not in workflow
     assert "FORCE_FULL: ${{ inputs.ref != '' || (github.event_name == 'workflow_dispatch'" in workflow
-    for job in ('pytest', 'coverage', 'fzf-legacy'):
+    for job in ('pytest', 'coverage', 'fzf-legacy', 'design-adherence'):
         body = re.split(r'\n  [a-z-]+:\n', workflow.split(f'  {job}:\n', 1)[1])[0]
         assert "if: needs.scope.outputs.full == 'true'" in body
     assert 'scripts/ci_shards.py combine shards' in workflow
