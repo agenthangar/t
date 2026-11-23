@@ -1,5 +1,6 @@
 """Route supervised Codex resume permissions to the owned app-server."""
 import json
+import os
 from pathlib import Path
 import runpy
 
@@ -70,17 +71,18 @@ class ResumePermissions:
                 self.frontend.append(arg)
         if 'sandbox_mode' in self.config and 'default_permissions' in self.config:
             raise ValueError('Codex resume received both sandbox mode and a named permission profile')
-        if 'sandbox_mode' in self.config and self.config['sandbox_mode'] not in SANDBOX_TYPES:
-            raise ValueError('Unsupported Codex resume sandbox mode')
         if not all(isinstance(self.config[k], str) for k in FIELDS if k in self.config):
             raise ValueError('Invalid Codex resume permission value')
+        if 'sandbox_mode' in self.config and self.config['sandbox_mode'] not in SANDBOX_TYPES:
+            raise ValueError('Unsupported Codex resume sandbox mode')
         configured = self.config.get('sandbox_workspace_write.writable_roots', [])
         if not isinstance(configured, list) or not all(isinstance(root, str) for root in configured):
             raise ValueError('Invalid Codex writable roots')
         self.configured_roots = [str((self.cwd / value).resolve()) for value in configured]
         self.params = {field: self.config[key] for key, field in FIELDS.items() if key in self.config}
-        if configured:
+        if 'sandbox_workspace_write.writable_roots' in self.config:
             self.params['config'] = {'sandbox_workspace_write.writable_roots': self.configured_roots}
+        self.runtime_roots = None
         self.server = [arg for key, value in self.config.items() for arg in ('-c', key+'='+json.dumps(value))]
 
     def client(self, message):
@@ -97,9 +99,14 @@ class ResumePermissions:
         if self.request is not None:
             raise ValueError('Codex requested a second resume before verifying the selected thread')
         self.request = message['id']
-        if self.roots:
-            roots = [str(self.cwd), *(params.get('runtimeWorkspaceRoots') or []), *self.configured_roots, *self.roots]
+        if self.roots or 'config' in self.params:
+            # An explicit list, including [], replaces saved roots rather than
+            # preserving roots restored by the frontend from the old thread.
+            inherited = [] if 'config' in self.params else (params.get('runtimeWorkspaceRoots') or [])
+            roots = [str(self.cwd), *inherited, *self.configured_roots, *self.roots]
             params['runtimeWorkspaceRoots'] = list(dict.fromkeys(roots))
+            if 'config' in self.params:
+                self.runtime_roots = params['runtimeWorkspaceRoots']
         if 'config' in self.params:
             params['config'] = {**(params.get('config') or {}), **self.params['config']}
         params.update({key: value for key, value in self.params.items() if key != 'config'})
@@ -120,9 +127,22 @@ class ResumePermissions:
             checks.append((profile.get('id') == self.params['permissions'], 'permission profile'))
         if self.roots:
             checks.append((set(self.roots) <= set(result.get('runtimeWorkspaceRoots') or []), 'workspace roots'))
+        if self.runtime_roots is not None:
+            checks.append((set(self.runtime_roots) == set(result.get('runtimeWorkspaceRoots') or []),
+                           'workspace roots'))
         if sandbox.get('type') == 'workspaceWrite':
             checks.append((set(self.configured_roots + self.roots) <= set(sandbox.get('writableRoots') or []),
                            'writable roots'))
+            if self.runtime_roots is not None:
+                allowed = set(self.runtime_roots)
+                # Codex can materialize its built-in temporary roots in this
+                # legacy policy as well as the selected workspace roots.
+                if not sandbox.get('excludeSlashTmp'):
+                    allowed.add(str(Path('/tmp').resolve()))
+                if not sandbox.get('excludeTmpdirEnvVar') and os.environ.get('TMPDIR'):
+                    allowed.add(str(Path(os.environ['TMPDIR']).resolve()))
+                actual = {str(Path(root).resolve()) for root in sandbox.get('writableRoots') or []}
+                checks.append((actual <= allowed, 'writable roots'))
         for valid, label in checks:
             if not valid:
                 raise ValueError('Codex did not apply the selected ' + label + ' during resume')

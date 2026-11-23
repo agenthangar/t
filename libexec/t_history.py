@@ -1919,6 +1919,24 @@ class HistoryCommand:
     def attach(self, owner):
         return subprocess.call(self.attach_command(owner))
 
+    def existing_owner(self, owner, *, detached, prepare_only, return_owner, fresh):
+        if fresh is not None or not owner.get('host'):
+            raise HistoryError('conversation became live; select its current owner again')
+        if not detached:
+            return owner if return_owner else self.attach(owner)
+        if prepare_only or os.environ.get('T_RESUME_OWNER_RECEIPT') != '1':
+            raise HistoryError('conversation became live; select its current owner again')
+        self.attach_command(owner)  # Surface a specific instruction for desktop and foreground owners.
+        if owner['host'] != 'local':
+            raise HistoryError('conversation became live on ' + owner['host'] + '; select its current owner to attach')
+        # The picker can now attach an existing local pane using the same receipt
+        # as a successful launch. Recheck the live row before issuing it.
+        args = [owner['slot'], owner['sid'], owner['cwd'], owner['agent'], 'receipt']
+        terminal = run(self.shell('_t_history_owner ' + shlex.join(args)), launch_diagnostics=True).strip()
+        if not re.fullmatch(r'\$[0-9]+:%[0-9]+', terminal):
+            raise HistoryError('the live terminal identity could not be verified')
+        return f"dev-{owner['slot']}\t{owner['cwd']}\t{terminal}"
+
     def resume_many(self, alias, rows):
         owners = []
         for index, row in enumerate(rows):
@@ -2337,10 +2355,9 @@ class HistoryCommand:
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
             raise HistoryError('conversation has multiple reported owners; resolve ownership before resuming')
-        if matches and (detached or fresh is not None):
-            raise HistoryError('conversation became live; select its current owner again')
+        owner_options = dict(detached=detached, prepare_only=prepare_only, return_owner=return_owner, fresh=fresh)
         if matches:
-            return matches[0] if return_owner else self.attach(matches[0])
+            return self.existing_owner(matches[0], **owner_options)
         destination_alias = alias if alias in self.cfg.repos else self.repository_alias(row['repo'])
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
@@ -2395,9 +2412,9 @@ class HistoryCommand:
             owners = self.owners(True)
             matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
             if matches:
-                if len(matches) == 1 and not detached and fresh is None and 'host' in matches[0]:
+                if len(matches) == 1:
                     fcntl.flock(lock, fcntl.LOCK_UN)
-                    return matches[0] if return_owner else self.attach(matches[0])
+                    return self.existing_owner(matches[0], **owner_options)
                 raise HistoryError('conversation became live while selecting; rerun t resume to attach to its owner')
             try:
                 allocation = {'fresh_source': source} if fresh is not None else {}

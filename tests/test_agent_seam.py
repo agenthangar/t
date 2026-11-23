@@ -293,6 +293,7 @@ TMUX_LOG_STUB = r"""#!/bin/bash
 # log every call; answer the two reads the seam makes
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  new-session) [[ "$*" == *'#{session_id}:#{pane_id}'* ]] && printf '$1:%%1\n' ;;
   show-environment)
     [[ -n "${FAKE_DEV_AGENT:-}" && "$4" == DEV_AGENT ]] && echo "DEV_AGENT=$FAKE_DEV_AGENT"
     [[ -n "${FAKE_RESUME_ID:-}" && "$4" == CLAUDE_RESUME_ID ]] && echo "CLAUDE_RESUME_ID=$FAKE_RESUME_ID"
@@ -310,6 +311,7 @@ case "$1" in
       fi
     elif [[ -n "${FAKE_SESSIONS:-}" ]]; then printf '%s\n' $FAKE_SESSIONS; fi ;;
   display-message)
+    [[ "$*" == *pane_dead* ]] && echo 0
     [[ -n "${FAKE_SESSION_PATH:-}" && "$*" == *session_path* ]] && echo "$FAKE_SESSION_PATH"
     [[ -n "${FAKE_PANE_TITLE:-}" && "$*" == *pane_title* ]] && echo "$FAKE_PANE_TITLE" ;;
   list-panes)       [[ -n "${FAKE_PANES:-}" ]] && printf '%s\n' "$FAKE_PANES" ;;

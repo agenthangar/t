@@ -1228,7 +1228,7 @@ _t_resume() {
     _t_resume_history_registered "$repo" || return 1
     if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
       _t_history_owner "${history_session#dev-}" "$sid" "$history_owner[2]" "$agent" attach "$history_owner[3]" >/dev/null || return $?
-      _t_session_attach "$history_session" "$agent" fresh "${history_owner[3]%%:*}:"
+      _t_session_attach "$history_session" "$agent" fresh "${history_owner[3]#*:}"
     elif [[ -z $TMUX && -t 0 && -t 1 ]]; then
       _t_history_attach "${history_session#dev-}" "$sid" "$history_owner[2]" "$agent" "$history_owner[3]"
     else
@@ -2001,17 +2001,22 @@ _dev_resume_session_effect() {
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  local launched
+  local launched immutable pane
   launched=$(tmux new-session -P -F '#{session_id}:#{pane_id}' -d -s "$session" -c "$dir" sleep 86400) || {
     print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
     return 1
   }
-  tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
+  [[ $launched == \$<->:%<-> ]] || { print -u2 't resume: could not verify the launched terminal'; return 1; }
+  immutable=${launched%%:*}
+  pane=${launched#*:}
+  # The slot name can be reused while setup runs. Every effect must retain the
+  # exact session/pane created above, including failure cleanup and startup.
+  tmux set-option -t "$pane" window-size latest 2>/dev/null || { tmux kill-session -t "$immutable:"; return 1; }
   # Record the resumed id on the session so `tpop` can pull the exact same
   # conversation back to the foreground (it also falls back to the dir's newest
   # transcript, but this is the precise signal when we know it).
-  tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
-  tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
+  tmux set-environment -t "$immutable:" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "$immutable:"; return 1; }
+  tmux set-environment -t "$immutable:" DEV_AGENT "$agent" || { tmux kill-session -t "$immutable:"; return 1; }
   # Run without typing the internal command into the pane (see _dev_new_session).
   local resume_command; resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
@@ -2019,10 +2024,9 @@ _dev_resume_session_effect() {
   fi
   # Preserve a changed or failed pane for inspection; do not kill by a mutable
   # session name after the placeholder guard refused it.
-  _dev_start_session_command "$session" "$resume_command" "$logfile" || return 1
-  _dev_launch_startup_check "$session" "$logfile" || return 1
+  _dev_start_session_command "$session" "$resume_command" "$logfile" "$pane" || return 1
+  _dev_launch_startup_check "$session" "$logfile" "$pane" || return 1
   if [[ -n ${T_HISTORY_TOKEN:-} ]]; then
-    [[ $launched == \$<->:%<-> ]] || { print -u2 't resume: could not verify the launched terminal'; return 1; }
     print -r -- "$launched"
   fi
 }

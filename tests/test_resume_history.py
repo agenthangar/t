@@ -66,7 +66,7 @@ def test_mcp_resume_window_uses_resolved_history_slot(zsh, new_window, window_co
     assert result.stderr.count('LAUNCH') == 1
     assert ('WINDOW ' in result.stdout) == new_window
     if new_window:
-        assert r'tmux attach-session -t \$99:' in result.stdout
+        assert 'tmux attach-session -t %99' in result.stdout
         assert 'tmux attach-session -t =dev-api-3:' not in result.stdout
     else:
         assert 'detached control' in result.stdout
@@ -114,7 +114,7 @@ def test_local_transcripts_use_history_allocation_once_per_conversation(zsh, age
         assert result.stdout.count(f'HISTORY {sid} {agent} launch') == 1
     assert 'UNEXPECTED_LEGACY_LAUNCH' not in result.stdout
     assert 'slot already used' not in result.stdout
-    assert 'attach-session -t $98:' in zsh.log.read_text()
+    assert 'attach-session -t %98' in zsh.log.read_text()
     if batch:
         assert '_t_history_attach api-99' in result.stdout
 

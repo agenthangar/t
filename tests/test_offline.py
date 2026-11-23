@@ -458,9 +458,42 @@ def test_resume_permission_spellings(tmp_path, args, expected):
     assert route.frontend == ['codex', 'resume', 'id']
 
 
+@pytest.mark.parametrize('configured, add_dir', [([], False), (['selected'], False), ([], True)])
+def test_resume_explicit_writable_roots_replace_saved_roots(tmp_path, monkeypatch, configured, add_dir):
+    policy = load_script(ROOT/'libexec/t_resume_permissions.py', 'resume_permissions_test').ResumePermissions
+    monkeypatch.setenv('TMPDIR', str(tmp_path / 'temporary'))
+    args = ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps(configured)]
+    if add_dir:
+        args += ['--add-dir', 'additional']
+    route = policy(['codex', 'resume', 'selected', *args], tmp_path)
+    selected = [str((tmp_path / root).resolve()) for root in configured]
+    extra = [str((tmp_path / 'additional').resolve())] if add_dir else []
+    expected = [str(tmp_path.resolve()), *selected, *extra]
+    stale = str(tmp_path / 'saved-extra')
+    request = dict(method='thread/resume', id=3, params=dict(threadId='selected',
+                   runtimeWorkspaceRoots=[str(tmp_path), stale], config={'model': 'test'}))
+    route.client(request)
+    assert request['params']['config'] == {'model': 'test', 'sandbox_workspace_write.writable_roots': selected}
+    assert request['params']['runtimeWorkspaceRoots'] == expected
+    assert route.params['config']['sandbox_workspace_write.writable_roots'] == selected
+    effective = dict(thread={'id': 'selected'}, runtimeWorkspaceRoots=expected,
+                     sandbox=dict(type='workspaceWrite', writableRoots=[*selected, *extra]))
+    with pytest.raises(ValueError, match='workspace roots'):
+        route.server_reply(dict(id=3, result={**effective, 'runtimeWorkspaceRoots': [*expected, stale]}))
+    with pytest.raises(ValueError, match='writable roots'):
+        route.server_reply(dict(id=3, result={**effective, 'sandbox': dict(type='workspaceWrite',
+                                writableRoots=[*selected, *extra, stale])}))
+    assert not route.verified
+    # Built-in roots may be included in the legacy sandbox representation.
+    effective['sandbox']['writableRoots'] += [str(tmp_path.resolve()), '/tmp', str(tmp_path / 'temporary')]
+    route.server_reply(dict(id=3, result=effective))
+    assert route.verified
+
+
 @pytest.mark.parametrize('args', [
     ['--sandbox'], ['--sandbox=unsupported'], ['--sandbox', 'read-only', '--permission-profile', ':workspace'],
-    ['-c', 'sandbox_mode=12'], ['-c', 'sandbox_workspace_write.writable_roots=true'],
+    ['-c', 'sandbox_mode=12'], ['-c', 'sandbox_mode=[]'], ['-c', 'sandbox_mode={}'],
+    ['-c', 'sandbox_workspace_write.writable_roots=true'],
     ['-c', 'sandbox_workspace_write.network_access=true'], ['-c', 'approval_policy'],
 ])
 def test_resume_rejects_unverifiable_permission_arguments(tmp_path, args):
