@@ -125,7 +125,7 @@ _t_lifecycle_effect() {
         print -u2 "t open: agent startup is not ready; inspect $HOME/.tmux-logs/$session.log"
         return 1
       fi
-      _t_history_owner "${session#dev-}" "$sid" "$dir" "$agent" wait ;;
+      _t_history_owner "${session#dev-}" "$sid" "$dir" "$agent" wait "${5:-}" ;;
     record)
       local event=$1 session=$2 dir=$3 agent=$4 sid=$5
       if [[ -z $sid && $event == new && -n ${T_LAUNCH_CONTEXT:-} ]]; then

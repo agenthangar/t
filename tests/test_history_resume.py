@@ -176,20 +176,22 @@ _t_history_attach repo-1 selected /repo/1 codex
 
 
 @pytest.mark.parametrize('inside', [False, True])
-def test_shell_attach_success_uses_exact_target_and_switches_existing_client(history, tmp_path, inside):
+@pytest.mark.parametrize('pinned', [False, True])
+def test_shell_attach_success_uses_exact_target_and_switches_existing_client(history, tmp_path, inside, pinned):
     log = tmp_path / 'calls'
+    expected = "'$7:%11'" if pinned else ''
     script = f'''
 source {ROOT}/zsh/sessions.zsh
 _dev_session_claude_pid() {{ print 123; }}
 _dev_session_sid() {{ print selected; }}
 _dev_agent_of_session() {{ print codex; }}
 TMUX={'isolated' if inside else ''}
-tmux() {{ case $1 in has-session) return 0 ;; display-message) print '$7|/repo/1' ;; *) print "$*" >> {log} ;; esac }}
-_t_history_attach repo-1 selected /repo/1 codex
+tmux() {{ case $1 in has-session) return 0 ;; display-message) print '$7{':%11' if pinned else ''}|/repo/1' ;; *) print "$*" >> {log} ;; esac }}
+_t_history_attach repo-1 selected /repo/1 codex {expected}
 '''
     result = subprocess.run(['zsh', '-fc', script], text=True, capture_output=True, env=os.environ.copy())
     assert result.returncode == 0, result.stderr
-    assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t $7:'
+    assert log.read_text().strip() == f'{"switch-client" if inside else "attach-session"} -t {"%11" if pinned else "$7:"}'
 
 
 @pytest.mark.parametrize('outcome', ['ready', 'sid', 'cwd', 'agent', 'recycled', 'exited', 'dead', 'dead-ready', 'dead-missing-agent', 'timeout'])
@@ -561,7 +563,7 @@ def test_generation_race_after_destination_is_blocked_under_claim(app, history, 
     monkeypatch.setattr(app, 'destination', modified)
     with pytest.raises(history.HistoryError, match='generation changed'):
         app.resume('repo', row)
-    assert releases and all(Path(path) == workspace for path in releases)
+    assert not releases  # Revalidate generation before touching the native writer.
 
 
 @pytest.mark.parametrize('ready', [True, False])
@@ -580,7 +582,11 @@ _dev_stop_session_placeholder() {{ print -r -- "%1|off"; }}
 _t_history_owner() {{ print -r -- "READY $*" >> {commands}; return {0 if ready else 1}; }}
 _dev_history_record() {{ print RECORDED >> {commands}; }}
 _dev_recovery_watch() {{ return 0; }}
-tmux() {{ [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}; return 0; }}
+tmux() {{
+  [[ $1 == new-session ]] && print -r -- '$1:%1'
+  [[ $1 == respawn-pane ]] && print -r -- "$*" > {commands}
+  return 0
+}}
 _dev_resume_session_effect dev-repo-2 '{tmp_path}/destination 2' selected codex history || exit $?
 _t_lifecycle_effect ready dev-repo-2 '{tmp_path}/destination 2' codex selected || exit $?
 _t_lifecycle_effect record resume dev-repo-2 '{tmp_path}/destination 2' codex selected
@@ -702,6 +708,9 @@ def test_resume_unindexed_writer_guidance_uses_public_resume(app, history, tmp_p
         if argv == ['ps', '-p', '42', '-o', 'comm=']:
             return SimpleNamespace(returncode=0, stderr='', stdout=(
                 '/Applications/ChatGPT.app/Contents/Resources/codex\n'))
+        if argv == ['ps', '-ww', '-p', '42', '-o', 'lstart=,command=']:
+            return SimpleNamespace(returncode=0, stderr='', stdout=(
+                'Sat Nov 21 10:00:00 2026 /Applications/ChatGPT.app/Contents/Resources/codex\n'))
         raise AssertionError(f'unexpected action during ownership inspection: {argv}')
 
     app.api['_run'] = inspect
@@ -744,7 +753,7 @@ def test_index_merge_retains_source_freshness(app, history, store):
 
 
 def test_history_failure_exits_without_reopening_picker(app, history, monkeypatch, capsys):
-    row = conversation()
+    row = conversation(associations=[dict(workspace='/repo/1', slot='1', host='local')])
     for method in ('discover', 'pr_states', 'branch_prs'):
         monkeypatch.setattr(app, method, lambda *a, **k: None)
     monkeypatch.setattr(app, 'owners', lambda *a: [])
@@ -966,6 +975,112 @@ def tool_output(call_id, **result):
     return dict(type='response_item', payload=dict(type='custom_tool_call_output', call_id=call_id, output=json.dumps(result)))
 
 
+def structured_tool_output(call_id, *results):
+    row = tool_output(call_id)
+    row['payload']['output'] = [
+        dict(type='input_text', text='Script completed\nWall time 0.0 seconds\nOutput:\n'),
+        *(dict(type='input_text', text=json.dumps(result)) for result in results),
+    ]
+    return row
+
+
+@pytest.mark.parametrize('mode', ['success', 'failed', 'missing-exit', 'prose', 'wrong-repo', 'redirected'])
+def test_prepared_create_uses_verified_process_output(history, tmp_path, mode):
+    command = "python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/body').write_text('PR body')\nPY\n"
+    command += 'gh pr create --body-file /tmp/body --repo org/repo'
+    if mode == 'redirected':
+        command += ' >/dev/null'
+    url = 'https://github.com/org/repo/pull/489'
+    output = 'link: ' + url if mode == 'prose' else url.replace('org/repo', 'other/repo') if mode == 'wrong-repo' else url
+    result = dict(output=output + '\n')
+    if mode != 'missing-exit':
+        result['exit_code'] = 1 if mode == 'failed' else 0
+    rows = codex_rows(tmp_path) + [
+        tool_event('create', 'text(await tools.exec_command({cmd: ' + json.dumps(command) + '}));'),
+        structured_tool_output('create', dict(session_id=42, output='')),
+        tool_event('poll', 'text(await tools.write_stdin({session_id:42,chars:""}));'),
+        structured_tool_output('poll', result),
+    ]
+    path = transcript_file(tmp_path / 'rollout-selected.jsonl', rows[:-2])
+    checkpoint = json.loads(json.dumps(history.transcript(path, 'codex')))
+    with path.open('a') as stream:
+        for entry in rows[-2:]:
+            stream.write(json.dumps(entry) + '\n')
+    value = history.transcript(path, 'codex', checkpoint)
+    assert [pr['number'] for pr in value['prs']] == ([489] if mode == 'success' else [])
+
+
+def test_sequential_poll_uses_first_structured_result(history, tmp_path):
+    rows = codex_rows(tmp_path) + [
+        tool_event('create', 'text(await tools.exec_command({cmd:"gh pr create"}));'),
+        structured_tool_output('create', dict(session_id=42, output='')),
+        tool_event('poll', 'text(await tools.write_stdin({session_id:42,chars:""}));\n'
+                   'text(await tools.exec_command({cmd:"echo unrelated"}));'),
+        structured_tool_output('poll', dict(exit_code=0, output='https://github.com/org/repo/pull/432\n'),
+                               dict(exit_code=0, output='https://github.com/org/repo/pull/9\n')),
+    ]
+    value = history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')
+    assert [pr['number'] for pr in value['prs']] == [432]
+
+
+@pytest.mark.parametrize('mode', ['dirty', 'clean', 'open', 'new-sid', 'live-owner', 'stale-generation',
+                                  'new-branch', 'commits', 'published', 'published-pr', 'live-exact',
+                                  'no-generation', 'open-commits', 'saved-new-sid'])
+def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history, git_repo, mode):
+    workspace = Path(app.cfg.worktree_root) / 'repo/repo-1'
+    repo = app.cfg.repos['repo']
+    history.run(['git', '-C', repo, 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
+    app.cfg.worktree_paths = lambda alias, slot: [str(workspace)]
+    app.discovery_identities['repo'] = 'org/repo'
+    row = saved_row(app, git_repo, workspace)
+    rows = [row]
+    live = []
+    if mode not in ('clean', 'open'):
+        (workspace / 'tracked').write_text('local change\n')
+    if mode == 'open':
+        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
+    if mode == 'new-sid':
+        rows.append(saved_row(app, git_repo, workspace, sid='later', observed=2))
+    if mode == 'live-owner':
+        live.append(dict(agent='codex', sid='later', cwd=str(workspace)))
+    if mode in ('no-generation', 'live-exact'):
+        row['associations'][0]['generation'] = ''
+    if mode == 'live-exact':
+        live.append(dict(agent='codex', sid=row['sid'], cwd=str(workspace)))
+    if mode == 'saved-new-sid':
+        replacement = saved_row(app, git_repo, workspace, sid='later', observed=2)
+        replacement['associations'][0]['generation'] = ''
+        rows.append(replacement)
+    if mode == 'stale-generation':
+        row['associations'][0]['generation'] = 'previous'
+    if mode == 'new-branch':
+        history.run(['git', '-C', str(workspace), 'switch', '-c', 'other'])
+    if mode in ('commits', 'published', 'published-pr'):
+        row['prs'] = [dict(repo='org/repo', number=7, state='MERGED')]
+        cache = Path(os.environ['XDG_CACHE_HOME']) / 'claude-sessions/pr/org#repo#7.head'
+        cache.parent.mkdir(parents=True)
+        cache.write_text(git_repo)
+        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Follow-up'])
+        if mode == 'published':
+            Path(repo, 'tracked').write_text('local change\n')
+            history.run(['git', '-C', repo, 'commit', '-am', 'Squashed follow-up'])
+        if mode == 'published-pr':
+            (cache.parent / 'org#repo#8').write_text('MERGED')
+            tip = history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD'])
+            (cache.parent / 'org#repo#8.head').write_text(tip)
+        history.run(['git', '-C', repo, 'update-ref', 'refs/remotes/origin/main', 'main'])
+    if mode == 'open-commits':
+        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
+        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Open working branch'])
+        row['associations'].append({**row['associations'][0], 'evidence': 'close', 'observed': 2,
+                                    'commit': history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD']).strip()})
+    app.annotate_resume_work(rows, live)
+    fields = history.resume_candidate(row, 'repo', row['associations'][0], 'local').split('\t')
+    assert fields[14] == ('yes' if mode in ('dirty', 'commits', 'open-commits', 'live-exact') else '-')
+    if mode == 'new-sid':
+        assert rows[-1].get('work_in_progress') is True
+
+
 def test_real_shaped_async_create_and_exact_poll_backfill_across_cache_append(app, history, tmp_path):
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
     source = transcript_file(tmp_path / 'rollout-selected.jsonl', codex_rows(workspace, sid='selected') + [
@@ -1024,6 +1139,8 @@ def test_async_cell_wait_preserves_known_invocation_and_requires_success(app, hi
     '// tools.exec_command({cmd:"gh pr create"})\ntext("unrelated");',
     'text(await tools.exec_command({cmd: "printf unrelated", nested: {cmd:"gh pr create"}}));',
     'text(await tools.exec_command({cmd: "gh pr create"})); text(await tools.exec_command({cmd:"printf unrelated"}));',
+    'text(await tools.exec_command({cmd: "gh pr create" + " --dry-run"}));',
+    'if (false) text(await tools.exec_command({cmd:"gh pr create"}));',
 ])
 def test_custom_exec_pr_evidence_requires_actual_unambiguous_invocation(app, history, tmp_path, source):
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
@@ -1106,6 +1223,31 @@ def test_detached_saved_resume_refuses_new_live_owner(app, history, monkeypatch)
     monkeypatch.setattr(app, 'owners', lambda *a: [dict(sid='selected', agent='codex')])
     with pytest.raises(history.HistoryError, match='became live'):
         app.resume('repo', conversation(sid='selected'), detached=True)
+
+
+@pytest.mark.parametrize('when,terminal', [('selected', '$7:%9'), ('allocation', '$7:%9'), ('selected', '$7')])
+def test_picker_saved_row_that_became_live_uses_verified_pane(
+        app, history, monkeypatch, git_repo, tmp_path, when, terminal):
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    row = saved_row(app, git_repo, workspace)
+    owner = dict(host='local', slot='repo-1', sid='selected', agent='codex', cwd=str(workspace))
+    scans = iter([[], [owner]] if when == 'allocation' else [[owner]])
+    monkeypatch.setattr(app, 'owners', lambda *a: next(scans))
+    monkeypatch.setattr(app, 'source', lambda *a: tmp_path / 'unused')
+    monkeypatch.setattr(app, 'destination', lambda *a, **k: pytest.fail('must attach only'))
+    monkeypatch.setenv('T_RESUME_OWNER_RECEIPT', '1')
+    run = history.run
+    def probe(argv, **kwargs):
+        if argv[0] == 'zsh':
+            assert argv[-1].endswith(f'_t_history_owner repo-1 selected {workspace} codex receipt')
+            return terminal
+        return run(argv, **kwargs)
+    monkeypatch.setattr(history, 'run', probe)
+    if ':' in terminal:
+        assert app.resume('repo', row, detached=True) == f'dev-repo-1\t{workspace}\t{terminal}'
+    else:
+        with pytest.raises(history.HistoryError, match='terminal identity'):
+            app.resume('repo', row, detached=True)
 
 
 @pytest.mark.parametrize('mode', ['candidates', 'slot-candidates', 'invalid-slot', 'missing-slot',
@@ -1346,7 +1488,7 @@ def test_saved_resume_offers_repair_for_exact_selection(
     def resume(alias, selected, **kwargs):
         calls.append((alias, selected['sid'], kwargs))
         if len(calls) == 1 or decision == 'still-blocked':
-            raise history.HistoryError('writer metadata is not available yet')
+            raise history.WriterBusy('writer metadata is not available yet')
         return 'dev-repo-7'
     monkeypatch.setattr(app, 'resume', resume)
     prompts = []
@@ -1395,7 +1537,7 @@ app.root=str(root); app.api=api
 calls=[]
 def resume(*a,**k):
     calls.append(1)
-    if len(calls)==1: raise h['HistoryError']('Waiting writer')
+    if len(calls)==1: raise h['WriterBusy']('Waiting writer')
     return 'dev-sample-3'
 app.resume=resume
 app.resume_with_repair.__globals__['_CACHE_REQUEST']=lambda *a,**k: {}
@@ -1411,12 +1553,12 @@ except h['HistoryCancelled']: sys.exit(130)
     screen = b''
     try:
         deadline = time.monotonic() + 10
-        while b'Repair' not in screen and time.monotonic() < deadline:
+        while b'Wait for release' not in screen and time.monotonic() < deadline:
             if select.select([master], [], [], .1)[0]:
                 screen += os.read(master, 65536)
             if process.poll() is not None:
                 break
-        assert b'Repair' in screen and b'Cancel' in screen, screen.decode(errors='replace')
+        assert b'Wait for release' in screen and b'Cancel' in screen, screen.decode(errors='replace')
         os.write(master, b'\x1b' if cancel else b'\r')
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:
@@ -1496,7 +1638,7 @@ def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(
     def resume(alias, selected, **options):
         events.append(('resume', alias, selected['sid']))
         if len(events) == 1:
-            raise history.HistoryError('selected writer still loaded')
+            raise history.WriterBusy('selected writer still loaded')
         return selected['sid']
     monkeypatch.setattr(app, 'resume', resume)
     def stop(selected, **options):
@@ -1529,3 +1671,40 @@ def test_stranded_close_repair_stops_exact_writer_then_rechecks_selected_resume(
         assert app.resume_with_repair('repo', row) == 'selected'
         assert events == [('resume', 'repo', 'selected'), ('stop', False), *([('stop', True)] if decision == 'force' else []),
                           ('released', 'codex', 'selected'), ('refresh',), ('resume', 'repo', 'selected')]
+
+
+def test_prepared_workspace_reused_when_writer_releases(app, history, store, git_repo, monkeypatch, tmp_path):
+    original = Path(app.cfg.worktree_root) / 'repo/repo-74'
+    row = store.merge(saved_row(app, git_repo, original))
+    monkeypatch.setattr(app, 'source', lambda *_: tmp_path/'rollout')
+    monkeypatch.setattr(app, 'owners', lambda *_: [])
+    monkeypatch.setattr(app, 'install_transcript', lambda *_: None)
+    checked, choices = [], []
+    def check(*_, workspace):
+        checked.append(workspace)
+        if len(checked) == 1:
+            raise history.WriterBusy('selected thread still loaded')
+    monkeypatch.setattr(app, 'codex_released', check)
+    monkeypatch.setattr(history, 'repair_terminal', lambda: True)
+    monkeypatch.setattr(history, '_CACHE_REQUEST', lambda *_: {})
+    monkeypatch.setitem(history._CLIENT_STOP, 'stranded', lambda *_: None)
+    load = history.runpy.run_path
+    def helpers(path, **kwargs):
+        if str(path).endswith('t_open_recovery.py'):
+            return {'ask': lambda api, title, note, action: choices.append(action) is None}
+        return load(path, **kwargs)
+    monkeypatch.setattr(history.runpy, 'run_path', helpers)
+    target = app.resume_with_repair('repo', row, detached=True, prepare_only=True)
+    assert checked == [target.split('\t')[1]] * 2
+    assert choices == ['Resume in repo-1', 'Wait for release']
+    assert not (original.parent/'repo-2').exists()
+
+
+def test_startup_error_has_no_repair_prompt(app, history, monkeypatch):
+    def failed(*_):
+        raise history.HistoryError('Error: Permission overrides are not supported when resuming a remote task.')
+    monkeypatch.setattr(app, 'resume', failed)
+    monkeypatch.setattr(history, 'repair_terminal', lambda: True)
+    monkeypatch.setattr(history.runpy, 'run_path', lambda *_: pytest.fail('unexpected retry prompt'))
+    with pytest.raises(history.HistoryError, match='Permission overrides'):
+        app.resume_with_repair('repo', conversation())

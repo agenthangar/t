@@ -204,12 +204,25 @@ def test_catalog_projection_filters_and_preserves_repository_identity(adapter, m
     row, = adapter._catalog_candidates(data, history, 'mini')
     fields = row.split('\t')
     assert fields[1:4] == ['api', '2', 'saved']
-    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-']
+    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-', 'org/api#1:OPEN', '-', 'unknown']
+    record['work_in_progress'] = True
+    record['title_kind'] = 'name'
+    assert next(adapter._catalog_candidates(data, history, 'mini')).split('\t')[14:] == ['yes', 'name']
     history.worktree_enabled = lambda alias: False
     assert not list(adapter._catalog_candidates(data, history, 'mini'))
     history.worktree_enabled = lambda alias: True
     record['title'] = ''
     assert not list(adapter._catalog_candidates(data, history, 'mini'))
+
+
+def test_active_resume_owners_excludes_idle_and_unidentified_rows(adapter):
+    rows = '\n'.join([
+        'known\t/work/repo-1\trepo-1\tdetached\tactive\tTitle\tcodex',
+        'idle\t/work/repo-2\trepo-2\tattached\tidle\tTitle\tclaude',
+        '-\t/work/repo-3\trepo-3\tattached\tactive\tTitle\tcodex',
+        'loaded\t/work/repo-4\trepo:loaded\tapp\tactive\tTitle\tcodex',
+    ])
+    assert [owner['sid'] for owner in adapter.active_resume_owners(rows)] == ['known', 'loaded']
 
 
 def test_cli_adapters_use_cache_and_targeted_events(adapter, t_mod, monkeypatch, capsys):
@@ -255,11 +268,11 @@ def test_local_snapshot_includes_unindexed_live_sessions_and_repo_scopes(adapter
     assert row['title'] == '(no transcript yet)' and row['url'].endswith(':5201')
 
 
-@pytest.mark.parametrize('fields_count', [12, 13])
+@pytest.mark.parametrize('fields_count', [12, 13, 14, 15, 16])
 def test_remote_delta_retains_unchanged_closed_resume_rows(adapter, collector, monkeypatch, fields_count):
     def candidate(sid):
         fields = ['api', 'local', '1', sid, '/sample', 'date', 'Title', 'mini',
-                  'codex', '-', 'org/repo', 'OPEN', '2026-11-16T10:00:00Z']
+                  'codex', '-', 'org/repo', 'OPEN', '2026-11-16T10:00:00Z', 'org/repo#1:OPEN', 'yes', 'name']
         return '\t'.join(fields[:fields_count])
     records = [dict(repo='org/repo', agent='codex', sid=sid) for sid in ('keep', 'remove')]
     previous = dict(rows='', catalog={'conversations': records}, _remote_generation='before',

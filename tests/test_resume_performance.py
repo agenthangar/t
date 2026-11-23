@@ -41,16 +41,34 @@ def test_saved_resume_preparation_and_readiness_are_measured_separately(lifecycl
 
 def test_numbered_resume_with_unindexed_fast_cli_in_another_workspace(lifecycle):
     import subprocess
-    from test_session_lifecycle import _shell_tty, _until, UNINDEXED
+    from test_session_lifecycle import _until, UNINDEXED
 
     base, env = lifecycle
     workspace = saved_source(base, env, 'codex')
     stopped = _shell(base, env, '_dev_kill_one dev-repo-1 1')
     assert stopped.returncode == 0, stopped.stderr
-    # Select the exact row through the public numbered resume's history picker.
-    picker = base / 'bin/fzf'
-    picker.write_text("#!/bin/sh\nprintf '\\n\\n'\nhead -n 1\n")
-    picker.chmod(0o755)
+    # Exercise the public picker with both staged and unstaged edits at an advanced tip.
+    import shutil
+    picker = shutil.which('fzf')
+    if not picker:
+        pytest.skip('interactive numbered-resume fixture requires fzf')
+    git = lambda *args: subprocess.check_output(['git', '-C', str(workspace), *args], env=env)
+    tracked = workspace / 'work.txt'
+    tracked.write_text('commit\\n')
+    git('add', tracked.name)
+    git('commit', '-qm', 'Advance fixture branch')
+    tracked.write_text('staged\\n')
+    git('add', tracked.name)
+    tracked.write_text('working\\n')
+    (workspace / 'untracked.txt').write_text('untracked\\n')
+    def state():
+        return [git(*args) for args in [('rev-parse', 'HEAD'), ('branch', '--show-current'),
+                ('worktree', 'list', '--porcelain'), ('diff', '--cached'), ('diff',),
+                ('status', '--porcelain')]]
+    before = state()
+    # Drive fzf through the fixture's private tmux server and actual controlling PTY.
+    def tmux(*args):
+        return subprocess.check_output([str(base/'bin/tmux'), *args], env=env, cwd=base, text=True)
     other = base / 'unrelated'
     other.mkdir()
     sibling = subprocess.Popen([str(base / 'bin/codex'), '--enable', 'fast_mode', '--no-daemon'],
@@ -58,11 +76,18 @@ def test_numbered_resume_with_unindexed_fast_cli_in_another_workspace(lifecycle)
     try:
         lock = Path(env['CODEX_HOME']) / 'thread-writer-locks' / (UNINDEXED[0] + '.lock')
         _until(lock.exists)
-        result = _shell_tty(base, env, 't resume repo 1', timeout=60)
-        assert result.returncode == 0, result.stdout
-        assert 'Waiting for conversation ownership' not in result.stdout
+        import shlex
+        status = base / 'resume.status'
+        command = 'unset TMUX; t resume repo 1; print -r -- $? > ' + shlex.quote(str(status))
+        tmux('new-session', '-d', '-s', 'picker-test', '-x', '100', '-y', '28',
+             'zsh', '-lic', command)
+        _until(lambda: 'history repo' in tmux('capture-pane', '-p', '-t', 'picker-test'), seconds=45)
+        tmux('send-keys', '-t', 'picker-test', 'Enter')
+        _until(status.exists, seconds=60)
+        assert status.read_text().strip() == '0'
+        assert state() == before
         owner = _shell(base, env, '_dev_session_sid dev-repo-1')
-        assert owner.stdout.strip() == SID, result.stdout
+        assert owner.stdout.strip() == SID
         assert str(workspace) in (base / 'agents.log').read_text().splitlines()[-1]
         assert sibling.poll() is None
     finally:

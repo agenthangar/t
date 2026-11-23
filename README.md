@@ -69,6 +69,9 @@ The test suite runs on macOS and Linux with Python 3.12.
 To try a fresh install and worktree session in a disposable Docker container, see
 the [playground guide](docs/playground.md).
 
+On macOS, the [rnnr menu-bar companion](apps/rnnr/README.md) shows detached
+sessions and opens the existing Terminal flows. Build it from this checkout.
+
 With Homebrew:
 
 ```sh
@@ -299,6 +302,14 @@ with slot 2, including live and saved work and conversations later moved to
 another slot. Even one conversation waits for selection. Ctrl-F shows inactive
 work; Ctrl-A shows all, and Escape cancels without attaching or resuming.
 Without a terminal, an explicit slot retains newest-saved selection.
+
+Press Ctrl-B in the filtered resume picker to resume the most recently verified
+closed conversation, or run `t session resume --last --wait` directly.
+Use `t session resume api 3 --last` to scope the search to one slot, or
+`--all` to search every repository. Exact selection requires a unique verified
+close and complete discovery. Session open, close, resume, move and list accept
+`-w` (`--wait`) to observe discovery for at most 30 seconds. Ctrl-C leaves the
+refresh running. Redirected waits stay silent and prompt-free.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
@@ -765,11 +776,11 @@ session, retaining an explicit `--codex` or `--claude` choice. If repair fails,
 the existing **Force open** option resets only that session's t records. It still
 requires verified ownership and preserves worktree files and native transcripts.
 
-Saved `t resume api 3` selections also offer **Repair / Cancel** after failure.
-Repair retries that exact conversation once. Native writers that have not yet
-published their worktree metadata get a bounded 30-second settling wait; normal
-launches do not wait. A writer that remains unknown or owns the target still
-blocks the launch. Cancel stops any remaining batch selections.
+After quitting a session, run `t resume api 3` and select the conversation.
+If it still belongs to that worktree, it reopens there with the current branch,
+staged changes, and working files intact. If recovery needs another worktree,
+the interactive command shows the reason and proposed slot first. **Wait for release**
+rechecks a busy writer. A startup failure shows the native error from that attempt.
 
 Saved Codex resumes use native cloud retries when automatic local continuation
 cannot support resume, including workflows set to ask or continue locally.

@@ -91,13 +91,16 @@ checks, known conflicts and allocator-proven fresh workspaces retain their fast
 paths. Every retry reads live ownership, and saved resume rechecks its selected
 writer after the wait. Expiry never authorizes a conflicting launch.
 
-Failed interactive saved resumes also offer **Repair / Cancel** through the same
-rail. Repair refreshes local discovery and retries the exact selected conversation
-once, including source and owner validation. Failures preserve a bounded shell
-cause and identify which readiness field changed (session, workspace, agent or
-conversation). They never relax ownership checks. It never switches to the latest
-conversation in that slot or force-opens a fresh context. A second failure retains
-the diagnostic. When a failed managed close left a verified local Codex writer
+Interactive resume reopens the selected conversation in its original worktree
+when the repository, branch, generation and released ownership still match.
+It keeps HEAD, the Git index and working files intact. An advanced branch tip
+is valid when it descends from the recorded commit. If relocation is necessary,
+the recovery rail explains the reason and names the proposed destination before
+creating a checkpoint or worktree. Cancel returns 130.
+
+**Wait for release** rechecks a native writer in the same prepared workspace.
+A deterministic startup failure reports the current attempt’s sanitized native
+error and finishes. When a failed managed close left a verified local Codex writer
 without its terminal, the rail identifies the stranded client and offers to stop
 it. Repair checks the owner again and waits for writer release before retrying
 the selected conversation. When Repair finds the same unresolved lock and holder again, it
@@ -317,7 +320,8 @@ showing the next action and keys. Focus and marks must remain distinguishable
 without color. Headings are cyan, hints muted, and focused text light on dark cyan.
 Keep the green checkmark in its own gutter beside the pointer, with spaces between
 status icons inside rows. Give controls and results a blank separating row when
-height permits. Session pickers list HOTKEYS above FILTERS, with readable shortcuts
+height permits. Session pickers list HOTKEYS above FILTERS, except filtered resume
+places unheaded result hotkeys beside the rows. Use readable shortcuts
 and bright underlined labels for the current filter On/Off state, resume sort, and
 merged-session toggle when enabled. Session lists highlight selected column filters
 and the current sort key. Plain output retains explicit state text.
@@ -329,6 +333,8 @@ Display native Mac labels (`⌃T`, `⌃S`, `↩ Return`, `⎋ Esc`, `⇥ Tab`) o
 other hosts use `Ctrl-T`, `Ctrl-S`, `Enter`, `Esc`, `Tab`. Compact headers use the short
 Mac symbols or `^T` on other systems. Only labels change: bindings remain the
 same control keys, Return, Escape and Tab. Align labels on wide terminals and stack them below 60 columns.
+Filtered resume uses bold, written Return or Enter, Esc, and Tab labels at all
+sizes.
 Let label columns use available width before truncating; never cap wide-terminal
 labels at 24 characters. Clip text before applying color and count physical rows when repainting; at
 80×24, 44×20, and 32×12 interactive screens the focused row and primary action
@@ -1073,13 +1079,19 @@ Timeout never retries or prompts. Incomplete results retain a warning through
 filtering, sorting and history paging. Ctrl-C cancels observation with 130 while
 the shared refresh continues.
 
-After a saved selection, local and cross-host resumes reconcile the latest durable
+Interactive resume uses the same cold discovery and service recovery rail as
+open. In the picker, an in-flight refresh updates results as hosts finish.
+Ctrl-U refreshes the same discovery scope and preserves query, filters and
+sort. Ctrl-R filters by repository in the resume picker and refreshes plain
+slot history.
+
+When a saved selection needs transfer, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
 branch, generation and released ownership, checkpoints eligible outstanding code
 with normal Git hooks, and transfers the verified tip privately into a fresh safe
 destination. Safety or checkpoint refusals stop launch; unreachable or unsupported
 source helpers warn and retain the locally available revision and transcript path.
-A valid local source carries its current branch tip and checkpoints eligible tracked
+A transfer from a valid local source carries its current branch tip and checkpoints eligible tracked
 and nonignored untracked changes before allocating a new worktree. Missing or
 recycled local workspaces retain historical fallback without copying replacement
 files. Local transfers do not require a bundle or inherit the remote size limit.
@@ -1094,25 +1106,40 @@ and preserve query and identities. Filters, reset and on/off preserve sorting.
 Compact headers use ⌃ for Control on macOS and ^ elsewhere. Resume disables fzf relevance sorting
 so searching preserves the chosen order. Saved transcript mtime/reopen time still
 controls --days eligibility.
-The resume picker labels the PR, slot, agent, activity, and working-on columns.
-All-repository views include REPO, and HOST appears when an origin is recorded.
-ACTIVITY shows the last user turn and, for live rows, the current owner status.
-Columns use the full snapshot to stay aligned when filtering or sorting.
-The table scrolls horizontally under its fixed query, controls and selection
-gutter. Move the ordinary wheel over the table: up pans left, down pans right;
-a horizontal wheel follows its direction. Shift is unnecessary. Headings and
-rows move together. `<` appears only with hidden text to the left and `>` only
-with hidden text to the right. Search still matches every complete column.
-Panning retains the query cursor, focused conversation, marks, filters and sort.
-Wheel events in the controls or details pane retain native fzf behavior.
-For example, run `t session resume --all`, hover the rows, and wheel down to
-read WORKING ON. Up/Down still moves focus, and Left/Right edits the query.
-On a tall-to-short resize, legacy fzf keeps its original frame; the header
-prioritizes action, filter state, sort and column labels to keep focus visible.
-Resume rows begin with a cached PR badge: MERGED, OPEN, CLOSED, NONE (no PR
-recorded), UNKNOWN, or MIXED. Ctrl-D toggles hiding MERGED rows and advertises the
-next action in the header. It uses explicit snapshot metadata, never title text.
-Compact headers show `M-M -merged` to hide and `M-M +merged` to show them.
+The resume picker labels STATUS, PRS, REPO, SLOT, AGENT, LAST TURN, and TITLE.
+TITLE prefers the recorded conversation name. A `Prompt:` prefix identifies
+an opening prompt used as a fallback. `Saved label:` identifies older display
+text whose source cannot be verified.
+A bare command outside a registered repository browses all repos, as does
+`t session resume --all`. HOST appears when results span hosts.
+LAST TURN shows the local date and time to the minute. Green Ctrl-U sits next
+to the refresh status. During an active refresh, show the previous refresh time when space permits.
+Hosts use a green ✓ for current, cyan … for refreshing, and a red × for failed
+connections, with the reason in amber. The hidden count belongs beside the
+result count. Older fzf versions show it on the first header line below the count.
+Active filters list their current value and shortcut even with the editor closed.
+Alt-F (⌥F on macOS) opens and closes the inline filter editor. Ctrl-T includes
+attached sessions or returns to the saved-only default. Return attaches to an
+existing terminal session when one is selected. The current sort and its actions
+use the same summary and action layout as filters.
+
+Leave blank rows between the full header sections, before the result hotkeys,
+and before the columns. The legend follows the table order: Status, PRs, Agent.
+Status icons identify attached (●), last closed (↶), work in progress (↻), and
+a verified preview deployment (↗). Tab marks action targets with fzf’s green ✓.
+Matching legend entries and row icons use the same colors. The AGENT column
+shows terminal glyphs while full names remain searchable and visible in details.
+Column widths remain stable while filtering and sorting. Over the table,
+wheel up pans left and wheel down pans right. Horizontal wheel input follows
+its direction. STATUS stays fixed while the other columns and their headings
+move together. Search still matches offscreen text. Up and Down move focus.
+Left and Right edit the query.
+
+PRS shows up to two associated pull requests with vertically aligned state icons
+before their numbers (↴ merged, ○ open, ◌ draft, ! conflict, × closed, ? unknown).
+A count indicates additional PRs. A dash indicates no recorded PR. Color follows
+GitHub’s status palette, and the symbols remain visible in monochrome.
+Ctrl-D toggles hiding merged histories using explicit snapshot metadata.
 For histories with multiple associated PRs, all must be explicitly merged before
 the row is hidden; mixed or unknown states remain visible. Live rows without
 structured PR metadata stay UNKNOWN. A merged PR does not imply completed work.
@@ -1127,8 +1154,8 @@ current computation; the selection gutter ✓ marks an action target.
 
 Query and visible selection identity survive supported reloads; hidden marks
 are removed. Old fzf clears marks on filter actions. These remain filtered/multi
-modes, not new commands or discovery operations. Every shortcut and a focused
-row remain visible at 80×24, 44×20, and 32×12. Short terminals use a borderless
+modes, not new commands or discovery operations. Keep primary shortcuts and a focused row visible at 80×24, 44×20, and 32×12.
+The inline editor reveals additional filter shortcuts. Short terminals use a borderless
 full-height view, including nested value pickers. Narrow headers use ⌃ on macOS and ^ elsewhere for Ctrl
 and show the selected column count; full values are available in Filters. One cyan
 summary highlights enabled constraints, with explicit ON/OFF text in monochrome.
@@ -1295,8 +1322,7 @@ on every scan; `--remote` remains a compatibility option. The picker includes
 canonical checkouts, swept Codex rollouts and renamed roots whose recorded Git
 origin exactly matches the configured repository. Only the selected transcript
 is downloaded and verified. A different live conversation in the historical
-slot does not hide saved work: inactive selections receive a safely allocated
-workspace when their original workspace cannot be reused. Exact live IDs attach
+slot does not hide saved work: interactive resume offers a new workspace when its original cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
 A plain explicit slot (`t session resume api 2`, including `t resume api 2`
 and the inferred-repository `t resume 2`) opens the internal saved-conversation picker.
@@ -1307,7 +1333,7 @@ Without a terminal it lists history without launching. Tab marks conversations o
 Search, page changes, and refresh clear marks. Extra selections open in tabs before
 the first attaches. A resume failure exits nonzero without reopening the picker;
 batches stop and report any conversations already resumed.
-Fresh saved launches wait up to 15 seconds for the exact conversation identity
+Saved launches bind attachment to the verified tmux session and pane. They wait up to 15 seconds for the exact conversation identity
 before attaching or reporting readiness. This covers Codex registering a resumed
 conversation in a new worktree. A changed or exited owner still fails immediately;
 an identity timeout keeps the launched session and prints `t open api 2` with its
@@ -2252,10 +2278,15 @@ sharing editor are unchanged.
 ### Last closed session
 
 `t session resume` and plain slot history mark the latest verified closure with
-**↶**, in its own fixed-width cell beside the existing row. A compact legend
-explains the icon and close time. Sorting and filtering never reassign that mark
-to another conversation; hiding the marked conversation leaves no marked row.
-Use `t resume`, then Return to resume the initially focused last-closed conversation;
+**↶**, in its own fixed-width cell beside the row. The filtered picker uses
+verified close events from its available snapshot. Sorting and filtering never
+reassign the mark to another conversation. Hiding that conversation leaves no
+marked row.
+Press Ctrl-B in the filtered `t resume` picker to resume the most recent
+verified close within the command's repository or slot scope. Ctrl-B uses
+the same bounded discovery and guarded launch as `t session resume --last --wait`.
+The shortcut considers all saved history in scope, independent of the date
+window, search, filters, and marks. Return accepts the focused or marked rows.
 Ctrl-Y switches to last turn and the existing sort choices.
 
 Closure evidence comes from successful `t close` lifecycle records after writer
@@ -2264,9 +2295,9 @@ turn, transcript mtime, and last-opened stamps. Native/app exits without a recor
 closure remain unknown. A later launch/resume/handoff, newer user turn, or live
 owner invalidates that conversation's prior close as a current saved closure.
 Unknown close times sort after recorded closes, with last turn breaking ties.
-Tied latest closures and incomplete discovery suppress the unique marker; they
-never substitute an older session. Remote peers without close metadata retain
-last-turn behavior. All existing guarded exact-conversation resume checks remain.
+Tied latest closures suppress the marker. History paging retains its own
+partial-discovery rules. Remote peers without close metadata retain last-turn
+behavior. All existing guarded exact-conversation resume checks remain.
 
 ### Local inference and runtime controls
 

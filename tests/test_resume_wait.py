@@ -90,7 +90,7 @@ def test_resume_wait_rail_layout(t_mod, monkeypatch, width, height):
     assert ui.restored
     frame = ui.frames[0]
     plain = '\n'.join(t_mod._ANSI_RE.sub('', line) for line in frame)
-    assert 'Skip waiting' in plain and '▸' in plain and 'cancel' in plain
+    assert 'Refreshing sessions' in plain and 'Skip waiting' in plain and '▸' in plain and 'cancel' in plain
     assert sum(t_mod._term_rows(line, width) for line in frame) <= height
     assert all(t_mod._vis_len(line) <= width for line in frame)
 
@@ -221,5 +221,109 @@ def test_resume_discovery_notice_survives_auth_and_filter_changes(filters, tmp_p
     for action in ('current', 'agent', 'off', 'on', 'sort-repo', 'default'):
         filters.render(tmp_path, 'resume', action, 32)
         header = (tmp_path / 'current-header').read_text()
-        assert header.startswith('GitHub auth failed:')
+        assert any(line.startswith('GitHub auth failed:') for line in header.splitlines())
         assert 'Older or incomplete results' in header
+
+
+@pytest.mark.parametrize('outcome', ['cancel', 'unavailable', 'timeout', 'complete'])
+def test_explicit_resume_refresh_preserves_snapshot_on_failure(t_mod, monkeypatch, tmp_path, outcome):
+    (tmp_path / 'discovery-status').write_text(json.dumps(dict(hosts=[dict(host='local', status='current')])))
+    for name in ('source', 'rows-0', 'columns'):
+        (tmp_path / name).write_text(f'old {name}')
+    running = view()
+    running['hosts'][0]['refreshing'] = True
+    finished = view()
+    replies = {'cancel': [running], 'unavailable': [{'unavailable': True}],
+               'timeout': [running], 'complete': [running, finished]}
+    sequence, calls, clock = iter(replies[outcome]), [], [100]
+
+    def discover(cfg, **kwargs):
+        calls.append(kwargs['refresh'])
+        return next(sequence)
+
+    def wait(refresh):
+        assert not refresh()
+        if outcome == 'cancel':
+            raise KeyboardInterrupt
+        if outcome in ('unavailable', 'timeout'):
+            clock[0] += 31
+        assert refresh()
+        return '__done__'
+
+    def rebuild(command, **kwargs):
+        # The spawner receives original flags and operates without input or a
+        # controlling terminal. It writes solely to the private staging directory.
+        import shlex
+        from pathlib import Path
+        options = shlex.split(command[-1])
+        destination = Path(next(part.partition('=')[2] for part in options if part.startswith('_T_RESUME_PICKER_SNAPSHOT=')))
+        assert options[-5:] == ['_t_resume', 'api', '4', '--days', 'all']
+        assert kwargs['stdin'] == t_mod.subprocess.DEVNULL and kwargs['start_new_session']
+        assert (destination / 'history').read_text() == 'new history\n'
+        for name in ('source', 'rows-0', 'columns'):
+            (destination / name).write_text(f'new {name}')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(t_mod, 'Config', lambda: None)
+    monkeypatch.setattr(t_mod, '_resume_discovery_wait', wait)
+    monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(t_mod.subprocess, 'run', rebuild)
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
+        discover=discover, resume_health=lambda v: dict(hosts=[], timed_out=v.get('wait_timed_out', False)),
+        rows=lambda _: 'local\tlive\n',
+        candidates=lambda v, aliases, slot: ['new history'] if aliases == ['api'] and slot == '4' else []))
+    assert t_mod._resume_picker_refresh(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == 0
+    status = json.loads((tmp_path / 'discovery-status').read_text())
+    if outcome in ('cancel', 'unavailable'):
+        assert (tmp_path / 'source').read_text() == 'old source'
+        assert status['cancelled' if outcome == 'cancel' else 'failed']
+    else:
+        assert (tmp_path / 'source').read_text() == 'new source'
+        assert status['timed_out'] == (outcome == 'timeout')
+    assert calls == ([True, False] if outcome == 'complete' else [True])
+
+
+def test_observer_repaints_a_settled_host_before_a_pending_peer(t_mod, monkeypatch, tmp_path):
+    status_file = tmp_path / 'discovery-status'
+    def status(local, mini):
+        return dict(hosts=[dict(host='local', status=local), dict(host='mini', status=mini)])
+    status_file.write_text(json.dumps(status('refreshing', 'refreshing')))
+    clock, observed = [0], []
+    def discover(_, *, observe, deadline):
+        assert observe and deadline > clock[0]
+        return status('current', 'refreshing' if not observed else 'unreachable')
+    def stage(snapshot, *args):
+        (snapshot / 'source').write_text('New local row')
+    class Picker:
+        def __init__(self, count): pass
+        def request(self, actions):
+            if actions.startswith('execute-silent('):
+                t_mod._resume_picker_adopt(tmp_path)
+                (tmp_path / 'observed/ready').touch()
+                observed.append(json.loads(status_file.read_text()))
+    monkeypatch.setitem(sys.modules, 't_picker_close', SimpleNamespace(Picker=Picker))
+    monkeypatch.setattr(t_mod.signal, 'signal', lambda *a: None)
+    monkeypatch.setattr(t_mod, 'Config', lambda: None)
+    monkeypatch.setattr(t_mod, '_resume_picker_stage', stage)
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(discover=discover, resume_health=lambda view: view))
+    monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(t_mod.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + dt))
+    assert t_mod._resume_picker_observe(tmp_path, ['api'], None, []) == 0
+    assert observed == [status('current', 'refreshing'), status('current', 'unreachable')]
+    assert (tmp_path / 'source').read_text() == 'New local row'
+    assert not (tmp_path / 'observed').exists()
+
+
+def test_queued_observer_does_not_overwrite_a_superseding_manual_refresh(t_mod, tmp_path):
+    status = tmp_path / 'discovery-status'
+    status.write_text('new manual state')
+    source = tmp_path / 'source'
+    source.write_text('new manual rows')
+    observed = tmp_path / 'observed'
+    observed.mkdir()
+    (observed / 'base').write_text('old state')
+    (observed / 'discovery-status').write_text('settled old state')
+    (observed / 'source').write_text('older observed rows')
+    assert t_mod._resume_picker_adopt(tmp_path) == 0
+    assert status.read_text() == 'new manual state'
+    assert source.read_text() == 'new manual rows'

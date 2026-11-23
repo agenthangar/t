@@ -30,22 +30,24 @@ def key_labels(text, platform=None, compact=False):
 def paint(text, role='hint'):
     if 'NO_COLOR' in os.environ or os.environ.get('TERM') == 'dumb':
         return text
-    code = {'heading': '36', 'action': '37', 'hint': '90', 'active': '1;4;96', 'selected': '1;4;97;48;5;23'}[role]
+    code = {'heading': '36', 'action': '37', 'key': '1;97', 'hint': '90', 'active': '1;4;96',
+            'selected': '1;4;97;48;5;23', 'progress': '1;96', 'warning': '33', 'primary': '92',
+            'agent-codex': '94', 'agent-claude': '38;5;215'}[role]
     return '\033[' + code + 'm' + text + '\033[0m' if text else ''
 
 
-def control_rows(parts, width, selected=(), compact=False, color=False, selected_role='active'):
+def control_rows(parts, width, selected=(), compact=False, color=False, selected_role='active', separator=' · '):
     """Pack whole key labels with the same spacing in every session picker."""
     active = {key_labels(part, compact=compact) for part in selected}
     lines = []
     for part in parts:
         part = _DISPLAY['clip_columns'](key_labels(part, compact=compact), width)
-        if lines and _DISPLAY['display_width'](lines[-1] + ' · ' + part) <= width:
-            lines[-1] += ' · ' + part
+        if lines and _DISPLAY['display_width'](separator.join([*lines[-1], part])) <= width:
+            lines[-1].append(part)
         else:
-            lines.append(part)
-    return [' · '.join(paint(part, selected_role if part in active else 'action') if color else part
-                      for part in line.split(' · ')) for line in lines]
+            lines.append([part])
+    return [separator.join(paint(part, selected_role if part in active else 'action') if color else part
+                           for part in line) for line in lines]
 
 
 def sort_rows(mode, width, enabled=True, compact=False, color=False, include_turn=True, include_closed=False, selected_role='active'):
@@ -54,7 +56,8 @@ def sort_rows(mode, width, enabled=True, compact=False, color=False, include_tur
                for name, (_, label) in (_SORT['SAVED_SORTS'] if include_closed else _SORT['RESUME_SORTS']).items()
                if (include_turn or name != 'turn') and (not compact or name in ('turn', 'repo', 'session'))}
     label = 'Sort: ' + (_SORT['sort_label'](mode, compact) if enabled else 'OFF')
-    return (control_rows([label, 'Ctrl-S toggle'], width, [label] if enabled else [], compact, color, selected_role)
+    return (control_rows([label, 'Ctrl-S toggle'], width, [label] if enabled else [], compact, color,
+                         selected_role='selected' if include_closed else selected_role)
             + control_rows(['Ctrl-Y next'] + ([] if compact else list(choices.values())), width,
                            [choices[mode]] if enabled and mode in choices and not compact else [], compact, color))
 

@@ -41,7 +41,7 @@ def main():
                 if fresh:
                     return 'Opened the selected sample conversation in a fresh worktree.'
                 if len(attempts) == 1 or args.blocked:
-                    error = history['HistoryError']('Another writer has not published its worktree yet.')
+                    error = history['WriterBusy']('Another writer has not published its worktree yet.')
                     error.fingerprint = None
                     raise history['UnknownWorkspaceWriter'](error, '~/code/.worktrees/api/api-3')
                 return 'Resumed the exact selected sample conversation.'

@@ -32,6 +32,17 @@ _t_resume_host_check() {
   return 1
 }
 
+# Attach a live selection with its exact conversation and owning cwd.
+_t_resume_live_attach() {
+  local host=$1; shift
+  if [[ $host == here ]]; then
+    _t_history_attach "$@"
+  else
+    local remote_command="_t_history_attach ${(j: :)${(@q)@}}"
+    ssh -t "${REMOTE_HOSTS[$host]:-$host}" "zsh -lic ${(q)remote_command}"
+  fi
+}
+
 _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 
 _t_resume_on_host() {
@@ -61,7 +72,7 @@ _t_resume_history_candidates() {
 # Resume a retained conversation through the exact-source verifier and fresh
 # workspace allocator. Stdout contains only the actual allocated tmux owner.
 _t_resume_history_launch() {
-  python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}" "${5:--}"
+  T_RESUME_OWNER_RECEIPT=1 python3 "$T_HOME/bin/t" __resume-saved "$1" "$2" "$3" "${4:-launch}" "${5:--}" "${@:6}"
 }
 
 # Selected history may register a checkout in the Python worker. Make that exact
@@ -192,7 +203,7 @@ _t_resume() {
   _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
   (( _repo_selector_rc == 2 )) && return 2
   (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  if [[ $T_RESUME_LAST != 1 && -n $repo && $slot == <-> ]]; then
+  if [[ $T_RESUME_LAST != 1 && -z ${_T_RESUME_PICKER_SNAPSHOT:-} && -n $repo && $slot == <-> ]]; then
     local recovery recovery_rc=0
     recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$repo" "$slot") || recovery_rc=$?
     if (( recovery_rc == 0 )); then
@@ -231,42 +242,58 @@ _t_resume() {
     repos=($repo)
   fi
 
+  if [[ -n $remote_flag && ${#REMOTE_HOSTS} == 0 ]]; then
+    echo "t resume -r: no REMOTE_HOSTS configured (set them in ${T_LOCAL_RC})." >&2
+    return 1
+  fi
+
   local -x T_RESUME_CUTOFF=0
   [[ $days != all ]] && T_RESUME_CUTOFF=$(( EPOCHSECONDS - days * 86400 ))
+  local -A resume_hosts
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_emitted history_pr_state
+  local -A history_seen history_emitted live_titles live_work
+  local live_identity live_host
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
   [[ -n $identity_scope ]] && history_scope=("$identity_scope")
   [[ -n $slot ]] && history_scope+=(--slot "$slot")
-  local auth_file auth_hosts auth_host discovery_notice=
-  local -x T_RESUME_NOTICE_FILE= T_RESUME_ROWS_FILE=
-  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    T_RESUME_ROWS_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-rows.XXXXXX") || return 1
-  fi
-  auth_file=$(mktemp "${TMPDIR:-/tmp}/t-resume-auth.XXXXXX") || return 1
-  if [[ $T_RESUME_WAIT == 1 && ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    T_RESUME_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || { rm -f -- "$auth_file"; return 1; }
-    # The shared rail owns stderr and terminal input during this wait. A shell
-    # spinner would capture its controls and hide the skip/cancel action.
-    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
-    discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
-    rm -f -- "$T_RESUME_NOTICE_FILE"
+  local auth_file auth_hosts auth_host discovery_notice= discovery_status= snapshot
+  local -x T_RESUME_NOTICE_FILE= T_RESUME_ROWS_FILE= T_RESUME_STATUS_FILE=
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    history_rows=$(<"$_T_RESUME_PICKER_SNAPSHOT/history") || return $?
   else
-    history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+    snapshot=$(mktemp -d "${TMPDIR:-/tmp}/t-resume-discovery.XXXXXX") || return 1
+    auth_file=$snapshot/auth
+    : > "$auth_file"
+    if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+      T_RESUME_ROWS_FILE=$snapshot/live
+      : > "$T_RESUME_ROWS_FILE"
+      if [[ $T_RESUME_WAIT == 1 && $T_RESUME_LAST != 1 ]]; then
+        T_RESUME_STATUS_FILE=$snapshot/status
+        T_RESUME_NOTICE_FILE=$snapshot/notice
+        : > "$T_RESUME_STATUS_FILE"
+        : > "$T_RESUME_NOTICE_FILE"
+      fi
+      # The shared wait owns stderr and terminal input.
+      history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+      if [[ -n $T_RESUME_STATUS_FILE ]]; then
+        discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
+        discovery_status=$(<"$T_RESUME_STATUS_FILE")
+      fi
+    else
+      history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Finding saved conversations across hosts" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+    fi
+    auth_hosts=$(<"$auth_file")
+    for auth_host in "${(@f)auth_hosts}"; do
+      [[ -n $auth_host ]] || continue
+      _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
+    done
+    if (( history_rc )); then
+      rm -rf -- "$snapshot"
+      return $history_rc
+    fi
   fi
-  auth_hosts=$(<"$auth_file")
-  rm -f -- "$auth_file"
-  for auth_host in "${(@f)auth_hosts}"; do
-    [[ -n $auth_host ]] || continue
-    _t_warn "GitHub authentication failed on $auth_host; some saved conversations may be missing. Run gh auth login --hostname github.com on $auth_host, then retry."
-  done
-  if (( history_rc )); then
-    [[ -n $T_RESUME_ROWS_FILE ]] && rm -f -- "$T_RESUME_ROWS_FILE"
-  fi
-  (( history_rc == 130 )) && return 130
-  (( history_rc == 0 )) || return $history_rc
 
   # Live dev sessions by ROOTED PATH (any alias — dev-dot-2 and dev-dotfiles-2 can
   # key one worktree), so a live slot is recognised however it was named.
@@ -276,14 +303,6 @@ _t_resume() {
     p=$(tmux display-message -p -t "=$s:" '#{session_path}' 2>/dev/null)
     [[ -n $p ]] && live[${p:A}]=$s
   done
-  fi
-
-  # Saved discovery uses the repository identity on each configured host. The
-  # metadata adapter below refreshes by default and fetches only a selected
-  # transcript, so aliases, home directories and worktree roots may differ.
-  if [[ -n $remote_flag && ${#REMOTE_HOSTS} == 0 ]]; then
-    echo "t resume -r: no REMOTE_HOSTS configured (set them in ${T_LOCAL_RC})." >&2
-    return 1
   fi
 
   # ONE live-slot scan (one-live-owner invariant): a synced transcript here does
@@ -300,15 +319,17 @@ _t_resume() {
   # `dev-dotfiles-2` here — both key one dir); the alias is captured so an attach
   # needs no second scan.
   local all_rows= remote_rows= live_all= live_scan_rc=0
-  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    live_all=$(<"$T_RESUME_ROWS_FILE")
-    rm -f -- "$T_RESUME_ROWS_FILE"
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    live_all=$(<"$_T_RESUME_PICKER_SNAPSHOT/live") || return $?
+  elif [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    live_all=$(<"$T_RESUME_ROWS_FILE") || live_scan_rc=$?
   elif (( ${#REMOTE_HOSTS} )); then
     live_all=$(_dev_rows_all --best-effort) || live_scan_rc=$?
   else
     live_all=$(_dev_session_rows 2>/dev/null) || live_scan_rc=$?
     live_all=$(print -r -- "$live_all" | awk -F'\t' 'NF {print "local\t" $0}')
   fi
+  [[ -z $snapshot ]] || rm -rf -- "$snapshot"
   (( live_scan_rc == 130 )) && return 130
   # Issue starts explicitly tolerate unavailable hosts. Revalidate local rows
   # separately so a local scanner failure cannot be mistaken for an offline host.
@@ -338,11 +359,14 @@ _t_resume() {
   # is running ANYWHERE becomes a live row pointing at its owner.
   # live_sid[sid] = loc \t alias \t slot \t summary \t agent, loc = here | <host>
   # | fg:<host> (a foreground owner: alias = its `t open` label, slot = -).
-  local -A live_sid live_sid_agent; local _lh _ls _lc _ln _lst _lctx _lsm _lag2
+  local -A live_sid live_sid_agent live_sid_cwd live_owner_sid
+  local _lh _ls _lc _ln _lst _lctx _lsm _lag2
   while IFS=$'\t' read -r _lh _ls _lc _ln _lst _lctx _lsm _lag2; do
     [[ -n $_ls && $_ls != - && -n $_ln ]] || continue
+    live_sid_cwd[$_ls]=$_lc
     live_sid_agent[$_ls]=${_lag2:-claude}
     [[ $_lh == local ]] && _lh=here
+    live_owner_sid[$_lh/$_ln]=$_ls
     if [[ $_ln == *:* ]]; then
       live_sid[$_ls]="fg:${_lh}"$'\t'"$_ln"$'\t'-$'\t'"$_lsm"$'\t'"${_lag2:-claude}"
     else
@@ -376,8 +400,8 @@ _t_resume() {
   local -a sidlive
   local _p _mr _mrest
   local n wt sid busy rhost _rdir _rbase _rhost _rn _ralias _rsum _rag _rst _ok _stale stale_path agent _ag
-  local txf title when ep org orgf hf skipped=0 hidden_live=0
-  local reopened opf opep REPLY
+  local txf title ep org orgf hf skipped=0 hidden_live=0
+  local opf opep REPLY legacy_pr
   local _rwtr=${DEV_WORKTREE_ROOT:-}
   # The two picker signals shared with _claude_session_rows/tfind (see the
   # t-session-start notes): opened/ = the last-opened stamps (recency =
@@ -386,6 +410,8 @@ _t_resume() {
   # collects stale refs into _PR_STALE for the one batched _pr_state_flush below.
   local opdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/opened"
   local -A _PR_SPAWNED
+  local _PR_WITH_BADGES=0
+  [[ ( -t 0 && -t 1 ) || -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]] && _PR_WITH_BADGES=1
   # Recency window (--days, default 30; 'all' disables) + this machine's short
   # hostname, to blank the origin column for locally-run conversations.
   local cutoff=$T_RESUME_CUTOFF selfhost=$(hostname -s 2>/dev/null)
@@ -508,10 +534,10 @@ _t_resume() {
           # writes nothing to the .jsonl, so without the stamp a just-reopened
           # conversation sorts — and --days-gates — as days old. Stamp newer →
           # the row is dated by the stamp and marked ↻.
-          reopened=; opf="$opdir/$(_dev_transcript_sid "$txf")"
+          opf="$opdir/$(_dev_transcript_sid "$txf")"
           if [[ -f $opf ]]; then
             opep=$(zstat +mtime "$opf" 2>/dev/null || echo 0)
-            (( opep > ep )) && { ep=$opep; reopened=1; }
+            (( opep > ep )) && ep=$opep
           fi
           if (( cutoff && ep < cutoff )); then
             (( skipped++ )); continue        # outside the --days window
@@ -521,9 +547,9 @@ _t_resume() {
           # plus a whole-file `grep -ao` per candidate — 135MB read twice for ff's
           # 43 in-window conversations. Collect the survivors instead and read them
           # all in ONE batched, incrementally-cached pass below. Every field is
-          # non-empty (reopened is 1/0, never blank) so the `ps:\t:` split back
+          # non-empty so the `ps:\t:` split back
           # cannot collapse a column.
-          pending+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$wt"$'\t'"$txf"$'\t'"${reopened:-0}")
+          pending+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$wt"$'\t'"$txf")
         done
       done
     done
@@ -542,20 +568,26 @@ _t_resume() {
   done
   for history_row in "${(@f)history_rows}"; do
     history_fields=("${(@ps:\t:)history_row}")
-    (( $#history_fields >= 9 && $#history_fields <= 13 )) || continue
+    (( $#history_fields >= 9 && $#history_fields <= 17 )) || continue
     history_key=${DEV_REPOS[$history_fields[2]]:-$history_fields[2]}/$history_fields[9]/$history_fields[4]
     [[ -z ${history_emitted[$history_key]:-} ]] || continue
     history_emitted[$history_key]=1
-    # Retained local transcript rows need the full associated-PR aggregate too;
-    # their last-mentioned PR alone cannot prove all work's PRs have merged.
-    if (( $#history_fields >= 12 )) && [[ $history_fields[12] != NONE ]]; then
-      history_pr_state[$history_fields[2]/$history_fields[9]/$history_fields[4]]=$history_fields[12]
-    fi
+    resume_hosts[$history_fields[2]/$history_fields[9]/$history_fields[4]/$history_fields[5]]=${history_fields[17]:--}
     # Keep reopened-stamp eligibility when history takes over, without scanning
     # every pending transcript again for each history row.
     (( ${history_seen[$history_key]:-0} > history_fields[1] )) && history_fields[1]=$history_seen[$history_key]
     [[ -z $slot || $history_fields[3] == $slot ]] || continue
+    title=$history_fields[7]
+    case ${history_fields[16]:-} in
+      prompt) title="Prompt: $title" ;;
+      unknown) title="Saved label: $title" ;;
+    esac
     if [[ $T_RESUME_LAST != 1 && -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
+      live_identity="$history_fields[9]/$history_fields[4]"
+      live_titles[$live_identity]=$title
+      if [[ ${history_fields[15]:--} == yes ]]; then
+        live_work[$live_identity/$history_fields[8]]=yes
+      fi
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
@@ -563,7 +595,7 @@ _t_resume() {
       (( skipped++ )); continue
     fi
     org=$history_fields[8]; [[ $org == local ]] && org=-
-    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$history_fields[7]"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}")
+    cands+=("$history_fields[1]"$'\t'"$history_fields[2]"$'\t'"$history_fields[3]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"$history_fields[6]"$'\t'"$title"$'\t'-$'\t'history$'\t'"$org"$'\t'"$history_fields[9]"$'\t'-$'\t'"${history_fields[10]:--}"$'\t'"${history_fields[11]:--}"$'\t'"${history_fields[12]:-UNKNOWN}"$'\t'"${history_fields[13]:--}"$'\t'"${history_fields[14]:--}"$'\t'"${history_fields[15]:--}")
   done
   # One linear pass removes every local layout/alias copy handled by history.
   for _p in "${(@)pending}"; do
@@ -614,20 +646,11 @@ _t_resume() {
   for _p in "${(@)pending}"; do
     _mf=("${(@ps:\t:)_p}")
     ep=$_mf[1]; repo=$_mf[2]; n=$_mf[3]; wt=$_mf[4]; txf=$_mf[5]
-    [[ $_mf[6] == 1 ]] && reopened=1 || reopened=
     title=${meta_title[$txf]:-}
     [[ -n $title ]] || continue        # conversationless stub — nothing to resume
-    # ep already reflects the reopened stamp (ep=opep above), so one
-    # strftime covers both branches; ↻ marks the stamp-dated rows.
-    when=; (( ep )) && when=$(strftime '%b %d %H:%M' "$ep" 2>/dev/null)
-    [[ -n $reopened && -n $when ]] && when+=" ↻"
-    # PR-in-session tag: the LAST github.com …/pull/N URL in the transcript
-    # (a `gh pr create` lands its URL in the tool output) names the
-    # session's PR; append " · #N <state>" to the title. State is read from
-    # the pr/ cache ONLY — never a blocking gh call — with the freshness policy in
-    # _pr_state_stale and the (detached, per-repo batched) refetch fired once for
-    # the whole scan below, so a new state shows on the next invocation.
-    _pr_state_tag "${meta_pr[$txf]:-}"; title+=$REPLY
+    # Legacy local transcripts supply a PR URL from the structured metadata scan.
+    legacy_pr=${meta_pr[$txf]#github.com/}
+    legacy_pr=${legacy_pr/\/pull\//#}
     # Origin: which machine the conversation LAST RAN on — the <sid>.origin
     # stamp t-session-start writes next to the transcript (syncs with it).
     # Blank for this machine / unstamped (pre-feature) transcripts; a raw
@@ -643,14 +666,8 @@ _t_resume() {
     # (field 11 here, 10 once the sort key is stripped) gets its own display column
     # AND picks the binary a pick spawns
     _ag=$(_dev_transcript_agent "$txf")
-    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'"$when"$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf"$'\t'-$'\t'-$'\t'"${history_pr_state[$repo/$_ag/$(_dev_transcript_sid "$txf")]:-$REPLY_PR_STATE}")
+    cands+=("$ep"$'\t'"$repo"$'\t'"$n"$'\t'"$(_dev_transcript_sid "$txf")"$'\t'"$wt"$'\t'-$'\t'"$title"$'\t'-$'\t'-$'\t'"${org[1,10]}"$'\t'"$_ag"$'\t'"$txf"$'\t'-$'\t'-$'\t'"${${legacy_pr:+UNKNOWN}:-NONE}"$'\t'-$'\t'"${${legacy_pr:+$legacy_pr:UNKNOWN}:--}")
   done
-  # ONE detached refresh for the whole scan, instead of a `gh pr view` child per
-  # stale row: _pr_state_refresh batches the refs by repo, so a scan that turned up
-  # six unknown PRs in one repo costs a single gh call rather than six. Still
-  # strictly fire-and-forget — the render above already used the cache and is done.
-  _pr_state_flush
-
   (( skipped )) && echo "(${skipped} older conversation(s) outside the last ${days}d hidden — t session resume --days all shows them)" >&2
   (( hidden_live )) && [[ ! -t 0 || ! -t 1 ]] && \
     echo "(${hidden_live} live slot(s) hidden — t session resume --live lists them; t session open attaches one)" >&2
@@ -662,7 +679,8 @@ _t_resume() {
     cands=("${(@f)$(print -rl -- "${(@)cands}" | T_RESUME_OWNER_ROWS="$live_all" T_RESUME_CACHED=$([[ ${T_DISCOVERY_COLLECTOR:-} == 1 ]] && print 0 || print 1) python3 "$T_HOME/libexec/t_picker_filters.py" --resume-turns)}")
   fi
 
-  if (( ! $#cands )); then
+  if (( ! $#cands )) && [[ -z ${_T_RESUME_PICKER_SNAPSHOT:-} ]] &&
+      [[ -z $discovery_status || ! -t 0 || ! -t 1 ]]; then
     if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
       if [[ $T_RESUME_WAIT != 1 ]]; then
         print -u2 -- 'No matching cached conversations. Discovery status is shown above; run again after a pending refresh.'
@@ -686,56 +704,155 @@ _t_resume() {
     return 1
   fi
 
-  # Preserve repo, slot, conversation ID, workspace, activity, label, location,
-  # remote alias, origin, agent, turn, repository identity, PR state, and close
-  # time. Add one display field for fzf's --with-nth=-1.
-  # Measure the full snapshot so filtering does not move the columns.
-  local pick c fprompt columns row_format
-  local -a f cells
-  local rw=4 sw=4 ow=0 aw=5 tw=8 i=1
+  # Measure display widths from the full snapshot so filtering cannot move a
+  # column. Keep the verified merged aggregate in the private selection fields.
+  local pick c fprompt columns row_format pr_ref pr_key pr_number pr_state pr_symbol pr_count pr_aggregate pr_display pr_width slot_display agent_glyph agent_display pr_index
+  local REPLY_PR_BADGE REPLY_PR_PREVIEW
+  local -a f cells pr_first pr_second pr_first_width pr_second_width pr_extras pr_widths host_cells
+  local rw=4 sw=4 ow=0 aw=5 tw=9 pw=3 first_width=0 second_width=0 i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
+    if [[ $f[7] != - ]]; then
+      live_host=${${f[7]#app:}#fg:}
+      sid=$f[3]
+      if [[ $sid == - ]]; then
+        sid=${live_owner_sid[$live_host/${${f[8]:#-}:-$f[1]}-$f[2]]:--}
+      fi
+      live_identity="$f[10]/$sid"
+      if [[ -n ${live_titles[$live_identity]:-} ]]; then
+        f[6]=$live_titles[$live_identity]
+      fi
+      [[ $f[7] != app:* ]] || f[6]="Codex desktop · $f[6]"
+      [[ $live_host != here ]] || live_host=local
+      if [[ ${live_work[$live_identity/$live_host]:-} == yes ]]; then
+        f[16]=yes
+      fi
+    fi
+    pr_first[i]='' pr_second[i]='' pr_extras[i]=''
+    pr_first_width[i]=0 pr_second_width[i]=0
+    pr_count=0 pr_aggregate=
+    f[17]=-
+    for pr_ref in ${=f[15]}; do
+      [[ $pr_ref =~ '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+#[1-9][0-9]*:(OPEN|MERGED|CLOSED|UNKNOWN)$' ]] || continue
+      pr_key=${pr_ref%:*}
+      pr_number=${pr_key##*#}
+      pr_state=${pr_ref##*:}
+      REPLY_PR_BADGE= REPLY_PR_PREVIEW=
+      _pr_state_tag "github.com/${pr_key%#*}/pull/$pr_number"
+      [[ $REPLY_PR_STATE == UNKNOWN ]] || pr_state=$REPLY_PR_STATE
+      if [[ -z $pr_aggregate ]]; then
+        pr_aggregate=$pr_state
+      elif [[ $pr_aggregate != "$pr_state" ]]; then
+        pr_aggregate=MIXED
+      fi
+      if [[ $pr_state == OPEN && ${REPLY_PR_PREVIEW:-} == 1 ]]; then
+        f[17]=yes
+      fi
+      if (( ++pr_count <= 2 )); then
+        case $pr_state/${REPLY_PR_BADGE:-} in
+          MERGED/*) pr_symbol=↴ ;;
+          OPEN/DRAFT) pr_symbol=◌ ;;
+          OPEN/CONFLICT) pr_symbol='!' ;;
+          OPEN/*) pr_symbol=○ ;;
+          CLOSED/*) pr_symbol=× ;;
+          *) pr_symbol='?' ;;
+        esac
+        if (( pr_count == 1 )); then
+          pr_first[i]="$pr_symbol #$pr_number"
+          pr_first_width[i]=$(( ${#pr_number} + 3 ))
+        else
+          pr_second[i]="$pr_symbol #$pr_number"
+          pr_second_width[i]=$(( ${#pr_number} + 3 ))
+        fi
+      fi
+    done
+    if (( pr_count > 2 )); then
+      pr_extras[i]="  +$(( pr_count - 2 ))"
+    elif (( ! pr_count )); then
+      case $f[13] in
+        NONE) pr_first[i]=—; pr_first_width[i]=1 ;;
+        UNKNOWN) pr_first[i]='?'; pr_first_width[i]=1 ;;
+        *) pr_first[i]=${(L)f[13]}; pr_first_width[i]=${#pr_first[i]} ;;
+      esac
+    fi
+    if [[ -n $pr_aggregate ]]; then
+      f[13]=$pr_aggregate
+    fi
+    cands[$i]="${(pj:\t:)f}"
+    (( pr_first_width[i] <= first_width )) || first_width=$pr_first_width[i]
+    (( pr_second_width[i] <= second_width )) || second_width=$pr_second_width[i]
+
+    org=${f[9]:-}
+    if [[ $f[7] != - ]]; then
+      org=${${f[7]#app:}#fg:}
+      [[ $org == here ]] && org=-
+    fi
+    host_cells+=("${org:#-}")
     (( ${#f[1]} > rw )) && rw=${#f[1]}
     (( ${#f[2]} > sw )) && sw=${#f[2]}
-    (( ${#f[10]} + 2 > aw )) && aw=$(( ${#f[10]} + 2 ))
     (( ${#f[5]} > tw )) && tw=${#f[5]}
-    [[ ${f[9]:-} != - ]] && (( ${#f[9]} > ow )) && ow=${#f[9]}
+    (( ${#host_cells[-1]} > ow )) && ow=${#host_cells[-1]}
+    (( i++ ))
   done
-  row_format='%-9s  '
-  cells=(PR)
+  for (( pr_index=1; pr_index <= $#cands; pr_index++ )); do
+    pr_width=$pr_first_width[pr_index]
+    if [[ -n ${pr_second[pr_index]} ]]; then
+      pr_width=$(( first_width + 2 + second_width + ${#pr_extras[pr_index]} ))
+    fi
+    pr_widths+=("$pr_width")
+    (( pr_width <= pw )) || pw=$pr_width
+  done
+  _pr_state_flush
+  row_format="%s  %-${rw}s  "
+  printf -v pr_display "%-${pw}s" PRS
+  cells=("$pr_display" REPO)
+  local period=$days
+  [[ $days == all ]] || period+="d"
   if [[ -n $all_mode ]]; then
-    fprompt="resume (${days}d)> "
-    row_format+="%-${rw}s  "
-    cells+=(REPO)
+    fprompt="resume ($period)> "
   else
-    fprompt="resume $repo (${days}d)> "
+    fprompt="resume $repo ($period)> "
   fi
-  row_format+="%-${sw}s  %-${aw}s  "
-  cells+=(SLOT AGENT)
+  row_format+='%s  %s  '
+  printf -v slot_display "%-${sw}s" SLOT
+  printf -v agent_display "%-${aw}s" AGENT
+  cells+=("$slot_display" "$agent_display")
   if (( ow )); then
-    (( ow < 4 )) && ow=4
+    (( ow < 5 )) && ow=5
     row_format+="%-${ow}s  "
     cells+=(HOST)
   fi
   row_format+="%-${tw}s  %s"
-  cells+=(ACTIVITY 'WORKING ON')
+  cells+=('LAST TURN' TITLE)
   columns=$(printf "$row_format" "${cells[@]}")
 
   local legend; legend=$(_dev_agent_legend)
+  i=1
   for c in "${(@)cands}"; do
     f=("${(@ps:\t:)c}")
-    org=${f[9]:-}; [[ $org == - ]] && org=
-    agent="${_DEV_AGENT_GLYPH[${f[10]:-claude}]:-?} ${f[10]:-claude}"
-    cells=("$(printf '[%-7s]' "${f[13]:-UNKNOWN}")")
-    [[ -n $all_mode ]] && cells+=("$f[1]")
-    cells+=("$f[2]" "$agent")
-    (( ow )) && cells+=("$org")
+    agent=${f[10]:-claude}
+    case $agent in
+      codex) agent_glyph='>_' ;;
+      claude) agent_glyph='*' ;;
+      cursor) agent_glyph='<>' ;;
+      *) agent_glyph='?' ;;
+    esac
+    printf -v agent_display '%s%*s' "$agent_glyph" $(( aw - ${#agent_glyph} )) ''
+    pr_display=${pr_first[i]}
+    if [[ -n ${pr_second[i]} ]]; then
+      printf -v pr_display '%s%*s  %s%*s%s' "$pr_display" $(( first_width - pr_first_width[i] )) '' \
+        "${pr_second[i]}" $(( second_width - pr_second_width[i] )) '' "${pr_extras[i]}"
+    fi
+    printf -v pr_display '%s%*s' "$pr_display" $(( pw - pr_widths[i] )) ''
+    cells=("$pr_display" "$f[1]")
+    printf -v slot_display "%-${sw}s" "$f[2]"
+    cells+=("$slot_display" "$agent_display")
+    (( ow )) && cells+=("${host_cells[$i]:-local}")
     cells+=("$f[5]" "$f[6]")
     cands[$i]+=$'\t'"$(printf "$row_format" "${cells[@]}")"
     (( i++ ))
   done
-  # Add a fixed-width recency cell without changing selection identity.
-  cands=("${(@f)$(print -rl -- "${(@)cands}" | T_PICKER_NOTICE="${discovery_notice}${auth_hosts}" python3 "$T_HOME/libexec/t_picker_filters.py" --resume-mark)}")
+  # The picker marks the latest verified closure in its full snapshot.
   # Keep the inactive set separate from the initial view so Ctrl-F can always
   # restore it, even when --live (or an explicit slot) starts with all rows.
   # The full row, including every aligned display detail, is identical in both
@@ -747,6 +864,14 @@ _t_resume() {
     f=("${(@ps:\t:)c}")
     [[ $f[7] == - ]] && inactive+=("$c")
   done
+  if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
+    print -r -- "$columns" > "$_T_RESUME_PICKER_SNAPSHOT/columns"
+    : > "$_T_RESUME_PICKER_SNAPSHOT/source"
+    : > "$_T_RESUME_PICKER_SNAPSHOT/rows-0"
+    (( ! $#cands )) || print -rl -- "${(@)cands}" > "$_T_RESUME_PICKER_SNAPSHOT/source"
+    (( ! $#inactive )) || print -rl -- "${(@)inactive}" > "$_T_RESUME_PICKER_SNAPSHOT/rows-0"
+    return 0
+  fi
   if [[ -n $show_all ]]; then
     visible=("${(@)cands}")
   else
@@ -768,18 +893,40 @@ _t_resume() {
   # _t_dev / _dev_remote_attach, both of which need a terminal to attach; fall
   # through to the listing branch so the message matches the multi-candidate
   # no-fzf case instead of failing hard from inside the attach helper.
-  if [[ $T_RESUME_LAST == 1 ]] && (( $#visible == 1 )); then
+  if [[ $T_RESUME_LAST == 1 ]]; then
+    if (( $#visible != 1 )); then
+      print -u2 't resume: last closed selection changed; no conversation was resumed'
+      return 1
+    fi
     pick=${visible[1]}
+    f=("${(@ps:\t:)pick}")
+    [[ $f[8] == history && ${f[14]:--} != - ]] || { print -u2 't resume: no verified last close; no conversation was resumed'; return 1; }
   elif [[ -z $discovery_notice && ${_T_RESUME_REQUIRE_PICKER:-} != 1 && ( -z $slot || ! -t 0 || ! -t 1 ) ]] && (( $#visible == 1 )) && \
      { (( ! hidden_live || $#cands == 1 )) || [[ ! -t 0 || ! -t 1 ]]; } && \
      f=("${(@ps:\t:)visible[1]}") && [[ $f[7] == - || ( -t 0 && -t 1 ) ]]; then
     pick=${visible[1]}
   elif [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null; then
-    pick=$(T_PICKER_NOTICE="$discovery_notice" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
+    local refresh_callback=
+    if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+      refresh_callback="${(q)T_HOME}/bin/t __resume-picker-refresh \"\$T_PICKER_VIEWS\" ${(j: :)${(@q)history_scope}} -- ${(j: :)${(@q)@}}"
+    fi
+    pick=$(T_PICKER_RESUME_LAST=1 T_PICKER_NOTICE="$discovery_notice" T_PICKER_DISCOVERY_STATUS="$discovery_status" T_PICKER_REFRESH_CALLBACK="$refresh_callback" T_PICKER_AUTH_HOSTS="$auth_hosts" T_PICKER_SOURCE_ROWS="${(F)cands}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=resume _t_fzf_filtered "$(print -rl -- "${(@)inactive}")" \
       "$(print -rl -- "${(@)cands}")" resume inactive "$legend" "$show_all" \
       --delimiter=$'\t' --with-nth=-1 --no-hscroll \
       --prompt="$fprompt") || return $?
     [[ -n $pick ]] || return 130
+    if [[ $pick == last-closed ]]; then
+      # The shortcut inherits command scope and destination, not picker filters
+      # or marks. Exact selection and writer validation run through --last.
+      local -a last_args=("${(@)pos}" --last --wait)
+      [[ -z $all_flag ]] || last_args+=(--all)
+      [[ -z $cli ]] || last_args+=(--cli)
+      [[ -z $no_tmux ]] || last_args+=(--fg)
+      [[ -z $remote_flag ]] || last_args+=(--remote)
+      [[ -z $on_host ]] || last_args+=(--host "$on_host")
+      _t_resume "${(@)last_args}"
+      return $?
+    fi
   elif [[ -n $slot && -t 0 && -t 1 ]]; then
     print -u2 -- 't resume: selecting a conversation requires fzf; install fzf and retry.'
     return 1
@@ -825,7 +972,8 @@ _t_resume() {
       echo "t resume --fg resumes ONE conversation inline in this terminal — mark a single row (or drop --fg)." >&2
       return 1
     fi
-    local -A mp_taken
+    local -A mp_taken mp_attach mp_exact
+    local -a mp_owner
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
     local -a mp_rest mp_live mp_live_fields mp_ready
@@ -844,7 +992,7 @@ _t_resume() {
         continue
       elif [[ $mp_loc == here ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
-        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-$'\t'"$sid"$'\t'"${live_sid_cwd[$sid]:-$wt}"$'\t'"$mp_agent")
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
         continue
       elif [[ $mp_loc == app:* ]]; then
@@ -852,12 +1000,12 @@ _t_resume() {
         return 1
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
-        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-$'\t'"$sid"$'\t'"${live_sid_cwd[$sid]:-$wt}"$'\t'"$mp_agent")
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --host ${(q)mp_loc}")
         continue
       fi
       if [[ $f[8] == history && -n $on_host ]]; then
-        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" prepare "${f[12]:--}") || {
+        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" transfer "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$mp_agent/$sid/$wt]:--}") || {
           mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation preparation failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
           return "$mp_rc"
         }
@@ -867,11 +1015,16 @@ _t_resume() {
           return 1
         }
       elif [[ $f[8] == history ]]; then
-        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}") || {
+        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$mp_agent/$sid/$wt]:--}") || {
           mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
           return "$mp_rc"
         }
+        mp_owner=("${(@ps:\t:)mp_session}")
+        (( $#mp_owner == 3 )) || { print -u2 't resume: incomplete terminal receipt'; return 1; }
+        mp_session=$mp_owner[1]
         slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
+        mp_exact[$repo/$slot]="${mp_session#dev-}"$'\t'"$sid"$'\t'"$mp_owner[2]"$'\t'"$mp_agent"$'\t'"$mp_owner[3]"
+        mp_attach[$repo/$slot]="source ${(q)T_HOME}/t.plugin.zsh; _t_history_attach ${(q)${mp_session#dev-}} ${(q)sid} ${(q)mp_owner[2]} ${(q)mp_agent} ${(q)mp_owner[3]}"
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
         _t_resume_history_registered "$repo" || {
           _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable after launch' "$mp_remaining" "${mp_ready[@]}"
@@ -945,6 +1098,9 @@ _t_resume() {
         here)     mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --local" ;;
         *)        mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --host ${(q)mp_live_loc}" ;;
       esac
+      if [[ -n ${mp_live_fields[5]:-} && $mp_live_fields[5] != - ]]; then
+        mp_live_cmd="source ${(q)T_HOME}/t.plugin.zsh; _t_resume_live_attach ${(q)mp_live_loc} ${(q)mp_live_repo}-${(q)mp_live_slot} ${(q)mp_live_fields[5]} ${(q)mp_live_fields[6]} ${(q)mp_live_fields[7]}"
+      fi
       _dev_open_tab "$mp_live_cmd" || {
         _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open selected owner tabs' 0 "${mp_ready[@]}"
         return 1
@@ -954,6 +1110,10 @@ _t_resume() {
       mp_live_fields=("${(@ps:\t:)mp_live_first}")
       mp_live_loc=$mp_live_fields[1]; mp_live_repo=$mp_live_fields[2]
       mp_live_slot=$mp_live_fields[3]; mp_live_alias=$mp_live_fields[4]
+      if [[ -n ${mp_live_fields[5]:-} && $mp_live_fields[5] != - ]]; then
+        _t_resume_live_attach "$mp_live_loc" "$mp_live_repo-$mp_live_slot" "${mp_live_fields[@]:4}"
+        return
+      fi
       case $mp_live_loc in
         fg:here)  _dev_open_fg "$mp_live_alias" ;;
         fg:*)     _dev_remote_open "${mp_live_loc#fg:}" "$mp_live_alias" --cli ;;
@@ -987,15 +1147,22 @@ _t_resume() {
     # Inside tmux / no TTY the first cannot attach here either, so it gets a
     # tab too.
     for mp_pair in "${(@)mp_rest}"; do
-      _dev_open_tab "t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --local" || {
+      mp_live_cmd=${mp_attach[${mp_pair%% *}/${mp_pair##* }]:-"t open ${(q)${mp_pair%% *}} ${(q)${mp_pair##* }} --cli --local"}
+      _dev_open_tab "$mp_live_cmd" || {
         _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open resumed session tabs' 0 "${mp_ready[@]}"
         return 1
       }
     done
     if [[ -z $TMUX && -t 0 && -t 1 ]]; then
-      tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
+      if [[ -n ${mp_attach[$mp_first_repo/$mp_first_slot]:-} ]]; then
+        mp_owner=("${(@ps:\t:)mp_exact[$mp_first_repo/$mp_first_slot]}")
+        _t_history_attach "${mp_owner[@]}"
+      else
+        tmux attach-session -t "=dev-${mp_first_repo}-${mp_first_slot}:"
+      fi
     else
-      _dev_open_tab "t open ${(q)mp_first_repo} ${(q)mp_first_slot} --cli --local" \
+      mp_live_cmd=${mp_attach[$mp_first_repo/$mp_first_slot]:-"t open ${(q)mp_first_repo} ${(q)mp_first_slot} --cli --local"}
+      _dev_open_tab "$mp_live_cmd" \
         || {
           _t_resume_batch_stop 1 'terminal tab' 't session resume' 'could not open resumed session' 0 "${mp_ready[@]}"
           return 1
@@ -1010,8 +1177,9 @@ _t_resume() {
   [[ $T_RESUME_LAST == 1 ]] && T_RESUME_LAST_CLOSED=${f[14]:--}
 
   if [[ $lalias == history && ( -n $no_tmux || -n $on_host ) ]]; then
-    local prepared
-    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" prepare "${f[12]:--}") || return $?
+    local prepared preparation=prepare
+    [[ -z $on_host ]] || preparation=transfer
+    prepared=$(_t_resume_history_launch "$repo" "$sid" "$agent" "$preparation" "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$agent/$sid/$wt]:--}") || return $?
     local prepared_session=${prepared%%$'\t'*}
     slot=${prepared_session##*-}; repo=${${prepared_session#dev-}%-*}; wt=${prepared#*$'\t'}; lalias=-
     _t_resume_history_registered "$repo" || return 1
@@ -1034,22 +1202,35 @@ _t_resume() {
   elif [[ $loc == here ]]; then
     [[ -n $lalias && $lalias != - ]] && repo=$lalias   # owner under another alias/slot
     echo "Slot $slot is live locally — attaching."
-    _t_dev "$repo" "$slot"
+    if [[ -n $sid && $sid != - ]]; then
+      _t_history_attach "$repo-$slot" "$sid" "${live_sid_cwd[$sid]:-$wt}" "$agent"
+    else
+      _t_dev "$repo" "$slot"
+    fi
     return
   elif [[ -n $loc && $loc != - ]]; then
+    if [[ -n $sid && $sid != - ]]; then
+      _t_resume_live_attach "$loc" "$lalias-$slot" "$sid" "${live_sid_cwd[$sid]:-$wt}" "$agent"
+      return
+    fi
     _dev_remote_attach "$loc"$'\t'"$lalias"$'\t'"$slot" ""
     return
   fi
 
   if [[ $lalias == history ]]; then
     local history_session
-    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}") || return $?
+    local -a history_owner
+    history_session=$(_t_resume_history_launch "$repo" "$sid" "$agent" launch "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$agent/$sid/$wt]:--}") || return $?
+    history_owner=("${(@ps:\t:)history_session}")
+    (( $#history_owner == 3 )) || { print -u2 't resume: incomplete terminal receipt'; return 1; }
+    history_session=$history_owner[1]
     slot=${history_session##*-}; repo=${${history_session#dev-}%-*}
     _t_resume_history_registered "$repo" || return 1
     if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
-      _t_session_attach "$history_session" "$agent" fresh
+      _t_history_owner "${history_session#dev-}" "$sid" "$history_owner[2]" "$agent" attach "$history_owner[3]" >/dev/null || return $?
+      _t_session_attach "$history_session" "$agent" fresh "${history_owner[3]#*:}"
     elif [[ -z $TMUX && -t 0 && -t 1 ]]; then
-      tmux attach-session -t "=$history_session:"
+      _t_history_attach "${history_session#dev-}" "$sid" "$history_owner[2]" "$agent" "$history_owner[3]"
     else
       echo "Attach with: t session open $repo $slot"
     fi
@@ -1820,25 +2001,34 @@ _dev_resume_session_effect() {
   mkdir -p "$HOME/.tmux-logs"
   # No fixed geometry / window-size latest: fit the active client so attaching from
   # a phone doesn't pan a too-wide window (see _dev_new_session for the full why).
-  tmux new-session -d -s "$session" -c "$dir" sleep 86400 || {
+  local launched immutable pane
+  launched=$(tmux new-session -P -F '#{session_id}:#{pane_id}' -d -s "$session" -c "$dir" sleep 86400) || {
     print -u2 't: tmux could not create the session; keep the error above and run t doctor on this host'
     return 1
   }
-  tmux set-option -t "=$session:" window-size latest 2>/dev/null || { tmux kill-session -t "=$session:"; return 1; }
+  [[ $launched == \$<->:%<-> ]] || { print -u2 't resume: could not verify the launched terminal'; return 1; }
+  immutable=${launched%%:*}
+  pane=${launched#*:}
+  # The slot name can be reused while setup runs. Every effect must retain the
+  # exact session/pane created above, including failure cleanup and startup.
+  tmux set-option -t "$pane" window-size latest 2>/dev/null || { tmux kill-session -t "$immutable:"; return 1; }
   # Record the resumed id on the session so `tpop` can pull the exact same
   # conversation back to the foreground (it also falls back to the dir's newest
   # transcript, but this is the precise signal when we know it).
-  tmux set-environment -t "=$session" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "=$session:"; return 1; }
-  tmux set-environment -t "=$session" DEV_AGENT "$agent" || { tmux kill-session -t "=$session:"; return 1; }
+  tmux set-environment -t "$immutable:" CLAUDE_RESUME_ID "$sid" || { tmux kill-session -t "$immutable:"; return 1; }
+  tmux set-environment -t "$immutable:" DEV_AGENT "$agent" || { tmux kill-session -t "$immutable:"; return 1; }
   # Run without typing the internal command into the pane (see _dev_new_session).
   local resume_command; resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid")
   if [[ $5 == history && $agent == codex ]]; then
-    resume_command=$(_dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
+    resume_command=$(T_WORKFLOW_CWD="$dir" _dev_agent_resume_cmd "$agent" "$sid" --cd "$dir")
   fi
   # Preserve a changed or failed pane for inspection; do not kill by a mutable
   # session name after the placeholder guard refused it.
-  _dev_start_session_command "$session" "$resume_command" "$logfile" || return 1
-  _dev_launch_startup_check "$session" "$logfile" || return 1
+  _dev_start_session_command "$session" "$resume_command" "$logfile" "$pane" || return 1
+  _dev_launch_startup_check "$session" "$logfile" "$pane" || return 1
+  if [[ -n ${T_HISTORY_TOKEN:-} ]]; then
+    print -r -- "$launched"
+  fi
 }
 
 # _dev_slot_for_cwd <cwd> — map a transcript's working dir to a dev session slot.

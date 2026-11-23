@@ -293,6 +293,7 @@ TMUX_LOG_STUB = r"""#!/bin/bash
 # log every call; answer the two reads the seam makes
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$1" in
+  new-session) [[ "$*" == *'#{session_id}:#{pane_id}'* ]] && printf '$1:%%1\n' ;;
   show-environment)
     [[ -n "${FAKE_DEV_AGENT:-}" && "$4" == DEV_AGENT ]] && echo "DEV_AGENT=$FAKE_DEV_AGENT"
     [[ -n "${FAKE_RESUME_ID:-}" && "$4" == CLAUDE_RESUME_ID ]] && echo "CLAUDE_RESUME_ID=$FAKE_RESUME_ID"
@@ -310,6 +311,7 @@ case "$1" in
       fi
     elif [[ -n "${FAKE_SESSIONS:-}" ]]; then printf '%s\n' $FAKE_SESSIONS; fi ;;
   display-message)
+    [[ "$*" == *pane_dead* ]] && echo 0
     [[ -n "${FAKE_SESSION_PATH:-}" && "$*" == *session_path* ]] && echo "$FAKE_SESSION_PATH"
     [[ -n "${FAKE_PANE_TITLE:-}" && "$*" == *pane_title* ]] && echo "$FAKE_PANE_TITLE" ;;
   list-panes)       [[ -n "${FAKE_PANES:-}" ]] && printf '%s\n' "$FAKE_PANES" ;;
@@ -365,7 +367,7 @@ def zsh(tmp_path):
         effects = r"""
         # Placeholder shutdown is verified by isolated-tmux and dedicated guard tests.
         if [[ ${REAL_TMUX_PLACEHOLDER:-} != 1 ]]; then
-          _dev_stop_session_placeholder() { print -r -- "=$1:|off"; }
+          _dev_stop_session_placeholder() { print -r -- "${2:-=$1:}|off"; }
         fi
         _dev_new_session_claimed() {
           _dev_launch_preflight "$1" "$2" || return $?
@@ -522,7 +524,7 @@ def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
     log = zsh.log.read_text().splitlines()
     assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
     assert not any("CLAUDE_RESUME_ID" in ln for ln in log)          # codex mints its own id
-    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --no-daemon") for line in log)
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --no-daemon") for line in log)
     zsh.log.write_text("")
     r = zsh("_dev_new_session dev-api-4 $HOME/code/api dev/x 1 claude")
     log = zsh.log.read_text().splitlines()
@@ -538,12 +540,12 @@ def test_zsh_new_session_stamps_the_agent_and_launch_line(zsh):
 def test_zsh_resume_session_uses_the_agent_resume_line(zsh):
     zsh("_dev_resume_session dev-api-7 $HOME/code/api thr_9 codex")
     log = zsh.log.read_text().splitlines()
-    assert "set-environment -t =dev-api-7 CLAUDE_RESUME_ID thr_9" in log
-    assert "set-environment -t =dev-api-7 DEV_AGENT codex" in log
-    assert any(line.startswith("respawn-pane -t =dev-api-7: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_9 --no-daemon") for line in log)
+    assert "set-environment -t $1: CLAUDE_RESUME_ID thr_9" in log
+    assert "set-environment -t $1: DEV_AGENT codex" in log
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_9 --no-daemon") for line in log)
     zsh.log.write_text("")
     zsh("_dev_resume_session dev-api-8 $HOME/code/api sid-1")
-    assert "respawn-pane -t =dev-api-8: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-1" in zsh.log.read_text()
+    assert "respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-1" in zsh.log.read_text()
 
 
 @pytest.mark.parametrize("launch", ["new", "resume"])
@@ -558,7 +560,8 @@ def test_failed_tmux_creation_never_sends_keys_into_an_existing_slot(zsh, tmp_pa
     assert result.returncode == 1, result.stderr
     assert "run t doctor on this host" in result.stderr
     calls = zsh.log.read_text()
-    assert "new-session -d -s dev-api-3" in calls
+    assert ('new-session -d -s dev-api-3' if launch == 'new' else
+            'new-session -P -F #{session_id}:#{pane_id} -d -s dev-api-3') in calls
     assert "send-keys" not in calls and "respawn-pane" not in calls
 
 
@@ -747,9 +750,9 @@ def test_zsh_model_defaults_reach_new_tmux_sessions_and_not_resumes(zsh):
             "_dev_resume_session dev-api-5 $HOME/code/api thread-id codex")
     assert r.returncode == 0, r.stderr
     lines = zsh.log.read_text().splitlines()
-    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --model local/model -c model_reasoning_effort=ultra --no-daemon") for line in lines)
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex --model local/model -c model_reasoning_effort=ultra --no-daemon") for line in lines)
     assert any("claude --session-id " in line and line.split(" ; pipe-pane", 1)[0].endswith(" --model sonnet --effort max") for line in lines)
-    assert any(line.startswith("respawn-pane -t =dev-api-5: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thread-id --no-daemon") for line in lines)
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thread-id --no-daemon") for line in lines)
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex"])
@@ -1399,6 +1402,81 @@ def test_zsh_pr_refresh_records_the_merged_head(zsh, tmp_path):
     assert (prdir / "o#r.checked").exists()
 
 
+def test_zsh_pr_badges_require_current_confirmed_preview(zsh, tmp_path):
+    jq = shutil.which("jq")
+    if jq is None:
+        pytest.skip("jq is needed to replay the GitHub CLI response filter")
+    heads = {n: char * 40 for n, char in enumerate("abcdefg", 5)}
+
+    def deployment(n, environment="Preview", state="SUCCESS", url="https://preview.example.invalid",
+                   created="2026-11-20T11:00:00Z"):
+        return dict(commitOid=heads[n], createdAt=created, latestEnvironment=environment,
+                    latestStatus=dict(state=state, environmentUrl=url))
+
+    records = {
+        5: [deployment(5)],
+        6: [deployment(6, environment="Production")],
+        7: [deployment(7), deployment(7, state="FAILURE", created="2026-11-20T12:00:00Z")],
+        8: [deployment(5)],
+        9: [deployment(9, url=None)],
+        10: [deployment(10)],
+    }
+    provider = {}
+    for number, deployments in records.items():
+        head = heads[number] if number != 10 else "1" * 40
+        provider[f"p{number}"] = dict(state="OPEN", headRefOid=head, commits={"nodes": [
+            {"commit": {"oid": head, "deployments": {"nodes": deployments}}},
+        ]})
+    body = tmp_path / "github.json"
+    body.write_text(json.dumps({"data": {"repository": provider}}))
+    queries = tmp_path / "queries"
+    stub = tmp_path / "stubbin" / "gh"
+    state_lines = "\n".join(f"{n} OPEN {head} {'true' if n in (5, 6) else 'false'} "
+                            f"{'CONFLICTING' if n == 5 else 'UNKNOWN'}" for n, head in heads.items())
+    stub.write_text(f"""#!/bin/sh
+if [ "$1" = api ]; then
+    printf '%s\n' "$4" >> {shlex.quote(str(queries))}
+    exec {shlex.quote(jq)} -r "$6" < {shlex.quote(str(body))}
+fi
+printf '%s\n' {shlex.quote(state_lines)}
+""")
+    stub.chmod(0o755)
+    refs = " ".join(f"'o/r#{number}'" for number in records)
+    tagged = " ".join(f"{number}" for number in records)
+    zsh("_pr_state_refresh 'o/r#5'")
+    assert not queries.exists()
+    out = zsh(f"""typeset -a _PR_STALE; typeset -A _PR_SPAWNED; typeset _PR_WITH_BADGES=1
+_pr_state_refresh {refs}
+for number in {tagged}; do
+  _pr_state_tag "github.com/o/r/pull/$number"
+  print -r -- "$number $REPLY_PR_STATE $REPLY_PR_BADGE ${{REPLY_PR_PREVIEW:-none}}"
+done
+print -r -- "queued=${{#_PR_STALE}}" """)
+    assert out.stderr == ""
+    assert out.stdout.splitlines() == [
+        "5 OPEN CONFLICT 1", "6 OPEN DRAFT none", "7 OPEN OPEN none",
+        "8 OPEN OPEN none", "9 OPEN OPEN none", "10 OPEN OPEN none", "queued=0",
+    ]
+    query, = queries.read_text().splitlines()
+    assert all(f"pullRequest(number:{n})" in query for n in records)
+    assert "pullRequest(number:11)" not in query
+    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    assert (prdir / "o#r#5").read_text() == "OPEN"
+    assert (prdir / "o#r#5.preview").read_text() == f"{heads[5]} 1"
+    assert (prdir / "o#r#10.preview").read_text() == f"{heads[10]} ?"
+    assert not (prdir / "o#r#11.preview").exists()
+
+    os.utime(prdir / "o#r#5.preview", (time.time() - 301, time.time() - 301))
+    (prdir / "o#r#6.preview").write_text(f"{heads[5]} 1")
+    retained = zsh("""typeset -a _PR_STALE; typeset -A _PR_SPAWNED; typeset _PR_WITH_BADGES=1
+for number in 5 6; do
+  _pr_state_tag "github.com/o/r/pull/$number"
+  print -r -- "$number $REPLY_PR_BADGE ${REPLY_PR_PREVIEW:-none}"
+done
+print -rl -- $_PR_STALE""").stdout.splitlines()
+    assert retained == ["5 CONFLICT none", "6 DRAFT none", "o/r#5", "o/r#6"]
+
+
 def test_zsh_codex_subagent_threads_are_not_conversations(zsh):
     """A thread the parent spawned (`source` = a subagent JSON, empty title, the same
     first prompt as the parent's brief) is codex's `<sid>/subagents/` — listed as a
@@ -1466,14 +1544,14 @@ def test_zsh_agent_wrap_spawns_the_recorded_agent(zsh, tmp_path):
     stub.chmod(0o755)
     r = zsh("codex; echo rc=$?")
     log = zsh.log.read_text().splitlines()
-    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_7 --no-daemon") for line in log)
-    assert "set-environment -t =dev-api-3 DEV_AGENT codex" in log
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; codex resume thr_7 --no-daemon") for line in log)
+    assert "set-environment -t $1: DEV_AGENT codex" in log
     # a payload WITHOUT the agent field (an older t push) resumes as claude
     stub.write_text('#!/bin/bash\nprintf "SPAWN\\tdev-api-4\\t%s\\t%s\\n" "$HOME/code/.worktrees/api/4" "sid-9" > "$CLAUDE_TPUSH_ATTACH"\n')
     zsh.log.write_text("")
     zsh("codex")
     log = zsh.log.read_text().splitlines()
-    assert any(line.startswith("respawn-pane -t =dev-api-4: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-9") for line in log)
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r sid-9") for line in log)
 
 
 def test_zsh_repo_slots_sees_codex_only_slots(zsh):
@@ -2276,9 +2354,8 @@ def test_plugin_never_declares_a_tied_special_as_a_plain_local():
 
 
 def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path):
-    """What fzf DISPLAYS for each `t resume` row is the padded display column — slot,
-    agent (the word: claude / codex), date, title — for a dead claude conversation, a
-    dead codex thread and a live slot alike. The column is the LAST tab field and the picker must
+    """The padded display column includes status, PR, repo, slot, agent icon,
+    date and title for a saved Claude conversation, a saved Codex thread and a live slot. The column is the LAST tab field and the picker must
     render it as such (--with-nth=-1): when the agent field landed as a 10th column, a
     hard-coded --with-nth=10 showed every dead row as the bare word `claude` — and a
     query matched nothing else — which is "t resume shows no session info"
@@ -2300,27 +2377,15 @@ def test_zsh_resume_picker_shows_the_display_column_for_every_row(zsh, tmp_path)
     assert "rc=130" in r.stdout.splitlines(), r.stdout                    # Esc cancels without spawning work
     rows = log.read_text().splitlines()
     assert len(rows) == 3, rows                                # the subagent thread adds no row
-    assert all(row.startswith(('[NONE   ] ', '[UNKNOWN] ')) for row in rows)
-    rows = [row.split('] ', 1)[1] for row in rows]  # Leading PR state precedes the existing columns.
-    # No transcript records a turn timestamp here: deterministic identity ties
-    # leave the live slot after saved slot 3 instead of pinning it to the top.
-    assert rows[-1].split()[:5] == ["4", "✱", "claude", "●", "active"]
-    dead = sorted(rows[:-1])
-    assert dead[0].split()[:3] == ["3", "✱", "claude"] and dead[0].endswith("fix the login bug")
-    assert dead[1].split()[:3] == ["3", "⬡", "codex"] and "Indexed task title" in dead[1]
-    assert not any(row.strip() in ("claude", "codex", "-") for row in rows)   # never a bare field
-    # the padded layout: slot right-aligned in 2, then the `<icon> <name>` column padded
-    # to the widest agent, then the 14-wide date cell
-    assert all(row.startswith(" 3  ") or row.startswith(" 4  ") for row in rows)
-    assert {row[4:12] for row in rows} == {"✱ claude", "⬡ codex "}
-    # The header exposes every available filter; agent names remain in the rows.
-    header = semantic_chrome((tmp_path / "fzf.log.header").read_text()).splitlines()
-    controls = "\n".join(header)
-    for control in ("Ctrl-F toggle", "Ctrl-X reset", "Ctrl-G agent", "0 hidden",
-                    "Filters OFF", "Sort: last turn", "Ctrl-S toggle", "Ctrl-Y next",
-                    "last turn", "repo", "agent", "host", "session"):
-        assert control in controls
-    assert "Ctrl-D merged" in controls  # Resume uses this key for its merged filter.
+    assert rows[0].split()[:4] == ["—", "api", "3", ">_"] and "Indexed task title" in rows[0]
+    assert rows[1].split()[:4] == ["—", "api", "3", "*"] and rows[1].endswith("fix the login bug")
+    assert rows[2].split()[:5] == ["●", "?", "api", "4", "*"]
+    header = (tmp_path / "fzf.log.header").read_text()
+    for control in ("0 hidden", "Saved + attached", "Edit filters", "Last turn",
+                    "Next sort", "Pause sort", "● attached", ">_ Codex", "* Claude"):
+        assert control in header
+    assert header.splitlines()[-1].split() == ["STATUS", "PRS", "REPO", "SLOT", "AGENT",
+                                               "LAST", "TURN", "TITLE"]
 
 
 def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
@@ -2337,18 +2402,19 @@ def test_zsh_resume_pick_revives_the_row_with_its_own_agent(zsh, tmp_path):
     (proj / "c1.jsonl").write_text('{"type":"user","message":{"content":"fix the login bug"}}\n')
     _codex_home(zsh, [(SID, wt3, "t", 100, 0, None)])
     log = tmp_path / "fzf.log"
-    r = zsh('_t_resume_history_launch() { print -u2 -- "HISTORY $*"; print dev-api-99; }; '
-            '_t_resume api; echo rc=$?', _tty=True, FZF_LOG=str(log), FZF_PICK="codex")
+    r = zsh(r'''_t_resume_history_launch() { print -u2 -- "HISTORY $*"; printf 'dev-api-99\t%s\t$99:%%99\n' "$HOME/code/.worktrees/api/99"; }
+_t_history_owner() { print -r -- "$6"; }
+_t_resume api; echo rc=$?''', _tty=True, FZF_LOG=str(log), FZF_PICK="Prompt: t")
     assert "rc=0" in r.stdout and f"HISTORY api {SID} codex launch" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
     assert not any('respawn-pane' in line for line in tlog)
-    assert "attach-session -t =dev-api-99:" in tlog
+    assert "attach-session -t %99" in tlog
     zsh.log.write_text("")
     r = zsh("_t_resume api 3; echo rc=$?", _tty=True, FZF_LOG=str(log), FZF_PICK="login bug")
     assert "rc=0" in r.stdout, r.stdout
     tlog = zsh.log.read_text().splitlines()
-    assert any(line.startswith("respawn-pane -t =dev-api-3: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r c1 ; pipe-pane") for line in tlog)
-    assert "set-environment -t =dev-api-3 DEV_AGENT claude" in tlog
+    assert any(line.startswith("respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; claude -r c1 ; pipe-pane") for line in tlog)
+    assert "set-environment -t $1: DEV_AGENT claude" in tlog
 
 
 def _resume_stubs(tmp_path, **extra):
@@ -2370,16 +2436,16 @@ def test_zsh_resume_never_resumes_a_conversation_live_in_another_slot(zsh, tmp_p
     pathlib.Path(wt3).mkdir(parents=True)
     _codex_home(zsh, [(SID, wt3, "t", 100, 0, None)])
     live = (f"_dev_session_rows() {{ print -r -- '{SID}\t{wt5}\tapi-5\tdetached\tactive\tAudit balances\tcodex'; }}; "
-            "_t_dev() { echo \"ATTACH $*\"; }; ")
+            "_t_history_attach() { echo \"ATTACH $*\"; }; ")
     # explicit slot, no TTY: nothing dead to take → listed, and NO resume was sent
     r = zsh(live + "_t_resume api 3; echo rc=$?")
-    assert "rc=1" in r.stdout and "● in api-5" in r.stderr, (r.stdout, r.stderr)
+    assert "rc=1" in r.stdout and re.search(r"\bapi\s+5\s+>_", r.stderr), (r.stdout, r.stderr)
     assert "send-keys" not in zsh.log.read_text()
     # Under a TTY even the sole live row waits for selection, then attaches
     # the OWNER's slot rather than starting a second conversation.
     r = zsh(live + "_t_resume api 3; echo rc=$?", _tty=True,
-            FZF_LOG=str(tmp_path / 'resume-picker.log'), FZF_PICK='Audit balances')
-    assert "ATTACH api 5" in r.stdout and "send-keys" not in zsh.log.read_text(), r.stdout
+            FZF_LOG=str(tmp_path / 'resume-picker.log'), FZF_PICK='>_')
+    assert f"ATTACH api-5 {SID} {wt5} codex" in r.stdout and "send-keys" not in zsh.log.read_text(), r.stdout
     # scan mode: hidden like any live row, and counted
     r = zsh(live + "_t_resume api; echo rc=$?")
     assert "1 live slot(s) hidden" in r.stderr and "send-keys" not in zsh.log.read_text()
@@ -2429,7 +2495,7 @@ def test_fast_mode_reaches_new_tmux_and_foreground_launches(zsh, agent, fast, ar
     assert r.stdout.count('ARG\n' + args) == 2, r.stdout
     assert f'DEV_FAST[{agent}]={fast}' in r.stdout
     resume = f'{agent} resume saved-id --no-daemon' if agent == 'codex' else 'claude -r saved-id'
-    assert f'respawn-pane -t =dev-web-9: env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; {resume}' in zsh.log.read_text()
+    assert f'respawn-pane -t %1 env SHELL_SESSIONS_DISABLE=1 zsh -lic setopt no_monitor no_notify; {resume}' in zsh.log.read_text()
 
 
 @pytest.mark.parametrize('live', [False, True])

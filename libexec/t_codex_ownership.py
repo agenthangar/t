@@ -26,6 +26,10 @@ _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 _WRITER_SETTLE_SECONDS = 30.0
 
 
+class WriterBusyError(ValueError):
+    """A native writer still holds the selected thread or its workspace."""
+
+
 class UnresolvedWriterError(ValueError):
     """A held writer has not published verifiable workspace metadata yet."""
 
@@ -702,7 +706,7 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
                 raise ValueError("this saved conversation has no verifiable writer lock "
                                  "contract. " + "Exit the owning client and wait for its backend to release the writer. " + retry)
         if held:
-            raise ValueError("the selected Codex conversation is still loaded "
+            raise WriterBusyError("the selected Codex conversation is still loaded "
                              "(its writer lock is held). "
                              + _selected_writer_hint(target, run)
                              + "Exit the owning client and wait for its backend to release the writer. " + retry)
@@ -716,12 +720,12 @@ def assert_released(bundle, sid, cwd, run, *, codex_home=None, rollout=None,
             raise ValueError(str(exc) + ". " + retry) from exc
         if other:
             guidance = "Wait for its owning backend to exit before resuming. "
-            raise ValueError("another Codex conversation in this worktree is still loaded "
+            raise WriterBusyError("another Codex conversation in this worktree is still loaded "
                              f"({other}). " + guidance + retry)
         # Resolving a starting sibling may take time. Recheck the selected
         # writer before returning; the native resume still claims it atomically.
         if target and _lock_held(target):
-            raise ValueError("the selected Codex conversation is still loaded "
+            raise WriterBusyError("the selected Codex conversation is still loaded "
                              "(its writer lock is held). " + retry)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("could not verify the selected Codex rollout or writer lock: "

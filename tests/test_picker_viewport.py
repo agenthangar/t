@@ -25,7 +25,7 @@ def test_viewport_preserves_canonical_rows_and_clamps_boundaries(tmp_path):
 
 def test_slice_keeps_wide_and_combining_cells_aligned():
     assert viewport.window('a界e\u0301z', 2, 3) == ' e\u0301z'
-    assert viewport.window('\x1b[31ma界z\x1b[m', 0, 2) == 'a '
+    assert viewport.plain(viewport.window('\x1b[31ma界z\x1b[m', 0, 2)) == 'a '
     assert viewport.search(['id\tCafé hidden NEEDLE'], 'cafe hidden needle')
 
 
@@ -78,3 +78,38 @@ def test_snapshot_controls_pan_extent_and_invalid_mouse_bytes_pass_through(tmp_p
         assert b''.join(viewport.Mouse().feed(value, lambda *_: True)) == value
     assert viewport.window('', 0, 0) == ''
     assert viewport.window('abc', 9, 3) == '   '
+
+
+def test_fixed_status_remains_visible_colored_and_aligned_during_pan(tmp_path):
+    status = '\x1b[32m●\x1b[m ↶ ↻   '
+    rows = ['repo\t2\tsid\t' + status + '0123456789abcdefghijklmnop']
+    columns = 'STATUS  PRS  AGENT  SESSION'
+    shown, heading = viewport.project(tmp_path, rows, columns, 22, fixed=8)
+    assert viewport.plain(shown[0].rsplit('\t', 1)[1]).startswith('● ↶ ↻   0123456789abc>')
+    assert shown[0].rsplit('\t', 1)[1].startswith(status)
+    assert heading.startswith('STATUS  PRS')
+    (tmp_path / 'pan-offset').write_text('8')
+    shown, heading = viewport.project(tmp_path, rows, columns, 22, fixed=8)
+    assert shown[0].rsplit('\t', 1)[1].startswith(status[:-1] + '<89')
+    assert heading.startswith('STATUS <')
+    assert viewport.display_width(viewport.plain(heading)) == 22
+
+
+@pytest.mark.fzf_compat
+def test_search_keeps_agent_name_available_with_glyph_only_rows():
+    fields = ['repo', '2', 'sid', '-', '-', '-', '-', '-', '-', 'codex'] + ['-'] * 8
+    fields.append('⊡  api  2  Investigate viewport')
+    row = '\t'.join(fields)
+    assert viewport.search([row], 'codex') == [row]
+
+
+@pytest.mark.parametrize('offset,expected', [(0, '○ OP'), (2, 'OPEN')])
+def test_slice_preserves_pr_and_agent_colors_with_zero_and_nonzero_offset(offset, expected):
+    text = '\x1b[32m○ OPEN\x1b[0m  \x1b[36m⊡\x1b[0m'
+    shown = viewport.window(text, offset, 4)
+    assert viewport.plain(shown) == expected
+    assert '\x1b[32m' in shown
+    assert shown.endswith('\x1b[0m')
+    agent = viewport.window(text, 8, 1)
+    assert viewport.plain(agent) == '⊡'
+    assert '\x1b[36m' in agent

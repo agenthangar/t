@@ -23,6 +23,10 @@ def test_local_collector_reuses_unchanged_projection_and_removes_missing_source(
     class History:
         def __init__(self, cfg, api):
             self.cfg, self.store = cfg, SimpleNamespace(close=lambda: None)
+        def pr_states(self, records):
+            return {}
+        def annotate_resume_work(self, records, owners):
+            pass
         def local_catalog(self):
             self.catalog_paths = set(records)
             self.catalog_changed_paths = set(changed)
@@ -85,7 +89,7 @@ def test_remote_delta_preserves_unchanged_candidates_and_replaces_only_changed(a
 
 
 @pytest.mark.parametrize('response,kind', [
-    ('pending', None), ('pending-error', 'collector'), ('invalid-json', 'protocol'), ('timeout', 'collector')])
+    ('pending', None), ('pending-error', 'collector'), ('invalid-json', 'protocol'), ('timeout', 'timeout')])
 def test_remote_cold_and_malformed_responses_have_distinct_outcomes(adapter, collector, monkeypatch, response, kind):
     def remote(*a, **k):
         if response == 'timeout':

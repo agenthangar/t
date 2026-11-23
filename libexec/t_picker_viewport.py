@@ -28,39 +28,71 @@ def plain(text):
 
 
 def window(text, offset, width):
-    """Slice terminal cells, padding a split wide glyph instead of misaligning."""
-    text = plain(text)
-    result, position = [], 0
-    for char in text:
+    """Slice terminal cells, preserving SGR and padding split wide glyphs."""
+    if width <= 0:
+        return ''
+    result, position, colored, visible = [], 0, False, False
+    for match in re.finditer(ANSI.pattern + r'|[\s\S]', text):
+        char = match[0]
+        if ANSI.fullmatch(char):
+            # Carry styling through the skipped prefix, but never relay cursor
+            # movement from a display field. Reset before the overflow marker.
+            if char.endswith('m'):
+                result.append(char)
+                colored = True
+            continue
         cells = display_width(char)
         end = position + cells
         if cells == 0:
-            if result and offset < position <= offset + width:
+            if visible and offset < position <= offset + width:
                 result.append(char)
         elif end > offset and position < offset + width:
             result.append(char if position >= offset and end <= offset + width
                           else ' ' * (min(end, offset + width) - max(position, offset)))
+            visible = True
         position = end
         if position >= offset + width:
             break
+    if colored:
+        result.append('\x1b[0m')
     value = ''.join(result)
-    return value + ' ' * max(0, width - display_width(value))
+    return value + ' ' * max(0, width - display_width(plain(value)))
 
 
-def project(directory, rows, columns, width):
+def fixed_prefix(text, width):
+    """Separate a fixed cell prefix while retaining its status colors."""
+    position = cells = 0
+    while position < len(text) and cells < width:
+        match = ANSI.match(text, position)
+        if match:
+            position = match.end()
+        else:
+            cells += display_width(text[position])
+            position += 1
+    return text[:position], text[position:]
+
+
+def project(directory, rows, columns, width, fixed=0):
     directory = Path(directory)
-    # Reserve one cell at either edge for overflow, outside the table text.
-    size = max(1, width - 2)
-    snapshot = (directory / 'all').read_text().splitlines() if (directory / 'all').exists() else rows
-    widest = max([display_width(plain(columns))] +
-                  [display_width(plain(row.rsplit('\t', 1)[-1])) for row in snapshot])
+    # Status stays fixed; its trailing gap hosts the left overflow indicator.
+    # A right overflow cell remains outside the scrolling table text.
+    fixed = min(fixed, max(0, width - 3))
+    size = max(1, width - fixed - (1 if fixed else 2))
+    canonical = (directory / 'all').exists()
+    snapshot = (directory / 'all').read_text().splitlines() if canonical else rows
+    widest = max([max(0, display_width(plain(columns)) - fixed)] +
+                  [max(0, display_width(plain(row.rsplit('\t', 1)[-1])) - (0 if canonical else fixed))
+                   for row in snapshot])
     path = directory / 'pan-offset'
     offset = int(path.read_text()) if path.exists() else 0
     offset = min(max(0, offset), max(0, widest - size))
     path.write_text(str(offset))
     left, right = ('<' if offset else ' '), ('>' if offset + size < widest else ' ')
     def cell(text):
-        return left + window(text, offset, size) + right
+        prefix, body = fixed_prefix(text, fixed)
+        if fixed:
+            return prefix[:-1] + left + window(body, offset, size) + right
+        return left + window(body, offset, size) + right
     return [row + '\t' + cell(row.rsplit('\t', 1)[-1]) for row in rows], cell(columns)
 
 
@@ -214,8 +246,11 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
             time.sleep(.005)
         os.environ['FZF_PORT'] = (directory / 'pan-port').read_text().strip()
         picker = Picker(len((directory / 'all').read_text().splitlines()) + 1)
-        expected = [plain(row) for row in (directory / 'current').read_text().splitlines()]
         while True:
+            # Discovery may publish another serialized view while the native
+            # input barrier settles. Follow that view, including its new count.
+            picker.count = len((directory / 'all').read_text().splitlines()) + 1
+            expected = [plain(row) for row in (directory / 'current').read_text().splitlines()]
             state = picker.request()
             if (not state['reading'] and state['totalCount'] == len(expected)
                     and [plain(item['text']) for item in state['matches']] == expected):
@@ -256,9 +291,10 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
             render(directory, 'resume', 'current', max(3, width - inset), os.environ.get('T_PICKER_COLUMNS', ''))
             projected = (directory / 'current').read_text()
             if projected != previous:
-                expected = [plain(row) for row in projected.splitlines()]
                 picker.request('reload-sync(cat "$T_PICKER_CURRENT")')
                 while True:
+                    picker.count = len((directory / 'all').read_text().splitlines()) + 1
+                    expected = [plain(row) for row in (directory / 'current').read_text().splitlines()]
                     state = picker.request()
                     if (not state['reading'] and state['totalCount'] == len(expected)
                             and [plain(item['text']) for item in state['matches']] == expected):
@@ -323,6 +359,12 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
                 data = os.read(terminal, 65536)
                 if not data: break
                 last_input = time.monotonic()
+                # Before fzf enters its action loop, its terminal queries need
+                # the original replies. The input barrier would wait for fzf
+                # while fzf was still waiting for those replies.
+                if not (directory / 'pan-port').exists():
+                    to_child.extend(data)
+                    continue
                 # Decode and handle in order so a preview toggle changes the
                 # hitbox for mouse events later in this same terminal read.
                 def decoded():
@@ -347,9 +389,18 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
             elif mouse.pending and time.monotonic() - last_input > .06:
                 to_child.extend(mouse.flush())
             if process.poll() is not None and not ready: break
-        return process.wait()
+        try:
+            return process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            # The outer terminal can disappear while fzf is still alive.
+            # The cleanup below terminates the orphaned picker.
+            return 130
     finally:
-        termios.tcsetattr(terminal, termios.TCSADRAIN, saved)
+        try:
+            termios.tcsetattr(terminal, termios.TCSADRAIN, saved)
+        except termios.error as error:
+            if error.args[0] not in (errno.EIO, errno.ENXIO, errno.ENOTTY):
+                raise
         for signum, handler in old_handlers.items(): signal.signal(signum, handler)
         if process is not None and process.poll() is None:
             try: os.killpg(process.pid, signal.SIGTERM)

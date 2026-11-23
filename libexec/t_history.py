@@ -23,13 +23,14 @@ import uuid
 _spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 _resolve_repo = runpy.run_path(str(Path(__file__).with_name("t_repos.py")))["resolve_repo"]
 
-_codex_rows = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))["rows"]
+_CODEX_STORE = runpy.run_path(str(Path(__file__).with_name("t_codex_store.py")))
+_codex_rows = _CODEX_STORE["rows"]
 
 _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
 _CLIENT_STOP = runpy.run_path(str(Path(__file__).with_name('t_client_stop.py')))
 
 VERSION = 1
-PARSER_VERSION = 6
+PARSER_VERSION = 8
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
 _CACHE_REQUEST = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))['request']
 _RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
@@ -58,13 +59,38 @@ class HistoryCancelled(HistoryError):
     """The user left a history selection without choosing work."""
 
 
-class UnknownWorkspaceWriter(HistoryError):
+class WriterBusy(HistoryError):
+    """An identified native writer can release the selected conversation."""
+
+
+class UnknownWorkspaceWriter(WriterBusy):
     """Ownership of a sibling writer could not be resolved at this workspace."""
 
     def __init__(self, error, workspace):
         super().__init__(str(error))
         self.workspace = workspace
         self.fingerprint = error.fingerprint
+
+
+def repair_terminal():
+    return sys.stdin.isatty() and sys.stderr.isatty() and (
+        sys.stdout.isatty() or os.environ.get('T_RESUME_REPAIR') == '1')
+
+
+def bind_workspace(row, slot, path=None, host=None):
+    """Bind the displayed historical location without discarding other source evidence."""
+    matches = [a for a in row['associations'] if (a.get('slot') or '-') == slot
+               and (path is None or a['workspace'] == path)
+               and (host is None or a.get('host') == host)]
+    if not matches:
+        raise HistoryError('selected workspace association changed; select the conversation again')
+    if path is not None and host is None and len({a.get('host') for a in matches}) > 1:
+        raise HistoryError('selected workspace host is ambiguous; refresh the picker')
+    latest = max(a.get('observed', 0) for a in matches)
+    locations = {(a.get('host'), a['workspace']) for a in matches if a.get('observed', 0) == latest}
+    if len(locations) != 1:
+        raise HistoryError('selected workspace association is ambiguous')
+    return {**row, '_selected_workspace': locations.pop()}
 
 
 def clean(value):
@@ -124,12 +150,17 @@ def validate(record):
         raise HistoryError('invalid history timestamp')
     if 'last_turn' in record:
         record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
-    for field in ('model', 'model_source', 'summary', 'summary_source', 'interface'):
+    if 'work_in_progress' in record and type(record['work_in_progress']) is not bool:
+        raise HistoryError('invalid work status')
+    if 'title_kind' in record and (not isinstance(record['title_kind'], str)
+                                   or record['title_kind'] not in _RESUME_SOURCE['TITLE_KINDS']):
+        raise HistoryError('invalid title provenance')
+    for field in ('title', 'model', 'model_source', 'summary', 'summary_source', 'interface'):
         if field in record and not isinstance(record[field], str):
             raise HistoryError('invalid recorded display metadata')
     if record.get('interface', 'unknown') not in ('cli', 'desktop', 'foreground', 'unknown'):
         raise HistoryError('invalid recorded interface')
-    for field in ('model_updated', 'summary_updated', 'interface_updated'):
+    for field in ('title_updated', 'model_updated', 'summary_updated', 'interface_updated'):
         if field in record and (not isinstance(record[field], (int, float)) or not math.isfinite(record[field]) or not 0 <= record[field] <= 253402300799):
             raise HistoryError('invalid display metadata timestamp')
     for field in ('associations', 'sources', 'prs', 'mentions'):
@@ -154,13 +185,13 @@ def validate(record):
     return record
 
 
-def generation(workspace):
+def generation(workspace, *, timeout=30):
     gitfile = Path(workspace) / '.git'
     try:
         info = gitfile.stat()
     except OSError:
         return ''
-    gitdir = run(['git', '-C', str(workspace), 'rev-parse', '--absolute-git-dir'], optional=True).strip()
+    gitdir = run(['git', '-C', str(workspace), 'rev-parse', '--absolute-git-dir'], timeout=timeout, optional=True).strip()
     return hashlib.sha256(json.dumps([gitdir, info.st_dev, info.st_ino, info.st_ctime_ns]).encode()).hexdigest() if gitdir else ''
 
 
@@ -234,19 +265,18 @@ class Store:
         key = json.dumps([record['repo'], record['agent'], record['sid']])
         existing = self.db.execute('select record from conversations where key=?', (key,)).fetchone()
         old = json.loads(existing[0]) if existing else {}
-        merged = {**old, **record, 'version': VERSION}
-        for field in ('title', 'model', 'summary', 'interface'):
+        merged = {**old, **record, **_RESUME_SOURCE['verified_title'](record, old), 'version': VERSION}
+        for field in ('model', 'summary', 'interface'):
             incoming_known = record.get(field) not in (None, '', '-', 'unknown')
             old_known = old.get(field) not in (None, '', '-', 'unknown')
             incoming_time = record.get(field + '_updated', record.get('updated', 0))
             old_time = old.get(field + '_updated', old.get('updated', 0))
             if old_known and (not incoming_known or incoming_time < old_time):
                 merged[field] = old[field]
-                if field in ('model', 'summary', 'interface'):
-                    merged[field + '_updated'] = old_time
+                merged[field + '_updated'] = old_time
                 if field + '_source' in old:
                     merged[field + '_source'] = old[field + '_source']
-            elif incoming_known and field in ('model', 'summary', 'interface'):
+            elif incoming_known:
                 merged[field + '_updated'] = incoming_time
         for field in ('associations', 'prs', 'mentions', 'sources'):
             values = old.get(field, []) + record.get(field, [])
@@ -296,6 +326,24 @@ def timestamp(value):
         return 0
 
 
+def codex_title(row, index_name):
+    """Prefer a persisted name and identify a stored copy of the first prompt."""
+    sql_name = clean(row.get('name'))
+    indexed = clean(index_name.get('thread_name'))
+    sql_updated = timestamp(row.get('updated_at_ms') or row.get('updated_at'))
+    indexed_updated = timestamp(index_name.get('updated_at'))
+    if indexed and (not sql_name or indexed_updated > sql_updated):
+        title, kind, observed = indexed, 'name', indexed_updated
+    elif sql_name:
+        title, kind, observed = sql_name, 'name', sql_updated
+    else:
+        prompt = clean(row.get('first_user_message'))
+        title = clean(row.get('title')) or prompt
+        kind = 'prompt' if title and prompt.startswith(title) else 'unknown'
+        observed = sql_updated
+    return dict(title=title, title_kind=kind, title_updated=observed)
+
+
 def pr_refs(text):
     return [dict(repo=repo.lower(), number=int(number), url=f'https://github.com/{repo}/pull/{number}')
             for repo, number in PR_URL.findall(text)]
@@ -328,21 +376,22 @@ def literal_commands(source):
     if len(objects) != 1:
         return []
     start, end, masked = objects[0]
-    commands = []
-    pattern = r"\b(?:cmd|command)\s*:\s*(" + JS_STRING + ')'
-    for match in re.finditer(pattern, source[start + 1:end], re.S):
-        position = start + 1 + match.start()
-        if not masked[position:position + 3].strip():
-            continue
-        if masked[start:position].count('{') - masked[start:position].count('}') != 1:
-            continue
-        try:
-            value = ast.literal_eval(match[1])
-            if isinstance(value, str):
-                commands.append(value)
-        except (ValueError, SyntaxError):
-            pass
-    return commands
+    if not (re.fullmatch(r'\s*text\s*\(\s*await\s+tools\.exec_command\s*\(\s*', masked[:start])
+            and re.fullmatch(r'\s*\)\s*\)\s*;?\s*', masked[end + 1:])):
+        return []
+    obj = masked[start + 1:end]
+    properties = [match for match in re.finditer(r'\bcmd\s*:', obj)
+                  if obj[:match.start()].count('{') == obj[:match.start()].count('}')]
+    if len(properties) != 1:
+        return []
+    value_start = start + 1 + properties[0].end()
+    value = re.match(r'\s*(' + JS_STRING + ')', source[value_start:end], re.S)
+    if not value or not re.match(r'\s*(?:,|$)', masked[value_start + value.end():end]):
+        return []
+    try:
+        return [ast.literal_eval(value[1])]
+    except (ValueError, SyntaxError):
+        return []
 
 
 def shell_source(command):
@@ -360,31 +409,91 @@ def shell_source(command):
 
 def poll_key(call, args):
     if call.get('type') == 'custom_tool_call' and isinstance(args, str):
-        # Only a literal session id on the execution API is lineage evidence.
-        match = re.search(r'\btools\.write_stdin\s*\(\s*\{[^}]*\bsession_id\s*:\s*([0-9]+)', js_structure(args), re.S)
+        # Match one literal poll and, for a known sequential two-result wrapper,
+        # consume only its first structured process result.
+        masked = js_structure(args)
+        match = re.fullmatch(
+            r'\s*text\(await tools\.write_stdin\(\s*\{([^{}]*)\}\s*\)\s*\)\s*;?'
+            r'(\s*text\(await tools\.exec_command\(\s*\{[^{}]*\}\s*\)\s*\)\s*;?)?\s*', masked)
         if match:
-            return 'session:' + match[1]
+            obj = match[1]
+            session = re.search(r'\bsession_id\s*:\s*([0-9]+)\s*(?=,|$)', obj)
+            chars = re.search(r'\bchars\s*:', obj)
+            if session and (not chars or re.match(r'''\s*(?:""|'')\s*(?=,|$)''', args[
+                    match.start(1) + chars.end():match.end(1)])):
+                return 'session:' + session[1], bool(match[2])
     if isinstance(args, dict):
         name = str(call.get('name') or '').split('.')[-1]
-        if name == 'write_stdin' and type(args.get('session_id')) is int:
-            return 'session:' + str(args['session_id'])
+        if name == 'write_stdin' and type(args.get('session_id')) is int and args.get('chars', '') == '':
+            return 'session:' + str(args['session_id']), False
         if name == 'wait' and isinstance(args.get('cell_id'), str):
-            return 'cell:' + args['cell_id']
-    return None
+            return 'cell:' + args['cell_id'], False
+    return None, False
 
 
 def running_keys(output):
-    sessions = ['session:' + value for value in re.findall(r'"session_id"\s*:\s*([0-9]+)', output)]
-    cells = ['cell:' + value for value in re.findall(r'Script running with cell ID ([A-Za-z0-9_-]+)', output)]
-    return sessions + cells
+    return ['cell:' + value for value in re.findall(r'^Script running with cell ID ([A-Za-z0-9_-]+)', output, re.M)]
+
+
+def process_output(value, first_only=False):
+    """Extract tool status and stdout without matching against repr() or PR prose."""
+    if isinstance(value, list):
+        value = '\n'.join(block.get('text', '') for block in value
+                          if isinstance(block, dict) and block.get('type') in ('input_text', 'text')
+                          and isinstance(block.get('text'), str))
+    if not isinstance(value, str):
+        return '', [], []
+    stdout, statuses, running, results = [], [], running_keys(value), []
+    for line in value.splitlines():
+        if line.lstrip().startswith('{'):
+            try:
+                result = json.loads(line)
+            except ValueError:
+                result = None
+            if isinstance(result, dict) and isinstance(result.get('output'), str) and (
+                    'exit_code' in result or 'session_id' in result):
+                results.append(result)
+                continue
+        status = re.fullmatch(r'(?:Exit code:\s*|Process exited with code\s+)(-?[0-9]+)', line)
+        if status:
+            statuses.append(int(status[1]))
+        elif not re.match(r'^(?:Script completed|Script running with cell ID |Wall time |Output:)', line):
+            stdout.append(line)
+    if first_only:
+        if len(results) != 2 or any(line.strip() for line in stdout) or statuses:
+            return '', [], []
+        results = results[:1]
+    elif len(results) > 1:
+        return '', [], []
+    if results:
+        stdout = []
+    for result in results:
+        stdout.append(result['output'])
+        if type(result.get('exit_code')) is int:
+            statuses.append(result['exit_code'])
+        elif type(result.get('session_id')) is int:
+            running.append('session:' + str(result['session_id']))
+    return '\n'.join(stdout).strip(), statuses, running
 
 
 def tool_pr_command(command):
     """Extract actual gh invocations, excluding quoted prose/printf and PR bodies."""
     if not isinstance(command, str):
         return []
+    first, separator, rest = command.partition('\n')
+    # A Python heredoc is used to write a PR body before the final create.
+    # Only the final create can determine the shell's exit, and explicit
+    # process success and its terminal URL are required for that shape.
+    preparation = separator and re.fullmatch(
+        r'''python[23]?[ \t]+-[ \t]+<<[ \t]*(['"]?)([A-Za-z0-9_]+)\1[ \t]*''', first)
+    if preparation:
+        _, delimiter, source = ('\n' + rest).partition('\n' + preparation[2] + '\n')
+        if not delimiter or not source.strip():
+            return []
+    else:
+        source = shell_source(command)
     try:
-        lexer = shlex.shlex(shell_source(command), posix=True, punctuation_chars=';&|()\n')
+        lexer = shlex.shlex(source, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
         lexer.whitespace_split = True
         tokens = list(lexer)
@@ -400,13 +509,19 @@ def tool_pr_command(command):
             statement.append(token)
     # One successful shell result proves an unbranched sole gh invocation.
     # Mixed/control-flow commands cannot safely attribute arbitrary stdout URLs.
-    if len(statements) != 1 or any(token in ('&&', '||') for token in tokens):
+    if len(statements) != 1 or any(re.fullmatch(r'[;&|()\n]*[&|()][;&|()\n]*', token) for token in tokens):
         return []
     out = []
     for words in statements:
         while words and (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]) or words[0] in ('command', 'env')):
             words = words[1:]
-        if len(words) < 3 or Path(words[0]).name != 'gh' or words[1] != 'pr' or words[2] not in ('create', 'checkout', 'edit'):
+        if len(words) < 3 or Path(words[0]).name != 'gh' or words[1] != 'pr' or words[2] not in ('create', 'checkout', 'edit', 'merge'):
+            continue
+        if preparation and words[2] != 'create':
+            continue
+        if words[2] == 'create' and any(
+                re.fullmatch(r'[<>]+', word) or word in ('--dry-run', '--web', '-w')
+                or word.startswith(('--dry-run=', '--web=')) for word in words[3:]):
             continue
         repo = None
         for index, word in enumerate(words):
@@ -420,7 +535,7 @@ def tool_pr_command(command):
             refs = pr_refs(target) if PR_URL.fullmatch(target) else []
             if re.fullmatch(r'[1-9][0-9]*', target):
                 numbers = [dict(number=int(target), repo=repo)]
-        out.append(dict(refs=refs, numbers=numbers, action=words[2]))
+        out.append(dict(refs=refs, numbers=numbers, action=words[2], repo=repo, explicit_exit=bool(preparation)))
     return out
 
 
@@ -480,9 +595,10 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                     if not record['associations'] or any(record['associations'][-1].get(key) != association.get(key) for key in ('workspace', 'branch', 'commit')):
                         record['associations'].append(association)
                 if row.get('type') in ('custom-title', 'ai-title'):
-                    record['title'] = clean(row.get('customTitle') or row.get('aiTitle'))
-                    if record['title']:
-                        record.update(summary=record['title'], summary_source='transcript title', summary_updated=record['updated'])
+                    title = clean(row.get('customTitle') or row.get('aiTitle'))
+                    if title:
+                        record.update(title=title, title_kind='name', title_updated=record['updated'],
+                                      summary=title, summary_source='transcript title', summary_updated=record['updated'])
                 message = payload if agent == 'codex' else row.get('message', {})
                 if not isinstance(message, dict):
                     continue
@@ -491,12 +607,10 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                 blocks = content if isinstance(content, list) else [{'text': content}]
                 text = ' '.join(str(b.get('text', '')) for b in blocks if isinstance(b, dict))
                 if role == 'user' and not record['title'] and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
-                    record['title'] = clean(text)[:200]
+                    record.update(title=clean(text)[:200], title_kind='prompt', title_updated=record['updated'])
                 if role == 'user' and text.strip() and not text.lstrip().startswith(('<', '# AGENTS.md instructions')):
                     record.update(summary=record['title'] or clean(text), summary_source='transcript', summary_updated=record['updated'])
-                if metadata_only:
-                    continue
-                if role in ('user', 'assistant'):
+                if not metadata_only and role in ('user', 'assistant'):
                     record['mentions'].extend(pr_refs(text))
                 # Structured tool invocations establish association; conversational
                 # links remain explicitly incidental. Pair command output by tool id.
@@ -511,46 +625,47 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                                 args = json.loads(args)
                             except ValueError:
                                 args = {}
-                        key = poll_key(call, args)
+                        key, first_only = poll_key(call, args)
                         call_id = call.get('call_id') or call.get('id') or 'unknown'
                         if key and key in pending:
-                            polls[call_id] = key
+                            polls[call_id] = (key, first_only)
                         if call.get('type') == 'custom_tool_call' and isinstance(args, str):
                             executions[call_id] = bool(execution_objects(args)) or str(call.get('name') or '').split('.')[-1] == 'exec'
                             commands = literal_commands(args)
                         else:
-                            executions[call_id] = str(call.get('name') or '').split('.')[-1] in ('exec_command', 'shell_command', 'Bash')
-                            commands = [args.get('command') or args.get('cmd') or ''] if isinstance(args, dict) else []
+                            name = str(call.get('name') or '').split('.')[-1]
+                            executions[call_id] = name in ('', 'exec_command', 'shell_command', 'Bash')
+                            commands = [args.get('command') or args.get('cmd') or ''] if executions[call_id] and isinstance(args, dict) else []
                         evidence = [item for command in commands for item in tool_pr_command(command)]
                         if evidence:
                             tools[call_id] = evidence
                     elif call.get('type') in ('function_call_output', 'custom_tool_call_output', 'tool_result'):
                         call_id = call.get('call_id') or call.get('tool_use_id')
-                        key = polls.get(call_id)
-                        inherited = pending.get(key, {})
-                        evidence = tools.get(call_id) or inherited.get('evidence')
-                        output = str(call.get('output') or call.get('content') or '')
-                        statuses = [int(status) for status in re.findall(r'(?:"exit_code"\s*:\s*|Exit code:\s*|Process exited with code\s+)(-?[0-9]+)', output)]
+                        key, first_only = polls.pop(call_id, (None, False))
+                        inherited = pending.pop(key, {})
+                        evidence = tools.pop(call_id, None) or inherited.get('evidence')
+                        output, statuses, running = process_output(call.get('output') or call.get('content') or '', first_only)
                         failed = call.get('is_error') or any(status != 0 for status in statuses)
-                        running = running_keys(output)
-                        if executions.get(call_id):
+                        if executions.pop(call_id, False):
                             for identifier in running:
                                 pending.pop(identifier, None)
-                        if evidence and failed:
-                            if key:
-                                pending.pop(key, None)
-                        elif evidence and running:
-                            item = dict(evidence=evidence, refs=inherited.get('refs', []) + pr_refs(output))
+                        if not evidence or failed:
+                            continue
+                        if running:
+                            item = dict(evidence=evidence, last_line=output.splitlines()[-1] if output else inherited.get('last_line', ''))
                             for identifier in running:
                                 pending[identifier] = item
-                        elif evidence and (not key or statuses and all(status == 0 for status in statuses)):
+                        else:
                             for item in evidence:
+                                if (key or item['explicit_exit']) and not statuses:
+                                    continue
                                 record['prs'].extend(item['refs'])
                                 record.setdefault('pr_numbers', []).extend(item['numbers'])
                                 if item['action'] == 'create':
-                                    record['prs'].extend(inherited.get('refs', []) + pr_refs(output))
-                            if key:
-                                pending.pop(key, None)
+                                    last_line = output.splitlines()[-1].strip() if output else inherited.get('last_line', '').strip()
+                                    if PR_URL.fullmatch(last_line):
+                                        refs = pr_refs(last_line)
+                                        record['prs'].extend(ref for ref in refs if not item['repo'] or item['repo'] == ref['repo'])
     except OSError:
         return record
     if not record['sid'] and agent == 'claude':
@@ -645,6 +760,74 @@ def picker_columns(width, last_turn=True):
     if width >= 32:
         return [('ST', 2), ('#', 3), ('LAST TURN', 11)]
     return [('S', 1), ('#', 2), ('TURN', 5)]
+
+
+def resume_candidate(row, alias, association, host):
+    """Keep PR references and states separate from the conversation title."""
+    updated = int(row.get('updated', 0))
+    prs = row.get('prs', [])
+    states = [state if state in ('OPEN', 'MERGED', 'CLOSED') else 'UNKNOWN'
+              for state in (pr.get('state') for pr in prs)]
+    unique = set(states)
+    state = next(iter(unique)) if len(unique) == 1 else 'MIXED' if unique else 'NONE'
+    refs = ' '.join(f'{pr["repo"]}#{pr["number"]}:{status}' for pr, status in zip(prs, states))
+    return '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
+                              association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
+                              clean(row['title']), host, row['agent'], row.get('last_turn', '-'), row['repo'],
+                              state, _SORT['closed_time'](row), refs or '-',
+                              'yes' if row.get('work_in_progress') else '-', _RESUME_SOURCE['title_kind'](row), association.get('host') or '-']))
+
+
+def worktree_has_pending_work(workspace, branch, baselines, published_heads, deadline, *, exact_owner=False):
+    def git(*args, optional=False):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HistoryError('work status deadline exceeded')
+        return run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', workspace, *args],
+                   timeout=min(1, remaining), optional=optional).strip()
+
+    try:
+        current = git('symbolic-ref', '--quiet', '--short', 'HEAD')
+        if not current or (current != branch and not exact_owner):
+            return False
+        if git('status', '--porcelain'):
+            return True
+        if not baselines:
+            return False
+        head = git('rev-parse', 'HEAD')
+        if head in baselines or head in published_heads():
+            return False
+        if not any(git('merge-base', head, baseline, optional=True) == baseline for baseline in baselines):
+            return False
+        default_refs = ('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master',
+                        'refs/heads/main', 'refs/heads/master')
+        refs = git('for-each-ref', '--format=%(refname)', *default_refs).splitlines()
+        base = next((ref for ref in default_refs if ref in refs), '')
+        if not base:
+            return False
+        common = git('merge-base', head, base)
+        if common == head:
+            return False
+        tree = git('rev-parse', 'HEAD^{tree}')
+        # A squash merge changes the commit ID but can publish the same tree.
+        return (tree != git('rev-parse', common + '^{tree}')
+                and tree not in git('log', '--first-parent', '--format=%T', common + '..' + base).splitlines())
+    except HistoryError:
+        return False
+
+
+def cached_merged_heads(directory, repo, deadline):
+    """Read the same repo-wide merged-head sidecars used by the live status."""
+    heads = set()
+    for path in directory.glob(repo.replace('/', '#') + '#*.head'):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            if path.with_suffix('').read_text().strip() == 'MERGED':
+                heads.add(path.read_text().strip().lower())
+        except (OSError, UnicodeError):
+            continue
+    return heads
 
 
 def compact_model(model, width):
@@ -785,6 +968,7 @@ class HistoryCommand:
         self.reservation_token = uuid.uuid4().hex
         self.reservation = None
         self.repair_writer = None
+        self.prepared_destination = None
         self.discovery_identities = dict(getattr(self.store, 'identities', {}))
         self.repository_proofs = {}
         self.fresh_repository_proofs = set()
@@ -968,6 +1152,7 @@ class HistoryCommand:
         # Codex names and relocated workspaces can change without appending a
         # rollout. Read its index once, independently of transcript file stamps.
         native = []
+        native_names = _CODEX_STORE['session_names'](codex)
         for database in sorted(codex.glob('state_*.sqlite'), reverse=True):
             try:
                 native = [dict(row) for row in _codex_rows(database, 'select * from threads',
@@ -1046,7 +1231,7 @@ class HistoryCommand:
                 value['prs'] = value.get('prs', []) + [dict(repo=p.get('repo') or identity, number=p['number'],
                     url=f'https://github.com/{p.get("repo") or identity}/pull/{p["number"]}') for p in value.pop('pr_numbers', [])]
             self.store.merge(value)
-        indexed = {}
+        indexed, indexed_sids = {}, set()
         by_source = {s['path']: record for record in self.store.records() for s in record.get('sources', [])
                      if s.get('host') == 'local' and s.get('path') in paths}
         for row in native:
@@ -1055,8 +1240,9 @@ class HistoryCommand:
             if (not original or original['agent'] != 'codex' or original['sid'] != row.get('id')
                     or '"subagent"' in str(row.get('source', ''))):
                 continue
-            title = clean(row.get('name') or row.get('title') or row.get('first_user_message'))
-            value = dict(repo=original['repo'], agent='codex', sid=row['id'], title=title, summary=title,
+            metadata = codex_title(row, native_names.get(row['id'], {}))
+            indexed_sids.add(row['id'])
+            value = dict(repo=original['repo'], agent='codex', sid=row['id'], **metadata, summary=metadata['title'],
                          summary_source='index', model=clean(row.get('model')) or '-',
                          model_source='index' if row.get('model') else 'unknown',
                          updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')),
@@ -1067,6 +1253,15 @@ class HistoryCommand:
             indexed[name] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
             if indexed[name] != old.get('index', {}).get(name) or name in self.catalog_changed_paths:
                 self.store.merge(value)
+                self.catalog_changed_paths.add(name)
+        for name, original in by_source.items():
+            sid = original['sid']
+            if original['agent'] != 'codex' or sid in indexed_sids or sid not in native_names:
+                continue
+            metadata = codex_title({}, native_names[sid])
+            indexed[name] = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
+            if indexed[name] != old.get('index', {}).get(name) or name in self.catalog_changed_paths:
+                self.store.merge({**{key: original[key] for key in ('repo', 'agent', 'sid')}, **metadata})
                 self.catalog_changed_paths.add(name)
         rows = []
         for original in self.store.records():
@@ -1112,6 +1307,7 @@ class HistoryCommand:
             row['repo'] = allowed[row['repo']]
             row.pop('owners', None)
             row.pop('display', None)
+            row.pop('work_in_progress', None)
             for field in ('associations', 'sources'):
                 if any(value.get('host') != 'local' for value in row.get(field, [])):
                     raise HistoryError('remote catalog contains imported evidence')
@@ -1289,6 +1485,7 @@ class HistoryCommand:
         self.discovery_identities[alias] = identity
         home = Path.home()
         codex = Path(os.environ.get('CODEX_HOME') or home / '.codex')
+        native_names = _CODEX_STORE['session_names'](codex)
         for directory, pattern, agent in [(home / '.claude/projects', '*/*.jsonl', 'claude'),
                                            (codex / 'sessions', '**/rollout-*.jsonl', 'codex'),
                                            (codex / 'archived_sessions', '**/rollout-*.jsonl', 'codex')]:
@@ -1326,11 +1523,19 @@ class HistoryCommand:
                     row = dict(row)
                     if '"subagent"' in str(row.get('source', '')):
                         continue
-                    value = dict(agent='codex', sid=row.get('id', ''), title=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary=clean(row.get('name') or row.get('title') or row.get('first_user_message')), summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
+                    sid = row.get('id', '')
+                    metadata = codex_title(row, native_names.get(sid, {}))
+                    value = dict(agent='codex', sid=sid, **metadata, summary=metadata['title'], summary_source='index', model=clean(row.get('model')) or '-', model_source='index' if row.get('model') else 'unknown', updated=timestamp(row.get('updated_at')), archived=bool(row.get('archived')), associations=[dict(workspace=row.get('cwd', ''), branch=clean(row.get('git_branch')), commit=row.get('git_sha') or '', evidence='index', observed=timestamp(row.get('updated_at')))], sources=[dict(host='local', path=row.get('rollout_path') or '', available=Path(row.get('rollout_path') or '').is_file())])
                     self.ingest(value, alias)
                 break
             except sqlite3.Error:
                 continue
+        for original in self.store.records():
+            sid = original['sid']
+            if (original['agent'] == 'codex' and original['repo'] == identity and sid in native_names
+                    and any(source.get('host') == 'local' for source in original.get('sources', []))):
+                self.store.merge({**{key: original[key] for key in ('repo', 'agent', 'sid')},
+                                  **codex_title({}, native_names[sid])})
 
     def export(self, alias):
         self.check_auth()
@@ -1489,6 +1694,84 @@ class HistoryCommand:
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
 
+    def annotate_resume_work(self, rows, live=()):
+        """Check each worktree against its exact live owner or captured generation."""
+        owners_by_path = {}
+        for owner in live:
+            owners_by_path.setdefault(owner['cwd'], set()).add((owner['agent'], owner['sid']))
+        by_workspace = {}
+        for row in rows:
+            row.pop('work_in_progress', None)
+            for association in row.get('associations', []):
+                if association.get('host') == 'local' and association.get('slot'):
+                    by_workspace.setdefault(association['workspace'], []).append((row, association))
+        deadline = time.monotonic() + 3
+        aliases = {**self.local_identities, **self.discovery_identities}
+        legacy = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
+        published = {}
+        def published_heads(repo):
+            if repo not in published:
+                published[repo] = cached_merged_heads(legacy, repo, deadline)
+            return published[repo]
+
+        def workspace_order(item):
+            workspace, entries = item
+            return workspace in owners_by_path, max(entry[1].get('observed', 0) for entry in entries)
+        for workspace, entries in sorted(by_workspace.items(), key=workspace_order, reverse=True):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if not (Path(workspace) / '.git').is_file():
+                continue
+            owners = {owner for cwd, identities in owners_by_path.items()
+                      if cwd == workspace or cwd.startswith(workspace.rstrip('/') + '/') for owner in identities}
+            if len(owners) > 1:
+                continue
+            if owners:
+                matching = [(row, a) for row, a in entries if (row['agent'], row['sid']) in owners]
+            else:
+                matching = [(row, a) for row, a in entries if a.get('generation')]
+            if not matching:
+                continue
+            row, captured = max(matching, key=lambda entry: entry[1].get('observed', 0))
+            observed = captured.get('observed', 0)
+            if not owners and any((other['agent'], other['sid']) != (row['agent'], row['sid'])
+                   and evidence.get('observed', 0) >= observed for other, evidence in entries):
+                continue
+            latest = max(row['associations'], key=lambda entry: entry.get('observed', 0))
+            if latest['workspace'] != workspace or latest.get('host') != 'local':
+                continue
+            if not any(repo == row['repo'] and workspace in self.cfg.worktree_paths(alias, captured['slot'])
+                       for alias, repo in aliases.items() if alias in self.cfg.repos):
+                continue
+            current_generation = generation(workspace, timeout=min(1, remaining))
+            if not current_generation or (not owners and current_generation != captured['generation']):
+                continue
+            merged_heads = set()
+            for pr in row.get('prs', []):
+                if pr.get('state') != 'MERGED' or pr['repo'] != row['repo']:
+                    continue
+                try:
+                    head = (legacy / f'{pr["repo"].replace("/", "#")}#{pr["number"]}.head').read_text().strip()
+                except (OSError, UnicodeError):
+                    continue
+                if re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', head):
+                    merged_heads.add(head.lower())
+            repo = row['repo']
+            baselines = merged_heads
+            if not baselines:
+                revisions = [a for r, a in entries if r is row
+                             and (a.get('generation') == current_generation or owners)
+                             and re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', a.get('commit', ''))]
+                if revisions:
+                    initial = min(revisions, key=lambda a: a.get('observed', 0))
+                    baselines = {initial['commit'].lower()}
+            if worktree_has_pending_work(workspace, captured.get('branch'), baselines, lambda: published_heads(repo),
+                                         deadline, exact_owner=bool(owners)):
+                remaining = deadline - time.monotonic()
+                if remaining > 0 and generation(workspace, timeout=min(1, remaining)) == current_generation:
+                    row['work_in_progress'] = True
+
     def pick(self, rows, alias, limit=50, page=1, query='', multi=False):
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
             snapshot, state = Path(directory) / 'records.json', Path(directory) / 'page.json'
@@ -1569,8 +1852,15 @@ class HistoryCommand:
         return selected['sid'] if selected else None
 
     def revision(self, row):
+        associations = row['associations']
+        location = row.get('_selected_workspace')
+        if location:
+            associations = [a for a in associations if (a.get('host'), a['workspace']) == tuple(location)]
+        durable = _RESUME_SOURCE['selected']({'associations': associations}, error=HistoryError)
+        if durable and re.fullmatch(r'[a-fA-F0-9]{40,64}', durable.get('commit', '')):
+            return durable, durable['commit']
         # Only commit evidence recorded with this conversation is safe across slot reuse.
-        associations = sorted(row['associations'], key=lambda a: a.get('observed', 0), reverse=True)
+        associations = sorted(associations, key=lambda a: a.get('observed', 0), reverse=True)
         for association in associations:
             commit = association.get('commit', '')
             if re.fullmatch(r'[a-fA-F0-9]{40,64}', str(commit)):
@@ -1621,13 +1911,31 @@ class HistoryCommand:
         if ':' in owner['slot']:
             raise HistoryError('conversation is already running in foreground ' + owner['slot'] + ' on ' + owner['host'] + '; return to that terminal or use t session push there for an explicit handoff')
         # Attach-only helper rechecks exact ID/path/agent and has no launch fallback.
-        snippet = '_t_history_attach ' + shlex.join([owner['slot'], owner['sid'], owner['cwd'], owner['agent']])
+        snippet = '_t_history_attach ' + shlex.join([owner['slot'], owner['sid'], owner['cwd'], owner['agent'], *([owner['terminal']] if owner.get('terminal') else [])])
         if owner['host'] == 'local':
             return self.shell(snippet)
         return ['ssh', '-t', self.cfg.hosts[owner['host']], 'zsh -lic ' + shlex.quote(snippet)]
 
     def attach(self, owner):
         return subprocess.call(self.attach_command(owner))
+
+    def existing_owner(self, owner, *, detached, prepare_only, return_owner, fresh):
+        if fresh is not None or not owner.get('host'):
+            raise HistoryError('conversation became live; select its current owner again')
+        if not detached:
+            return owner if return_owner else self.attach(owner)
+        if prepare_only or os.environ.get('T_RESUME_OWNER_RECEIPT') != '1':
+            raise HistoryError('conversation became live; select its current owner again')
+        self.attach_command(owner)  # Surface a specific instruction for desktop and foreground owners.
+        if owner['host'] != 'local':
+            raise HistoryError('conversation became live on ' + owner['host'] + '; select its current owner to attach')
+        # The picker can now attach an existing local pane using the same receipt
+        # as a successful launch. Recheck the live row before issuing it.
+        args = [owner['slot'], owner['sid'], owner['cwd'], owner['agent'], 'receipt']
+        terminal = run(self.shell('_t_history_owner ' + shlex.join(args)), launch_diagnostics=True).strip()
+        if not re.fullmatch(r'\$[0-9]+:%[0-9]+', terminal):
+            raise HistoryError('the live terminal identity could not be verified')
+        return f"dev-{owner['slot']}\t{owner['cwd']}\t{terminal}"
 
     def resume_many(self, alias, rows):
         owners = []
@@ -1676,8 +1984,76 @@ class HistoryCommand:
                  if os.path.realpath(path) == directory}
         paths = {os.path.realpath(path) for path in paths}
         return any(owner.get('host', 'local') == 'local' and
-                   (owner['slot'] in names or os.path.realpath(owner['cwd']) in paths)
+                   (owner.get('slot') in names or os.path.realpath(owner['cwd']) in paths)
                    for owner in owners)
+
+    @staticmethod
+    def workspace_occupants(path, records):
+        workspace = os.path.realpath(path)
+        evidence = [(a.get('observed', 0), (record['sid'], record['agent']))
+                    for record in records for a in record.get('associations', [])
+                    if a.get('host') == 'local' and a.get('evidence') in _RESUME_SOURCE['LIFECYCLE']
+                    and os.path.realpath(a['workspace']) == workspace]
+        newest = max((stamp for stamp, _ in evidence), default=None)
+        return {identity for stamp, identity in evidence if stamp == newest}
+
+    def shares_git_directory(self, alias, path):
+        def common(directory):
+            return run(['git', '-C', str(directory), 'rev-parse', '--path-format=absolute',
+                        '--git-common-dir'], optional=True).strip()
+        source = common(path)
+        return bool(source) and os.path.realpath(source) == os.path.realpath(common(self.cfg.repos[alias]))
+
+    def original_workspace(self, alias, row, owners):
+        """Return the current tip only for the selected, continuously owned worktree."""
+        association, recorded = self.revision(row)
+        slot = association.get('slot', '')
+        path = Path(association.get('workspace') or '/')
+        base = Path(self.cfg.repos[alias]).name
+        root = Path(self.cfg.worktree_root) / base
+        paths = (root / slot, root / f'{base}-{slot}') if slot else ()
+        if association.get('host') != 'local' or path not in paths or not path.is_dir():
+            return '', 'The original worktree is unavailable on this host.'
+        if self.destination_busy(alias, slot, paths, owners):
+            return '', 'The original worktree has a live owner.'
+        if any(os.path.lexists(other) for other in paths if other != path):
+            return '', 'Two worktrees claim the original slot.'
+        if not association.get('generation') or association['generation'] != generation(path):
+            return '', 'The original worktree has been replaced or its identity cannot be verified.'
+        records = list(self.store.records())
+        occupants = self.workspace_occupants(path, records)
+        if occupants != {(row['sid'], row['agent'])}:
+            return '', 'The original worktree no longer has a unique association with this conversation.'
+        associations = [a for record in records if (record['agent'], record['sid']) == (row['agent'], row['sid'])
+                        and self.same_repository(record['repo'], row['repo']) for a in record['associations']]
+        current = _RESUME_SOURCE['selected']({'associations': associations}, error=HistoryError)
+        if not current or any(current.get(key) != association.get(key)
+                              for key in ('host', 'workspace', 'generation', 'branch')):
+            return '', 'The conversation was last used in another workspace.'
+        git = lambda *argv: run(['git', '-C', str(path), *argv], optional=True).strip()
+        if os.path.realpath(git('rev-parse', '--show-toplevel')) != os.path.realpath(path):
+            return '', 'The original worktree root has changed.'
+        if not self.shares_git_directory(alias, path):
+            return '', 'The historical workspace belongs to a different checkout.'
+        head = git('rev-parse', 'HEAD')
+        if (git('branch', '--show-current') != association.get('branch') or not recorded
+                or git('merge-base', recorded, head) != recorded):
+            return '', 'The original branch or its recorded history has changed.'
+        return head, ''
+
+    def free_destinations(self, alias, owners):
+        directory = self.cfg.repos[alias]
+        base = Path(directory).name
+        root = Path(self.cfg.worktree_root) / base
+        # Fresh allocation skips every existing branch/worktree and every owner.
+        for slot in range(1, 10001):
+            path, branch = root / f'{base}-{slot}', f'dev/{base}-{slot}'
+            legacy = root / str(slot)
+            if any(os.path.lexists(p) for p in (path, legacy, root / f'.{slot}.history-reservation', root / f'.{path.name}.history-reservation')) or self.destination_busy(alias, slot, (path, legacy), owners):
+                continue
+            if run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/heads/' + branch], optional=True) or run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/remotes/origin/' + branch], optional=True):
+                continue
+            yield path, str(slot), branch
 
     def destination(self, alias, row, revision, owners, *, fresh_source=None):
         if not self.worktree_enabled(alias):
@@ -1685,37 +2061,16 @@ class HistoryCommand:
         directory = self.cfg.repos[alias]
         base = Path(directory).name
         root = Path(self.cfg.worktree_root) / base
-        association, recorded = self.revision(row)
-        historical_slot = association.get('slot', '')
-        # A slot number does not identify its layout. Reuse only its recorded path.
-        workspace = Path(association.get('workspace') or '/')
-        candidates = (root / historical_slot, root / f'{base}-{historical_slot}') if historical_slot else ()
-        historical_path = workspace if workspace in candidates else None
-        if any(os.path.lexists(p) for p in candidates if p != workspace):
-            historical_path = None
-        busy = self.destination_busy(alias, historical_slot, candidates, owners)
-        latest = []
-        if historical_path and fresh_source is None:
-            for conversation in self.store.records():
-                for a in conversation.get('associations', []):
-                    if a.get('host') == 'local' and os.path.realpath(a['workspace']) == os.path.realpath(historical_path) and a.get('evidence') in ('launch', 'resume', 'close', 'handoff'):
-                        latest.append((a.get('observed', 0), conversation['sid'], conversation['agent']))
-        current_identity = max(latest, default=(0, '', ''))[1:]
-        # Reuse only when both revision and provenance match, never by branch name alone.
-        if fresh_source is None and historical_path and association.get('generation') and association['generation'] == generation(historical_path) and current_identity == (row['sid'], row['agent']) and recorded == revision and association.get('host') == 'local' and os.path.realpath(association.get('workspace', '')) == os.path.realpath(historical_path) and historical_path.is_dir() and not busy:
-            head = run(['git', '-C', str(historical_path), 'rev-parse', 'HEAD'], optional=True).strip()
-            actual = run(['git', '-C', str(historical_path), 'branch', '--show-current'], optional=True).strip()
-            if head == revision and actual == association.get('branch'):
-                self.reserve(historical_path)
-                return str(historical_path), historical_slot, False
-        # Fresh allocation skips every existing branch/worktree and every owner.
-        for slot in range(1, 10001):
-            path, branch = root / f'{base}-{slot}', f'dev/{base}-{slot}'
-            legacy = root / str(slot)
-            if any(os.path.lexists(p) for p in (path, legacy, root / f'.{slot}.history-reservation')) or self.destination_busy(alias, slot, (path, legacy), owners):
-                continue
-            if run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/heads/' + branch], optional=True) or run(['git', '-C', directory, 'rev-parse', '--verify', 'refs/remotes/origin/' + branch], optional=True):
-                continue
+        association, _ = self.revision(row)
+        head = revision if row.get('_in_place') else self.original_workspace(alias, row, owners)[0]
+        if fresh_source is None and head and head == revision and not row.get('_relocation'):
+            path = Path(association['workspace'])
+            self.reserve(path)
+            return str(path), association['slot'], False
+        for path, slot, branch in self.free_destinations(alias, owners):
+            expected = row.get('_relocation')
+            if expected and str(path) != expected:
+                raise HistoryError('proposed destination changed before allocation; select the conversation again')
             root.mkdir(parents=True, exist_ok=True)
             marker = root / f'.{path.name}.history-reservation'
             try:
@@ -1762,20 +2117,30 @@ class HistoryCommand:
                         sys.stdin.isatty() and sys.stderr.isatty())
             # This probe returns no stdout data. Let its shared wait spinner
             # use the terminal while the shell captures the eventual owner.
-            with redirect_stdout(sys.stderr) if terminal else nullcontext():
+            with (redirect_stdout(sys.stderr) if terminal else nullcontext()), _spinner('Waiting for conversation ownership'):
                 creation = value['associations'][0]['workspace']
                 probe_cwd = workspace or creation
                 previous = self.repair_writer
                 options = ({'unresolved_fingerprint': previous.fingerprint}
                            if previous and previous.workspace == probe_cwd else {})
-                helper['assert_released']('Codex', row['sid'], creation, self.api['_run'],
-                    ownership_cwd=workspace,
-                    codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
-                    rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
-                    retry='Retry: t session resume, then select the conversation again.', **options)
+                deadline = time.monotonic() + (10 if getattr(self, 'waiting_for_writer', False) else 0)
+                while True:
+                    try:
+                        helper['assert_released']('Codex', row['sid'], creation, self.api['_run'],
+                            ownership_cwd=workspace,
+                            codex_home=str(Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')),
+                            rollout=str(source), archived=bool(row.get('archived')) and source.resolve().is_relative_to((Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'archived_sessions').resolve()),
+                            retry='Retry: t session resume, then select the conversation again.', **options)
+                        break
+                    except helper.get('WriterBusyError', ()):
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(.25)
         except ValueError as error:
             if isinstance(error, helper.get('UnresolvedWriterError', ())):
                 raise UnknownWorkspaceWriter(error, probe_cwd) from error
+            if isinstance(error, helper.get('WriterBusyError', ())):
+                raise WriterBusy(str(error)) from error
             raise HistoryError(str(error)) from error
 
     def codex_target(self, row, default):
@@ -1887,33 +2252,30 @@ class HistoryCommand:
 
     def resume_with_repair(self, alias, row, **options):
         """Repair retries the selected conversation, never a slot's latest one."""
+        self.prepared_destination = None
         previous = None
         stranded = None
         try:
             return self.resume(alias, row, **options)
-        except HistoryCancelled:
-            raise
-        except (HistoryError, OSError, ValueError) as error:
+        except WriterBusy as error:
             # The shell captures the resulting owner on stdout. Its explicit
             # terminal marker lets the shared rail use stderr without putting
             # escape sequences in that owner or prompting redirected callers.
-            interactive = (sys.stdin.isatty() and sys.stderr.isatty() and
-                           (sys.stdout.isatty() or os.environ.get('T_RESUME_REPAIR') == '1'))
-            if not interactive:
+            if not repair_terminal():
                 raise
             if isinstance(error, UnknownWorkspaceWriter):
                 previous = error
-            print('t resume: ' + str(error), file=sys.stderr)
             ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
             if row.get('agent') == 'codex' and row.get('associations'):
                 association, _ = self.revision(row)
                 if association.get('host') == 'local' and association.get('workspace'):
                     stranded = _CLIENT_STOP['stranded'](association['workspace'], row['sid'])
+            print('t resume: ' + str(error), file=sys.stderr)
             note = ('Stop the stranded Codex client (pid ' + str(stranded['process']['pid']) +
                     ') and resume this exact conversation after verifying writer release.' if stranded else
-                    'Retry the selected conversation after checking ownership.')
+                    'Wait for the previous writer to release this conversation, then resume it here.')
             with redirect_stdout(sys.stderr):
-                if not ask(self.api, 'Could not resume ' + alias, note, 'Repair'):
+                if not ask(self.api, 'Could not resume ' + alias, note, 'Repair' if stranded else 'Wait for release'):
                     raise HistoryCancelled('resume repair cancelled') from error
         if stranded:
             try:
@@ -1929,8 +2291,12 @@ class HistoryCommand:
         _CACHE_REQUEST('event', {'targets': ['local']})
         # The failed resume has released its reservations and claims. Repeat
         # every live ownership/source check once; do not loop or force a launch.
+        retry_destination = self.prepared_destination
         self.repair_writer = previous
+        self.waiting_for_writer = True
         try:
+            if retry_destination:
+                row = {**row, '_retry_destination': retry_destination}
             return self.resume(alias, row, **options)
         except UnknownWorkspaceWriter as error:
             if options.get('prepare_only'):
@@ -1948,6 +2314,7 @@ class HistoryCommand:
             return self.resume(alias, row, fresh=(revision, source), **options)
         finally:
             self.repair_writer = None
+            self.waiting_for_writer = False
 
     def fresh_resume_offer(self, alias, row, workspace):
         if row.get('agent') != 'codex':
@@ -1983,15 +2350,14 @@ class HistoryCommand:
                        if value['sid'] == row['sid'] and value['agent'] == row['agent']]
             if len(current) != 1 or _SORT['closed_time'](current[0]) != expected_close:
                 raise HistoryError('selected last close changed; no conversation was resumed')
-            row = current[0]
+            row = {**current[0], **{k: v for k, v in row.items() if k.startswith('_')}}
         owners = self.owners(True)
         matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
         if len(matches) > 1:
             raise HistoryError('conversation has multiple reported owners; resolve ownership before resuming')
-        if matches and (detached or fresh is not None):
-            raise HistoryError('conversation became live; select its current owner again')
+        owner_options = dict(detached=detached, prepare_only=prepare_only, return_owner=return_owner, fresh=fresh)
         if matches:
-            return matches[0] if return_owner else self.attach(matches[0])
+            return self.existing_owner(matches[0], **owner_options)
         destination_alias = alias if alias in self.cfg.repos else self.repository_alias(row['repo'])
         if not self.worktree_enabled(destination_alias):
             raise HistoryError('repository opts out of worktree-per-session; no saved conversation resumed')
@@ -2001,8 +2367,37 @@ class HistoryCommand:
         if not self.same_repository(self.identity(alias), row['repo']):
             raise HistoryError('repository identity changed before resume')
         association, revision = self.revision(row)
-        if fresh is None:
-            revision = self.reconcile_source(alias, row) or revision
+        original_tip, reason = self.original_workspace(alias, row, owners)
+        retry = row.get('_retry_destination') if fresh is None else None
+        if retry:
+            revision = retry['revision']
+        elif fresh is None and original_tip and not row.get('_transfer'):
+            row = {**row, '_in_place': True}
+            revision = original_tip
+        elif fresh is None:
+            if not original_tip and repair_terminal():
+                candidate = next(self.free_destinations(alias, owners), None)
+                if not candidate:
+                    raise HistoryError('no free slot is available')
+                path = candidate[0]
+                ask = runpy.run_path(str(Path(self.root) / 'libexec/t_open_recovery.py'))['ask']
+                with redirect_stdout(sys.stderr):
+                    if not ask(self.api, 'Recover the selected conversation?',
+                               f'{reason} Resume in {path.name}?', f'Resume in {path.name}'):
+                        raise HistoryCancelled('resume cancelled')
+                row = {**row, '_relocation': str(path)}
+            latest = _RESUME_SOURCE['selected'](row, error=HistoryError)
+            selected_location = row.get('_selected_workspace')
+            same_source = not selected_location or not latest or tuple(selected_location) == (latest.get('host'), latest['workspace'])
+            # A retired local slot supplies its recorded commit. Checkpointing its
+            # current files could capture the replacement occupant's work.
+            source_path = Path(association.get('workspace') or '/')
+            repo_name = Path(self.cfg.repos[alias]).name
+            slot_root = Path(self.cfg.worktree_root) / repo_name
+            retired_slot = (association.get('host') == 'local' and source_path.parent == slot_root
+                            and self.shares_git_directory(alias, source_path))
+            if same_source and (row.get('_transfer') or not retired_slot):
+                revision = self.reconcile_source(alias, row) or revision
         elif (prepare_only or row['agent'] != 'codex' or revision != fresh[0]
               or not self.verify_source(transcript(source, 'codex'), row)):
             raise HistoryError('saved conversation or revision changed; no fresh worktree created')
@@ -2017,10 +2412,24 @@ class HistoryCommand:
             owners = self.owners(True)
             matches = [o for o in owners if o['sid'] == row['sid'] and o['agent'] == row['agent']]
             if matches:
+                if len(matches) == 1:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                    return self.existing_owner(matches[0], **owner_options)
                 raise HistoryError('conversation became live while selecting; rerun t resume to attach to its owner')
             try:
                 allocation = {'fresh_source': source} if fresh is not None else {}
-                destination, slot, created = self.destination(alias, row, revision, owners, **allocation)
+                if retry:
+                    destination, slot, created = retry['destination'], retry['slot'], retry['created']
+                    occupants = self.workspace_occupants(destination, self.store.records())
+                    if (occupants - {(row['sid'], row['agent'])} or generation(destination) != retry['generation'] or self.destination_busy(alias, slot, (destination,), owners)
+                            or run(['git', '-C', destination, 'branch', '--show-current']).strip() != retry['branch']):
+                        raise HistoryError('prepared workspace changed before retry')
+                    self.reserve(Path(destination))
+                else:
+                    destination, slot, created = self.destination(alias, row, revision, owners, **allocation)
+                self.prepared_destination = dict(destination=destination, slot=slot, created=created,
+                        generation=generation(destination), revision=revision,
+                        branch=run(['git', '-C', destination, 'branch', '--show-current']).strip())
                 print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
                     final_owners = self.owners(True)
@@ -2031,6 +2440,8 @@ class HistoryCommand:
                     actual = run(['git', '-C', destination, 'rev-parse', 'HEAD']).strip()
                     if actual != revision:
                         raise HistoryError('destination revision changed before restore; no conversation launched')
+                    if not created and self.original_workspace(alias, row, final_owners)[0] != revision:
+                        raise HistoryError('original workspace ownership changed before restore')
                     if not self.same_repository(self.identity(alias), row['repo']):
                         raise HistoryError('repository identity changed before restore')
                     # The rollout retains its creation cwd even after that slot
@@ -2049,8 +2460,8 @@ class HistoryCommand:
                     if not prepare_only:
                         # Allow the final ownership guard's startup settling
                         # window plus native readiness and shell startup.
-                        run(self.shell(snippet), timeout=90, launch_diagnostics=True)
-                self.store.merge({**row, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
+                        ready = run(self.shell(snippet), timeout=90, launch_diagnostics=True).strip()
+                self.store.merge({**{k: v for k, v in row.items() if not k.startswith('_')}, 'associations': [dict(workspace=destination, host='local', slot=slot, commit=revision, branch=run(['git', '-C', destination, 'branch', '--show-current']).strip(), generation=generation(destination), evidence='resume', observed=time.time())]})
             finally:
                 try:
                     if fresh is not None:
@@ -2062,8 +2473,14 @@ class HistoryCommand:
         if prepare_only:
             return f'dev-{alias}-{slot}\t{destination}'
         if detached:
+            if os.environ.get('T_RESUME_OWNER_RECEIPT') == '1':
+                if not re.fullmatch(r'\$[0-9]+:%[0-9]+', ready):
+                    raise HistoryError('the resumed terminal identity could not be verified')
+                return f'dev-{alias}-{slot}\t{destination}\t{ready}'
             return f'dev-{alias}-{slot}'
         owner = dict(host='local', slot=f'{alias}-{slot}', sid=row['sid'], agent=row['agent'], cwd=destination, state='active')
+        if re.fullmatch(r'\$[0-9]+:%[0-9]+', ready):
+            owner['terminal'] = ready
         return owner if return_owner else self.attach(owner)
 
     def resume_candidates(self, aliases, slot=None):
@@ -2094,6 +2511,7 @@ class HistoryCommand:
             alias = local_alias or identity
             records = self.records(alias)
             self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
+            self.annotate_resume_work(records)
             for row in records:
                 key = (identity, row['agent'], row['sid'])
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
@@ -2104,15 +2522,10 @@ class HistoryCommand:
                     continue
                 association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
-                updated = int(row.get('updated', 0))
-                when = datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M')
-                states = {pr.get('state') or 'UNKNOWN' for pr in row['prs']}
-                pr_state = next(iter(states)) if len(states) == 1 else 'MIXED' if states else 'NONE'
-                title = clean(row['title'])
-                if row['prs']:
-                    title += ' · ' + pr_summary(row['prs'])
-                yield '\t'.join(map(str, [updated, alias, association.get('slot') or '-', row['sid'],
-                    association['workspace'], when, title, source.get('host') or '-', row['agent'], row.get('last_turn', '-'), identity, pr_state, _SORT['closed_time'](row)]))
+                latest = max(row['associations'], key=lambda a: a.get('observed', 0))
+                if association != latest or source.get('host') != 'local':
+                    row = {**row, 'work_in_progress': False}
+                yield resume_candidate(row, alias, association, source.get('host') or '-')
 
     def execute(self, args):
         alias, slot = self.scope(args.target)
@@ -2178,11 +2591,15 @@ class HistoryCommand:
                 self.discovery_identities.clear()
                 self.local_identities.clear()
                 self.store = Store()  # Selection starts guarded action; durable truth is required.
-            if isinstance(row, list):
-                if len(row) > 1:
-                    return self.resume_many(alias, row)
-                row = row[0]
             try:
+                if isinstance(row, list):
+                    if slot:
+                        row = [bind_workspace(item, slot) for item in row]
+                    if len(row) > 1:
+                        return self.resume_many(alias, row)
+                    row = row[0]
+                elif slot:
+                    row = bind_workspace(row, slot)
                 return self.resume_with_repair(alias, row)
             except HistoryCancelled:
                 return 130
