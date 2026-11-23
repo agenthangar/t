@@ -17,6 +17,16 @@ import urllib.parse
 import uuid
 
 TTL = 12
+_DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
+# Air's cyan identity/focus, amber warnings and explicit failure state. Each
+# field owns both colours so it stays readable on light and dark status bars.
+FIELD_STYLES = {
+    'identity': 'fg=#09232c,bg=#9de6f5,bold',
+    'context': 'fg=#edf6fa,bg=#203d4a',
+    'active': 'fg=#09232c,bg=#9de6f5,bold',
+    'warning': 'fg=#302000,bg=#f2d080,bold',
+    'failed': 'fg=#3b1210,bg=#ffb0aa,bold',
+}
 
 
 def tmux(socket, *args):
@@ -38,10 +48,14 @@ def ancestry(pid, ancestor):
 def pane_info(socket, pane):
     if not re.fullmatch(r'%\d+', pane):
         return None
+    # The managed two-row format already renders the pane identity.
+    managed = ('#{&&:#{@t-appearance-command},'
+               '#{&&:#{==:#{status},2},#{m:*@t-appearance-workflow*,#{status-format[1]}}}}')
     result = tmux(socket, 'display-message', '-p', '-t', pane,
-                  '#{pane_id}\t#{pane_pid}\t#{session_id}\t#{pane_title}\t#{pane_current_path}\t#{window_name}')
+                  '#{pane_id}\t#{pane_pid}\t#{session_id}\t#{pane_title}\t#{pane_current_path}\t'
+                  '#{window_name}\t#{window_width}\t' + managed)
     fields = result.stdout.rstrip('\n').split('\t')
-    return fields if result.returncode == 0 and len(fields) == 6 and fields[0] == pane and fields[1].isdigit() else None
+    return fields if result.returncode == 0 and len(fields) == 8 and fields[0] == pane and fields[1].isdigit() else None
 
 
 def root():
@@ -53,7 +67,16 @@ def record_path(folder, socket, pane):
 
 
 def safe(text, limit):
-    return ''.join(c for c in str(text) if c.isprintable())[:limit].replace('#', '##')
+    return _DISPLAY['clip_columns'](''.join(c for c in str(text) if c.isprintable()), limit).replace('#', '##')
+
+
+def field(text, width, role='context'):
+    """Bound visible columns before escaping; restore the enclosing tmux style."""
+    if not text or width < 4:
+        return ''
+    if 'NO_COLOR' in os.environ or os.environ.get('TERM') == 'dumb':
+        return ' ' + safe(text, width - 3) + '  '
+    return '#[none,' + FIELD_STYLES[role] + '] ' + safe(text, width - 3) + ' #[default] '
 
 
 def watcher_status(socket, pane, info):
@@ -65,9 +88,9 @@ def watcher_status(socket, pane, info):
     text = watches['label'](items)
     if text != '—':
         visible = next(item for item in items if item.get('active') or item.get('state') == 'stale')
-        return safe(visible['state'].capitalize() + ' · ' + text, 100) + ' '
+        return visible['state'].capitalize() + ' · ' + text
     ready = [item for item in items if item.get('state') == 'result ready' and 0 <= time.time() - item['updated'] <= watches['TTL']]
-    return 'Result ready ' if ready else ''
+    return 'Result ready' if ready else ''
 
 
 def render(side, folder, socket, pane):
@@ -75,29 +98,56 @@ def render(side, folder, socket, pane):
         info = pane_info(socket, pane)
         if not info:
             return ''
+        columns = max(20, int(info[6])) if len(info) > 6 and info[6].isdigit() else 120
+        left_width = min(50, columns // 3)
         if side == 'left':
+            if info[7] == '1':
+                return ''
             title = info[3].rpartition(' | ')[0] or info[5]
             cwd = Path(info[4])
-            return safe(title, 24) + ' ' + safe(cwd.parent.name + '/' + cwd.name, 24) + ' '
+            if columns < 100:
+                return field(title, left_width, 'identity')
+            title_width = min(27, left_width // 2)
+            return (field(title, title_width, 'identity')
+                    + field(cwd.parent.name + '/' + cwd.name, left_width - title_width))
+        right_width = min(70, columns - left_width - 4)
         watching = watcher_status(socket, pane, info)
+        watch_role = 'warning' if watching.startswith('Stale') else 'context'
         if not record_path(folder, socket, pane).exists():
-            return watching
+            return field(watching, right_width, watch_role)
         data = json.loads(record_path(folder, socket, pane).read_text())
         if (data['pane_pid'] != int(info[1]) or not 0 <= time.time() - data['updated'] <= TTL
                 or data['state'] not in ('loading', 'inferring', 'working', 'idle', 'failed', 'queued', 'waiting', 'cancelling')):
-            return watching
+            return field(watching, right_width, watch_role)
         label = re.sub(r'(?i)-(?:mlx-)?\d+bit$', '', data['model'].split('/')[-1])
         state = data['state']
+        role = ('failed' if state == 'failed' else
+                'warning' if state in ('queued', 'waiting', 'cancelling') else
+                'context' if state == 'idle' else 'active')
+        verification = data.get('verification', '')
+        controls = ' · Prefix F6' if data.get('controls') else ''
         if data.get('memory'):
-            state = 'Timed out · memory' if state == 'failed' else 'Waiting for memory'
+            core = 'Timed out · memory' if state == 'failed' else 'Waiting for memory'
             shortfall = data['memory'].get('shortfall_bytes')
-            if shortfall is not None:
-                state += f' · {shortfall/1024**3:.1f} GiB short'
-        verification = data.get('verification')
-        if data.get('memory'):
-            compact = verification.replace('Verified on this Mac at ', 'Verified here · ') if verification else ''
-            return watching + state + (' · '+safe(compact, 30) if compact else '') + (' · Prefix F6' if data.get('controls') else '') + ' '
-        return watching + 'local ' + safe(label, 35) + ' · ' + (safe(verification, 40)+' · ' if verification else '') + state + (' · Prefix F6' if data.get('controls') else '') + ' '
+            detail = f' · {shortfall / 1024**3:.1f} GiB short' if shortfall is not None else ''
+            verification = verification.replace('Verified on this Mac at ', 'Verified here · ')
+        else:
+            core = 'local ' + state
+            detail = ''
+        local_width = min(right_width, max(len(core + controls) + 3, right_width // 2)) if watching else right_width
+        if not data.get('memory') and local_width < len(core) + 3:
+            core = state
+        if not data.get('memory') and columns >= 100:
+            model_width = local_width - len('local  · ' + state + controls) - 3
+            if model_width >= 8:
+                core = 'local ' + _DISPLAY['clip_columns'](label, model_width) + ' · ' + state
+        details = detail + (' ' + verification if verification else '')
+        available = local_width - len(core + controls) - 3
+        if available > 3:
+            core += _DISPLAY['clip_columns'](details, available)
+        if len(core + controls) + 3 <= local_width:
+            core += controls
+        return field(watching, right_width - local_width, watch_role) + field(core, local_width, role)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return ''
 
@@ -117,7 +167,7 @@ def install(socket, session, folder):
         fragment = '#(' + prefix + ' ' + shlex.join([side, str(folder), socket]) + " '#{pane_id}')"
         # The default session label is superseded by name + worktree. Custom
         # content (including recovery hints) is retained after the new fragment.
-        if side == 'left' and original == '[#S] ':
+        if side == 'left' and original in ('[#S] ', '[#{session_name}] '):
             original = ''
         tmux(socket, 'set-option', '-t', session, option, fragment + original)
         previous = tmux(socket, 'show-options', '-A', '-v', '-t', session, option + '-length').stdout.strip()

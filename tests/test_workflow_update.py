@@ -617,7 +617,9 @@ def test_workflow_menu_exposes_watching_and_stage_speed(modules, monkeypatch):
     api = load_script(ROOT / 'bin/t', 'watching_menu_update')
     cfg = SimpleNamespace(repos={}, _workflow_document=w.defaults())
     monkeypatch.setattr(api, '_config_model_menu', lambda ui, staged, agent, *a, **k: staged.fast.update({agent: 'fast'}))
-    api._workflow_policy_menu(Menu(['job_watching', 'on_request', 'review', 'speed', 'main_speed', 'back']), cfg, vars(w), name='standard')
+    api._workflow_policy_menu(Menu(['job_watching', 'on_request', ('palette_stage', 'workflow', 'review'),
+                                    ('stage_model', 'review'), 'speed', 'main_speed', 'back']),
+                              cfg, vars(w), name='standard')
     saved = cfg._workflow_document['workflows']['standard']
     assert saved['behaviors']['job_watching'] == 'on_request'
     assert saved['review']['speed'] == 'fast'

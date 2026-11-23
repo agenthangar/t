@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 import time
@@ -21,11 +22,17 @@ def status(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     monkeypatch.delenv('TMUX', raising=False)
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
     return load_script(ROOT / 'libexec/t_local_status.py', 'status_test')
 
 
-def info(pane='%1', pid=123):
-    return [pane, str(pid), '$2', 'Parser fix | t-13', '/work/t/t-13', 'codex']
+def info(pane='%1', pid=123, width=160):
+    return [pane, str(pid), '$2', 'Parser fix | t-13', '/work/t/t-13', 'codex', str(width), '0']
+
+
+def plain(text):
+    return re.sub(r'(?<!#)#\[[^\]]*\]', '', text).replace('##', '#')
 
 
 def test_ownership_and_read_only_render(status, tmp_path, monkeypatch):
@@ -34,13 +41,13 @@ def test_ownership_and_read_only_render(status, tmp_path, monkeypatch):
     assert m.pane_info('/socket', '%1') == info()
     assert m.pane_info('/socket', 'bad') is None
     assert m.pane_info('/socket', '%2') is None
-    assert m.render('left', tmp_path, '/socket', '%1') == 'Parser fix t/t-13 '
+    assert plain(m.render('left', tmp_path, '/socket', '%1')) == ' Parser fix   t/t-13  '
     assert m.render('right', tmp_path, '/socket', '%1') == ''
     path = m.record_path(tmp_path, '/socket', '%1')
     row = dict(pane_pid=123, updated=time.time(), model='publisher/Qwen#test', state='inferring')
     path.write_text(json.dumps(row))
     before = path.stat().st_mtime_ns
-    assert m.render('right', tmp_path, '/socket', '%1') == 'local Qwen##test · inferring '
+    assert plain(m.render('right', tmp_path, '/socket', '%1')) == ' local Qwen#test · inferring  '
     assert path.stat().st_mtime_ns == before
     path.write_text(json.dumps(dict(row, state='waiting', memory={'shortfall_bytes':5*1024**3},
                                     verification='Verified on this Mac at 32K', controls=True)))
@@ -59,8 +66,69 @@ def test_ownership_and_read_only_render(status, tmp_path, monkeypatch):
     assert not m.ancestry(21, 19)
 
 
-def test_install_preserves_custom_status_and_is_idempotent(status, tmp_path, monkeypatch):
-    m = status; values = {'status-left': '[#S] ', 'status-right': 'my clock', 'status-left-length':'10', 'status-right-length':'90', 'status-interval':'15'}
+@pytest.mark.parametrize('width', [32, 44, 80, 120, 180])
+@pytest.mark.parametrize('state', ['loading', 'inferring', 'working', 'idle', 'failed', 'queued', 'waiting', 'cancelling'])
+def test_fields_fit_and_preserve_activity(status, tmp_path, monkeypatch, width, state):
+    pane = info(width=width)
+    pane[3] = '界面修复 long session title that cannot fit | t-13'
+    monkeypatch.setattr(status, 'pane_info', lambda *a: pane)
+    monkeypatch.setattr(status, 'watcher_status', lambda *a: '')
+    status.record_path(tmp_path, '/socket', '%1').write_text(json.dumps({
+        'pane_pid': 123, 'updated': time.time(), 'state': state,
+        'model': 'sample/A-very-long-model-label-8bit'}))
+    left = status.render('left', tmp_path, '/socket', '%1')
+    right = status.render('right', tmp_path, '/socket', '%1')
+    measure = status._DISPLAY['display_width']
+    assert measure(plain(left)) <= min(50, width // 3)
+    assert measure(plain(right)) <= min(70, width - min(50, width // 3) - 4)
+    assert state in plain(right)
+    if width >= 44:
+        assert 'local' in plain(right)
+    assert '…' in plain(left)
+    assert left.endswith('#[default] ') and right.endswith('#[default] ')
+    if width < 100:
+        assert 'model' not in plain(right) and 't/t-13' not in plain(left)
+    else:
+        assert 'A-very' in plain(right) and 't/t-13' in plain(left)
+    role = 'failed' if state == 'failed' else 'warning' if state in ('queued', 'waiting', 'cancelling') else 'context' if state == 'idle' else 'active'
+    assert status.FIELD_STYLES[role] in right
+
+
+def test_watcher_blocks_and_empty_activity(status, tmp_path, monkeypatch):
+    pane = info(width=80)
+    monkeypatch.setattr(status, 'pane_info', lambda *a: pane)
+    monkeypatch.setattr(status, 'watcher_status', lambda *a: 'Stale · stale watch-123456789abc')
+    alone = status.render('right', tmp_path, '/socket', '%1')
+    assert 'Stale' in alone and status.FIELD_STYLES['warning'] in alone
+    record = status.record_path(tmp_path, '/socket', '%1')
+    data = dict(pane_pid=123, updated=time.time(), state='inferring', model='sample/model')
+    record.write_text(json.dumps(data))
+    together = status.render('right', tmp_path, '/socket', '%1')
+    assert 'Stale' in together and 'local inferring' in together
+    assert status._DISPLAY['display_width'](plain(together)) <= 50
+    record.write_text(json.dumps(dict(data, updated=time.time()-20)))
+    assert status.render('right', tmp_path, '/socket', '%1') == alone
+    record.unlink()
+    monkeypatch.setattr(status, 'watcher_status', lambda *a: '')
+    assert status.render('right', tmp_path, '/socket', '%1') == ''
+    assert status.field('', 10) == status.field('text', 3) == ''
+
+
+def test_fields_escape_content_and_respect_no_color(status, monkeypatch):
+    text = '#[bg=red]#{pane_id}\n\x1b'
+    result = status.field(text, 80, 'identity')
+    assert '##[bg=red]##{pane_id}' in result
+    assert '\n' not in result and '\x1b' not in result
+    monkeypatch.setenv('NO_COLOR', '')
+    assert status.field('local working', 20) == ' local working  '
+    monkeypatch.delenv('NO_COLOR')
+    monkeypatch.setenv('TERM', 'dumb')
+    assert status.field('local working', 20) == ' local working  '
+
+
+@pytest.mark.parametrize('stock_left', ['[#S] ', '[#{session_name}] '])
+def test_install_preserves_custom_status_and_is_idempotent(status, tmp_path, monkeypatch, stock_left):
+    m = status; values = {'status-left': stock_left, 'status-right': 'my clock', 'status-left-length':'10', 'status-right-length':'90', 'status-interval':'15'}
     calls = []
     def tmux(socket, *args):
         calls.append(args)
@@ -69,7 +137,7 @@ def test_install_preserves_custom_status_and_is_idempotent(status, tmp_path, mon
         return SimpleNamespace(returncode=0, stdout=values[args[-1]])
     monkeypatch.setattr(m, 'tmux', tmux)
     m.install('/private/socket', '$1', tmp_path)
-    assert '[#S]' not in values['status-left'] and 'pane_id' in values['status-left']
+    assert stock_left not in values['status-left'] and 'pane_id' in values['status-left']
     assert values['status-right'].endswith('my clock') and values['status-right-length'] == '90'
     installed = dict(values)
     m.install('/private/socket', '$1', tmp_path)

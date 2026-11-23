@@ -16,12 +16,13 @@ def main():
     if sys.argv[1:] == ['--pane']:
         status = runpy.run_path(str(ROOT / 'libexec/t_local_status.py'))
         print('Local status preview · simulated activity · no model calls or configuration changes')
-        print('Name and worktree appear at the left; model activity appears at the right.')
+        print('Field blocks: name/worktree at left, local activity at right.')
+        print('Resize below 100 columns: model and worktree yield to the name and state.')
         print('Ctrl-C exits the disposable preview.')
         with status['Activity']('sample/Qwen3.8-27B-8bit') as activity:
             try:
                 while True:
-                    for state in ('loading', 'inferring', 'working', 'inferring', 'idle', 'failed'):
+                    for state in ('loading', 'queued', 'inferring', 'working', 'waiting', 'cancelling', 'idle', 'failed'):
                         activity.update(state)
                         print(state, flush=True)
                         time.sleep(4)

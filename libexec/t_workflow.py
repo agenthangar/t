@@ -23,6 +23,16 @@ EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 SPEEDS = ('inherit', 'standard', 'fast', 'ultrafast')
 SEPARATE_STAGES = ('planning', 'review')
 MODEL_STAGES = ('planning', 'implementation', 'review')
+BACKGROUND_PALETTES = ('standard', 'priority')
+BACKGROUND_DEFAULTS = {
+    'idle': ('default', '#452563'),
+    'waiting': ('#3b2d18', '#72532a'),
+    'planning': ('#17283b', '#344d6a'),
+    'implementation': ('#263146', '#464260'),
+    'review': ('#163233', '#2a5558'),
+    'custom': ('#3b2733', '#613c53'),
+}
+BACKGROUND_HEX = re.compile(r'#[0-9a-fA-F]{6}')
 TOOLS = ('codex', 'claude', 'cursor')
 MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/@+\[\](),=-]*')
 PERMISSIONS = {
@@ -689,8 +699,10 @@ def _ensure_claude_catalogue(document, previous=None):
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions', 'inference', 'mcp'} != set(DEFAULT):
+    if not isinstance(value, dict) or set(value) - {'instructions', 'stages_enabled', 'separate_stages', 'model_stages', 'behaviors', 'runners', 'session_defaults', 'permissions', 'inference', 'mcp', 'stage_backgrounds'} != set(DEFAULT):
         raise ValueError('workflow requires enabled, planning, implementation and review')
+    if 'stage_backgrounds' in value:
+        _validate_stage_backgrounds(value['stage_backgrounds'])
     instructions = value.get('instructions', '')
     if not isinstance(instructions, str) or any(marker in instructions for marker in (BEGIN, END, ISSUE_BEGIN, ISSUE_END)):
         raise ValueError('workflow instructions must be Markdown text without managed workflow markers')
@@ -986,6 +998,54 @@ def _validate_stage_selection(selected):
             any(not isinstance(stage, str) or stage not in SEPARATE_STAGES for stage in selected) or
             len(set(selected)) != len(selected)):
         raise ValueError('workflow separate_stages must be a list of unique planning and/or review stages')
+
+
+def _validate_stage_backgrounds(backgrounds):
+    if not isinstance(backgrounds, dict):
+        raise ValueError('workflow stage backgrounds must be grouped by section')
+    for section, stages in backgrounds.items():
+        validate_name(section)
+        if not isinstance(stages, dict):
+            raise ValueError('workflow section backgrounds must be grouped by stage ID')
+        for stage, palettes in stages.items():
+            validate_name(stage)
+            if (not isinstance(palettes, dict) or set(palettes) - set(BACKGROUND_PALETTES) or
+                    any(not isinstance(color, str) or
+                        (color != 'default' and not BACKGROUND_HEX.fullmatch(color))
+                        for color in palettes.values())):
+                raise ValueError('workflow backgrounds require Standard or Priority and #RRGGBB or default')
+
+
+def stage_background_default(section, stage, palette):
+    builtin = ((section == 'session' and stage in ('idle', 'waiting')) or
+               (section == 'workflow' and stage in MODEL_STAGES))
+    kind = stage if builtin else 'custom'
+    return BACKGROUND_DEFAULTS[kind][BACKGROUND_PALETTES.index(palette)]
+
+
+def stage_background(policy, section, stage, palette):
+    colors = policy.get('stage_backgrounds', {}).get(section, {}).get(stage, {})
+    return colors.get(palette, stage_background_default(section, stage, palette)).lower()
+
+
+def update_stage_background(policy, section, stage, palette, color):
+    """Store only explicit overrides. None restores the recommended color."""
+    _validate_stage_backgrounds({section: {stage: {palette: color if color is not None else 'default'}}})
+    after = copy.deepcopy(policy)
+    backgrounds = after.setdefault('stage_backgrounds', {})
+    stages = backgrounds.setdefault(section, {})
+    colors = stages.setdefault(stage, {})
+    if color is None:
+        colors.pop(palette, None)
+    else:
+        colors[palette] = color.lower()
+    if not colors:
+        stages.pop(stage)
+    if not stages:
+        backgrounds.pop(section)
+    if not backgrounds:
+        after.pop('stage_backgrounds')
+    return after
 
 
 def _validate_model_stages(selected):
@@ -1715,6 +1775,14 @@ def save(document, before, extra=(), preserve_storage=False, propagation_context
                 publish([*publication, (journal, snapshot(journal), encode(state))])
         else:
             publish(publication)
+    socket = os.environ.get('TMUX', '').rsplit(',', 2)[0]
+    if not preserve_storage and previous != document:
+        try:
+            subprocess.Popen([sys.executable, str(Path(__file__).with_name('t_session_appearance.py')),
+                              'refresh-registered', socket or 'default'], start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
     if helper:
         try:
             helper['retry']()

@@ -101,6 +101,8 @@
       "tests": [
         "tests/test_workflow_resets.py::test_grouped_workflow_viewport_and_reset_focus",
         "tests/test_workflow_tui.py::test_workflow_tui_narrow",
+        "tests/test_workflow_tui.py::test_workflow_stage_background_row_geometry",
+        "tests/test_session_appearance.py::test_workflow_line_uses_resolved_models_and_active_palette",
         "tests/test_workflow_assignments.py::test_assignment_picker_keyboard_and_narrow_viewport"
       ],
       "renderers": []

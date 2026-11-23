@@ -135,7 +135,9 @@ def test_stage_and_runner_resets_are_scoped(workflow, t_mod):
     policy['runners'] = dict(copy.deepcopy(workflow.RUNNER_DEFAULT), timeout_seconds=42)
     policy['model_stages'] = ['planning']
     policy['stages_enabled'] = True
-    t_mod._workflow_policy_menu(ToolMenu(['planning', 'reset', 'stages_enabled', ['__default__'], 'back']), cfg, vars(workflow), name='standard')
+    menu = ToolMenu([('palette_stage', 'workflow', 'planning'), ('stage_model', 'planning'),
+                     'reset', 'stages_enabled', ['__default__'], 'back'])
+    t_mod._workflow_policy_menu(menu, cfg, vars(workflow), name='standard')
     after = cfg._workflow_document['workflows']['standard']
     assert after['planning'] == workflow.DEFAULT['planning']
     assert after['model_stages'] == ['review'] and 'stages_enabled' not in after
