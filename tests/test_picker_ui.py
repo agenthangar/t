@@ -120,6 +120,12 @@ def picker(t_mod):
                 default = rows.splitlines()[0] + '\n'
                 (root / 'attached').write_text('\n'.join(rows.splitlines()[:2]) + '\n')
                 (root / 'pending').write_text('\n'.join(rows.splitlines()[::2]) + '\n')
+            if profile == 'resume-reference':
+                from scripts.preview_picker import resume_fixture
+                columns, rows = resume_fixture()
+                default = '\n'.join(row for row in rows.splitlines() if row.split('\t')[6] == '-')
+                env.update(T_PICKER_COLUMNS=columns, T_PICKER_NOTICE='Last refresh 09:20',
+                           T_PICKER_RESUME_LAST='1')
             if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan'):
                 rows = ('web\t10\tsid1\t/wt\tdate\ttask\t-\t-\tmini\tcodex\t2026-10-22T10:00:00Z\tNewest web\n'
                         'api\t2\tsid2\t/wt\tdate\ttask\t-\t-\t-\tclaude\t2026-10-21T10:00:00Z\tOlder api\n')
@@ -144,7 +150,7 @@ def picker(t_mod):
             (root / 'all').write_text(rows)
             (root / 'default').write_text(default)
             mode_env = 'T_PICKER_SESSION_FILTERS=' + shlex.quote(mode) + ' '
-            if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan'):
+            if profile in ('resume-rich', 'resume-merged', 'resume-closed', 'resume-pan', 'resume-reference'):
                 mode_env += 'T_PICKER_SOURCE_ROWS="$(cat "$HOME/all")" '
             if profile == 'resume-closed':
                 mode_env += 'T_PICKER_COLUMNS="WORKING ON" '
@@ -1174,4 +1180,41 @@ def test_resume_pan_barrier_accepts_background_snapshot_growth(picker):
     keys('-l', f'\x1b[<65;12;{row}M' * 8 + f'\x1b[<64;12;{row}M' * 8)
     modern = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     wait('3/3 (1)' if modern else '3/3 (0)', absent=['Refreshing local'])
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+def test_shared_resume_reference_real_picker_spacing_and_marks(picker):
+    start, wait, keys, finish = picker
+    start(profile='resume-reference', mode='resume', width=120, height=36)
+    frame = wait('Simplify the onboarding view', focused='Simplify the onboarding view')
+    lines = frame.splitlines()
+    labels = ('Last refresh 09:20', 'Active filter', 'Active sort', 'LEGEND',
+              'Enter resume', 'STATUS', 'Simplify the onboarding view')
+    positions = [next(i for i, line in enumerate(lines) if label in line) for label in labels]
+    endings = (positions[0], positions[1] + 1, positions[2] + 1, positions[3] + 3, positions[4])
+    assert [positions[i + 1] - end for i, end in enumerate(endings)] == [2] * 5, frame
+    assert positions[6] == positions[5] + 1, frame
+    assert all(mark in lines[positions[6]] for mark in '↶↻')
+    keys('Tab', 'Up', 'M-f')
+    frame = wait('Hide filters', focused='Simplify the onboarding view')
+    assert any('▸' in line and '✓' in line and 'Simplify the onboarding view' in line for line in frame.splitlines())
+    keys('M-f')
+    keys.resize(44, 20)
+    wait('Edit filters')
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
+def test_narrow_tall_picker_separates_filters_and_sort(picker, profile):
+    start, wait, keys, finish = picker
+    start(profile=profile, width=38, height=36)
+    frame = wait('2/2 (0)', ordered=('Filters ON', 'Sort:'))
+    lines = frame.splitlines()
+    sort_row = next(index for index, line in enumerate(lines) if 'Sort:' in line)
+    assert not lines[sort_row - 1].strip(' │┃'), frame
+    assert 'hidden' in lines[sort_row - 2] and '▸' in frame
+    keys('C-y')
+    wait('Sort: repo')
     assert finish('Escape', status=130) == []

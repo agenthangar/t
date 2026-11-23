@@ -439,6 +439,15 @@ def test_defaults_are_live_complete_and_never_materialized(workflow, t_mod):
     assert not workflow.config_path().exists()
 
 
+@pytest.mark.parametrize('tool', ['codex', 'claude', 'cursor'])
+def test_first_interface_policy_reaches_managed_instructions(workflow, tool):
+    instructions = workflow.render(workflow.defaults(), tool=tool)
+    assert 'in the first user-facing iteration' in instructions
+    assert 'representative rendered example' in instructions
+    assert 'before opening a design-related PR, in nightly CI' in instructions
+    assert 'release gate for the exact release commit' in instructions
+
+
 def test_repository_off_override_roundtrip_and_agent_instructions(workflow, repo):
     w = workflow
     document = w.select_design_system(w.defaults(), str(repo), mode='off')
@@ -450,6 +459,7 @@ def test_repository_off_override_roundtrip_and_agent_instructions(workflow, repo
     text = w.render(document, repository=str(repo))
     assert 'Do not add design-system discovery' in text
     assert 'automatically discover repository-owned' not in text
+    assert 'in the first user-facing iteration' not in text
     document['workflows']['standard']['behaviors'] = {'design_system': 'off'}
     selected = w.select_design_system(document, str(repo), 'DESIGN.md')
     text = w.render(selected, repository=str(repo))

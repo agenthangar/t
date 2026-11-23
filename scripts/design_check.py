@@ -27,7 +27,9 @@ def validate(inventory, contract, root=ROOT):
             if not any(isinstance(n, ast.FunctionDef) and n.name == function for n in tree.body):
                 raise ValueError(f'{name}: missing layout fixture {node}')
             selectors.add(node)
-    for command, entry in inventory['commands'].items():
+    entries = [(name, entry) for section in ('commands', 'entrypoints', 'standalone_commands')
+               for name, entry in inventory.get(section, {}).items()]
+    for command, entry in entries:
         if entry.get('layout') not in profiles:
             raise ValueError(f'{command}: missing or unknown layout profile')
         if entry.get('renderer') not in profiles[entry['layout']].get('renderers', []):
@@ -38,6 +40,10 @@ def validate(inventory, contract, root=ROOT):
             layout = detail.get('layout')
             if layout != 'inherit' and layout not in profiles:
                 raise ValueError(f'{command}/{mode}: missing layout coverage')
+            effective = entry['layout'] if layout == 'inherit' else layout
+            patterns = set(detail.get('patterns', []))
+            if effective == 'plain' and patterns & {'single', 'multi', 'wizard'}:
+                raise ValueError(f'{command}/{mode}: interactive selection requires a rendered picker profile')
             if layout == 'machine' and set(detail.get('patterns', [])) != {'machine'}:
                 raise ValueError(f'{command}/{mode}: only machine-only modes may be excluded')
             if layout == 'external' and set(detail.get('patterns', [])) != {'passthrough'}:

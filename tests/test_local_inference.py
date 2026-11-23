@@ -408,7 +408,8 @@ def test_ollama_catalogue_surfaces_measurement_without_starting_runtime(local, m
     manifest=Path.home()/'.ollama/models/manifests/registry.ollama.ai/library/qwen/8b'
     manifest.parent.mkdir(parents=True);manifest.write_text('fixture manifest')
     legacy={'hardware':hardware,'report':lambda:{'models':[{'model':name,'bytes':4,'fit':True,'score':None,'reason':'fit'}], 'benchmark':{}},'missing_bytes':lambda *a:0}
-    monkeypatch.setattr(m,'helper',lambda n:legacy)
+    original_helper = m.helper
+    monkeypatch.setattr(m,'helper',lambda n: legacy if n == 't_local_models' else original_helper(n))
     measured={'model':name,'revision':m.ollama_revision(name),'median':20,'min':19,'max':21,'metric':'decode tokens / second','context_tokens':32768,'hardware':hardware()}
     path=m.measurement_path(name);path.parent.mkdir(parents=True);path.write_text(json.dumps(measured))
     row=m.catalogue()['models'][-1]
@@ -636,7 +637,8 @@ def test_model_actions_use_exact_instance_and_report_launch_failures(local,monke
     def open_app(provider):
         if failure[0]:raise ValueError('missing app')
         calls.append(('app',provider))
-    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[{'model':row['model'],'alias':'exact-instance','owned':True,'provider':'lmstudio'}]},'rpc':rpc} if n=='t_local_manager' else {'open_desktop':open_app} if n=='t_local_apps' else {'provider_menu':lambda ui,provider:calls.append(('guide',provider))})
+    original_helper = m.helper
+    monkeypatch.setattr(m,'helper',lambda n:{'status':lambda:{'models':[{'model':row['model'],'alias':'exact-instance','owned':True,'provider':'lmstudio'}]},'rpc':rpc} if n=='t_local_manager' else {'open_desktop':open_app} if n=='t_local_apps' else {'provider_menu':lambda ui,provider:calls.append(('guide',provider))} if n=='t_local_runtime_ui' else original_helper(n))
     class UI:
         def __init__(self,choices):self.choices=iter(choices);self.pages=[]
         def pick(self,*a,**kw):return next(self.choices)
@@ -752,7 +754,7 @@ def test_cloud_recovery_staging_and_readiness(local, monkeypatch):
     current = local.policy({'on_cloud_failure':'local', 'cloud_retry_seconds':30})
     local.cloud_failure_menu(UI(['readiness','model','cloud_retry_seconds','60','back']), current)
     assert current['cloud_retry_seconds'] == 60 and calls[0][1] is row
-    assert any(v[2]['values'].get('readiness') == 'Downloaded · not verified' for v in views)
+    assert any(v[2]['values'].get('readiness') == 'Downloaded' for v in views)
     local.cloud_failure_menu(UI(['cloud_retry_seconds',None,'on_cloud_failure',None,'back']), current)
     assert current['cloud_retry_seconds'] == 60 and current['on_cloud_failure'] == 'local'
     local.cloud_failure_menu(UI(['cloud_retry_seconds','','reset','back']), current)
@@ -897,3 +899,19 @@ def test_enabled_host_recovery_preserves_exact_saved_native_resume(local, monkey
     monkeypatch.setattr(local, 'helper', helper)
     assert local.lead(argv, cwd=str(tmp_path), chosen={'on_cloud_failure': recovery}) == 7
     assert calls == [('codex', argv, None)]
+
+
+@pytest.mark.parametrize('installed,verified,ready,error,expected', [
+    (False, False, False, None, 'Available'),
+    (True, False, False, None, 'Downloaded'),
+    (True, True, False, None, 'Verified'),
+    (True, True, True, None, 'Ready'),
+    (True, True, False, 'timeout', 'Verified · verification failed'),
+    (True, False, False, 'timeout', 'Downloaded · verification failed'),
+])
+def test_model_details_retain_verification_history(local, installed, verified, ready, error, expected):
+    row = dict(model='fixture/example', provider='ollama', fit=True, reason='estimated fit',
+               bytes=1000, installed=installed, verified=verified, ready=ready,
+               verification_error=error)
+    assert local.model_status(row) == expected
+    assert 'State: ' + expected in local.detail_lines(row)

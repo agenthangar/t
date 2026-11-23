@@ -26,7 +26,7 @@ The workflow compares the fetched main commit with the highest published stable
 All commits count, including documentation and workflow changes. Every nightly
 run invokes full Linux CI for the pinned commit, even when there is nothing new
 to publish. This includes all tests, combined 97% coverage, real compatibility
-tests on both fzf versions, install smoke, CLI/shell contracts and security scans.
+tests on both fzf versions, rendered design checks and the browser reference, install smoke, CLI/shell contracts and security scans.
 Failed or cancelled validation fails the workflow and prevents publication.
 The workflow does not enable macOS CI or native desktop tests.
 

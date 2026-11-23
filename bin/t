@@ -1740,6 +1740,15 @@ or issue creation cannot be verified, resolve that before implementation.
 Use the model configured for this repository in t when available. Edit this
 section to name a specific model if you prefer one.
 
+## Design system
+Follow the project's selected design-system settings, including Off. With the
+default policy, reuse existing design guidance or establish it in the first
+user-facing iteration. Include it in the first authored commit if that commit
+introduces the interface. Link the design entry point from repository agent
+instructions, include a representative rendered example, and test an actual
+design decision. By default, run that check before opening a design-related PR,
+in nightly CI, and for the exact release commit when the project ships releases.
+
 ## Local preview
 If this repository has a user interface, run it locally and inspect the changed
 screens before finalizing work.
@@ -5744,7 +5753,7 @@ class _RailUI:
         text = title.upper() + separator + detail
         return f"{self.rail}   {st.b}{st.c}{self.clip(text, self.cols() - 6)}{st.r}"
 
-    def row(self, label, value=None, *, selected=False, mark=None, label_width=0, accent=""):
+    def row(self, label, value=None, *, selected=False, mark=None, label_width=0, accent="", styled_label=None):
         """Style only after clipping plain text: ANSI codes never count as columns."""
         st, width = self.st, self.cols()
         pre = f"{st.c}▸{st.r}" if selected else " "
@@ -5769,9 +5778,10 @@ class _RailUI:
             body = styled(left, color) + "   " + styled(right, st.c)
         else:
             plain = self.clip(label, avail)
-            body = styled(plain, color)
+            body = styled(plain if styled_label is None else styled_label, color)
         if selected:
-            body = styled(plain + ' ' * max(0, avail - _display_width(plain)), st.focus)
+            padded = (plain if styled_label is None else styled_label) + ' ' * max(0, avail - _display_width(plain))
+            body = styled(padded, st.focus)
         lines = [f"{self.rail}  {pre} {box}{body}"]
         if stacked:
             detail = self.clip(value, width - 10)
@@ -5967,7 +5977,10 @@ class _RailUI:
                 display.extend((line, None) for line in lines)
             if context:
                 display.append((self.rail, None))
-            table_header, table_rows = _model_display()["table"](model_table, self.cols()-8) if model_table else ("", {})
+            model_display = _model_display() if model_table else None
+            table_header, table_rows = model_display["table"](model_table, self.cols()-8) if model_table else ("", {})
+            colored_rows = (model_display["table"](model_table, self.cols()-8, color=True, focus=rows[cur][0])[1]
+                            if model_table and self.st.r else {})
             table_keys = [key for key, _ in rows if key in table_rows]
             label_width = max((_display_width(text) for key, text in rows if key in values), default=0)
             widths = [max(len(title), max((len(str(cell[i])) for cell in cells.values()), default=0))
@@ -5986,7 +5999,9 @@ class _RailUI:
                     display.append((f"{self.rail}    {self.st.y}{table_header}{self.st.r}", None))
                 mark = ("◼" if n in marks else "◻") if multi else None
                 if key in table_rows:
-                    display += [(line, n) for line in self.row(table_rows[key], selected=n == cur, mark=mark, accent="y" if key in disabled else accents.get(key, ""))]
+                    display += [(line, n) for line in self.row(
+                        table_rows[key], selected=n == cur, mark=mark, styled_label=colored_rows.get(key),
+                        accent="y" if key in disabled else accents.get(key, ""))]
                 elif key in cells:
                     if table and first_cell:
                         heading = 'Model'.ljust(model_width) + '  ' + '  '.join(t.rjust(w) for t, w in zip(columns, widths))
@@ -6030,9 +6045,11 @@ class _RailUI:
                         display.extend((f'{self.rail}    {part}', None) for part in _wrap_columns(detail, max(1, self.cols() - 7)))
                 if table_keys and key == table_keys[-1]:
                     display.append((self.rail, None))
-                    display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None)
-                                   for line in _model_display()["legend"](model_table, benchmark_suite)
-                                   for part in _wrap_columns(line, self.cols()-8))
+                    legend_width = self.cols() - 8
+                    for line in model_display["legend"](model_table, benchmark_suite, columns=legend_width,
+                                                        color=bool(self.st.r)):
+                        parts = [line] if '\033[' in line else _wrap_columns(line, legend_width)
+                        display.extend((f"{self.rail}    {self.st.y}{part}{self.st.r}", None) for part in parts)
                     display.append((self.rail, None))
             self.frame(label, display, cur, keys, primary, flash, notice)
             flash = ""
@@ -14085,7 +14102,12 @@ OPENING DEFAULTS
   guarded resume/restart.
 
 RECOVERY
-  When a numbered open fails in a terminal, choose Repair or Cancel.
+  A numbered open reopens the recorded local conversation in its verified worktree
+  using local history and writer checks before contacting peers.
+  If a peer is unreachable and a numbered open cannot verify remote ownership,
+  choose a saved conversation for that slot in the resume picker. This path
+  requires a terminal, an isolated worktree, and automatic host and agent selection.
+  Other numbered open failures in a terminal offer Repair or Cancel.
   Repair retains an explicit --codex or --claude choice. Unresolved native
   writers get a bounded 30-second wait to publish their worktree metadata;
   healthy ownership checks do not wait. Expiry never bypasses ownership.
@@ -15745,10 +15767,16 @@ def _main(argv):
             for row in cache['candidates'](view, aliases, slot):
                 print(row)
         return 1 if view.get('unavailable') else 0
-    if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
+    if argv and argv[0] in ('__resume-candidates', '__resume-saved', '__open-local-slot'):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())
         try:
+            if argv[0] == '__open-local-slot' and len(argv) == 4:
+                receipt = history.open_local_slot(*argv[1:])
+                if receipt is None:
+                    return 3
+                print(receipt)
+                return 0
             if argv[0] == '__resume-candidates':
                 aliases, slot = argv[1:], None
                 diagnostics_file = None

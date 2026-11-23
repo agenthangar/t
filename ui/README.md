@@ -4,6 +4,13 @@ This is the repository's terminal design system, indexed by [DESIGN.md](../DESIG
 
 ## Planning previews
 
+The [approved HTML picker reference](previews/picker.html) and running
+`t resume` define the picker structure and keyboard behavior. Generate the
+self-contained reference with `python3 scripts/preview_picker.py --output PATH`.
+The [picker design rules](../DESIGN.md#picker-design-reference) specify the
+exact section spacing, marker gutters, and model-library variants.
+
+
 When a workflow or task calls for a planning preview, use a local interactive HTML
 prototype to demonstrate the proposed command flow before application changes.
 Follow this terminal contract: shared layout, focus, keyboard controls, spacing,
@@ -74,7 +81,19 @@ ancestry and workspace; clear its attachable state on selection, retry or cancel
 Keep the one-step ready-model selection and existing retry/cancel actions.
 This is terminal readiness only; saved-conversation writer checks remain strict.
 
-Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
+A numbered open with automatic agent selection first reopens a uniquely recorded local
+conversation in its verified worktree. Local writer checks and cached evidence of a
+remote owner protect the launch without a peer scan. For example, `t open api 3`
+reopens the original conversation after the local terminal has exited.
+
+When a peer is unreachable, an interactive numbered open with automatic host
+and agent selection opens the same slot's saved-conversation picker for an
+isolated repository. The automatic open still attaches any reachable owner it
+resolved for the slot. The picker uses the usual saved-resume checks on selection.
+Cancellation and failed selection
+return directly without creating a blank session or entering open repair.
+
+Other failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
 refreshes discovery and retries, or revives a verified exited pane. If it fails,
 offer **Force open / Cancel**. Keep the reason brief and identify any live client
 that force open will stop. Cancel returns 130 and stops remaining batch actions.
@@ -243,8 +262,13 @@ Repository source settings survive assignment changes and are tool-scoped.
 
 Automatic discovery prefers safe root DESIGN.md, then one root design-system.md
 or design_system.md, then a sole discovered candidate. Multiple remaining
-candidates require a choice. No candidates means no system found; creation is
-always explicit. Discovery reads repository-owned docs, linked guidance, tokens,
+candidates require a choice. Discovery itself is read-only. When automatic discovery finds no
+source, the default agent instructions establish the system during the first
+user-facing iteration, or the next authorized interface change in an existing
+project. The change includes a design entry point, agent reference, representative
+rendered example and a reproducible design check. The default check runs before
+opening a design-related PR, nightly, and against the exact release commit.
+Repository or user instructions can select another schedule. Discovery reads repository-owned docs, linked guidance, tokens,
 components and Storybook, excluding dependencies, generated directories and
 symlinks. Resolve relative paths in the matching active worktree. Lists never
 scan or prompt; managed agent instructions describe the same resolution rule.
@@ -320,8 +344,8 @@ showing the next action and keys. Focus and marks must remain distinguishable
 without color. Headings are cyan, hints muted, and focused text light on dark cyan.
 Keep the green checkmark in its own gutter beside the pointer, with spaces between
 status icons inside rows. Give controls and results a blank separating row when
-height permits. Session pickers list HOTKEYS above FILTERS, except filtered resume
-places unheaded result hotkeys beside the rows. Use readable shortcuts
+height permits. Open, close, and resume place result shortcuts beside the rows.
+History keeps its separate pagination controls. Use readable shortcuts
 and bright underlined labels for the current filter On/Off state, resume sort, and
 merged-session toggle when enabled. Session lists highlight selected column filters
 and the current sort key. Plain output retains explicit state text.
@@ -1123,8 +1147,9 @@ attached sessions or returns to the saved-only default. Return attaches to an
 existing terminal session when one is selected. The current sort and its actions
 use the same summary and action layout as filters.
 
-Leave blank rows between the full header sections, before the result hotkeys,
-and before the columns. The legend follows the table order: Status, PRs, Agent.
+Leave one blank row between refresh, filters, sort, legend, result shortcuts,
+and column headings. The first result follows the headings immediately. Reclaim
+these blank rows first on short screens. The legend follows the table order: Status, PRs, Agent.
 Status icons identify attached (●), last closed (↶), work in progress (↻), and
 a verified preview deployment (↗). Tab marks action targets with fzf’s green ✓.
 Matching legend entries and row icons use the same colors. The AGENT column

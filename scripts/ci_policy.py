@@ -7,7 +7,7 @@ import subprocess
 
 
 def check_results(results, *, full, macos=False, reference=False):
-    optional = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage'}
+    optional = {'smoke'} if full else {'pytest', 'fzf-legacy', 'coverage', 'design-adherence'}
     if not macos:
         optional.add('macos')
     if not reference:

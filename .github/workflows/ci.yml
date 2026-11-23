@@ -66,6 +66,7 @@ jobs:
       - name: Long-running command progress contract
         run: python3 scripts/lint_progress.py
   design-adherence:
+    if: needs.scope.outputs.full == 'true'
     needs: scope
     name: Design adherence fzf ${{ matrix.fzf }}
     strategy:
@@ -82,6 +83,14 @@ jobs:
           fzf: ${{ matrix.fzf }}
       - name: Required rendered layout contracts
         run: python3 scripts/design_check.py run
+      - name: Standalone HTML picker reference
+        if: matrix.fzf == '0.74.5'
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/picker-browser" --no-package-lock playwright@1.64.0
+          "$RUNNER_TEMP/picker-browser/node_modules/.bin/playwright" install --with-deps --only-shell chromium
+          python3 scripts/preview_picker.py --output "$RUNNER_TEMP/picker-standard.html"
+          NODE_PATH="$RUNNER_TEMP/picker-browser/node_modules" node tests/picker_preview.cjs "$RUNNER_TEMP/picker-standard.html"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -100,6 +109,7 @@ jobs:
       - name: Shell syntax and lint
         run: |
           files=(install.sh)
+          if [[ -f scripts/check_design.sh ]]; then files+=(scripts/check_design.sh); fi
           for f in bin/* .githooks/* ui/*.sh scripts/playground/* scripts/agentcore-test-runtime/*.sh; do
             head -1 "$f" | grep -qE '^#!.*\b(bash|sh)$' && files+=("$f")
           done

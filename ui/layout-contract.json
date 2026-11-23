@@ -25,10 +25,14 @@
         "tests/test_picker_ui.py::test_open_simple_rows_and_focused_marks",
         "tests/test_picker_ui.py::test_open_discovery_notice_keeps_focused_row_visible",
         "tests/test_design_geometry.py::test_real_picker_columns_do_not_shift_on_search",
+        "tests/test_picker_reference.py::test_resume_reference_native_section_geometry",
+        "tests/test_picker_reference.py::test_picker_reference_uses_native_rows_and_marker_vocab",
+        "tests/test_picker_ui.py::test_shared_resume_reference_real_picker_spacing_and_marks",
         "tests/test_picker_filters.py::test_air_headers_preserve_keys_width_and_state",
         "tests/test_external_codex.py::test_external_picker_renders_and_reveals_hidden_sessions",
         "tests/test_picker_ui.py::test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks",
-        "tests/test_picker_ui.py::test_resume_pan_excludes_details_preview_and_survives_resize_cancel"
+        "tests/test_picker_ui.py::test_resume_pan_excludes_details_preview_and_survives_resize_cancel",
+        "tests/test_picker_ui.py::test_narrow_tall_picker_separates_filters_and_sort"
       ],
       "renderers": [
         "fzf"
@@ -111,7 +115,8 @@
     "models": {
       "tests": [
         "tests/test_model_selection.py::test_comparison_picker_layout_navigation_and_source_keys",
-        "tests/test_model_selection.py::test_context_and_actions_align"
+        "tests/test_model_selection.py::test_context_and_actions_align",
+        "tests/test_model_display.py::test_local_model_reference_states_and_memory_match_rows_and_legend"
       ],
       "renderers": []
     },
@@ -142,6 +147,21 @@
         "tests/test_memory_recovery.py::test_waiting_controls_shared_layout",
         "tests/test_memory_recovery.py::test_waiting_controls_isolated_tmux"
       ]
+    },
+    "statusline": {
+      "renderers": [],
+      "tests": [
+        "tests/test_session_appearance.py::test_workflow_line_uses_resolved_models_and_active_palette",
+        "tests/test_session_appearance.py::test_status_badge_is_idempotent_and_preserves_status_controls"
+      ]
+    },
+    "nightr": {
+      "renderers": [],
+      "tests": [
+        "tests/test_nightr.py::test_nightr_install_review_cancel_uses_real_rail",
+        "tests/test_nightr.py::test_nightr_status_public_route_is_static",
+        "tests/test_config.py::test_config_nosleep_opens_shared_editor_only_with_clean_hub"
+      ]
     }
   },
   "nested_screens": {
@@ -159,6 +179,10 @@
     "models": "models",
     "session-table": "session-table",
     "nosleep": "nosleep",
-    "waiting_memory_controls": "memory_recovery"
+    "waiting_memory_controls": "memory_recovery",
+    "eval.runs.picker": "picker",
+    "managed.statusline": "statusline",
+    "nightr.review": "nightr",
+    "nightr.config-handoff": "nightr"
   }
 }

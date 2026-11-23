@@ -8,7 +8,9 @@ import subprocess
 import sys
 
 from t_session_details import clip_columns, display_width, enrich, format_last_turn, wrap_columns
-from t_picker_theme import key_labels, paint, control_rows, sort_rows
+from t_picker_theme import (PICKER_BREAK_PRIORITY, control_rows, key_labels, paint,
+                            picker_filter_disclosure, picker_filter_keys, picker_filter_summary,
+                            picker_section_rows, picker_sort_keys, picker_sort_summary, sort_rows)
 from t_session_sort import RESUME_SORTS, SAVED_SORTS, natural, turn_epoch, latest_closed, sort_label
 
 FACETS = {'agent': ('Ctrl-G', 'agent'), 'interface': ('Ctrl-D', 'interface'),
@@ -139,7 +141,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
            filters_expanded=False, hidden_info=False, attached_results=False, legend=''):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
-    short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    height = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24')
+    short = height <= 14
     compact = width <= 40 or short
     if profile == 'resume':
         return resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
@@ -151,13 +154,10 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         return control_rows(parts, width, selected, compact, color, 'selected' if profile == 'open' else 'active')
     actions = ['Enter/Esc' if compact else f'Enter {profile}/Esc', 'Tab ✓',
                'Ctrl-K kill' if profile == 'open' else 'Ctrl-/']
-    lines = [] if compact else [style('HOTKEYS', 'heading')]
     if profile == 'open' and os.environ.get('T_PICKER_NEW_SESSION') == '1':
         actions.append('Ctrl-N new')
-    lines += keys(actions)
-    if not compact:
-        lines.append('')
-    lines += keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle',
+    hotkeys = keys(actions)
+    filter_rows = keys(['Filters ' + ('ON' if enabled else 'OFF'), 'Ctrl-F' if compact else 'Ctrl-F toggle',
                    'Ctrl-X reset'], ['Filters ON'] if enabled else [])
     controls = ([] if compact else ['Ctrl-T state']) + [f'{shortcut} {label}' for shortcut, label in FACETS.values()]
     active = [f'{FACETS[name][0]} {FACETS[name][1]}' for name, value in filters.items()
@@ -165,88 +165,57 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
     state_active = enabled and mask != (3 if profile == 'kill' else 1)
     if state_active:
         active.append('Ctrl-T state')
-    lines += keys(controls, active)
+    filter_rows += keys(controls, active)
     summary = ', '.join(f'{name}={value}' for name, value in filters.items() if value is not None)
     summary = state_label(profile, mask) + (' · ' + summary if summary else '')
     if compact:
         summary = key('Ctrl-T ') + summary
     suffix = f' · {hidden} hidden'
     summary = clip_columns(summary if enabled else 'Saved filters paused', width - display_width(suffix))
-    lines.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
+    filter_rows.append(style(summary, 'active' if compact and state_active else 'heading' if enabled else 'hint')
                  + style(suffix, 'heading' if enabled else 'hint'))
-    if not compact:
-        lines += [''] if profile == 'open' else [style('Match highlighted row; repeat key to clear'), '']
-    lines += sort_rows(sort, width, sort_enabled, compact, color, profile == 'open',
-                       selected_role='selected' if profile == 'open' else 'active')
-    if not compact:
-        lines += ['']
-    if legend:
-        lines.append(style(clip_columns(legend, width)))
-    if columns:
-        column_width = width + int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) if os.environ.get('T_PICKER_PAN') == '1' else width
-        lines.append(style(clip_columns(columns, column_width)))
-    return '\n'.join(lines) + '\n'
+    if not compact and profile != 'open':
+        filter_rows.append(style('Match highlighted row; repeat key to clear'))
+    column_width = width + int(os.environ.get('T_PICKER_PAN_HEADER_PAD', '0')) if os.environ.get('T_PICKER_PAN') == '1' else width
+    sections = {
+        'status': list(status), 'filter': filter_rows,
+        'sort': sort_rows(sort, width, sort_enabled, compact, color, profile == 'open',
+                          selected_role='selected' if profile == 'open' else 'active'),
+        'legend': [style(clip_columns(legend, width))] if legend else [],
+        'actions': hotkeys, 'columns': [style(clip_columns(columns, column_width))] if columns else [],
+    }
+    breaks = PICKER_BREAK_PRIORITY if status else PICKER_BREAK_PRIORITY[1:]
+    # Reserve space for the query, counter and results before adding group breaks.
+    rows = picker_section_rows(sections, short=short, breaks=breaks, budget=height - 5, optional=())
+    return '\n'.join(rows) + '\n'
+
+
+def resume_controls(mask, filters, width, sort, enabled, color, hide_merged,
+                    sort_enabled, compact, filters_expanded=False, platform=None):
+    active = [] if mask else ['Ctrl-T Saved only']
+    active += [f'{FACETS[name][0]} {name.title()}: {value}' for name, value in filters.items()
+               if name in FACETS and value is not None]
+    if hide_merged:
+        active.append('Ctrl-D Merged PRs hidden')
+    filter_rows = picker_filter_summary(active, enabled, width, compact, color, platform, inactive=['Saved + attached'])
+    editor = picker_filter_disclosure(filters_expanded, width, compact, color, platform)
+    state = 'state' if compact else ('show saved only' if mask else 'include attached')
+    merged = 'merged' if compact else 'hide merged'
+    facets = [f'Ctrl-T {state}', 'Ctrl-G agent', 'Ctrl-O host', 'Ctrl-R repo', f'Ctrl-D {merged}']
+    editor_rows = picker_filter_keys(facets, enabled, width, compact, color, platform) if filters_expanded else []
+    sort_rows = picker_sort_summary(sort_label(sort).capitalize() if sort_enabled else 'Snapshot order',
+                                    sort_enabled, width, compact, color, platform)
+    sort_keys = picker_sort_keys(sort_enabled, width, compact, color, platform)
+    return {'filter': filter_rows, 'filter-disclosure': editor, 'filter-options': editor_rows,
+            'sort': sort_rows, 'sort-options': sort_keys}
 
 
 def resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
                   hide_merged, sort_enabled, show_legend, status, compact, short,
                   filters_expanded=False, hidden_info=False, attached_results=False):
     style = lambda text, role='action': paint(text, role) if color else text
-    def keys(parts, selected=()):
-        return control_rows(parts, width, selected, compact, color, separator='  ')
-    def summary(label, values, active):
-        label_width = max(16, display_width(label) + 2) if width >= 60 else 0
-        prefix = label.ljust(label_width) if label_width else label + ' '
-        text = prefix + '  '.join(key_labels(value, compact=compact) for value in values)
-        rows, line = [], ''
-        for word in re.findall(r'\S+\s*', text):
-            if line and display_width(line + word.rstrip()) > width:
-                rows.append(line.rstrip())
-                line = ' ' * label_width
-            if display_width(line + word.rstrip()) > width:
-                pieces = wrap_columns(word.rstrip(), width - label_width)
-                rows.extend(line + piece for piece in pieces[:-1])
-                line = ' ' * label_width + pieces[-1]
-            else:
-                line += word
-        if line:
-            rows.append(line.rstrip())
-        if not color:
-            return rows
-        result = []
-        for index, row in enumerate(rows):
-            if index == 0 and row.startswith(label):
-                row = style(label, 'selected' if active else 'hint') + row[len(label):]
-            row = re.sub(r'(?:Ctrl-[A-Z/]|Alt-[A-Z]|[⌃⌥^][A-Z/]|M-[A-Z])',
-                         lambda match: style(match[0], 'heading'), row)
-            result.append(row)
-        return result
-
-    active = []
-    if not mask:
-        active.append('Ctrl-T Saved only')
-    active += [f'{FACETS[name][0]} {name.title()}: {value}' for name, value in filters.items()
-               if name in FACETS and value is not None]
-    if hide_merged:
-        active.append('Ctrl-D Merged PRs hidden')
-    filter_label = ('Active filter' if len(active) == 1 else 'Active filters') if enabled and active else (
-        'No active filters' if enabled else 'Filters paused')
-    filter_rows = summary(filter_label, active if enabled and active else ['Saved + attached'], enabled and bool(active))
-    editor = keys(['Alt-F ' + ('Hide filters ▾' if filters_expanded else 'Edit filters ▸')])
-    editor_rows = []
-    if filters_expanded:
-        controls = ['Ctrl-F ' + ('pause filters' if enabled else 'enable filters'),
-                    'Ctrl-T ' + ('show saved only' if mask else 'include attached'),
-                    'Ctrl-G agent', 'Ctrl-O host', 'Ctrl-R repo', 'Ctrl-D hide merged', 'Ctrl-X reset filters']
-        if compact:
-            controls = ['Ctrl-F ' + ('pause' if enabled else 'enable'), 'Ctrl-T state',
-                        'Ctrl-G agent', 'Ctrl-O host', 'Ctrl-R repo', 'Ctrl-D merged', 'Ctrl-X reset']
-        editor_rows = keys(controls)
-    sort_rows = summary('Active sort' if sort_enabled else 'Sort paused',
-                        [sort_label(sort).capitalize() if sort_enabled else 'Snapshot order'], sort_enabled)
-    sort_keys = keys(['Ctrl-Y ' + ('sort' if compact else 'Next sort'),
-                      'Ctrl-S ' + (('pause' if compact else 'Pause sort') if sort_enabled else
-                                   ('resume' if compact else 'Resume sort'))])
+    controls = resume_controls(mask, filters, width, sort, enabled, color,
+                               hide_merged, sort_enabled, compact, filters_expanded)
     legend = ([style('LEGEND', 'heading')] + resume_legend(width, short, color,
               attached=attached_results)) if show_legend else []
     actions = resume_action_rows(width, compact, color, attached_results)
@@ -267,18 +236,13 @@ def resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
     height = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24')
     frame = int(os.environ.get('T_PICKER_PAN_FRAME_ROWS') or ('2' if short else '8'))
     budget = max(3, height - frame - (1 if filters_expanded or (short and critical) else 3))
-    groups = [badge, health[:1], critical + health[1:], [''] if status and not compact else [],
-              filter_rows, editor, editor_rows, [''] if not compact else [],
-              sort_rows, sort_keys, [''] if not compact else [],
-              [] if short else legend, [''] if not compact else [], actions,
-              [''] if columns_rows and not compact else [], columns_rows]
-    order = [3, 7, 10, 14, 12, 11, 2, 4, 8, 6, 9, 1]
-    for index in order:
-        if sum(map(len, groups)) <= budget:
-            break
-        groups[index] = critical if index == 2 else []
-    lines = [line for group in groups for line in group]
-    return '\n'.join(lines) + '\n'
+    sections = {
+        'badge': badge, 'status': health[:1], 'alerts': critical, 'status-detail': health[1:],
+        **controls, 'legend': [] if short else legend,
+        'actions': actions, 'columns': columns_rows,
+    }
+    breaks = PICKER_BREAK_PRIORITY if status else PICKER_BREAK_PRIORITY[1:]
+    return '\n'.join(picker_section_rows(sections, short=short, budget=budget, breaks=breaks)) + '\n'
 
 
 def list_header(filters, hidden, columns, width, sort, color=False):
@@ -565,10 +529,11 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             legend = ''
     controls = header(profile, mask, filters, hidden, columns, width,
                       sort, enabled, color, hide_merged, sort_enabled, profile == 'resume',
-                      status if profile == 'resume' else (), filters_expanded,
+                      status, filters_expanded,
                       (directory / 'info-command').exists() and (directory / 'info-command').read_text() == '1',
                       attached_results, legend)
-    (directory / 'current-header').write_text(('\n'.join(status) + '\n' if status and profile != 'resume' else '') + controls)
+    prefix = '\n'.join(status) + '\n' if status and profile == 'list' else ''
+    (directory / 'current-header').write_text(prefix + controls)
     enabled_file.write_text('1' if enabled else '0')
     mask_file.write_text(str(mask))
     state_file.write_text(json.dumps(filters))
@@ -576,15 +541,15 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         expanded_file.write_text('1' if filters_expanded else '0')
 
 
-def resume_action_rows(width, compact, color, attached=False):
-    enter = 'Return' if sys.platform == 'darwin' else 'Enter'
-    details = key_labels('Ctrl-/', compact=compact)
+def resume_action_rows(width, compact, color, attached=False, platform=None):
+    enter = 'Return' if (platform or sys.platform) == 'darwin' else 'Enter'
+    details = key_labels('Ctrl-/', platform, compact)
     labels = [enter, 'Esc', 'Tab', details] if compact else [
-        key_labels('Enter'), key_labels('Esc'), key_labels('Tab'), details]
+        key_labels('Enter', platform), key_labels('Esc', platform), key_labels('Tab', platform), details]
     actions = list(labels) if compact else [f'{key} {action}' for key, action in zip(
         labels, ('resume/attach' if attached else 'resume', 'cancel', 'mark ✓', 'details'))]
     if os.environ.get('T_PICKER_RESUME_LAST') == '1':
-        shortcut = key_labels('Ctrl-B', compact=compact)
+        shortcut = key_labels('Ctrl-B', platform, compact)
         actions.append(f'{shortcut} ↶' if compact else f'{shortcut} resume last closed')
         if not compact and display_width('  '.join(actions)) > width:
             actions[-1] = f'{shortcut} last closed'

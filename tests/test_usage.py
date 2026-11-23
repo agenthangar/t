@@ -495,3 +495,26 @@ def test_verified_worker_generation_without_usage_is_not_zero(usage,tmp_path):
     assert row['requests'][-1]['usage'] is None
     record['generation_events']=0;(directory/'result.json').write_text(json.dumps(record))
     assert usage.worker_rows()[0]['requests']==[]
+
+
+@pytest.mark.parametrize('action', ['list', 'show'])
+def test_eval_run_picker_routes_through_shared_fzf(t_mod, tmp_path, monkeypatch, action):
+    for name in ('HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'):
+        monkeypatch.setenv(name, str(tmp_path / name))
+    core = load_script(ROOT / 'libexec/t_eval.py', 'eval_picker_core')
+    cli = load_script(ROOT / 'libexec/t_eval_cli.py', 'eval_picker_cli')
+    monkeypatch.setattr(cli, 'core', lambda: vars(core))
+    monkeypatch.setattr(cli, 'tty', lambda: True)
+    monkeypatch.setattr(cli.shutil, 'which', lambda name: '/fixture/fzf')
+    core.create_run(core.defaults('fixture'))
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout=kwargs['input'].splitlines()[0] + '\n')
+    monkeypatch.setattr(cli.subprocess, 'run', run)
+    assert cli.command(None, t_mod.build_parser().parse_args(['eval', 'runs', action]), {}) == 0
+    command, kwargs = calls[0]
+    assert '_t_fzf_single' in command[2]
+    assert command[4] == str(ROOT / 'ui/fzf.sh')
+    assert '--preview-window=down:40%:wrap' in command
+    assert kwargs['input'] and '--prompt=eval> ' in command

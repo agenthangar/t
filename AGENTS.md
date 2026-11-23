@@ -85,6 +85,9 @@ security/command contracts. New tests do not automatically join smoke. Full Linu
 regression and 97% coverage run nightly or by explicit manual request; changed
 paths never escalate routine CI to full validation.
 
+Before opening a design-related PR, run both pinned design checks described in
+[CI validation](docs/ci.md#required-design-adherence) and record their results.
+
 Before publishing, commit the intended work, then run `python3 scripts/local_smoke.py`
 with a Python environment containing `requirements-dev.txt`. This uses the isolated
 local snapshot runner and records the run ID, snapshot and commit privately. The
