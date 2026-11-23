@@ -2913,12 +2913,7 @@ _t_dev() {
         (( saved_rc == 0 )) || return $saved_rc
         local -a owner=("${(@ps:\t:)saved_receipt}")
         (( $#owner == 5 )) || { print -u2 't open: incomplete local session receipt'; return 1; }
-        if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
-          _t_history_owner "${owner[3]#dev-}" "$owner[1]" "$owner[4]" "$owner[2]" attach "$owner[5]" >/dev/null || return 1
-          _t_session_attach "$owner[3]" "$owner[2]" fresh "${owner[5]#*:}"
-        else
-          _t_history_attach "${owner[3]#dev-}" "$owner[1]" "$owner[4]" "$owner[2]" "$owner[5]"
-        fi
+        _t_history_attach "${owner[3]#dev-}" "$owner[1]" "$owner[4]" "$owner[2]" "$owner[5]"
         return $?
       fi
     fi

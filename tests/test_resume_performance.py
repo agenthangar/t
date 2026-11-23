@@ -154,8 +154,8 @@ def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
     assert not list(workspace.parent.glob('.*history-reservation'))
 
 
-@pytest.mark.parametrize('agent', ['codex', 'claude'])
-def test_numbered_open_reopens_local_conversation_without_ssh(lifecycle, agent):
+@pytest.mark.parametrize(('agent', 'detached'), [('codex', '0'), ('claude', '1')])
+def test_numbered_open_reopens_local_conversation_without_ssh(lifecycle, agent, detached):
     base, env = lifecycle
     workspace = saved_source(base, env, agent)
     stopped = _shell(base, env, '_dev_kill_one dev-repo-1 1')
@@ -167,7 +167,7 @@ def test_numbered_open_reopens_local_conversation_without_ssh(lifecycle, agent):
     ssh.chmod(0o755)
     marker = workspace / 'unfinished.txt'
     marker.write_text('keep my edits\n')
-    result = _shell(base, {**env, 'T_MCP_DETACHED': '1'}, 't open repo 1')
+    result = _shell(base, {**env, 'T_MCP_DETACHED': detached}, 't open repo 1')
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (Path(env['HOME']) / 'ssh-attempts').exists()
     assert _shell(base, env, '_dev_session_sid dev-repo-1').stdout.strip() == SID
