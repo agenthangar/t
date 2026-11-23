@@ -345,7 +345,7 @@ def holding(agent, sid, generation):
             if action == 'review':
                 pane_menu = True
                 choices = {
-                    'codex': [('default', 'Current Codex defaults'), ('restricted', 'Read only · ask on request')],
+                    'codex': [('default', 'Current Codex defaults'), ('restricted', 'Read only')],
                     'claude': [('default', 'Current Claude defaults'), ('restricted', 'Plan mode')],
                 }.get(agent, [('default', 'Current native agent defaults')])
                 selection = ui.pick('Launch settings', choices, back_label='back')
