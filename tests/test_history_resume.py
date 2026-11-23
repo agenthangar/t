@@ -1711,6 +1711,7 @@ def test_startup_error_has_no_repair_prompt(app, history, monkeypatch):
 
 
 def test_open_local_slot_honors_cached_remote_writer(app, history, store, git_repo, monkeypatch, t_mod):
+    monkeypatch.setitem(app.cfg.hosts, 'peer', 'peer.invalid')
     path = Path(app.cfg.worktree_root) / 'repo/1'
     row = store.merge(saved_row(app, git_repo, path))
     view = {'hosts': [{'host': 'peer', 'value': {'rows':
