@@ -20,6 +20,19 @@ def make_ui(t, keys, width=80, height=24):
     return ui
 
 
+@pytest.mark.parametrize('width,height', [(80,24), (32,12), (20,8)])
+def test_picker_notice_keeps_focused_choice_visible(t_mod, width, height):
+    ui = make_ui(t_mod, ['down', 'enter'], width, height)
+    rows = [('review', 'Review launch settings'), ('dismiss', 'Dismiss holding pane'), ('detach', 'Detach')]
+    selected = ui.pick('Recovery holding pane', rows, context=[('Agent', 'Codex')],
+                       back_label='detach', notice='Couldn’t check whether this conversation is already open.')
+    assert selected == 'dismiss'
+    for frame in ui.frames:
+        assert any('Couldn’t check' in line for line in frame)
+        assert any('▸' in line for line in frame)
+        assert sum(t_mod._term_rows(line, width) for line in frame) <= height
+
+
 @pytest.mark.parametrize('width,height', [(80,24),(44,20),(32,12)])
 def test_picker_refresh_finishes_without_key_and_retains_focus(t_mod,monkeypatch,width,height):
     ui=make_ui(t_mod,['down'],width,height)

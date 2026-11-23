@@ -635,7 +635,9 @@ _dev_fg_rows() {{ :; }}
     fake.write_text('#!/bin/sh\nprintf "%s\\n" "$TMUX_PANE" "$@" >> "$HOME/resumed"\nsleep 60\n')
     fake.chmod(0o755)
     ssh = bin_dir/'ssh'
-    ssh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/ssh-scans"\necho "simulated SSH timeout" >&2\nexit 255\n')
+    ssh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/ssh-scans"\n'
+                   'if [ -f "$HOME/known-owner" ]; then cat "$HOME/known-owner"; exit 0; fi\n'
+                   'echo "simulated SSH timeout" >&2\nexit 255\n')
     ssh.chmod(0o755)
     config = home/'hosts.zsh'
     config.write_text('REMOTE_HOSTS[offline]=offline.invalid\n')
@@ -671,7 +673,8 @@ _dev_fg_rows() {{ :; }}
         assert tmux('send-keys', '-t', holder[2], *keys).returncode == 0
 
     def wait_for(holder, title):
-        until(lambda: title in tmux('capture-pane', '-p', '-t', holder[2]).stdout)
+        until(lambda: title in tmux('capture-pane', '-p', '-t', holder[2]).stdout,
+              detail=lambda: tmux('capture-pane', '-p', '-t', holder[2]).stdout)
 
     keys(first, 'Enter')
     wait_for(first, 'Launch settings')
@@ -679,6 +682,21 @@ _dev_fg_rows() {{ :; }}
     wait_for(first, 'Review resume')
     scans = home/'ssh-scans'
     scans.write_text('')
+    (home/'known-owner').write_text(f'{first[3]}\t/other/worktree\tdemo-9\tdetached\tactive\tExisting writer\tclaude\n')
+    keys(first, 'Up', 'Enter')
+    wait_for(first, 'This conversation is already open in demo-9 on offline.')
+    failed_frame = tmux('capture-pane', '-p', '-t', first[2]).stdout
+    assert 'Retry' in failed_frame
+    assert 'Traceback' not in failed_frame
+    assert not (home/'resumed').exists()
+    assert tmux('show-options', '-qv', '-t', '='+first[1]+':', '@t_recovery_holding').stdout.strip() == first[3]
+    (home/'known-owner').unlink()
+    keys(first, 'Enter')
+    wait_for(first, 'Launch settings')
+    retry_frame = tmux('capture-pane', '-p', '-t', first[2]).stdout
+    assert 'already open in demo-9' not in retry_frame
+    keys(first, 'Enter')
+    wait_for(first, 'Review resume')
     keys(first, 'Up', 'Enter')
     until(lambda: (home/'resumed').exists(), detail=lambda: tmux('capture-pane', '-p', '-t', first[2]).stdout)
     assert 'offline.invalid' in scans.read_text()
@@ -690,6 +708,18 @@ _dev_fg_rows() {{ :; }}
     monkeypatch.setattr(auto.Runtime, 'live', lambda self: [dict(agent='claude', sid=first[3])])
     auto.Engine().tick()
     assert auto.holding_panes() == [third]
+
+
+def test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics(auto):
+    diagnostics = ('warning: dev: local session scan failed (rc=1)\n'
+                   'warning: dev: peer SSH diagnostic: connection timed out\n'
+                   'warning: t: saved conversation ownership is unknown because a local or configured host scan failed')
+    assert auto.holding_resume_notice(ValueError(diagnostics)) == (
+        'Couldn’t check whether this conversation is already open on this computer. '
+        'Choose Review launch settings to try again.')
+    assert auto.holding_resume_notice(ValueError('warning: dev: peer SSH diagnostic: timeout\n'
+                                                't recovery: workspace changed before recovery')) == (
+        'Couldn’t resume — workspace changed before recovery')
 
 
 def test_supervisor_inflight_and_changed_generation_prevent_second_launch(auto, tmp_path, monkeypatch):

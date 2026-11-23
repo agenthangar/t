@@ -2351,7 +2351,8 @@ Recovery holding panes preserve the original slot when exact launch settings are
 unavailable. They display real tool/model metadata and the recovery reason,
 remain one pane per eligible slot, and open through `t open REPO SLOT`. When you
 review the launch settings and confirm resume, t checks for owners locally and
-on reachable hosts. Detaching leaves the holding pane available.
+on reachable hosts. If resume fails, the holding pane explains the failure.
+Opening launch settings clears that message. Detaching leaves the holding pane available.
 A successful canonical update migrates enabled recovery service registration and
 hooks to the installed source. Status and discovery never start that service.
 
