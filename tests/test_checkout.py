@@ -326,7 +326,9 @@ def test_interactive_offer_creates_profile_then_can_decline_or_apply(t_mod, box,
     assert not (repo / "AGENTS.md").exists()
     monkeypatch.setattr(t_mod, "_confirm", lambda prompt: True)
     assert t_mod._instructions_offer([str(repo)], "ask", "t checkout") == 0
-    assert "## Local preview" in (repo / "AGENTS.md").read_text()
+    seeded = (repo / "AGENTS.md").read_text()
+    assert "## Local preview" in seeded
+    assert "user-facing iteration" in seeded and "nightly CI" in seeded
 
 
 def test_custom_profile_path_and_invalid_template(t_mod, box, tmp_path, monkeypatch, capsys):

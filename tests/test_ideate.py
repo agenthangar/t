@@ -154,6 +154,8 @@ def test_starts_and_resumes_private_native_session(box, tmp_path):
                             [('Next step', b'j\r')])
     assert code == 0, output
     first, resumed = [json.loads(line) for line in Path(env['IDEA_AGENT_LOG']).read_text().splitlines()]
+    assert 'design check under publish/ for my file review' in first['args'][-1]
+    assert all('design check under publish/' not in arg for arg in resumed['args'])
     sid = first['args'][first['args'].index('--session-id') + 1]
     resume_flag = '--resume' if '--resume' in resumed['args'] else '-r'
     assert resumed['args'][resumed['args'].index(resume_flag) + 1] == sid

@@ -1478,6 +1478,11 @@ or `on_request`, and approval accepts `required` or `not_required`. A repository
 may independently contain `"design_system": {"path": "DESIGN.md"}` or `"design_system": {"mode": "off"}`. Omitting this setting inherits the workflow default. Paths are relative
 to the active worktree, never external or generated/dependency locations. Missing
 sources remain stored until explicitly replaced or cleared. No read-time migration occurs.
+Under automatic discovery, the first interface implementation establishes missing
+design guidance, a rendered example, and a reproducible design check. Existing
+interface projects adopt the guidance with their next interface change. The default
+agent instructions run the check before design-related PRs, nightly and at release.
+Users and repositories can select another schedule.
 `pr_review` accepts `review` (Enabled) or `skip` (Disabled); omission means Enabled
 without materializing a stored value on read or an unchanged selection.
 Skipping review retains the saved model-stage selection and reviewer settings.

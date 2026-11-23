@@ -56,7 +56,23 @@ BEHAVIORS = {
         'on_request': ('Only when requested', 'Watch jobs only when explicitly requested or required by the task or repository. Keep pending jobs and their next steps identifiable; never treat a pending, unavailable or timed-out wait as successful validation.'),
     }},
     'design_system': {'label': 'Design system', 'choices': {
-        'auto': ('Automatically', 'For user-facing design, including terminal interfaces, automatically discover repository-owned design guidance in the active worktree. Reuse its components, tokens, styles and interaction patterns in prototypes and implementation. Prefer a safe root DESIGN.md, then a single root design-system.md or design_system.md, then a single discovered source. Discovery considers design documentation, links from agent instructions, and local tokens/components/Storybook; exclude dependencies, generated files and symlinks. If candidates are ambiguous, ask the user to choose; if none exists, report that and offer to draft guidance. Never invent a source or create files automatically. Explicit repository selections override discovery. This preference is independent of previews.'),
+        'auto': ('Automatically', (
+            'For user-facing design, including terminal interfaces, automatically discover repository-owned '
+            'design guidance in the active worktree. Reuse its components, tokens, styles and interaction '
+            'patterns in prototypes and implementation. Prefer a safe root DESIGN.md, then a single root '
+            'design-system.md or design_system.md, then a single discovered source. Discovery considers '
+            'design documentation, links from agent instructions, and local tokens/components/Storybook; '
+            'exclude dependencies, generated files and symlinks. If candidates are ambiguous, ask the user '
+            'to choose. Explicit repository selections override discovery. '
+            'With automatic discovery and no existing source, establish a repository-owned design system '
+            'in the first user-facing iteration. Include it in the first authored commit when that commit '
+            'introduces the interface. For an existing interface without guidance, use the next authorized '
+            'interface change. Link DESIGN.md from repository agent instructions, include a representative '
+            'rendered example, and add a reproducible check for an actual design decision. '
+            'Follow the user’s and repository’s validation schedule. By default run the design check before '
+            'opening a design-related PR, in nightly CI, and as a release gate for the exact release commit '
+            'where the project publishes releases. Workflow preferences govern preview timing and approval.'
+        )),
         'off': ('Off', 'Do not add design-system discovery or a selected design-source instruction from this workflow. Continue following repository and task instructions.'),
         'repo': ('Automatically', 'Compatibility spelling for automatic repository design-system discovery.'),
     }},
