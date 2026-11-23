@@ -2899,6 +2899,30 @@ _t_dev() {
     return $open_rc
   fi
 
+  # A recorded local occupant can reopen from this machine alone. Only a
+  # missing record falls through to the ordinary remote-slot lookup.
+  if [[ $slot == <-> && -z $no_tmux && -z $agent_over && -z ${T_OPEN_RECOVERY_ACTIVE:-} ]] &&
+     _dev_worktree_enabled "$repo" && ! _dev_local_slot_live "$repo" "$slot"; then
+    local saved_path saved_receipt saved_rc=0
+    saved_path=$(_dev_worktree_path "$repo" "$slot") || return 1
+    if [[ -d "$saved_path" ]]; then
+      saved_receipt=$(T_RESUME_OWNER_RECEIPT=1 python3 "$T_HOME/bin/t" __open-local-slot "$repo" "$slot" "$saved_path") || saved_rc=$?
+      if (( saved_rc != 3 )); then
+        _T_OPEN_FAILED_REPO=
+        (( saved_rc == 0 )) || return $saved_rc
+        local -a owner=("${(@ps:\t:)saved_receipt}")
+        (( $#owner == 5 )) || { print -u2 't open: incomplete local session receipt'; return 1; }
+        if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+          _t_history_owner "${owner[3]#dev-}" "$owner[1]" "$owner[4]" "$owner[2]" attach "$owner[5]" >/dev/null || return 1
+          _t_session_attach "$owner[3]" "$owner[2]" fresh "${owner[5]#*:}"
+        else
+          _t_history_attach "${owner[3]#dev-}" "$owner[1]" "$owner[4]" "$owner[2]" "$owner[5]"
+        fi
+        return $?
+      fi
+    fi
+  fi
+
   # Remote-aware open (auto half): <repo> is a valid key now (cwd-defaulted if bare) and
   # fg adoption already returned, so a slot that is NOT live HERE but IS live on a
   # $REMOTE_HOSTS host gets attached IN PLACE there (host inferred) — a live LOCAL slot

@@ -736,6 +736,7 @@
         "tests/test_offline_open.py::test_fresh_cli_open_with_offline_host",
         "tests/test_offline_open.py::test_interactive_numbered_open_on_incomplete_scan_uses_resume_picker",
         "tests/test_offline_open.py::test_open_fallback_picker_offers_only_stopped_history",
+        "tests/test_resume_performance.py::test_numbered_open_reopens_local_conversation_without_ssh",
         "tests/test_native_agent_shell.py::test_native_agent_generated_commands_execute_with_quoted_arguments",
         "tests/test_agent_seam.py::test_zsh_foreground_uses_native_agent_outside_path",
         "tests/test_agent_seam.py::test_session_startup_is_quiet_and_logged",

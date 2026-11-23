@@ -152,3 +152,25 @@ def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
             launches = (base / 'agents.log').read_text().splitlines()
             assert len(launches) == 2 and str(target) in launches[-1] and SID in launches[-1]
     assert not list(workspace.parent.glob('.*history-reservation'))
+
+
+@pytest.mark.parametrize('agent', ['codex', 'claude'])
+def test_numbered_open_reopens_local_conversation_without_ssh(lifecycle, agent):
+    base, env = lifecycle
+    workspace = saved_source(base, env, agent)
+    stopped = _shell(base, env, '_dev_kill_one dev-repo-1 1')
+    assert stopped.returncode == 0, stopped.stderr
+    with (base / 'config/t/local.zsh').open('a') as config:
+        config.write('REMOTE_HOSTS[offline]=offline.invalid\n')
+    ssh = base / 'bin/ssh'
+    ssh.write_text('#!/bin/sh\necho "$*" >> "$HOME/ssh-attempts"\nexit 255\n')
+    ssh.chmod(0o755)
+    marker = workspace / 'unfinished.txt'
+    marker.write_text('keep my edits\n')
+    result = _shell(base, {**env, 'T_MCP_DETACHED': '1'}, 't open repo 1')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (Path(env['HOME']) / 'ssh-attempts').exists()
+    assert _shell(base, env, '_dev_session_sid dev-repo-1').stdout.strip() == SID
+    launches = (base / 'agents.log').read_text().splitlines()
+    assert len(launches) == 2 and all(SID in line for line in launches)
+    assert marker.read_text() == 'keep my edits\n'

@@ -74,6 +74,11 @@ ancestry and workspace; clear its attachable state on selection, retry or cancel
 Keep the one-step ready-model selection and existing retry/cancel actions.
 This is terminal readiness only; saved-conversation writer checks remain strict.
 
+A numbered open with automatic agent selection first reopens a uniquely recorded local
+conversation in its verified worktree. Local writer checks and cached evidence of a
+remote owner protect the launch without a peer scan. For example, `t open api 3`
+reopens the original conversation after the local terminal has exited.
+
 When a peer is unreachable, an interactive numbered open with automatic host
 and agent selection opens the same slot's saved-conversation picker for an
 isolated repository. The automatic open still attaches any reachable owner it
