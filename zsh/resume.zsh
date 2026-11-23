@@ -32,6 +32,17 @@ _t_resume_host_check() {
   return 1
 }
 
+# Attach a live selection with its exact conversation and owning cwd.
+_t_resume_live_attach() {
+  local host=$1; shift
+  if [[ $host == here ]]; then
+    _t_history_attach "$@"
+  else
+    local remote_command="_t_history_attach ${(j: :)${(@q)@}}"
+    ssh -t "${REMOTE_HOSTS[$host]:-$host}" "zsh -lic ${(q)remote_command}"
+  fi
+}
+
 _t_resume_rsync() { rsync "$@" 2>/dev/null; }
 
 _t_resume_on_host() {
@@ -981,7 +992,7 @@ _t_resume() {
         continue
       elif [[ $mp_loc == here ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
-        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-$'\t'"$sid"$'\t'"${live_sid_cwd[$sid]:-$wt}"$'\t'"$mp_agent")
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
         continue
       elif [[ $mp_loc == app:* ]]; then
@@ -989,7 +1000,7 @@ _t_resume() {
         return 1
       elif [[ -n $mp_loc && $mp_loc != - ]]; then
         [[ -n ${f[8]:-} && $f[8] != - ]] && repo=$f[8]
-        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-)
+        mp_live+=("$mp_loc"$'\t'"$repo"$'\t'"$slot"$'\t'-$'\t'"$sid"$'\t'"${live_sid_cwd[$sid]:-$wt}"$'\t'"$mp_agent")
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --host ${(q)mp_loc}")
         continue
       fi
@@ -1087,6 +1098,9 @@ _t_resume() {
         here)     mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --local" ;;
         *)        mp_live_cmd="t open ${(q)mp_live_repo} ${(q)mp_live_slot} --cli --host ${(q)mp_live_loc}" ;;
       esac
+      if [[ -n ${mp_live_fields[5]:-} && $mp_live_fields[5] != - ]]; then
+        mp_live_cmd="source ${(q)T_HOME}/t.plugin.zsh; _t_resume_live_attach ${(q)mp_live_loc} ${(q)mp_live_repo}-${(q)mp_live_slot} ${(q)mp_live_fields[5]} ${(q)mp_live_fields[6]} ${(q)mp_live_fields[7]}"
+      fi
       _dev_open_tab "$mp_live_cmd" || {
         _t_resume_batch_stop 1 'terminal tabs' 't session resume' 'could not open selected owner tabs' 0 "${mp_ready[@]}"
         return 1
@@ -1096,6 +1110,10 @@ _t_resume() {
       mp_live_fields=("${(@ps:\t:)mp_live_first}")
       mp_live_loc=$mp_live_fields[1]; mp_live_repo=$mp_live_fields[2]
       mp_live_slot=$mp_live_fields[3]; mp_live_alias=$mp_live_fields[4]
+      if [[ -n ${mp_live_fields[5]:-} && $mp_live_fields[5] != - ]]; then
+        _t_resume_live_attach "$mp_live_loc" "$mp_live_repo-$mp_live_slot" "${mp_live_fields[@]:4}"
+        return
+      fi
       case $mp_live_loc in
         fg:here)  _dev_open_fg "$mp_live_alias" ;;
         fg:*)     _dev_remote_open "${mp_live_loc#fg:}" "$mp_live_alias" --cli ;;
@@ -1191,6 +1209,10 @@ _t_resume() {
     fi
     return
   elif [[ -n $loc && $loc != - ]]; then
+    if [[ -n $sid && $sid != - ]]; then
+      _t_resume_live_attach "$loc" "$lalias-$slot" "$sid" "${live_sid_cwd[$sid]:-$wt}" "$agent"
+      return
+    fi
     _dev_remote_attach "$loc"$'\t'"$lalias"$'\t'"$slot" ""
     return
   fi

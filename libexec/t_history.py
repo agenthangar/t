@@ -1979,6 +1979,13 @@ class HistoryCommand:
         newest = max((stamp for stamp, _ in evidence), default=None)
         return {identity for stamp, identity in evidence if stamp == newest}
 
+    def shares_git_directory(self, alias, path):
+        def common(directory):
+            return run(['git', '-C', str(directory), 'rev-parse', '--path-format=absolute',
+                        '--git-common-dir'], optional=True).strip()
+        source = common(path)
+        return bool(source) and os.path.realpath(source) == os.path.realpath(common(self.cfg.repos[alias]))
+
     def original_workspace(self, alias, row, owners):
         """Return the current tip only for the selected, continuously owned worktree."""
         association, recorded = self.revision(row)
@@ -2008,10 +2015,7 @@ class HistoryCommand:
         git = lambda *argv: run(['git', '-C', str(path), *argv], optional=True).strip()
         if os.path.realpath(git('rev-parse', '--show-toplevel')) != os.path.realpath(path):
             return '', 'The original worktree root has changed.'
-        common = git('rev-parse', '--path-format=absolute', '--git-common-dir')
-        registered = run(['git', '-C', self.cfg.repos[alias], 'rev-parse', '--path-format=absolute',
-                          '--git-common-dir'], optional=True).strip()
-        if not common or os.path.realpath(common) != os.path.realpath(registered):
+        if not self.shares_git_directory(alias, path):
             return '', 'The historical workspace belongs to a different checkout.'
         head = git('rev-parse', 'HEAD')
         if (git('branch', '--show-current') != association.get('branch') or not recorded
@@ -2373,7 +2377,8 @@ class HistoryCommand:
             source_path = Path(association.get('workspace') or '/')
             repo_name = Path(self.cfg.repos[alias]).name
             slot_root = Path(self.cfg.worktree_root) / repo_name
-            retired_slot = association.get('host') == 'local' and source_path.parent == slot_root
+            retired_slot = (association.get('host') == 'local' and source_path.parent == slot_root
+                            and self.shares_git_directory(alias, source_path))
             if same_source and (row.get('_transfer') or not retired_slot):
                 revision = self.reconcile_source(alias, row) or revision
         elif (prepare_only or row['agent'] != 'codex' or revision != fresh[0]

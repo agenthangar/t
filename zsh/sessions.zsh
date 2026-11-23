@@ -2608,6 +2608,10 @@ _t_history_attach() {
   local immutable agent=$4
   immutable=$(_t_history_owner "$1" "$2" "$3" "$4" attach "${5:-}") || return $?
   immutable=${immutable%%:*}
+  if [[ ${T_MCP_DETACHED:-0} == 1 ]]; then
+    _t_session_attach "dev-$1" "$agent" fresh "$immutable:"
+    return
+  fi
   _t_discovery_event local --activity
   _dev_workflow_attach "$agent"
   _t_terminal_close_install "dev-$1"
