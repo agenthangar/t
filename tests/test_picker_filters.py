@@ -122,7 +122,7 @@ def test_every_filter_key_survives_long_values(filters, width, profile):
         assert ('^' if width <= 40 else 'Ctrl-') + letter in text
     assert '17 hidden' in text and text.count('Filters ON') == 1
     assert 'Sort:' in text
-    assert len(text.splitlines()) <= (10 if width <= 40 else 19)
+    assert sum(bool(line) for line in text.splitlines()) <= (10 if width <= 40 else 19)
 
 
 @pytest.mark.parametrize('width', [28, 32, 68])
@@ -133,7 +133,7 @@ def test_open_header_keeps_every_column_shortcut_visible(filters, width):
     assert ('^F' if width <= 40 else 'Ctrl-F toggle') in text
     assert 'Filters ON' in text and '17 hidden' in text
     assert ('^G' if width <= 40 else 'Ctrl-G') in text
-    assert len(text.splitlines()) <= (10 if width <= 40 else 19)
+    assert sum(bool(line) for line in text.splitlines()) <= (10 if width <= 40 else 19)
 
 
 def test_open_exclusive_views_combine_column_choices_and_clear(filters, tmp_path, monkeypatch):

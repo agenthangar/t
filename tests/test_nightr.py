@@ -528,3 +528,40 @@ def test_invalid_lock_owner_prevents_install(apps, monkeypatch, capsys):
     request.yes = True
     assert apps["command"](request) == 1
     assert "invalid Nightr integration lock" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('existing', [False, True])
+def test_nightr_install_review_cancel_uses_real_rail(apps, t_mod, monkeypatch, width, height, existing):
+    from test_share_ui import fake_api
+    api, rail = fake_api(t_mod, width, height, keys=('down', 'enter'))
+    monkeypatch.setattr(apps['sys'], 'platform', 'darwin')
+    monkeypatch.setattr(apps['sys'].stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(apps['sys'].stdout, 'isatty', lambda: True)
+    patch(apps, monkeypatch, installed=lambda: '0.1.0' if existing else None,
+          install=lambda: pytest.fail('cancel must not install'))
+    assert apps['command'](args(), rail) == 130
+    frame = rail.instances[-1]
+    visible = '\n'.join(line for lines in frame.frames for line in lines)
+    assert 'Nightr' in visible and 'Cancel' in visible
+    if existing and width >= 44:
+        assert 'existing' in visible
+    assert all(t_mod._vis_len(line) <= width for lines in frame.frames for line in lines)
+    assert frame.raw_count == frame.restore_count == 1
+    assert not apps['state_path']().exists()
+
+
+@pytest.mark.parametrize('machine', [False, True])
+def test_nightr_status_public_route_is_static(apps, t_mod, monkeypatch, capsys, machine):
+    patch(apps, monkeypatch, installed=lambda: '0.1.0',
+          package=lambda *_: pytest.fail('status must not acquire packages'))
+    monkeypatch.setattr(t_mod, '_nightr_module', lambda: apps)
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: pytest.fail('status must not open a picker'))
+    words = ['system', 'apps', 'status', 'nightr'] + (['--json'] if machine else [])
+    assert t_mod.cmd_apps(SimpleNamespace(), t_mod.build_parser().parse_args(words)) == 0
+    output = capsys.readouterr().out
+    if machine:
+        assert json.loads(output)['version'] == '0.1.0'
+    else:
+        assert 'Nightr: 0.1.0' in output
+    assert not apps['state_path']().exists()

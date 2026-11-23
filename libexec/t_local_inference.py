@@ -508,7 +508,7 @@ def detail_lines(row):
              f"Memory fit {'✓' if row['fit'] is True else '✕' if row['fit'] is False else '?'} · {row['reason']}",
              f"Download: {row['bytes']/1e9:.1f} GB · Runtime estimate: {row.get('memory_bytes', 0)/1e9:.1f} GB",
              f"Context capacity: {row.get('context_tokens', 32768)}; estimated runtime overhead and OS headroom included.",
-             'Readiness: ' + ('Verified' if row.get('ready') else 'Downloaded; inference unverified' if row['installed'] else 'Not installed')]
+             'State: ' + model_status(row)]
     if row.get('revision'):
         lines.append('Artifact revision: ' + row['revision'])
     if row.get('source'):
@@ -527,11 +527,11 @@ def detail_lines(row):
 
 
 def model_status(row):
-    if row.get('ready'):
-        return 'Ready'
-    if row.get('verification_error'):
-        return 'Verification failed'
-    return 'Downloaded · not verified' if row['installed'] else 'Not downloaded'
+    display = helper('t_model_display')
+    state = display['MODEL_STATES'][display['model_state'](row)]['label']
+    if row.get('verification_error') and not row.get('ready'):
+        state += ' · verification failed'
+    return state
 
 
 def model_page(ui, title, lines):

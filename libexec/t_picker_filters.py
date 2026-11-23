@@ -141,7 +141,8 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
            filters_expanded=False, hidden_info=False, attached_results=False, legend=''):
     if profile == 'list':
         return list_header(filters, hidden, columns, width, sort, color)
-    short = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14
+    height = int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24')
+    short = height <= 14
     compact = width <= 40 or short
     if profile == 'resume':
         return resume_header(mask, filters, hidden, columns, width, sort, enabled, color,
@@ -184,7 +185,9 @@ def header(profile, mask, filters, hidden, columns, width, sort='turn', enabled=
         'actions': hotkeys, 'columns': [style(clip_columns(columns, column_width))] if columns else [],
     }
     breaks = PICKER_BREAK_PRIORITY if status else PICKER_BREAK_PRIORITY[1:]
-    return '\n'.join(picker_section_rows(sections, short=compact, breaks=breaks)) + '\n'
+    # Reserve space for the query, counter and results before adding group breaks.
+    rows = picker_section_rows(sections, short=short, breaks=breaks, budget=height - 5, optional=())
+    return '\n'.join(rows) + '\n'
 
 
 def resume_controls(mask, filters, width, sort, enabled, color, hide_merged,

@@ -106,6 +106,11 @@ Enter, Esc, Tab, and Ctrl-B appear in the resume result shortcut row.
 
 ### Model library reference
 
+The workflow model chooser prioritizes models that can be prepared, then ready
+and downloaded models. It keeps blocked candidates available for inspection and
+explains why a candidate cannot be used. It shares the catalog’s state and memory
+markers and their meanings.
+
 The full catalog starts alphabetically. Sorting is optional. Known memory
 nonfits are hidden initially, and unknown fits remain visible. The model
 summaries omit “All models,” “Snapshot order,” and long descriptions of

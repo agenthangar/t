@@ -1203,3 +1203,18 @@ def test_shared_resume_reference_real_picker_spacing_and_marks(picker):
     keys.resize(44, 20)
     wait('Edit filters')
     assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('profile', ['public-open-all', 'public-kill'])
+def test_narrow_tall_picker_separates_filters_and_sort(picker, profile):
+    start, wait, keys, finish = picker
+    start(profile=profile, width=38, height=36)
+    frame = wait('2/2 (0)', ordered=('Filters ON', 'Sort:'))
+    lines = frame.splitlines()
+    sort_row = next(index for index, line in enumerate(lines) if 'Sort:' in line)
+    assert not lines[sort_row - 1].strip(' │┃'), frame
+    assert 'hidden' in lines[sort_row - 2] and '▸' in frame
+    keys('C-y')
+    wait('Sort: repo')
+    assert finish('Escape', status=130) == []

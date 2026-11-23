@@ -54,3 +54,18 @@ def test_design_job_is_required_on_both_pinned_fzf_versions():
     assert 'node tests/picker_preview.cjs' in script
     assert 'if: always()' in job
     assert 'design-adherence' in source.split('  ci:\n')[1]
+
+
+@pytest.mark.parametrize('section,route', [('entrypoints', 'bare_t'), ('standalone_commands', 'nosleep')])
+def test_noncommand_entrypoints_require_layout_coverage(section, route):
+    inventory, contract = documents()
+    del inventory[section][route]['layout']
+    with pytest.raises(ValueError, match='layout'):
+        check.validate(inventory, contract)
+
+
+def test_interactive_eval_cannot_inherit_static_layout():
+    inventory, contract = documents()
+    inventory['commands']['eval runs list']['modes']['interactive_picker']['layout'] = 'inherit'
+    with pytest.raises(ValueError, match='interactive selection'):
+        check.validate(inventory, contract)
