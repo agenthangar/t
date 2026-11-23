@@ -1609,7 +1609,10 @@ class HistoryCommand:
         row = bind_workspace(rows[0], slot, path, 'local')
         row['sources'] = [s for s in row['sources'] if s.get('host') == 'local']
         self.local_open = True
-        receipt = self.resume(alias, row, detached=True)
+        try:
+            receipt = self.resume(alias, row, detached=True)
+        finally:
+            self.local_open = False
         return f'{sid}\t{agent}\t{receipt}'
 
     def owners(self, all_hosts=False):

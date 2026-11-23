@@ -2901,7 +2901,8 @@ _t_dev() {
 
   # A recorded local occupant can reopen from this machine alone. Only a
   # missing record falls through to the ordinary remote-slot lookup.
-  if [[ $slot == <-> && -z $no_tmux && -z $agent_over && -z ${T_OPEN_RECOVERY_ACTIVE:-} ]] &&
+  if [[ $slot == <-> && -z $no_tmux && -z $agent_over && -z $local_only &&
+        -z ${T_OPEN_RECOVERY_ACTIVE:-} ]] && (( ! ${pos[(Ie)new]} )) &&
      _dev_worktree_enabled "$repo" && ! _dev_local_slot_live "$repo" "$slot"; then
     local saved_path saved_receipt saved_rc=0
     saved_path=$(_dev_worktree_path "$repo" "$slot") || return 1
