@@ -74,7 +74,14 @@ ancestry and workspace; clear its attachable state on selection, retry or cancel
 Keep the one-step ready-model selection and existing retry/cancel actions.
 This is terminal readiness only; saved-conversation writer checks remain strict.
 
-Failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
+When a peer is unreachable, an interactive numbered open with automatic host
+and agent selection opens the same slot's saved-conversation picker for an
+isolated repository. The automatic open still attaches any reachable owner it
+resolved for the slot. The picker uses the usual saved-resume checks on selection.
+Cancellation and failed selection
+return directly without creating a blank session or entering open repair.
+
+Other failed numbered opens offer **Repair / Cancel** through the shared rail. Repair
 refreshes discovery and retries, or revives a verified exited pane. If it fails,
 offer **Force open / Cancel**. Keep the reason brief and identify any live client
 that force open will stop. Cancel returns 130 and stops remaining batch actions.

@@ -13926,7 +13926,10 @@ OPENING DEFAULTS
   guarded resume/restart.
 
 RECOVERY
-  When a numbered open fails in a terminal, choose Repair or Cancel.
+  If a peer is unreachable and a numbered open cannot verify remote ownership,
+  choose a saved conversation for that slot in the resume picker. This path
+  requires a terminal, an isolated worktree, and automatic host and agent selection.
+  Other numbered open failures in a terminal offer Repair or Cancel.
   Repair retains an explicit --codex or --claude choice. Unresolved native
   writers get a bounded 30-second wait to publish their worktree metadata;
   healthy ownership checks do not wait. Expiry never bypasses ownership.

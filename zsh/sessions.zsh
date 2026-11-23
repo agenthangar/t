@@ -2913,6 +2913,16 @@ _t_dev() {
     (( resolve_rc == 130 )) && return 130   # cancellation must not start a fresh slot
     if (( resolve_rc != 0 && resolve_rc != 1 )); then
       if (( resolve_rc == 3 )); then
+        if [[ $slot == <-> && -z $agent_over && -z ${T_OPEN_RECOVERY_ACTIVE:-} &&
+              ${T_MCP_DETACHED:-0} != 1 && -t 0 && -t 1 && -t 2 ]] &&
+           _dev_worktree_enabled "$repo" && command -v fzf >/dev/null 2>&1; then
+          resolve_rc=0
+          _T_OPEN_SAVED_ONLY=1 _t_resume "$repo" "$slot" --cli || resolve_rc=$?
+          # Resume already handled selection and recovery. A failed or canceled
+          # selection must never fall through to the open repair or fresh launch.
+          _T_OPEN_FAILED_REPO=
+          return $resolve_rc
+        fi
         print -u2 -- 't open: remote ownership is unknown; no local session was started. Retry when configured hosts are reachable.'
         if [[ $slot == <-> ]]; then
           print -u2 -r -- "Use t session resume ${(q)repo} $slot to select a saved conversation."
