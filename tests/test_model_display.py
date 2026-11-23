@@ -65,3 +65,25 @@ def test_extreme_width_and_monitor_evidence(display):
     benchmarks=display['benchmark_summaries']()
     assert 'swe-bench-pro 61.7' in benchmarks['mlx-community/Qwen3.8-27B-8bit']
     assert benchmarks['mlx-community/Qwen3.5-122B-A10B-4bit']=='Benchmark unavailable'
+
+
+def test_local_model_reference_states_and_memory_match_rows_and_legend(display):
+    data = [
+        dict(model='fixture/available', fit=False),
+        dict(model='fixture/downloaded', fit=None, installed=True),
+        dict(model='fixture/verified', fit=True, installed=True, verified=True),
+        dict(model='fixture/ready', fit=True, installed=True, verified=True, ready=True,
+             benchmarks={'swe-bench-pro': {'score': 60}, 'gpqa': {'score': 90},
+                         'terminal-bench': {'score': 30}}),
+    ]
+    records = display['local_models'](data, 'swe-bench-pro')
+    assert [row['ready'] for row in records] == ['○', '↓', '◇', '●']
+    header, rows = display['table'](records, 120, color=True, focus=data[0]['model'])
+    assert all(name in header for name in ('SWE PRO', 'GPQA', 'TERMINAL'))
+    assert header.index('ST') < header.index('MODEL') < header.index('MEM')
+    assert '\033[91m✕\033[97m' in rows[data[0]['model']]
+    assert '\033[90m?\033[39m' in rows[data[1]['model']]
+    assert '\033[92m✓\033[39m' in rows[data[2]['model']]
+    legend = '\n'.join(display['legend'](records, 'swe-bench-pro', color=True))
+    assert '\033[91m✕\033[39m blocked' in legend
+    assert legend.index('State') < legend.index('Memory')

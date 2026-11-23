@@ -4,6 +4,13 @@ This is the repository's terminal design system, indexed by [DESIGN.md](../DESIG
 
 ## Planning previews
 
+The [approved HTML picker reference](previews/picker.html) and running
+`t resume` define the picker structure and keyboard behavior. Generate the
+self-contained reference with `python3 scripts/preview_picker.py --output PATH`.
+The [picker design rules](../DESIGN.md#picker-design-reference) specify the
+exact section spacing, marker gutters, and model-library variants.
+
+
 When a workflow or task calls for a planning preview, use a local interactive HTML
 prototype to demonstrate the proposed command flow before application changes.
 Follow this terminal contract: shared layout, focus, keyboard controls, spacing,
@@ -320,8 +327,8 @@ showing the next action and keys. Focus and marks must remain distinguishable
 without color. Headings are cyan, hints muted, and focused text light on dark cyan.
 Keep the green checkmark in its own gutter beside the pointer, with spaces between
 status icons inside rows. Give controls and results a blank separating row when
-height permits. Session pickers list HOTKEYS above FILTERS, except filtered resume
-places unheaded result hotkeys beside the rows. Use readable shortcuts
+height permits. Open, close, and resume place result shortcuts beside the rows.
+History keeps its separate pagination controls. Use readable shortcuts
 and bright underlined labels for the current filter On/Off state, resume sort, and
 merged-session toggle when enabled. Session lists highlight selected column filters
 and the current sort key. Plain output retains explicit state text.
@@ -1123,8 +1130,9 @@ attached sessions or returns to the saved-only default. Return attaches to an
 existing terminal session when one is selected. The current sort and its actions
 use the same summary and action layout as filters.
 
-Leave blank rows between the full header sections, before the result hotkeys,
-and before the columns. The legend follows the table order: Status, PRs, Agent.
+Leave one blank row between refresh, filters, sort, legend, result shortcuts,
+and column headings. The first result follows the headings immediately. Reclaim
+these blank rows first on short screens. The legend follows the table order: Status, PRs, Agent.
 Status icons identify attached (●), last closed (↶), work in progress (↻), and
 a verified preview deployment (↗). Tab marks action targets with fzf’s green ✓.
 Matching legend entries and row icons use the same colors. The AGENT column

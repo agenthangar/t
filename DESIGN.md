@@ -37,42 +37,106 @@ review and cancellation behave as shown. Follow the
 [planning preview contract](ui/README.md#planning-previews) when a workflow
 calls for a planning prototype.
 
-## Picker filters and sorting
+## Vertical spacing
 
-Interactive session filtering and sorting use the existing picker hotkeys.
-For `t open` and `t resume`, extend those controls and preserve every existing
-filter and sort choice. Ctrl-F toggles filters, Ctrl-X resets filters, Ctrl-S
-toggles sorting, and Ctrl-Y cycles sort choices; use native Mac labels when appropriate.
-Slot history retains its pagination keys and uses Ctrl-S/Ctrl-Y for sorting.
-Reuse the shared control styles and two-space table gutters. Keep the focused
-result visible in short terminals.
-In the resume picker, place the green Ctrl-U refresh action beside the refresh
-status. Use bright cyan for an active refresh, then show the previous refresh
-time and per-host outcomes on separate rows when space permits. Use a green ✓
-for current hosts, a red × for failed connections, and amber for their reasons.
-Keep the hidden count beside the result count. Show the applied filters and
-their shortcuts together, with Alt-F (⌥F on macOS) on its own line to reveal the
-filter editor. Present the current sort and its shortcuts using the same
-summary and action layout. In the full header, leave blank rows before filters,
-sort, the legend, the result hotkeys, and the columns. Compact layouts may
-shorten these breaks to keep a focused result visible.
+Use spacing to show which controls belong together. Keep a label and its short
+description or current value on the same line when there is room. If the text
+wraps, put it on the next line without a blank row. Keep related controls and
+table rows contiguous.
 
-Order the legend by table column: Status, PRs, Agent. Within Status, use the
-row order for attached (●), last closed (↶), work in progress (↻), and verified
-preview (↗). Use matching colors in the legend and rows. The green fzf check
-marks selected rows. Align PR state icons in fixed positions within PRS, and
-keep the font-independent agent symbols in their own column. Keep STATUS fixed while headings
-and rows pan together. Highlight Return or Enter, Esc, and Tab, and put
-Ctrl-B for the last verified close on the result hotkey row.
-Do not interpret requests to improve picker filtering or sorting as requests for
-new CLI flags unless the user explicitly asks for flags or noninteractive control.
+Give each distinct group one blank terminal row of separation at normal height.
+Apply this between picker controls, the legend, the result shortcuts and the
+table. In settings lists, use one blank row before a collection-level action
+such as **Add custom stage**. Count that row once when it also ends a group.
+Use the terminal line height for this spacing in HTML previews.
 
-The resume table has a horizontal viewport. Over the table, ordinary wheel-up
-pans left and wheel-down pans right; horizontal wheels follow their direction.
-Keep the query, controls and selection gutter fixed while headings and data move
-together. Show `<` and `>` only at edges with hidden content. Panning preserves
-query editing, focused identity and marks, and search includes offscreen text.
-Wheel events over controls or details retain their native behavior.
+Base vertical spacing on available height. A narrow terminal wraps labels and
+values while keeping group breaks if there is room. On short terminals, reduce
+these gaps first so the focused row, its context and primary shortcuts remain
+visible together.
+
+## Picker design reference
+
+Use the running `t resume` and the [interactive HTML reference](ui/previews/picker.html)
+for the full picker layout. Generate the standalone reference from this checkout:
+
+```sh
+python3 scripts/preview_picker.py --output /tmp/t-picker.html
+```
+
+Open the generated file for the model library or add `?view=resume` for the
+matching resume fixture. The preview bundles public catalog metadata and synthetic
+session, installation, and verification state. Native captures and the browser
+resume example use the same fixture and render their controls from the same
+Python functions. Keep scenario selection outside the terminal frame.
+
+Start with the query, count, and refresh row. Follow with the filter summary
+and editor, sort summary and shortcuts, legend, result shortcuts, column
+headings, and results in that order. In the full layout, leave exactly one blank
+row between refresh and filters, filters and sort, sort and legend, legend and
+result shortcuts, and shortcuts and columns. Keep headings immediately above the first result and keep
+individual rows contiguous. Omit a section's dedicated gap when the section is
+absent. Use one terminal line height for each full-size gap in HTML. On a short
+screen, give space back in the resume renderer's priority order before dropping
+useful controls. Narrow widths wrap within a section while keeping its breaks
+when height permits.
+
+Put the green Ctrl-U refresh action next to refresh status in resume. Active
+refresh uses bright cyan. Where there is room, show the previous refresh time
+and host outcomes. Current hosts use a green ✓, failed connections a red ×,
+and failure reasons amber. Retain a legacy result-count fallback for older fzf.
+
+Place active filter values and their shortcuts on a summary row. Alt-F opens the
+inline editor in resume and the model reference. Ctrl-F pauses and restores
+filters, Ctrl-X resets filters, Ctrl-S pauses and resumes sorting, and Ctrl-Y
+cycles sort choices. Preserve query, focus, and applicable marks through
+disclosure and resizing. Keep existing picker-specific hotkeys and pagination.
+Use macOS key labels on macOS and the compact labels when space is tight.
+Each picker supplies the facets, sort choices, and actions that apply to it.
+
+Order the legend by table column and use matching glyphs, colors, and meanings
+in rows. In resume, the groups are Status, PRs, and Agent. Status shows attached
+(●), last verified close (↶), work in progress (↻), and verified preview (↗).
+Keep the focus pointer, selection ✓, and status markers in distinct cells.
+Keep columns aligned when sorting and filtering. On horizontal scroll, headings
+and values move together while the query, controls, and marker gutter stay fixed.
+Over the table, wheel up pans left and wheel down pans right. Show `<` and `>`
+only where content is hidden. Search still matches offscreen text. Return or
+Enter, Esc, Tab, and Ctrl-B appear in the resume result shortcut row.
+
+### Model library reference
+
+The full catalog starts alphabetically. Sorting is optional. Known memory
+nonfits are hidden initially, and unknown fits remain visible. The model
+summaries omit “All models,” “Snapshot order,” and long descriptions of
+active filters. Keep Install and Verify in the result shortcuts and keep
+the main listing focused on model data.
+
+The state marker distinguishes Available (○), Downloaded (↓), Verified (◇),
+and Ready (●). Verified represents a past successful check for that artifact
+and runtime. Ready requires valid evidence for the current settings. The
+memory column shows only ✓ fits (green), ✕ blocked (red), or ? unknown (muted).
+Use matching colors in the legend and review. Give each available benchmark
+its own column and retain its provenance. Missing scores render as a dash.
+
+In install and verification review, show the model, runtime, memory, size,
+state, and applicable plan. Start on the primary action using the displayed
+runtime. Offer Change runtime only for another eligible choice. With blocked
+memory, show the reason and omit the install action. Keep a blank row below
+Back. Review actions omit Details, Load this pair, and Use as default.
+Success shows Ready for offline use, the exact model, its runtime, and the
+return action. Failure shows the reason, retained files when applicable,
+and Retry when available. The standalone examples cover all model and memory
+states, runtime choices, and both outcomes.
+
+### Managed session statusline
+
+Use the two-row managed tmux layout. The first row carries session identity,
+conversation title, and the Priority control. The second carries workflow
+stages and models, with the active stage styling on the stage/model pair.
+In workflow settings, show Standard and Priority swatches once next to the
+stage name. Preserve user bindings, custom status content, and pane style
+attributes. See the [workflow appearance contract](ui/README.md#workflow-settings-and-resets).
 
 ## Required design adherence CI
 
@@ -98,7 +162,7 @@ Use [selective visual validation](docs/validation.md) to choose captures during
 iteration while retaining every project-required rendered check at delivery.
 
 Open picker actions include Ctrl-N for a fresh local session. Keep native key
-labels, `Tab ✓` spacing, the full HOTKEYS/filter/sort grouping, and a filled
-current Filters ON and Sort label. Do not add a selectable fake session row for
+labels, `Tab ✓` spacing, and the filled Filters ON and Sort labels. Place
+result shortcuts below the filter and sort controls. Do not add a selectable fake session row for
 New. Show the status legend in the bottom footer where supported; older fzf
 keeps a compact header legend and short terminals prioritize rows and controls.

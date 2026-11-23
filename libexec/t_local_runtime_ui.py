@@ -305,8 +305,11 @@ def run_model_action(ui, operation, model, preflight=False):
         page(ui, 'Model action failed', [result.get('runtime_error') or result['error'], 'Downloaded files and previous verification evidence are retained.'])
         return None
     value = result.get('value', {})
-    page(ui, 'Model test complete', ['Ready · test response succeeded.' if value.get('ready') else
-                                   'Speed measurement saved.' if value.get('median') else 'Files downloaded.'])
+    if value.get('ready'):
+        provider = value.get('provider')
+        page(ui, 'Ready for offline use', [model, 'Runtime   ' + provider] if provider else [model])
+    else:
+        page(ui, 'Model test complete', ['Speed measurement saved.' if value.get('median') else 'Files downloaded.'])
     return value
 
 

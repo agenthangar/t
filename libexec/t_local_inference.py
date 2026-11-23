@@ -216,7 +216,8 @@ def report(row, machine, context=32768, provider='lmstudio'):
     if row.get('special_runtime') and fit is True and not verified:
         fit = None
     result.update(context_tokens=context, memory_bytes=memory, fit=fit, installed=bool(installed),
-                  ready=bool(verified and fit is True), verification_allowed=memory_fit is True,
+                  ready=bool(verified and fit is True), verified=bool(evidence.get('verified_context', 0)),
+                  verification_allowed=memory_fit is True,
                   revision=installed.get('revision'),
                   verification_error=evidence.get('verification_error'),
                   reason='Runtime verification required for memory-mapped weights' if row.get('special_runtime') and fit is None else
@@ -460,8 +461,9 @@ def catalogue(suite='swe-bench-pro', context=32768):
             row['reason'] = 'estimated fit' if row['fit'] else 'memory estimate exceeds budget' if row['fit'] is False else 'accelerator capacity unknown'
         try:
             evidence = json.loads(measurement_path(row['model']).with_suffix('.ready.json').read_text())
-            row['ready'] = bool(row['installed'] and evidence.get('revision') == ollama_revision(row['model']) and
-                evidence.get('context_tokens', 0) >= context and
+            row['verified'] = bool(row['installed'] and evidence.get('revision') and
+                                   evidence['revision'] == ollama_revision(row['model']) and evidence.get('context_tokens', 0))
+            row['ready'] = bool(row['verified'] and evidence.get('context_tokens', 0) >= context and
                 all(evidence.get('hardware', {}).get(k) == machine.get(k) for k in ('ram_bytes', 'accelerator')))
         except (OSError, ValueError, TypeError):
             row['ready'] = False
@@ -676,6 +678,7 @@ def preparation_block(row):
 def prepare_model(ui, row, context):
     """One explicit preparation; never change selection on failure or cancellation."""
     error = row.get('verification_error', '')
+    display = helper('t_model_display')
     while True:
         blocked = preparation_block(row)
         if blocked:
@@ -683,7 +686,10 @@ def prepare_model(ui, row, context):
                     context=[('Model', model_name(row)), ('Reason', blocked),
                              ('Files', 'Retained on disk' if row['installed'] else 'Not downloaded')])
             return None
-        summary = [('Model', model_name(row)), ('Provider', row['provider']),
+        fit = None if row.get('reason') == 'accelerator capacity unknown' else row.get('fit')
+        summary = [('Model', row['model']), ('Runtime', row['provider']),
+                   ('Memory', display['MEMORY_STATES'][fit]['label']),
+                   ('State', display['MODEL_STATES'][display['model_state'](row)]['label']),
                    ('Files', f"{row['bytes']/1e9:.1f} GB · " + ('On disk · Reuse files' if row['installed'] else 'To download')),
                    ('Context', f'{context:,} tokens')]
         if not row['installed']:
