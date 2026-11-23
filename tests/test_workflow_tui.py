@@ -102,7 +102,7 @@ def test_workflow_stage_picker_one_model_reset_uses_real_checkboxes(workflow, t_
     policy = workflow.select_model_stages(document['workflows']['standard'], selected)
     document = workflow.update(document, policy, name='standard')
     cfg = SimpleNamespace(repos={}, _workflow_document=document)
-    ui = make_ui(t_mod, ['j', 'j', 'enter', *keys, 'q'], width, height)
+    ui = make_ui(t_mod, ['j'] * 5 + ['enter', *keys, 'q'], width, height)
     t_mod._workflow_policy_menu(ui, cfg, vars(workflow), name='standard')
     actual = cfg._workflow_document['workflows']['standard']
     assert workflow.model_stages(actual) == expected
@@ -126,6 +126,86 @@ def config(workflow, t_mod, monkeypatch, tmp_path):
         efforts=list(workflow.EFFORTS), fast=False, ultrafast=False)
         for model in {workflow.DEFAULT[stage]['model'] for stage in workflow.MODEL_STAGES}]}
     return cfg, local
+
+
+@pytest.mark.parametrize('save', [False, True])
+def test_stage_background_picker_save_discard(workflow, t_mod, monkeypatch, tmp_path, save):
+    cfg, local = config(workflow, t_mod, monkeypatch, tmp_path)
+    monkeypatch.setenv('TMUX', f'{tmp_path}/unused.sock,0,0')
+    picks = ['codex', 'customize', ('palette_stage', 'workflow', 'planning'),
+             ('background', 'workflow', 'planning', 'priority'), 'hex', 'hex', 'back']
+    picks += ['save'] if save else ['back', 'back', 'discard']
+    ui = HubMenu(picks)
+    ui.inputs = iter(['#bad', '#4C5471'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    args = t_mod.build_parser().parse_args(['config', 'workflows'])
+    assert t_mod.cmd_config(cfg, args) == (0 if save else 130)
+    assert workflow.config_path().exists() is save
+    assert local.read_text() == '# unchanged\n'
+    if save:
+        policy = workflow.load()[0]['workflows']['standard']
+        assert policy['stage_backgrounds'] == {'workflow': {'planning': {'priority': '#4c5471'}}}
+    detail = next(view for view in ui.views if view[0] == 'Workflow · standard')
+    assert not detail[2]['swatches']
+    expanded = next(view for view in ui.views if ('background', 'workflow', 'planning', 'standard') in dict(view[1]))
+    assert expanded[2]['swatches'] == {
+        ('background', 'workflow', 'planning', 'standard'): '#17283b',
+        ('background', 'workflow', 'planning', 'priority'): '#344d6a',
+    }
+
+
+@pytest.mark.parametrize('width,height', [(80, 24), (44, 20), (32, 12)])
+@pytest.mark.parametrize('color', [False, True])
+def test_workflow_stage_background_row_geometry(workflow, t_mod, monkeypatch, width, height, color):
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm-256color')
+    ui = make_ui(t_mod, ['enter', 'q'], width, height)
+    ui.st = t_mod.Style(tty=color)
+    helper = {**vars(workflow), 'stage_plan': lambda *_: [
+        'planning', {'id': 'verify', 'name': 'Verify in tmux'}, 'review']}
+    cfg = SimpleNamespace(repos={}, _workflow_document=workflow.defaults())
+    entries = t_mod._workflow_palette_stages(helper, cfg._workflow_document['workflows']['standard'])
+    assert entries == [('planning', 'Plan'), ('verify', 'Verify in tmux'), ('review', 'Review')]
+    stage = ('palette_stage', 'workflow', 'verify')
+    rows, swatches = t_mod._workflow_background_rows(helper, {}, entries, 'workflow', stage)
+    assert ui.pick('Stages', rows, swatches=swatches, default=2) == ('background', 'workflow', 'verify', 'standard')
+    frame = ui.frames[-1]
+    assert any('Verify in tmux' in line for line in frame)
+    assert set(swatches.values()) == {'#3b2733', '#613c53'}
+    sample = ui.swatch_row('    Standard background ›', swatches['background', 'workflow', 'verify', 'standard'],
+                           selected=True)
+    assert all(t_mod._term_rows(line, width) == 1 for line in sample)
+    assert all(any(value in line for line in sample) for value in ('#3B2733', '▸'))
+    assert any('\033[48;2;59;39;51m' in line for line in sample) is color
+    assert not any('│' in line for line in frame)
+    if width >= 44:
+        assert len(sample) == 1
+        assert 'Standard background ›' in sample[0]
+    else:
+        assert len(sample) == 2
+
+
+def test_custom_stage_colors_follow_identity(workflow, t_mod):
+    document = workflow.defaults()
+    cfg = SimpleNamespace(repos={}, _workflow_document=document)
+    custom = {'id': 'verify', 'name': 'Verify in tmux'}
+    plan = ['planning', custom, 'review']
+    helper = {**vars(workflow), 'stage_plan': lambda *_: plan}
+    ui = HubMenu([('palette_stage', 'workflow', 'verify'), ('background', 'workflow', 'verify', 'standard'),
+                  '#2a5558', 'back'])
+    t_mod._workflow_policy_menu(ui, cfg, helper, name='standard')
+    policy = cfg._workflow_document['workflows']['standard']
+    assert workflow.stage_background(policy, 'workflow', 'verify', 'standard') == '#2a5558'
+    assert workflow.stage_background(policy, 'workflow', 'verify', 'priority') == '#613c53'
+    assert workflow.stage_background(policy, 'cli', 'verify', 'standard') == '#3b2733'
+    custom['name'] = 'Verify terminal'
+    plan.reverse()
+    entries = t_mod._workflow_palette_stages(helper, policy)
+    key = ('palette_stage', 'workflow', 'verify')
+    rows, swatches = t_mod._workflow_background_rows(helper, policy, entries, 'workflow', key)
+    assert dict(rows)[key] == 'Verify terminal ▾'
+    assert swatches['background', 'workflow', 'verify', 'standard'] == '#2a5558'
+    assert swatches['background', 'workflow', 'verify', 'priority'] == '#613c53'
 
 
 @pytest.mark.parametrize('save', [False, True])

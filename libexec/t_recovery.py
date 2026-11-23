@@ -169,8 +169,13 @@ def owner(socket, pane, startup=False):
     else:
         # Login zsh is the shared local/remote integration contract. Resolve the
         # current thread, not the newest transcript in this worktree.
-        snippet = 'setopt no_monitor no_notify; s=%s; d=%s; print -r -- "$(_dev_agent_of_session "$s")"$\'\\t\'"$(_dev_session_sid "$s" "$d")"$\'\\t\'"$(_dev_session_claude_pid "$s")"' % (
-            shlex.quote(pane["session"]), shlex.quote(pane["cwd"]))
+        # Warm the shared process snapshot in the parent shell. Each command
+        # substitution otherwise rebuilds it in a subshell and discards it.
+        snippet = (
+            'setopt no_monitor no_notify; (( $+functions[_dev_ps_snapshot] )) && _dev_ps_snapshot; '
+            's=%s; d=%s; print -r -- "$(_dev_agent_of_session "$s")"$\'\\t\''
+            '"$(_dev_session_sid "$s" "$d")"$\'\\t\'"$(_dev_session_claude_pid "$s")"'
+        ) % (shlex.quote(pane["session"]), shlex.quote(pane["cwd"]))
         result = run(["zsh", "-lic", "export TMUX=" + shlex.quote(socket + ",0,0") + "; " + snippet])
         fields = result.stdout.rstrip("\r\n").split("\t")
         if result.returncode or len(fields) != 3 or fields[0] not in ("codex", "claude"):

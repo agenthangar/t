@@ -2215,6 +2215,10 @@ _dev_kill() {
 # disable its recovery menu. It exits when no managed sessions remain.
 _dev_recovery_watch() {
   _t_terminal_close_install "$1"
+  local appearance_helper="$T_HOME/libexec/t_session_appearance.py" socket
+  if [[ -f $appearance_helper ]] && socket=$(tmux display-message -p -t "=$1:" "#{socket_path}"); then
+    python3 "$appearance_helper" install "$socket" "$1" </dev/null >/dev/null 2>&1 || true
+  fi
   [[ -z ${T_RECOVERY_DISABLE:-} ]] || return 0
   ( local key; for key in ${(k)parameters}; do [[ $key == COV_CORE_* ]] && unset "$key"; done
     python3 "$T_HOME/libexec/t_recovery.py" start "$1" ) </dev/null >/dev/null 2>&1 &!
