@@ -14084,7 +14084,12 @@ OPENING DEFAULTS
   guarded resume/restart.
 
 RECOVERY
-  When a numbered open fails in a terminal, choose Repair or Cancel.
+  A numbered open reopens the recorded local conversation in its verified worktree
+  using local history and writer checks before contacting peers.
+  If a peer is unreachable and a numbered open cannot verify remote ownership,
+  choose a saved conversation for that slot in the resume picker. This path
+  requires a terminal, an isolated worktree, and automatic host and agent selection.
+  Other numbered open failures in a terminal offer Repair or Cancel.
   Repair retains an explicit --codex or --claude choice. Unresolved native
   writers get a bounded 30-second wait to publish their worktree metadata;
   healthy ownership checks do not wait. Expiry never bypasses ownership.
@@ -15744,10 +15749,16 @@ def _main(argv):
             for row in cache['candidates'](view, aliases, slot):
                 print(row)
         return 1 if view.get('unavailable') else 0
-    if argv and argv[0] in ('__resume-candidates', '__resume-saved'):
+    if argv and argv[0] in ('__resume-candidates', '__resume-saved', '__open-local-slot'):
         helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_history.py'))
         history = helper['HistoryCommand'](Config(), globals())
         try:
+            if argv[0] == '__open-local-slot' and len(argv) == 4:
+                receipt = history.open_local_slot(*argv[1:])
+                if receipt is None:
+                    return 3
+                print(receipt)
+                return 0
             if argv[0] == '__resume-candidates':
                 aliases, slot = argv[1:], None
                 diagnostics_file = None

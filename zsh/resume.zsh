@@ -864,6 +864,7 @@ _t_resume() {
     f=("${(@ps:\t:)c}")
     [[ $f[7] == - ]] && inactive+=("$c")
   done
+  [[ ${_T_OPEN_SAVED_ONLY:-} != 1 ]] || cands=("${(@)inactive}")
   if [[ -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]]; then
     print -r -- "$columns" > "$_T_RESUME_PICKER_SNAPSHOT/columns"
     : > "$_T_RESUME_PICKER_SNAPSHOT/source"
@@ -964,6 +965,10 @@ _t_resume() {
   # Check the whole selection before the first revive or attachment.
   for pick in "${(@)picks}"; do
     f=("${(@ps:\t:)pick}")
+    if [[ ${_T_OPEN_SAVED_ONLY:-} == 1 && $f[7] != - ]]; then
+      print -u2 't open: the selected conversation is live; retry t session open to attach'
+      return 1
+    fi
     _t_resume_host_check "${f[7]:-}" "$on_host" "$f[1]" "$f[2]" || return 1
   done
   pick=$picks[1]
