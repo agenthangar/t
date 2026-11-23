@@ -2117,7 +2117,7 @@ class HistoryCommand:
                         sys.stdin.isatty() and sys.stderr.isatty())
             # This probe returns no stdout data. Let its shared wait spinner
             # use the terminal while the shell captures the eventual owner.
-            with redirect_stdout(sys.stderr) if terminal else nullcontext():
+            with (redirect_stdout(sys.stderr) if terminal else nullcontext()), _spinner('Waiting for conversation ownership'):
                 creation = value['associations'][0]['workspace']
                 probe_cwd = workspace or creation
                 previous = self.repair_writer
