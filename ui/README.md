@@ -262,8 +262,13 @@ Repository source settings survive assignment changes and are tool-scoped.
 
 Automatic discovery prefers safe root DESIGN.md, then one root design-system.md
 or design_system.md, then a sole discovered candidate. Multiple remaining
-candidates require a choice. No candidates means no system found; creation is
-always explicit. Discovery reads repository-owned docs, linked guidance, tokens,
+candidates require a choice. Discovery itself is read-only. When automatic discovery finds no
+source, the default agent instructions establish the system during the first
+user-facing iteration, or the next authorized interface change in an existing
+project. The change includes a design entry point, agent reference, representative
+rendered example and a reproducible design check. The default check runs before
+opening a design-related PR, nightly, and against the exact release commit.
+Repository or user instructions can select another schedule. Discovery reads repository-owned docs, linked guidance, tokens,
 components and Storybook, excluding dependencies, generated directories and
 symlinks. Resolve relative paths in the matching active worktree. Lists never
 scan or prompt; managed agent instructions describe the same resolution rule.

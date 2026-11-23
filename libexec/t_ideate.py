@@ -423,6 +423,8 @@ def launch(cfg, record, resume=False):
                 prompt = ('Brainstorm this idea with me: ' + record['title'] + '\n'
                           'This is a private idea workspace, with no repository yet. Discuss and explore before building. '
                           'Keep private notes here. Put only files intended for eventual repository publication under publish/. '
+                          'If we build an interface and the design-system policy calls for guidance, prepare its '
+                          'design guidance, rendered example and design check under publish/ for my file review. '
                           'Do not create a Git repository, authenticate, create a remote, or publish anything. '
                           'I will review each selected file in t before creating a repository.')
                 argv += ['--', prompt]

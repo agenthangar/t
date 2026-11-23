@@ -1740,6 +1740,15 @@ or issue creation cannot be verified, resolve that before implementation.
 Use the model configured for this repository in t when available. Edit this
 section to name a specific model if you prefer one.
 
+## Design system
+Follow the project's selected design-system settings, including Off. With the
+default policy, reuse existing design guidance or establish it in the first
+user-facing iteration. Include it in the first authored commit if that commit
+introduces the interface. Link the design entry point from repository agent
+instructions, include a representative rendered example, and test an actual
+design decision. By default, run that check before opening a design-related PR,
+in nightly CI, and for the exact release commit when the project ships releases.
+
 ## Local preview
 If this repository has a user interface, run it locally and inspect the changed
 screens before finalizing work.
