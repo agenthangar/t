@@ -218,8 +218,7 @@ def attached(socket, tty, pid=None):
         return 1
     if helper['socket_identity'](socket) is None:
         return 1
-    if DARWIN:
-        stamp_attachment(socket, tty, pid)
+    stamp_attachment(socket, tty, pid)
     if not helper['adopt_attachment'](socket, tty, pid):
         return 1
     paths = helper['worker_paths']('terminalobserver', socket, tty)
@@ -377,6 +376,9 @@ def watch(socket, tty, pid, descriptor, lock_descriptor, checkpoint=None):
                 identity, pane, pane_pid = json.loads(event.read_text())
                 if not DARWIN:
                     event.unlink(missing_ok=True)
+                    stamp = attachment_stamp(socket, identity)
+                    if stamp.startswith(pid + ':'):
+                        return detached(socket, identity, pane, pane_pid, tty, fd, stamp)
                     return detached(socket, identity, pane, pane_pid, tty, fd)
                 gone_at = gone_at or time.monotonic()
                 stamp = attachment_stamp(socket, identity)
@@ -434,6 +436,12 @@ def owner(socket, identity, pane, pane_pid):
                      'dead', 'cursor', 'column'), fields))
 
 
+def attachment_matches(socket, identity, pane, pane_pid, stamp):
+    return (bool(re.fullmatch(r'[0-9]+:[0-9a-f]{32}', stamp))
+            and bool(owner(socket, identity, pane, pane_pid))
+            and attachment_stamp(socket, identity) == stamp)
+
+
 CODEX_IDLE_PROMPT = '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m'
 CODEX_IDLE_KEYS = '  \x1b[1m←\x1b[0m for agents · \x1b[1m?\x1b[0m for shortcuts'
 CODEX_STATUS_SEGMENT = r'\x1b\[38;2;\d+;\d+;\d+m[^\x1b]+\x1b\[39m'
@@ -488,35 +496,45 @@ def composer_empty(agent, screen, cursor, column=None):
 
 
 def transcript_state(agent, path):
-    """Return idle/empty/busy/unknown and associated PR URLs from real records."""
+    state, prs, _ = transcript_observation(agent, path)
+    return state, prs
+
+
+def transcript_observation(agent, path):
+    """Read native turn state and bind the most recent submitted prompt."""
     if not path:
-        return 'unknown', set()
+        return 'unknown', set(), None
     try:
         with open(path, 'rb') as stream:
             data = stream.read(16 * 1024 * 1024 + 1)
         if len(data) > 16 * 1024 * 1024 or (data and not data.endswith(b'\n')):
-            return 'unknown', set()
+            return 'unknown', set(), None
         records = [json.loads(line) for line in data.splitlines() if line.strip()]
     except (OSError, ValueError):
-        return 'unknown', set()
-    state, prs = 'empty', set()
-    for record in records:
+        return 'unknown', set(), None
+    state, prs, turn, fallback = 'empty', set(), None, None
+    for index, record in enumerate(records):
         if not isinstance(record, dict):
-            return 'unknown', prs
+            return 'unknown', prs, None
         prs.update('https://' + value for value in re.findall(r'github\.com/[\w.-]+/[\w.-]+/pull/\d+', json.dumps(record)))
         if agent == 'codex' and record.get('type') == 'response_item':
             payload = record.get('payload') or {}
             if not isinstance(payload, dict):
-                return 'unknown', prs
+                return 'unknown', prs, None
             if payload.get('role') in ('user', 'assistant') or payload.get('type') in ('function_call', 'function_call_output'):
                 state = 'busy'
         elif agent == 'codex' and record.get('type') == 'event_msg':
             payload = record.get('payload') or {}
             if not isinstance(payload, dict):
-                return 'unknown', prs
+                return 'unknown', prs, None
             kind = payload.get('type')
             if kind in ('task_started', 'user_message'):
                 state = 'busy'
+                marker = prompt_marker(record, index)
+                if kind == 'user_message':
+                    turn = marker
+                else:
+                    fallback = marker
             elif kind == 'task_complete':
                 state = 'idle'
             elif kind == 'turn_aborted':
@@ -526,13 +544,21 @@ def transcript_state(agent, path):
         elif agent == 'claude':
             message = record.get('message') or {}
             if not isinstance(message, dict):
-                return 'unknown', prs
+                return 'unknown', prs, None
             if record.get('type') == 'user' and not any(record.get(key) for key in
                     ('isMeta', 'isSidechain', 'isCompactSummary')):
                 state = 'busy'
+                content = message.get('content')
+                if isinstance(content, str) or (isinstance(content, list) and
+                        any(isinstance(part, dict) and part.get('type') == 'text' for part in content)):
+                    turn = prompt_marker(record, index)
             elif record.get('type') == 'assistant' and not record.get('isSidechain'):
                 state = 'idle' if message.get('stop_reason') == 'end_turn' else 'busy'
-    return (state if agent in ('codex', 'claude') else 'unknown'), prs
+    return (state if agent in ('codex', 'claude') else 'unknown'), prs, turn or fallback
+
+
+def prompt_marker(record, index):
+    return hashlib.sha256(json.dumps([index, record], sort_keys=True).encode()).hexdigest()
 
 
 def history_prs(agent, sid):
@@ -938,7 +964,7 @@ def conversation_mark(socket, identity, pane, agent_pid):
     return title.stdout, stamp.returncode, stamp.stdout, registered
 
 
-def stop_previews(check_args, agent_pid, inspector_pid):
+def stop_previews(check_args, agent_pid, inspector_pid, generation="", proof=""):
     socket, identity, pane, pane_pid, agent, transcript = check_args[:6]
     stopped = []
     try:
@@ -953,8 +979,15 @@ def stop_previews(check_args, agent_pid, inspector_pid):
             raise ValueError('unknown task before preview cleanup')
         planned = process_plan(agent_pid, workspace, inspector_pid)
         def recheck(expected):
-            if not git_completed(workspace):
+            if proof:
+                api = runpy.run_path(str(ROOT / 'libexec/t_close_queue.py'))
+                clean = api['validate'](json.loads(proof))
+            else:
+                clean = git_completed(workspace)
+            if not clean:
                 raise ValueError('pending or unverified Git work')
+            if generation and not attachment_matches(socket, identity, pane, pane_pid, generation):
+                raise ValueError('session reattached')
             decision = eligibility(*check_args)
             if decision['decision'] != 'terminate':
                 raise ValueError(decision['reason'])
@@ -1033,7 +1066,7 @@ def detached(socket, identity, pane, pane_pid, tty, terminal_fd, stamp=None, evi
         return 1
     # Use the original descriptor, never a device name which may be recycled.
     evidence = evidence or {}
-    lost = evidence.get('terminal_revoked') if stamp else hung_up(terminal_fd)
+    lost = evidence.get('terminal_revoked') if evidence else hung_up(terminal_fd)
     current = owner(socket, identity, pane, pane_pid)
     if stamp and attachment_stamp(socket, identity) != stamp:
         current = None
@@ -1041,6 +1074,14 @@ def detached(socket, identity, pane, pane_pid, tty, terminal_fd, stamp=None, evi
         receipt(socket, identity, dict(evidence, decision='preserve',
                                       reason='terminal still usable' if not lost else 'owner changed or attached'))
         return 0
+    result = dispatch_close(socket, identity, pane, pane_pid, stamp)
+    decision = 'preserve' if result.returncode else 'terminate'
+    reason = (result.stderr[-2000:].strip() or 'lifecycle refused cleanup') if result.returncode else 'session closed'
+    receipt(socket, identity, dict(evidence, decision=decision, reason=reason, code=result.returncode))
+    return result.returncode
+
+
+def dispatch_close(socket, identity, pane, pane_pid, stamp, proof=''):
     env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
     env['T_HOME'] = str(ROOT)
     if stamp:
@@ -1058,12 +1099,10 @@ for module in config agent worktree sessions remote resume lifecycle; do
 done
 _t_terminal_close_event "$@"
 '''
-    result = run(['zsh', '-f', '-c', script, 't-terminal-close', socket, identity,
-                  pane, pane_pid], env=env, timeout=90)
-    decision = 'preserve' if result.returncode else 'terminate'
-    reason = (result.stderr[-2000:].strip() or 'lifecycle refused cleanup') if result.returncode else 'session closed'
-    receipt(socket, identity, dict(evidence, decision=decision, reason=reason, code=result.returncode))
-    return result.returncode
+    args = ['zsh', '-f', '-c', script, 't-terminal-close', socket, identity, pane, pane_pid]
+    if proof:
+        args.append(proof)
+    return run(args, env=env, timeout=90, **({'start_new_session': True} if proof else {}))
 
 
 def receipt(socket, identity, value):
@@ -1099,7 +1138,7 @@ def main(args):
             return int(args[0] == 'processes-empty' and bool(planned['previews']))
         except (OSError, ValueError, KeyError, TypeError, SyntaxError):
             return 1
-    if len(args) == 13 and args[0] == 'stop-previews':
+    if len(args) in (13, 15) and args[0] == 'stop-previews':
         return stop_previews(args[1:11], *args[11:])
     if len(args) == 11 and args[0] == 'check':
         result = eligibility(*args[1:])

@@ -1,6 +1,6 @@
 # Automatic session recovery
 
-Open **`t config` → Recovery → Automatic recovery**, then review and save.
+Open **`t config` → Background agents → Automatic recovery**, then review and save.
 This is an opt-in setting for the current Mac. Installation leaves it disabled;
 each remote Mac must be configured separately. Setup also works from a development
 worktree: the save review identifies that source, and the service runs its worker
@@ -15,6 +15,7 @@ in their existing workspace. It does not unlock FileVault, log you in, open
 desktop applications, or recreate deleted worktrees. `nosleep` remains manual.
 
 ```sh
+t agent background status recovery
 t system recovery status
 t system recovery status --json
 t session recovery status api 1

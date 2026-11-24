@@ -662,7 +662,7 @@ def setup_note():
     return ''
 
 
-def configure(value, expected, *, enroll_live=True):
+def configure(value, expected, *, enroll_live=True, launch=True):
     if read(settings_path()).get('enabled', False) != expected:
         raise ValueError('recovery configuration changed while editing; reopen t config')
     if value and activation_error():
@@ -697,6 +697,8 @@ def configure(value, expected, *, enroll_live=True):
         enroll(snapshot())
     write(settings_path(), {'enabled': True, 'source': str(ROOT)})
     run(['launchctl', 'bootout', target], timeout=5)
+    if not launch:
+        return
     result = run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(path)], timeout=5)
     if result.returncode:
         raise ValueError('Recovery saved as enabled but service did not start; log in and save Recovery again. ' + result.stderr.strip())
@@ -727,6 +729,9 @@ def migrate():
     try:
         # The worker reconciles live owners after it starts. Waiting on process
         # inventory here could exhaust the outer updater's migration deadline.
+        if manually_stopped():
+            configure(True, True, enroll_live=False, launch=False)
+            return 0
         configure(True, True, enroll_live=False)
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
@@ -763,7 +768,7 @@ def status():
     heartbeat = read(root()/'heartbeat.json')
     source = read(settings_path()).get('source')
     return {**({'source': source} if source else {}),
-            'enabled': enabled(), 'running': bool(enabled() and heartbeat.get('at', 0) > time.time()-45),
+            'enabled': enabled(), 'running': bool(enabled() and not manually_stopped() and heartbeat.get('at', 0) > time.time()-45),
             'sessions': list(data.get('sessions', {}).values())}
 
 
@@ -1132,6 +1137,14 @@ def source_digest():
     return hashlib.sha256((ROOT/'libexec/t_auto_recovery.py').read_bytes()).hexdigest()
 
 
+def stop_marker():
+    return Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 't/background/recovery.stopped'
+
+
+def manually_stopped():
+    return stop_marker().is_file()
+
+
 def watch():
     root().mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(root()/'service.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -1140,6 +1153,7 @@ def watch():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 0
+        stop_marker().unlink(missing_ok=True)
         engine = Engine()
         stopped = threading.Event()
         digest = source_digest()

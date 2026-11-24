@@ -882,3 +882,121 @@ def test_conversation_mark_ignores_its_own_registry_read_atime(close, monkeypatc
     assert close.conversation_mark('/socket', '$1', '%1', 123) == first
     registry.write_text('changed\t/workspace\n')
     assert close.conversation_mark('/socket', '$1', '%1', 123) != first
+
+
+@pytest.mark.parametrize('outcome', ['merge', 'reattach', 'new-turn', 'refuses-term'])
+def test_delayed_terminal_cleanup(lifecycle, outcome):
+    base, env = lifecycle
+    env = {**env, 'T_TEST_AGENT_SCREEN': '\x1b[2J\x1b[HOpenAI Codex (v0.1)\r\n\r\n› ',
+           'T_TEST_AGENT_SECONDS': '180', 'T_TEST_FRESH_SID': SID}
+    if outcome == 'refuses-term':
+        env['T_TEST_IGNORE_TERM'] = '1'
+    minutes = 30 if outcome == 'new-turn' else 15
+    config = Path(env['XDG_CONFIG_HOME']) / 't/local.zsh'
+    with config.open('a') as stream:
+        stream.write(f'T_TERMINAL_CLOSE_RETRY_MINUTES={minutes}\n')
+    startup = _shell(base, env, 't session open repo 1 --codex')
+    assert startup.returncode == 0, startup.stderr
+    worktree = Path(env['T_TEST_WT'])
+    workspace_git = ['git', '-C', str(worktree)]
+    assert _run([*workspace_git, 'remote', 'set-url', 'origin', 'https://github.com/example/test.git'],
+                env=env, cwd=base).returncode == 0
+    service = Path(env['HOME']) / 'Library/LaunchAgents/com.agenthangar.t.cleanup.plist'
+    service.parent.mkdir(parents=True)
+    service.touch()  # only queue arming, no launchd or machine change
+    path = base / 'shipping.jsonl'
+
+    def add(*events):
+        with path.open('a') as stream:
+            for event in events:
+                stream.write(json.dumps({'type':'event_msg', 'payload':{'type':event}}) + '\n')
+
+    add('user_message', 'task_started')
+    pointer = Path(env['XDG_CACHE_HOME']) / 'claude-sessions/rollouts' / SID
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(str(path))
+    tmux = [str(base / 'bin/tmux')]
+    socket = _run([*tmux, 'display-message', '-p', '-t', '=dev-repo-1:', '#{socket_path}'],
+                  env=env, cwd=base).stdout.strip()
+    master, client = _attach(base, env, socket)
+    os.close(master)
+    client.wait(timeout=5)
+    pending = Path(env['XDG_STATE_HOME']) / 't/background/cleanup'
+    _until(lambda: list(pending.glob('*.json')), seconds=20)
+    ticket, = pending.glob('*.json')
+    record = json.loads(ticket.read_text())
+    assert record['interval'] == minutes * 60
+    assert record['expires'] - record['due'] == 86400 - minutes * 60
+
+    def tick():
+        if ticket.exists():
+            record = json.loads(ticket.read_text())
+            record['due'] = 0
+            ticket.write_text(json.dumps(record))
+        helper = REPO_ROOT / 'libexec/t_close_queue.py'
+        command = ('import runpy,sys,threading; '
+                   'runpy.run_path(sys.argv[1])["tick"](threading.Event())')
+        result = _run([sys.executable, '-c', command, str(helper)], env=env, cwd=base, timeout=100)
+        assert result.returncode == 0, result.stderr
+
+    def alive():
+        return _run([*tmux, 'has-session', '-t', '=dev-repo-1:'], env=env, cwd=base).returncode == 0
+
+    if outcome == 'reattach':
+        another, process = _attach(base, env, socket)
+        try:
+            detached = _run([*tmux, 'detach-client', '-s', 'dev-repo-1'], env=env, cwd=base)
+            assert detached.returncode == 0, detached.stderr
+            process.wait(timeout=5)
+            tick()
+            assert not ticket.exists() and alive()
+        finally:
+            os.close(another)
+        return
+    if outcome == 'new-turn':
+        add('task_complete', 'user_message', 'task_started')
+        tick()
+        assert not ticket.exists() and alive()
+        return
+
+    # Simulate a commit pushed after the window closes. Keep tracking refs
+    # unchanged so Git ancestry and the PR cache cannot prove a squash merge.
+    (worktree / 'shipped.txt').write_text('approved change')
+    assert _run([*workspace_git, 'add', 'shipped.txt'], env=env, cwd=base).returncode == 0
+    assert _run([*workspace_git, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                 'commit', '-qm', 'shipped fix'], env=env, cwd=base).returncode == 0
+    head = _run([*workspace_git, 'rev-parse', 'HEAD'], env=env, cwd=base).stdout.strip()
+    branch = _run([*workspace_git, 'branch', '--show-current'], env=env, cwd=base).stdout.strip()
+    gh = base / 'bin/gh'
+
+    def gh_result(merged_head):
+        merged = json.dumps([dict(headRefName=branch, headRefOid=merged_head, baseRefName='main',
+                                  isCrossRepository=False, mergedAt='2026-11-23T00:00:00Z')])
+        gh.write_text('#!/bin/sh\ncase "$*" in\n'
+                      '  "repo view "*) echo \'{"defaultBranchRef":{"name":"main"}}\' ;;\n'
+                      '  *"--state merged"*) echo ' + shlex.quote(merged) + ' ;;\n'
+                      '  *) echo \'[]\' ;;\nesac\n')
+        gh.chmod(0o755)
+
+    gh_result(head)
+    tick()  # merge exists but post-merge work is still active
+    assert ticket.exists() and alive()
+    add('task_complete')
+    gh_result('0' * 40)
+    tick()
+    assert ticket.exists() and alive()
+    gh_result(head)
+    if outcome == 'merge':
+        unfinished = worktree / 'pending.txt'
+        unfinished.write_text('work in progress')
+        tick()
+        assert ticket.exists() and alive()
+        unfinished.unlink()
+        gh.chmod(0o644)
+        tick()
+        assert ticket.exists() and alive()
+        gh.chmod(0o755)
+    tick()
+    assert not ticket.exists()
+    assert alive() == (outcome == 'refuses-term')
+    assert (worktree / 'shipped.txt').read_text() == 'approved change'

@@ -41,7 +41,7 @@ LEGACY_GROUP_VERBS = {
     "config": {"open", "show", "edit", "setup", "onboard", "local", "models"},
     "profile": {"init", "edit", "show", "apply"},
     "policy": {"check", "show", "apply"},
-    "agent": {"login", "install", "status", "trust"},
+    "agent": {"login", "install", "status", "trust", "background"},
     "system": {"integrate", "update", "diagnose", "advisories", "usage", "apps", "recovery"},
 }
 

@@ -3123,12 +3123,21 @@
           "notes": "Named workflow Repositories pages group registered repositories by current membership, including global inheritance. Batch assignment uses the shared multi-picker without initial marks; Enter stages selected repositories and Back cancels marks. Individual actions assign this workflow, restore global inheritance, choose another workflow, exclude, or edit the design source. Preserve design sources, unrelated policy edits and other tool scopes. Empty/all-assigned states disable assignment without an empty picker. Stage complete batches atomically and retain completed assignments on interruption. The shared review/save/discard transaction controls all writes.",
           "layout": "inherit"
         },
+        "finished_session_cleanup_interval": {
+          "argv": ["config", "open"],
+          "when": "Finished session cleanup is selected under Background agents",
+          "patterns": ["wizard"],
+          "read_only": false,
+          "tests": ["tests/test_config.py::test_cleanup_interval_stages_only_valid_minutes"],
+          "notes": "Stage whole minutes from 1 to 1439, or restore the 15-minute default. Shared review controls all writes. The saved setting applies to future terminal losses.",
+          "layout": "rail"
+        },
         "automatic_recovery": {
           "argv": [
             "config",
             "open"
           ],
-          "when": "Recovery is selected in the settings menu",
+          "when": "Automatic recovery is selected under Background agents",
           "patterns": [
             "wizard"
           ],
@@ -3590,6 +3599,383 @@
       },
       "hook_review": "Explain Codex CLI /hooks; never grant hook trust.",
       "layout": "rail"
+    },
+    "agent background status": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "plain",
+      "scope": "current host, current user",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_background_agents.py::test_background_routes",
+        "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "background",
+            "status"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_background_agents.py::test_background_routes",
+            "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Static installation, live state, login startup, and cadence. Recovery cadence is on restart.",
+      "layout": "plain"
+    },
+    "agent background install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "current host, current user",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_background_agents.py::test_background_routes",
+        "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "background",
+            "install",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_background_agents.py::test_background_routes",
+            "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+          ],
+          "layout": "inherit"
+        },
+        "reinstall": {
+          "argv": [
+            "agent",
+            "background",
+            "install",
+            "cleanup",
+            "--reinstall"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_background_agents.py::test_background_routes",
+            "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+          ],
+          "layout": "inherit",
+          "notes": "Repair an existing installation while preserving settings and live stop state."
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "plain"
+    },
+    "agent background start": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "current host, current user",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_background_agents.py::test_background_routes",
+        "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "background",
+            "start",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_background_agents.py::test_background_routes",
+            "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "plain"
+    },
+    "agent background stop": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "current host, current user",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_background_agents.py::test_background_routes",
+        "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "background",
+            "stop",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_background_agents.py::test_background_routes",
+            "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "plain"
+    },
+    "agent background restart": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "plain",
+      "scope": "current host, current user",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_background_agents.py::test_background_routes",
+        "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "agent",
+            "background",
+            "restart",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_background_agents.py::test_background_routes",
+            "tests/test_background_agents.py::test_cleanup_service_lifecycle"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "plain"
+    },
+    "remote agent background status": {
+      "patterns": [
+        "list"
+      ],
+      "renderer": "mixed",
+      "scope": "registered SSH hosts",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+        "tests/test_background_agents.py::test_background_routes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "background",
+            "status"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+            "tests/test_background_agents.py::test_background_routes"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Static installation, live state, login startup, and cadence. Recovery cadence is on restart.",
+      "layout": "mixed",
+      "remote_policy": "query"
+    },
+    "remote agent background install": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "an explicit registered SSH host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+        "tests/test_background_agents.py::test_background_routes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "background",
+            "install",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+            "tests/test_background_agents.py::test_background_routes"
+          ],
+          "layout": "inherit"
+        },
+        "reinstall": {
+          "argv": [
+            "remote",
+            "agent",
+            "background",
+            "install",
+            "cleanup",
+            "--reinstall"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+            "tests/test_background_agents.py::test_background_routes"
+          ],
+          "layout": "inherit",
+          "notes": "Repair an existing installation while preserving settings and live stop state."
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "mixed",
+      "remote_policy": "single"
+    },
+    "remote agent background start": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "an explicit registered SSH host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+        "tests/test_background_agents.py::test_background_routes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "background",
+            "start",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+            "tests/test_background_agents.py::test_background_routes"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "mixed",
+      "remote_policy": "single"
+    },
+    "remote agent background stop": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "an explicit registered SSH host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+        "tests/test_background_agents.py::test_background_routes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "background",
+            "stop",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+            "tests/test_background_agents.py::test_background_routes"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "mixed",
+      "remote_policy": "single"
+    },
+    "remote agent background restart": {
+      "patterns": [
+        "action"
+      ],
+      "renderer": "mixed",
+      "scope": "an explicit registered SSH host",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+        "tests/test_background_agents.py::test_background_routes"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "agent",
+            "background",
+            "restart",
+            "cleanup"
+          ],
+          "patterns": [
+            "action"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser",
+            "tests/test_background_agents.py::test_background_routes"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "notes": "Explicit target is cleanup, recovery, or all. Stop retains login startup policy.",
+      "layout": "mixed",
+      "remote_policy": "single"
     },
     "agent status": {
       "patterns": [

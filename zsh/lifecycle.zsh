@@ -183,7 +183,7 @@ _t_lifecycle_effect() {
         # Cleanup never authorizes closing a changed task. Rescan all guards and
         # refuse a newly launched preview as well as any other background work.
         _t_terminal_close_guard "$1" "$2" "$4" "$immutable" "$5" "$6" || return 1
-        _dev_kill_no_pending_work "$2" && _t_terminal_processes_clear "$1" "$2" strict || return 1
+        _t_terminal_git_clear "$2" && _t_terminal_processes_clear "$1" "$2" strict || return 1
         [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
            $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || return 1
       fi
@@ -191,7 +191,9 @@ _t_lifecycle_effect() {
       # The shell still owns SID/agent evidence; Python never guesses a thread.
       [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" &&
          $(tmux display-message -p -t "=$1:" '#{session_id}') == "$immutable" ]] || return 1
-      client_token=$(python3 "$T_HOME/libexec/t_client_stop.py" capture "$1" "$2" "$immutable" "$pid" "$8") || return 1
+      local -a automatic
+      [[ -n $4 ]] && automatic=("$4" "${T_CLOSE_GENERATION:-}" "${T_CLOSE_PROOF:-}")
+      client_token=$(python3 "$T_HOME/libexec/t_client_stop.py" capture "$1" "$2" "$immutable" "$pid" "$8" "${automatic[@]}") || return 1
       [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" ]] || return 1
       recovery_receipt=$(python3 "$T_HOME/libexec/t_auto_recovery.py" prepare-close "$8" "$7") || return 1
       {

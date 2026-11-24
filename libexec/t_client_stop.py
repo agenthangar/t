@@ -154,10 +154,10 @@ def pane_client(owner):
     return found[0] if found else None
 
 
-def capture(session, workspace, immutable, pid, agent):
+def capture(session, workspace, immutable, pid, agent, socket=None, generation="", proof=""):
     if not re.fullmatch(r'\$[0-9]+', immutable) or agent not in ('codex', 'claude'):
         raise ValueError('invalid selected owner')
-    owner = pane(session, immutable)
+    owner = pane(session, immutable, socket)
     if not owner or owner['workspace'] != os.path.realpath(workspace):
         raise ValueError('selected pane identity changed; nothing was stopped')
     value = pane_client(owner)
@@ -168,8 +168,37 @@ def capture(session, workspace, immutable, pid, agent):
         raise ValueError('selected client workspace changed; nothing was stopped')
     root = process(owner['pid'])
     token = dict(owner=owner, process=value, cwd=directory, agent=agent, pane_birth=root['birth'] if root else None)
+    if socket:
+        mark = NATIVE['conversation_mark'](socket, immutable, owner['pane'], int(pid)) if proof else None
+        token['automatic'] = dict(generation=generation, proof=proof,
+                                  conversation=json.dumps(mark) if mark else None)
     verify(token)
     return token
+
+
+def verify_automatic(token):
+    automatic = token.get('automatic')
+    if automatic is None:
+        return
+    owner = token['owner']
+    target = (owner['socket'], owner['session'], owner['pane'], str(owner['pid']))
+    generation = automatic['generation']
+    if not (NATIVE['attachment_matches'](*target, generation) if generation else NATIVE['owner'](*target)):
+        raise ValueError('automatic close lost its detached owner')
+    if automatic['proof']:
+        api = runpy.run_path(str(ROOT / 'libexec/t_close_queue.py'))
+        proof = json.loads(automatic['proof'])
+        if not api['validate'](proof):
+            raise ValueError('completed shipping evidence changed before stop')
+        ticket = proof['ticket']
+        observed = NATIVE['owner'](*target)
+        screen = NATIVE['tmux'](owner['socket'], 'capture-pane', '-p', '-e', '-t', owner['pane'])
+        if (not observed or screen.returncode or
+                NATIVE['composer_empty'](ticket['agent'], screen.stdout, observed['cursor'], observed.get('column')) is not True or
+                json.dumps(NATIVE['conversation_mark'](owner['socket'], owner['session'], owner['pane'],
+                                                     int(ticket['pid']))) != automatic['conversation'] or
+                not NATIVE['attachment_matches'](*target, generation)):
+            raise ValueError('automatic close lost its empty composer or detached owner')
 
 
 def verify(token):
@@ -193,6 +222,7 @@ def verify(token):
 def stop(token, *, force=False, timeout=3):
     if not verify(token):
         return
+    verify_automatic(token)
     os.kill(token['process']['pid'], signal.SIGKILL if force else signal.SIGTERM)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -212,6 +242,13 @@ def finalize(token):
     if pane(owner['name'], owner['session'], owner['socket']) is None:
         return  # Natural exit already removed this immutable session.
     condition = '#{&&:#{==:#{session_id},' + owner['session'] + '},#{&&:#{==:#{pane_id},' + owner['pane'] + '},#{==:#{pane_pid},' + str(owner['pid']) + '}}}'
+    if 'automatic' in token:
+        condition = '#{&&:#{==:#{session_attached},0},' + condition + '}'
+        generation = token['automatic']['generation']
+        if generation:
+            if not re.fullmatch(r'[0-9]+:[0-9a-f]{32}', generation):
+                raise ValueError('invalid attachment generation')
+            condition = '#{&&:#{==:#{@t_terminal_attachment},' + generation + '},' + condition + '}'
     result = run(['tmux', '-S', owner['socket'], 'if-shell', '-F', '-t', owner['session'] + ':', condition,
                   'kill-session -t ' + shlex.quote(owner['session'] + ':'),
                   'display-message -p client-stop-owner-changed'], timeout=5)

@@ -82,7 +82,7 @@ for _t_name in $_T_OWNED_HOSTS; do
 done
 _T_OWNED_ALIASES=() _T_OWNED_HOSTS=() _T_OWNED_ALIAS_VALUES=() _T_OWNED_HOST_VALUES=()
 DEV_REPOS=() DEV_BRANCHES=() REMOTE_HOSTS=() DEV_WORKTREE=() DEV_OPEN_MODE=() DEV_AGENT=() DEV_MODEL=() DEV_EFFORT=() DEV_FAST=() DEV_HANDOFF=()
-unset DEV_OPEN_MODE_DEFAULT DEV_BRANCH DEV_WORKTREE_ROOT DEV_WORKTREE_DEFAULT DEV_AGENT_DEFAULT TBEAM_HOST MINI_HOST
+unset DEV_OPEN_MODE_DEFAULT DEV_BRANCH DEV_WORKTREE_ROOT DEV_WORKTREE_DEFAULT DEV_AGENT_DEFAULT TBEAM_HOST MINI_HOST T_TERMINAL_CLOSE_RETRY_MINUTES
 
 export T_LOCAL_RC=${T_LOCAL_RC:-${XDG_CONFIG_HOME:-$HOME/.config}/t/local.zsh}
 [[ -f $T_LOCAL_RC ]] && source "$T_LOCAL_RC"
@@ -133,6 +133,7 @@ _t_sync_config() {
     for k in ${(k)DEV_MODEL};     do print -r -- "DEV_MODEL[$k]=${(q)DEV_MODEL[$k]}"; done
     for k in ${(k)DEV_EFFORT};    do print -r -- "DEV_EFFORT[$k]=${(q)DEV_EFFORT[$k]}"; done
     for k in ${(k)DEV_FAST};      do print -r -- "DEV_FAST[$k]=${(q)DEV_FAST[$k]}"; done
+    print -r -- "T_TERMINAL_CLOSE_RETRY_MINUTES=${(q)${T_TERMINAL_CLOSE_RETRY_MINUTES:-15}}"
     print -r -- "T_AUTO_TRUST=${(q)${T_AUTO_TRUST:-0}}"
     print -r -- "DEV_AGENT_DEFAULT=${(q)DEV_AGENT_DEFAULT}"
     print -r -- "TBEAM_HOST=${(q)TBEAM_HOST}"

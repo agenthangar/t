@@ -1477,7 +1477,14 @@ also keeps it running. Explicit tmux detach leaves the session running. For
 example, opening a fresh slot and closing its untouched terminal releases the
 live slot; closing a terminal with an open PR leaves its agent available to
 reattach with `t open`. Termination retains saved conversations, branches, and
-worktrees. This is a one-time check on terminal loss, not a periodic idle sweep.
+worktrees. The terminal-loss check runs immediately. When finished-session cleanup
+is installed, a verified last-window loss during an active turn or open pull
+request can also schedule follow-up checks. Each check targets the exact original
+session and turn. A new prompt or reattachment cancels follow-up. The agent can
+keep committing and pushing on the same branch. Delayed close requires a clean
+worktree, an idle agent, an empty composer, and fresh GitHub evidence of a
+same-repository PR merged to the default branch at the current worktree HEAD.
+Checks expire after 24 hours.
 A narrowly verified Python `-m http.server` preview directly owned by the agent
 can be stopped when it has an explicit loopback bind (`127.0.0.1`, `::1`, or
 `localhost`) and only supported static-server arguments. Its serving directory
@@ -1866,9 +1873,35 @@ review/save/discard transaction; preparation is an explicit immediate machine ac
 Retain **Ask which local model** alongside Pause and Continue locally. Preserve
 queue wait, owned model unloading and cloud-return recovery from main.
 
-## Automatic recovery
+## Background agents
 
-`t config` includes **Recovery → Automatic recovery** as a host-local staged
+`t config` groups **Finished session cleanup** and **Automatic recovery** under
+**Background agents**. Both rows show installation and live state for this host.
+The cleanup interval is 15 minutes by default. Enter whole minutes from 1 to 1,439
+or use **Use default**. Review and save applies the setting to future closures.
+
+`t agent background status [TARGET]` prints a static installation, runtime,
+effective login startup, and check interval table. Recovery shows `on restart`.
+Narrow terminals stack the values. Status never prompts or changes service state.
+On macOS, installation and lifecycle controls accept `cleanup`, `recovery`, or
+`all` as explicit targets:
+
+```sh
+t agent background install cleanup
+t agent background install recovery --reinstall
+t agent background start cleanup
+t agent background stop cleanup
+t agent background restart all
+```
+
+The login column checks the owned LaunchAgent, launch target, and OS disable
+override. Start and stop apply to the current login. Stop retains registration,
+settings and pending state. Reinstall repairs the selected registration and
+preserves a deliberate stop. The services are optional and belong to the current user.
+
+### Automatic recovery
+
+`t config` includes **Background agents → Automatic recovery** as a host-local staged
 setting. Review/save applies it; cancel writes nothing. Running status belongs to
 the setting row; Back has no status value. Pending toggles say starts/stops on save.
 Enabling on macOS installs the user login service and merges owned agent hooks.

@@ -279,7 +279,7 @@ def test_new_binary_dispatch_is_explicit_and_failure_propagates(t_mod, monkeypat
     argv, options = calls[0]
     assert argv[:3] == [t_mod.sys.executable, str(source / 'bin/t'), '__runtime-reconcile']
     assert json.loads(argv[3])['previous_sources'] == ['/old']
-    assert options['cwd'] == '/' and options['timeout'] == 45
+    assert options['cwd'] == '/' and options['timeout'] == 90
     assert 'T_DEV_CONTEXT' not in options['env']
     assert 'failed terminalobserver' in capsys.readouterr().err
 
