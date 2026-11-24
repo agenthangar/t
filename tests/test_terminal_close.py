@@ -55,6 +55,25 @@ def test_composer_proves_blank_current_input(close, agent, screen, cursor, expec
     assert close.composer_empty(agent, screen, cursor) is expected
 
 
+@pytest.mark.parametrize('case,expected', [
+    ('idle', True), ('typed-placeholder', False), ('moved-cursor', False), ('multiline', False),
+])
+def test_current_codex_composer(close, case, expected):
+    # Sanitized pane capture, including the reset after › and the wrapped status.
+    prompt = '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m'
+    footer = ('\n\n  \x1b[38;2;246;226;183mGPT-6.2-Sol high fast\x1b[39m · '
+              '\x1b[38;2;171;223;167m~/code/project\x1b[39m · '
+              '\x1b[38;2;166;227;161mComplete the requested\x1b[39m\n'
+              '  \x1b[38;2;166;227;161mfix\x1b[39m\n'
+              '  \x1b[1m←\x1b[0m for agents · \x1b[1m?\x1b[0m for shortcuts')
+    if case == 'typed-placeholder':
+        prompt = prompt.replace('\x1b[2m', '')
+    if case == 'multiline':
+        footer = '\n  real draft' + footer
+    assert close.composer_empty('codex', 'Task complete\n\n' + prompt + footer, '2',
+                                '3' if case == 'moved-cursor' else '2') is expected
+
+
 @pytest.mark.parametrize('kinds,expected', [
     ([], 'empty'), (['task_started'], 'busy'),
     (['task_started', 'task_complete'], 'idle'),
@@ -103,10 +122,12 @@ def _attach(base, env, socket, count=1):
     return master, process
 
 
-@pytest.mark.parametrize('case', ['empty', 'completed', 'draft', 'dirty', 'open-pr', 'busy', 'detach', 'background', 'another-client',
+@pytest.mark.parametrize('case', ['empty', 'completed', 'draft', 'dirty', 'open-pr', 'busy', 'detach', 'detach-close', 'background', 'another-client',
     'completed-preview', 'busy-preview', 'draft-preview', 'dirty-preview', 'unmerged-preview', 'open-pr-preview', 'mixed-preview'])
 def test_public_terminal_closure(lifecycle, close, case):
     base, env = lifecycle
+    if case == 'detach-close' and sys.platform != 'darwin':
+        pytest.skip('Darwin tracks the exact client exit status')
     preview = case.endswith('-preview')
     case = case.removesuffix('-preview')
     preview_dir = base / 'preview-outside-worktree'
@@ -154,11 +175,15 @@ def test_public_terminal_closure(lifecycle, close, case):
     master, process = _attach(base, env, socket)
     second = _attach(base, env, socket, 2) if case == 'another-client' else None
     try:
-        if case == 'detach':
+        if case in ('detach', 'detach-close'):
             _run([str(base / 'bin/tmux'), 'detach-client', '-s', 'dev-repo-1'], env=env, cwd=base)
             process.wait(timeout=5)
-            # Leave the terminal alive until the detach observer has exited.
-            time.sleep(1)
+            if case == 'detach-close':
+                os.close(master)
+                master = None
+            else:
+                # Leave the terminal alive until the detach observer has exited.
+                time.sleep(1)
         else:
             os.close(master)
             master = None
@@ -253,12 +278,12 @@ def test_eligibility_rechecks_after_pr_lookup(close, monkeypatch, change):
 
 
 @pytest.mark.parametrize('row', [
-    '$2\tdev-repo-1\t%1\t123\t/work\t0\t0\t0',
-    '$1\tdev-repo-1\t%2\t123\t/work\t0\t0\t0',
-    '$1\tdev-repo-1\t%1\t124\t/work\t0\t0\t0',
-    '$1\tdev-repo-1\t%1\t123\t/work\t1\t0\t0',
-    '$1\tdev-repo-1\t%1\t123\t/work\t0\t1\t0',
-    '$1\tunmanaged\t%1\t123\t/work\t0\t0\t0',
+    '$2\tdev-repo-1\t%1\t123\t/work\t0\t0\t0\t0',
+    '$1\tdev-repo-1\t%2\t123\t/work\t0\t0\t0\t0',
+    '$1\tdev-repo-1\t%1\t124\t/work\t0\t0\t0\t0',
+    '$1\tdev-repo-1\t%1\t123\t/work\t1\t0\t0\t0',
+    '$1\tdev-repo-1\t%1\t123\t/work\t0\t1\t0\t0',
+    '$1\tunmanaged\t%1\t123\t/work\t0\t0\t0\t0',
     'bad',
 ])
 def test_owner_never_follows_changed_identity(close, monkeypatch, row):
@@ -305,6 +330,7 @@ def test_attachment_passes_original_fd_and_cleans_up(close, monkeypatch, tmp_pat
     master, slave = pty.openpty()
     tty = os.ttyname(slave)
     calls = []
+    monkeypatch.setattr(close, 'stamp_attachment', lambda *args: None)
     monkeypatch.setattr(close.subprocess, 'Popen', lambda args, **kwargs: calls.append((args, kwargs)))
     try:
         if closed:
@@ -357,6 +383,7 @@ def test_attachment_resolves_saved_hook_client(close, monkeypatch, tmp_path, lis
 @pytest.mark.parametrize('lost', [False, True])
 def test_watcher_uses_retained_fd_and_exact_event(close, monkeypatch, tmp_path, lost):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    monkeypatch.setattr(close, 'DARWIN', False)
     helpers = close.runtime()
     helpers.update(canonical_socket=lambda value: value, socket_identity=lambda value: (1, 2),
                    adopt_attachment=lambda *args: True)
@@ -401,6 +428,55 @@ def test_watcher_missing_callback_never_cleans_up(close, monkeypatch, tmp_path, 
     finally:
         if not lost:
             os.close(master)
+
+
+@pytest.mark.parametrize('case,expected', [
+    ('revoke-first', 'terminate'), ('hook-first', 'terminate'),
+    ('detach-then-close', 'client detached normally'),
+    ('reattached', 'unverified or superseded attachment'),
+    ('no-revoke', 'incomplete terminal close evidence'),
+])
+def test_darwin_watcher_correlates_attachment_evidence(close, monkeypatch, tmp_path, case, expected):
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    monkeypatch.setattr(close, 'DARWIN', True)
+    monkeypatch.setattr(close, 'hung_up', lambda fd: False)
+    master, slave = pty.openpty()
+    tty = os.ttyname(slave)
+    lock = os.open(tmp_path / 'lock', os.O_CREAT | os.O_RDWR, 0o600)
+    event = Path(str(close.event_path('/socket', tty)) + '.event')
+    records = []
+    monkeypatch.setattr(close, 'receipt', lambda socket, identity, value: records.append(value['reason']))
+    def detach(*args):
+        assert args[-2] == '123:original'
+        assert args[-1]['terminal_revoked']
+        records.append('terminate')
+        return 0
+    monkeypatch.setattr(close, 'detached', detach)
+    monkeypatch.setattr(close, 'attachment_stamp',
+                        lambda *args: '456:new' if case == 'reattached' else '123:original')
+    monkeypatch.setattr(close.os, 'kill', lambda *args: None)
+    monkeypatch.setattr(close.time, 'sleep', lambda seconds: None)
+    ticks = iter(range(1, 25))
+    monkeypatch.setattr(close.time, 'monotonic', lambda: next(ticks))
+    class Terminal:
+        revoked = False
+        status = None
+        attempts = 0
+        def observe(self):
+            self.attempts += 1
+            self.status = 0 if case == 'detach-then-close' else 1
+            self.revoked = case != 'no-revoke' and (case != 'hook-first' or self.attempts > 1)
+            if self.attempts == (2 if case == 'revoke-first' else 1):
+                event.write_text(json.dumps(['$1', '%2', '321']))
+        def close(self):
+            pass
+    monkeypatch.setattr(close, 'DarwinTerminal', lambda *args: Terminal())
+    try:
+        assert close.watch('/socket', tty, '123', str(slave), str(lock)) == 0
+        assert records == [expected]
+        assert not event.exists()
+    finally:
+        os.close(master)
 
 
 @pytest.mark.parametrize('case', ['invalid', 'detach', 'attached', 'close', 'refused'])
@@ -481,7 +557,7 @@ def test_failed_observations_are_not_empty_evidence(close, monkeypatch, tmp_path
     assert close.composer_empty('codex', '› \n\x1b[2m50% context left\x1b[0m\n', '0') is True
     monkeypatch.setattr(close, 'tmux', lambda *args: subprocess.CompletedProcess(args, 1, '', 'failed'))
     assert close.owner('/s', '$1', '%1', '1') is None
-    monkeypatch.setattr(close, 'tmux', lambda *args: subprocess.CompletedProcess(args, 0, '$1\tdev-repo-1\t%1\t1\t/w\t0\t0\t0', ''))
+    monkeypatch.setattr(close, 'tmux', lambda *args: subprocess.CompletedProcess(args, 0, '$1\tdev-repo-1\t%1\t1\t/w\t0\t0\t0\t0', ''))
     assert close.owner('/s', '$1', '%1', '1')['workspace'] == '/w'
 
 
