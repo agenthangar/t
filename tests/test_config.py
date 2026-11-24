@@ -454,7 +454,7 @@ def test_recovery_toggle_applies_only_after_config_review(t_mod, config_cli, mon
               'menu': lambda ui, value: not value,
               'configure': lambda value, before: calls.append((value, before))}
     monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: helper)
-    ui = Menu(['recovery', 'save'] if save else ['recovery', 'cancel', 'discard'])
+    ui = Menu(['background', 'recovery', 'back', 'save'] if save else ['background', 'recovery', 'back', 'cancel', 'discard'])
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == (0 if save else 130)
     assert calls == ([(True, False)] if save else [])
@@ -484,7 +484,7 @@ def test_recovery_save_rebinds_running_service_to_current_source(t_mod, config_c
               'menu': lambda ui, value: value,
               'configure': lambda value, before: calls.append((value, before))}
     monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: helper)
-    ui = Menu(['recovery', 'save'])
+    ui = Menu(['background', 'recovery', 'back', 'save'])
     ui.page = lambda title, lines, *args, **kwargs: reviews.extend(lines) or 'y'
     monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
     assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == 0
@@ -1620,3 +1620,17 @@ def test_config_local_continuation_uses_shared_narrow_viewport(t_mod, local_cont
         assert sum(t_mod._term_rows(line, width) for line in frame) <= height
     assert all(any('▸' in line for line in frame) for frame in choices)
     assert all(any('SAVE AND CONTINUE' in line for line in frame) for frame in reviews)
+
+
+@pytest.mark.parametrize('save', [True, False])
+def test_cleanup_interval_stages_only_valid_minutes(t_mod, config_cli, monkeypatch, save):
+    cfg, local = config_cli
+    helper = {'enabled': lambda: False}
+    monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: helper)
+    actions = ['background', 'cleanup', 'interval', 'interval', 'back', 'back']
+    ui = Menu(actions + (['save'] if save else ['cancel', 'discard']), inputs=['0', '30'])
+    monkeypatch.setattr(t_mod, '_RailUI', lambda: ui)
+    assert t_mod.cmd_config(cfg, SimpleNamespace(show=False)) == (0 if save else 130)
+    assert ('T_TERMINAL_CLOSE_RETRY_MINUTES=30' in local.read_text()) == save
+    assert t_mod._cleanup_interval('1439') == '1439'
+    assert t_mod._cleanup_interval('1440') is None

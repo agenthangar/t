@@ -104,7 +104,7 @@ ZSH_PRELUDE = "setopt no_monitor no_notify 2>/dev/null; "
 
 _CFG_LINE = re.compile(
     r"^(DEV_REPOS|DEV_BRANCHES|REMOTE_HOSTS|DEV_WORKTREE|DEV_AGENT|DEV_MODEL|DEV_EFFORT|DEV_FAST)\[([^\]]+)\]=(.*)$"
-    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|T_AUTO_TRUST|T_LOCAL_RC)=(.*)$")
+    r"|^(DEV_BRANCH|DEV_WORKTREE_ROOT|DEV_WORKTREE_DEFAULT|DEV_AGENT_DEFAULT|TBEAM_HOST|MINI_HOST|T_AUTO_TRUST|T_TERMINAL_CLOSE_RETRY_MINUTES|T_LOCAL_RC)=(.*)$")
 
 
 _resolve_local_rc = runpy.run_path(str(Path(__file__).resolve().parent.parent /
@@ -142,6 +142,7 @@ class Config:
         self.agents = {}     # alias -> claude|codex (DEV_AGENT[alias])
         self.agent_default = "claude"
         self.auto_trust = os.environ.get("T_AUTO_TRUST", "0")
+        self.cleanup_interval = "15"
         self.models = {}     # agent -> model for NEW sessions; empty defers to the CLI
         self.efforts = {}    # agent -> reasoning effort for NEW sessions
         self.fast = {}       # agent -> speed override; empty inherits the CLI setting
@@ -176,6 +177,8 @@ class Config:
                 self.worktree_default = _unquote(m.group(5))
             elif m.group(4) == "DEV_AGENT_DEFAULT":
                 self.agent_default = _unquote(m.group(5))
+            elif m.group(4) == "T_TERMINAL_CLOSE_RETRY_MINUTES":
+                self.cleanup_interval = _cleanup_interval(_unquote(m.group(5))) or "15"
             elif m.group(4) == "T_AUTO_TRUST":
                 self.auto_trust = _unquote(m.group(5))
             elif m.group(4) == "TBEAM_HOST":
@@ -1947,6 +1950,7 @@ _CONFIG_ARRAYS = {"DEV_REPOS": "repos", "REMOTE_HOSTS": "hosts", "DEV_BRANCHES":
                   "DEV_EFFORT": "efforts", "DEV_FAST": "fast"}
 _CONFIG_SCALARS = {"DEV_AGENT_DEFAULT": "agent_default", "DEV_BRANCH": "branch",
                    "T_AUTO_TRUST": "auto_trust",
+                   "T_TERMINAL_CLOSE_RETRY_MINUTES": "cleanup_interval",
                    "DEV_WORKTREE_ROOT": "worktree_root", "DEV_WORKTREE_DEFAULT": "worktree_default",
                    "TBEAM_HOST": "beam_host", "MINI_HOST": "mini_host"}
 _CONFIG_ALIAS = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
@@ -1972,6 +1976,12 @@ def _config_unset_key(line):
     return words[1] if len(words) == 2 and words[0] == "unset" else None
 
 
+def _cleanup_interval(value):
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,4}", value) and 1 <= int(value) < 1440:
+        return str(int(value))
+    return None
+
+
 def _config_assignment(key, value):
     """Only our known keys may become shell assignments; every value is quoted."""
     m = _CFG_LINE.fullmatch(key + "=")
@@ -1981,6 +1991,8 @@ def _config_assignment(key, value):
         return "unset " + shlex.quote(key)
     if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("settings must be a single line without control characters")
+    if key == "T_TERMINAL_CLOSE_RETRY_MINUTES" and not _cleanup_interval(value):
+        raise ValueError("Enter whole minutes from 1 to 1,439.")
     if (key == "DEV_AGENT_DEFAULT" or key.startswith("DEV_AGENT[")) and value not in AGENTS:
         raise ValueError("choose claude or codex")
     if key.startswith("DEV_MODEL[") and value and not _MODEL_ID.fullmatch(value):
@@ -4553,6 +4565,59 @@ def _recovery_pending(cfg):
             getattr(cfg, '_recovery_repair', False))
 
 
+def _background_agents():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_background.py'))
+
+
+def _config_background(ui, cfg):
+    focus = 0
+    background = _background_agents()
+    statuses = {key: background['status'](key) for key in background['NAMES']}
+    while True:
+        values = {key: ' · '.join(statuses[key][:2]) for key in statuses}
+        values['cleanup'] += f' · Every {cfg.cleanup_interval} min'
+        if cfg._recovery_enabled != cfg._recovery_initial:
+            values['recovery'] += ' · ' + ('starts' if cfg._recovery_enabled else 'stops') + ' on save'
+        choice = ui.pick('Background agents', [
+            ('cleanup', 'Finished session cleanup ›'), ('recovery', 'Automatic recovery ›'), ('back', 'Back')],
+            values=values, default=focus)
+        if choice in (None, 'back'):
+            return
+        focus = 0 if choice == 'cleanup' else 1
+        if choice == 'recovery':
+            recovery = _automatic_recovery()
+            cfg._recovery_enabled = recovery['menu'](ui, cfg._recovery_enabled)
+            state = recovery['status']()
+            stopped = recovery.get('manually_stopped', lambda: False)()
+            cfg._recovery_repair = cfg._recovery_enabled and not stopped and (
+                not state['running'] or state.get('source', _t_source_root()) != _t_source_root())
+        else:
+            _config_cleanup_interval(ui, cfg)
+
+
+def _config_cleanup_interval(ui, cfg):
+    focus = 0
+    while True:
+        choice = ui.pick('Finished session cleanup', [
+            ('interval', 'Check interval'), ('default', 'Use default'), ('back', 'Back')],
+            values={'interval': f'Every {cfg.cleanup_interval} min', 'default': 'Every 15 min'},
+            context=['After the last window closes on a shipping session, t checks for a finished '
+                     'agent and a verified merge for up to 24 hours.'], default=focus)
+        if choice in (None, 'back'):
+            return
+        focus = int(choice == 'default')
+        if choice == 'default':
+            cfg.cleanup_interval = '15'
+        else:
+            value = _config_input(ui, 'Whole minutes', cfg.cleanup_interval)
+            if value is not None:
+                interval = _cleanup_interval(value)
+                if interval is None:
+                    ui.done('invalid', 'Enter whole minutes from 1 to 1,439.')
+                else:
+                    cfg.cleanup_interval = interval
+
+
 def _config_wizard(cfg, workflows_only=False, workflow_target=None):
     ui = _RailUI()
     ui._config_interrupts = True
@@ -4581,7 +4646,8 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
     try:
         while True:
             try:
-                rows = [("tool", "Default tool"), ("trust", "Automatic folder trust")]
+                rows = [("tool", "Default tool"), ("trust", "Automatic folder trust"),
+                        ("background", "Background agents ›")]
                 values = {"tool": edited.agent_default}
                 values["trust"] = ("enabled" if edited.auto_trust == "1" else "disabled") + (" (T_NO_TRUST overrides)" if os.environ.get(_TRUST_NO_ENV) else "")
                 for a in AGENTS:
@@ -4591,11 +4657,12 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         values[a] += " · fast"
                 rows += [("local", "Local worker & models ›"), ("workflow", "Workflows ›"), ("runners", "Test runners ›"),
                          ("mcp", "MCP servers ›"), ("repos", "Repositories ›"), ("worktrees", "Worktrees & branches ›"),
-                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("recovery", "Recovery ›"), ("edit", "Open config in editor"),
+                         ("hosts", "Hosts ›"), ("beam", "Default beam host"), ("nosleep", "Nightr ›"), ("edit", "Open config in editor"),
                          ("cancel", "Cancel")]
                 pending = len(_config_diff(initial, _config_state(edited))) + _workflow_pending(edited) + _recovery_pending(edited)
                 edited._workflow_shell_pending = bool(_config_diff(initial, _config_state(edited)))
-                values['recovery'] = 'Enabled · this Mac' if edited._recovery_enabled else 'Disabled · this Mac'
+                values['background'] = (f'Every {edited.cleanup_interval} min · recovery ' +
+                                        ('enabled' if edited._recovery_enabled else 'disabled'))
                 values.update({"hosts": f"{len(edited.hosts)} registered",
                                "repos": ", ".join(sorted(edited.repos)) or "none registered",
                                "beam": edited.beam_host or "none", "save": f"{pending} pending"})
@@ -4632,12 +4699,8 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         ui.done("cancelled", "earlier saves kept; no pending changes saved" if getattr(cfg, "_config_saved", False) else "nothing written")
                         return None
                 last = choice if choice in dict(rows) else last
-                if choice == 'recovery':
-                    recovery = _automatic_recovery()
-                    edited._recovery_enabled = recovery['menu'](ui, edited._recovery_enabled)
-                    state = recovery['status']()
-                    edited._recovery_repair = edited._recovery_enabled and (
-                        not state['running'] or state.get('source', _t_source_root()) != _t_source_root())
+                if choice == 'background':
+                    _config_background(ui, edited)
                     continue
                 if choice == "mcp":
                     _config_mcp(ui, pending)
@@ -4695,6 +4758,8 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                         lines += ["      " + line for line in _workflow_review(
                             edited._workflow_document, before=edited._workflow_initial,
                             activate=edited._workflow_activate)]
+                    if "T_TERMINAL_CLOSE_RETRY_MINUTES" in changes:
+                        lines.append("      Cleanup interval applies to future window closures on this host.")
                     if _recovery_pending(edited):
                         lines += (["      Enable automatic recovery on this Mac after login.",
                                    "      Enroll open and future managed sessions; resume interrupted work in background.",
@@ -5612,6 +5677,7 @@ def cmd_config(cfg, args):
         print(f"Local worker: t config local --show (setup: t config local)")
         print("Nightr: t system apps status nightr (setup: t config → Nightr)")
         print(f"Default beam host: {cfg.beam_host or 'none'}")
+        print(f'Finished session cleanup: every {cfg.cleanup_interval} min')
         print('Automatic recovery: ' + ('enabled' if _automatic_recovery()['enabled']() else 'disabled') + ' · this Mac')
         print(f"Worktrees: {cfg.worktree_default} · root: {cfg.worktree_root} · shared-tree branch: {cfg.branch}")
         for alias, target in sorted(cfg.hosts.items()):
@@ -8700,6 +8766,8 @@ def _command_readonly(argv, *, terminal=None):
             terminal = sys.stdin.isatty() and sys.stdout.isatty()
         return not terminal
     verb, tail = words[0], words[1:]
+    if verb == 'agent' and tail[:1] == ['background']:
+        return len(tail) == 1 or tail[1] == 'status'
     if verb in ('system', 'session') and tail[:1] == ['recovery']:
         return len(tail) == 1 or tail[1] == 'status'
     if verb in ("idea", "ideate"):
@@ -12939,7 +13007,9 @@ COMMAND_GROUPS = {
     "policy": {"check": ("permissions",), "show": ("permissions", "--show"),
                "apply": ("permissions", "--apply")},
     "agent": {"login": ("login",), "install": ("install",), "status": ("install", "--status"),
-              "trust": ("trust",)},
+              "trust": ("trust",),
+              "background": {verb: ("agent", "background", verb)
+                             for verb in ("status", "install", "start", "stop", "restart")}},
     "system": {"integrate": ("integrate",), "update": ("update",),
                "recovery": {"status": ("system", "recovery", "status")},
                "apps": {v: ("system", "apps", v) for v in ("install", "status")},
@@ -13207,10 +13277,22 @@ def _wrap_help(body):
 
 
 def _group_help(group):
+    if group == 'agent background':
+        return _wrap_help("""USAGE
+  t agent background status [TARGET]
+  t agent background install TARGET [--reinstall]
+  t agent background start TARGET
+  t agent background stop TARGET
+  t agent background restart TARGET
+
+TARGET is cleanup, recovery, or all. Stop applies to this login.
+Status checks installation, live state, and effective login startup on this host.
+Run t help agent background <verb> for details.
+""")
     if group in ('system recovery', 'session recovery'):
         verbs = ('status',) if group.startswith('system') else ('pause', 'resume', 'status')
         return _wrap_help('USAGE\n  t ' + group + ' <verb>' + (' [repo] [slot]' if group.startswith('session') else '') +
-                          '\n\nConfigure automatic recovery in t config → Recovery.\n\nCOMMANDS\n' +
+                          '\n\nConfigure automatic recovery in t config → Background agents.\n\nCOMMANDS\n' +
                           '\n'.join('  ' + verb + '  ' + {'status': 'Read recovery state (--json for machine output)',
                             'pause': 'Pause automatic recovery for a session', 'resume': 'Restore recovery eligibility for a session'}[verb] for verb in verbs) +
                           '\n\nSession targets accept an exact conversation ID or REPO SLOT.\nOmit the target to infer an unambiguous current workspace. No picker opens.\nRun t help ' + group + ' <verb> for details.\n')
@@ -13582,7 +13664,8 @@ def _command_description(group, action):
         "policy": {"check": "Check pending changes", "show": "Show translated rules",
                    "apply": "Apply permission rules"},
         "agent": {"login": "Log in logged-out or expiring agents", "install": "Install and log in agent CLIs", "status": "Show agent state",
-                  "trust": "Trust a folder in installed agents"},
+                  "trust": "Trust a folder in installed agents",
+                  "background": "Install, manage and inspect background services"},
         "system": {"integrate": "Link t and its hooks", "update": "Update t and managed apps",
                    "recovery": "Inspect automatic recovery; configure with t config",
                    "apps": "Install and inspect optional desktop apps",
@@ -15327,6 +15410,24 @@ PERIODIC CHECKS
     lp.add_argument("url")
     lp.add_argument("name")
     lp.add_argument("alias")
+    agents = sub.add_parser('agent', hidden=True, help='agent resources')
+    agent_resources = agents.add_subparsers(dest='resource', required=True)
+    background = agent_resources.add_parser('background', help='manage background agents on this host')
+    background_actions = background.add_subparsers(dest='action', required=True)
+    for action, description in (
+        ('status', 'show installation, running and login startup status'),
+        ('install', 'install a background agent and register it for login'),
+        ('start', 'start an installed background agent'),
+        ('stop', 'stop a background agent for this login'),
+        ('restart', 'restart an installed background agent'),
+    ):
+        leaf = background_actions.add_parser(action, help=description, description=description.capitalize() + '.')
+        leaf.add_argument('target',
+                          choices=('cleanup', 'recovery', 'all'), metavar='TARGET',
+                          **({'nargs': '?'} if action == 'status' else {}),
+                          help='cleanup, recovery, or all' + (' (default: all)' if action == 'status' else ''))
+        if action == 'install':
+            leaf.add_argument('--reinstall', action='store_true', help='repair an existing installation')
     for scope in ('system', 'session'):
         family = system if scope == 'system' else sub.add_parser(scope, hidden=True, help='session resources')
         resources = system_sub if scope == 'system' else family.add_subparsers(dest='resource', required=True)
@@ -15604,14 +15705,18 @@ def _main(argv):
             if not isinstance(request, dict):
                 raise ValueError('invalid runtime reconciliation request')
             display = request.pop('display', False)
-            recovery_failure = None
-            try:
-                _automatic_recovery()['migrate']()
-            except (OSError, ValueError, subprocess.SubprocessError) as error:
-                recovery_failure = dict(component='automatic recovery', status='failed', reason=str(error))
+            failures = []
+            for component, helper, operation in (
+                ('automatic recovery', _automatic_recovery, 'migrate'),
+                ('finished session cleanup', _background_agents, 'upgrade_cleanup'),
+            ):
+                try:
+                    helper()[operation]()
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    failures.append(dict(component=component, status='failed', reason=str(error)))
             value = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_runtime.py'))['reconcile'](**request)
-            if recovery_failure:
-                value['results'].append(recovery_failure)
+            if failures:
+                value['results'].extend(failures)
                 value['failed'] = True
         except (OSError, ValueError, KeyError, TypeError, SyntaxError) as error:
             value = dict(protocol=1, results=[dict(component='dispatcher', status='failed', reason=str(error))], failed=True)
@@ -16015,6 +16120,14 @@ def _main(argv):
     if update_result is not None:
         return update_result
     cfg = Config()
+    if args.verb == 'agent' and args.resource == 'background':
+        try:
+            with _spinner('Checking background agents' if args.action == 'status' else 'Managing background agents'):
+                return _background_agents()['command'](args.action, args.target, getattr(args, 'reinstall', False),
+                                                       cfg.cleanup_interval)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            print(f't agent background: {error}', file=sys.stderr)
+            return 1
     handler = IMPLEMENTED.get(args.verb)
     if handler:
         return handler(cfg, args)

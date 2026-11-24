@@ -2233,15 +2233,31 @@ _t_terminal_close_install() {
 # The event runs in a private shell on the owner host. Pin every tmux call to
 # that server; neither a default socket nor a recycled session name is a target.
 _t_terminal_close_event() {
-  local T_CLOSE_SOCKET=$1 identity=$2 pane=$3 pane_pid=$4 session dir sid agent
+  local T_CLOSE_SOCKET=$1 identity=$2 pane=$3 pane_pid=$4 T_CLOSE_GENERATION=${_T_TERMINAL_ATTACHMENT:-} T_CLOSE_PROOF=$5
+  local session dir sid agent
   tmux() { command tmux -S "$T_CLOSE_SOCKET" "$@"; }
   session=$(tmux display-message -p -t "$identity:" '#{session_name}') || return 1
   [[ $session == dev-* ]] || return 1
   dir=$(tmux display-message -p -t "$identity:" '#{session_path}') || return 1
   sid=$(_dev_session_sid "$session" "$dir")
   agent=$(_dev_agent_of_session "$session")
-  _dev_with_launch_locks "$dir" "$sid" _t_lifecycle_run auto-close \
+  _dev_with_launch_locks "$dir" "$sid" _t_terminal_close_locked \
     "$session" "$dir" "$sid" "$agent" "$T_CLOSE_SOCKET" "$identity" "$pane" "$pane_pid"
+}
+
+_t_terminal_close_locked() {
+  if [[ -n $T_CLOSE_GENERATION && -z $T_CLOSE_PROOF &&
+        -f "$HOME/Library/LaunchAgents/com.agenthangar.t.cleanup.plist" ]]; then
+    if ! _t_terminal_close_guard "$1" "$2" "$5" "$6" "$7" "$8"; then
+      local tx pid
+      tx=$(_dev_agent_transcript "$4" "$3" "$2" 2>/dev/null)
+      pid=$(_dev_session_claude_pid "$1") || return 1
+      python3 "$T_HOME/libexec/t_close_queue.py" arm "$5" "$6" "$7" "$8" "$T_CLOSE_GENERATION" \
+        "$4" "$3" "$pid" "$2" "$tx" "${T_TERMINAL_CLOSE_RETRY_MINUTES:-15}"
+      return 1
+    fi
+  fi
+  _t_lifecycle_run auto-close "$@"
 }
 
 _t_terminal_close_guard() {
@@ -2254,19 +2270,37 @@ _t_terminal_close_guard() {
   tx=$(_dev_agent_transcript "$agent" "$sid" "$dir" 2>/dev/null)
   fresh=$(tmux show-options -qv -t "$identity:" @t_fresh_launch)
   [[ $agent == codex && -n $sid ]] && fresh=0
-  _dev_kill_no_pending_work "$dir" && clean=1
+  if [[ -n $T_CLOSE_GENERATION ]]; then
+    [[ $(tmux show-options -qv -t "$identity:" @t_terminal_attachment) == "$T_CLOSE_GENERATION" ]] || return 1
+  fi
+  if [[ -n $T_CLOSE_PROOF ]]; then
+    pid=$(_dev_session_claude_pid "$session") || return 1
+    _t_terminal_git_clear "$dir" "$agent" "$sid" "$pid" "$dir" "$tx" && clean=1
+  else
+    _t_terminal_git_clear "$dir" && clean=1
+  fi
   _t_terminal_processes_clear "$session" "$dir" && clear=1
   if [[ $mode == stop-previews ]]; then
     pid=$(_dev_session_claude_pid "$session")
     [[ -n $pid ]] || return 1
     python3 "$T_HOME/libexec/t_terminal_close.py" stop-previews "$socket" "$identity" "$pane" "$pane_pid" \
-      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" "$pid" "$$" >/dev/null
+      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" "$pid" "$$" \
+      "${T_CLOSE_GENERATION:-}" "${T_CLOSE_PROOF:-}" >/dev/null
   else
     verdict=$(python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
       "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid") || {
       [[ -z $verdict ]] || print -u2 -r -- "$verdict"
       return 1
     }
+  fi
+}
+
+_t_terminal_git_clear() {
+  if [[ -n $T_CLOSE_PROOF ]]; then
+    shift
+    python3 "$T_HOME/libexec/t_close_queue.py" validate "$T_CLOSE_PROOF" "$@"
+  else
+    _dev_kill_no_pending_work "$1"
   fi
 }
 

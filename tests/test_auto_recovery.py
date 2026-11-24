@@ -411,6 +411,7 @@ def test_installed_runtime_dispatch_migrates_for_older_updater(t_mod, monkeypatc
         return dict(protocol=1, results=[], failed=False)
 
     monkeypatch.setattr(t_mod, '_automatic_recovery', lambda: {'migrate': migrate})
+    monkeypatch.setattr(t_mod, '_background_agents', lambda: {'upgrade_cleanup': lambda: None})
     monkeypatch.setattr(t_mod.runpy, 'run_path', lambda *args: {'reconcile': reconcile})
     assert t_mod._main(['__runtime-reconcile', '{"previous_sources":["/old"]}']) == 1
     result = json.loads(capsys.readouterr().out)
