@@ -286,10 +286,12 @@ def test_new_binary_dispatch_is_explicit_and_failure_propagates(t_mod, monkeypat
 
 def test_pending_detach_event_survives_observer_handoff_with_original_descriptor(runtime, source, tmp_path):
     helper = source / 'libexec/t_terminal_close.py'
-    original = helper.read_text()
+    # Exercise descriptor handoff independently of the native exit observer.
+    original = helper.read_text().replace("DARWIN = sys.platform == 'darwin'", 'DARWIN = False')
     # A test-only startup pause makes the request+event ordering deterministic.
-    helper.write_text(original.replace('    try:\n        while True:\n            # A reload',
-                                      '    try:\n        time.sleep(.5)\n        while True:\n            # A reload'))
+    loop = '        while True:\n            if terminal:'
+    assert loop in original
+    helper.write_text(original.replace(loop, '        time.sleep(.5)\n' + loop, 1))
     process, master, path, base = _observer(runtime, source)
     evidence = tmp_path / 'pending-event-evidence.json'
     try:
@@ -466,6 +468,7 @@ def test_concurrent_alias_attachments_arm_one_original_pty_owner(runtime, alias_
     runtime.server_inventory([canonical, alias])
     terminal = runtime.module('t_terminal_close.py')
     terminal['attached'].__globals__['runtime'] = lambda: runtime.__dict__
+    monkeypatch.setitem(terminal['attached'].__globals__, 'stamp_attachment', lambda *a: None)
     monkeypatch.setattr(runtime, 'adopt_attachment', lambda *a: True)
     held = []
     def spawn(argv, **options):

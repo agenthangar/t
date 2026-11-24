@@ -20,11 +20,17 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_PROTOCOL = 1
+DARWIN = sys.platform == 'darwin'
 HOOK = 'client-detached[50100]'
 ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+ATTACHMENT_OPTION = '@t_terminal_attachment'
+ATTACHMENT_ENV = '_T_TERMINAL_ATTACHMENT'
+NOTE_EXITSTATUS = 0x04000000  # Darwin sys/event.h
+DETACH_EVIDENCE_TIMEOUT = 5
 PROCESS_FIELDS = ('argv', 'executable', 'cwd', 'birth', 'import_safe')
 
 
@@ -44,6 +50,55 @@ def hung_up(fd):
     poll = select.poll()
     poll.register(fd, select.POLLHUP | select.POLLERR)
     return any(events & select.POLLHUP for _, events in poll.poll(0))
+
+
+class DarwinTerminal:
+    """Watch the original terminal and client without reading either stream."""
+
+    def __init__(self, fd, pid):
+        self.fd, self.pid = fd, int(pid)
+        self.revoked, self.status = False, None
+        self.queue = select.kqueue()
+        flags = select.KQ_EV_ADD | select.KQ_EV_ONESHOT
+        try:
+            self.queue.control([
+                select.kevent(fd, filter=select.KQ_FILTER_VNODE, flags=flags,
+                              fflags=select.KQ_NOTE_REVOKE),
+                select.kevent(self.pid, filter=select.KQ_FILTER_PROC, flags=flags,
+                              fflags=select.KQ_NOTE_EXIT | NOTE_EXITSTATUS),
+            ], 0, 0)
+        except OSError:
+            self.queue.close()
+            raise
+
+    def observe(self):
+        for event in self.queue.control(None, 2, 0):
+            if event.filter == select.KQ_FILTER_VNODE and event.fflags & select.KQ_NOTE_REVOKE:
+                self.revoked = True
+            if event.filter == select.KQ_FILTER_PROC and event.fflags & NOTE_EXITSTATUS:
+                self.status = os.waitstatus_to_exitcode(event.data)
+        self.revoked |= hung_up(self.fd)
+
+    def close(self):
+        self.queue.close()
+
+
+def stamp_attachment(socket, tty, pid):
+    result = tmux(socket, 'list-clients', '-F', '#{client_tty}|#{client_pid}|#{session_id}|#{session_name}')
+    if result.returncode:
+        return
+    for row in result.stdout.splitlines():
+        fields = row.split('|')
+        if (len(fields) == 4 and fields[:2] == [tty, pid]
+                and re.fullmatch(r'\$\d+', fields[2]) and fields[3].startswith('dev-')):
+            tmux(socket, 'set-option', '-t', fields[2] + ':', ATTACHMENT_OPTION,
+                 pid + ':' + uuid.uuid4().hex)
+            break
+
+
+def attachment_stamp(socket, identity):
+    result = tmux(socket, 'show-options', '-qv', '-t', identity + ':', ATTACHMENT_OPTION)
+    return result.stdout.strip() if not result.returncode else ''
 
 
 def runtime():
@@ -161,7 +216,11 @@ def attached(socket, tty, pid=None):
         socket = helper['canonical_socket'](socket)
     except (OSError, ValueError):
         return 1
-    if helper['socket_identity'](socket) is None or not helper['adopt_attachment'](socket, tty, pid):
+    if helper['socket_identity'](socket) is None:
+        return 1
+    if DARWIN:
+        stamp_attachment(socket, tty, pid)
+    if not helper['adopt_attachment'](socket, tty, pid):
         return 1
     paths = helper['worker_paths']('terminalobserver', socket, tty)
     if sum(helper['lock_held'](helper['worker_lock'](path, 'terminalobserver')) for path in paths) > 1:
@@ -208,7 +267,8 @@ def attached(socket, tty, pid=None):
                           str(fd), str(lock)], pass_fds=(fd, lock), start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          cwd='/', env=env)
-        atomic_write(Path(str(base) + '.ready'), pid)
+        if not DARWIN:
+            atomic_write(Path(str(base) + '.ready'), pid)
         pending = helper['pending_path']('terminalobserver', socket, tty)
         if pending.exists():
             path = Path(str(base) + '.runtime.json')
@@ -253,6 +313,12 @@ def watch(socket, tty, pid, descriptor, lock_descriptor, checkpoint=None):
     fd, lock = int(descriptor), int(lock_descriptor)
     event = Path(str(event_path(socket, tty)) + '.event')
     gone_at = None
+    terminal = None
+    if DARWIN:
+        try:
+            terminal = DarwinTerminal(fd, pid)
+        except OSError:
+            pass  # No exit observation means Darwin cleanup cannot be authorized.
     helper, record = None, None
     base = event_path(socket, tty)
     runtime_path = Path(str(base) + '.runtime.json')
@@ -281,11 +347,16 @@ def watch(socket, tty, pid, descriptor, lock_descriptor, checkpoint=None):
             raise  # Never acknowledge a successor that lost its original PTY.
         helper, record = None, None  # Preserve ordinary observation if metadata is unavailable.
     try:
+        if terminal:
+            atomic_write(Path(str(base) + '.ready'), pid)
         while True:
+            if terminal:
+                terminal.observe()
             # A reload is cooperative and precedes event consumption. The same
             # open PTY and flock descriptions, pending event and elapsed loss
             # deadline survive exec. The updater never generates detach events.
-            if helper and record and reload_path.exists():
+            if (helper and record and reload_path.exists()
+                    and not (terminal and (terminal.revoked or terminal.status is not None))):
                 try:
                     request = helper['replacement'](reload_path, record, 'terminalobserver')
                     if request:
@@ -304,41 +375,72 @@ def watch(socket, tty, pid, descriptor, lock_descriptor, checkpoint=None):
                     reload_path.unlink(missing_ok=True)
             if event.exists():
                 identity, pane, pane_pid = json.loads(event.read_text())
-                event.unlink(missing_ok=True)
-                return detached(socket, identity, pane, pane_pid, tty, fd)
+                if not DARWIN:
+                    event.unlink(missing_ok=True)
+                    return detached(socket, identity, pane, pane_pid, tty, fd)
+                gone_at = gone_at or time.monotonic()
+                stamp = attachment_stamp(socket, identity)
+                evidence = dict(client_pid=pid, pane=pane, terminal_revoked=bool(terminal and terminal.revoked),
+                                client_exit=terminal.status if terminal else None)
+                if not terminal or not stamp.startswith(pid + ':'):
+                    reason = 'unverified or superseded attachment'
+                elif terminal.status is not None and terminal.status not in (1, -signal.SIGHUP):
+                    reason = 'client detached normally' if terminal.status == 0 else 'unrecognized client exit'
+                elif terminal.revoked and terminal.status is not None:
+                    event.unlink(missing_ok=True)
+                    return detached(socket, identity, pane, pane_pid, tty, fd, stamp, evidence)
+                elif gone_at is not None and time.monotonic() - gone_at > DETACH_EVIDENCE_TIMEOUT:
+                    reason = 'incomplete terminal close evidence'
+                else:
+                    reason = None
+                if reason:
+                    event.unlink(missing_ok=True)
+                    receipt(socket, identity, dict(evidence, decision='preserve', reason=reason))
+                    return 0
             try:
                 os.kill(int(pid), 0)
             except ProcessLookupError:
                 gone_at = gone_at or time.monotonic()
-            if hung_up(fd):
+            if (terminal and (terminal.revoked or terminal.status is not None)) or hung_up(fd):
                 gone_at = gone_at or time.monotonic()
-            if gone_at is not None and time.monotonic() - gone_at > 5:
+            if not event.exists() and gone_at is not None and time.monotonic() - gone_at > DETACH_EVIDENCE_TIMEOUT:
                 return 0  # callback unavailable: no cleanup, even after PID reuse
             time.sleep(.1)
     finally:
         Path(str(event_path(socket, tty)) + '.ready').unlink(missing_ok=True)
         if record and helper['read'](runtime_path).get('token') == record['token']:
             runtime_path.unlink(missing_ok=True)
+        if terminal:
+            terminal.close()
         os.close(fd)
         os.close(lock)
 
 
 def owner(socket, identity, pane, pane_pid):
+    stamp = os.environ.get(ATTACHMENT_ENV)
+    if stamp and attachment_stamp(socket, identity) != stamp:
+        return None
     result = tmux(socket, 'list-panes', '-s', '-t', identity + ':', '-F',
                   '#{session_id}\t#{session_name}\t#{pane_id}\t#{pane_pid}\t'
-                  '#{session_path}\t#{session_attached}\t#{pane_dead}\t#{cursor_y}')
+                  '#{session_path}\t#{session_attached}\t#{pane_dead}\t#{cursor_y}\t#{cursor_x}')
     rows = result.stdout.splitlines()
     if result.returncode or len(rows) != 1:
         return None
     fields = rows[0].split('\t')
-    if (len(fields) != 8 or fields[0] != identity or fields[2:4] != [pane, pane_pid]
+    if (len(fields) != 9 or fields[0] != identity or fields[2:4] != [pane, pane_pid]
             or not fields[1].startswith('dev-') or fields[5:7] != ['0', '0']):
         return None
     return dict(zip(('identity', 'session', 'pane', 'pid', 'workspace', 'attached',
-                     'dead', 'cursor'), fields))
+                     'dead', 'cursor', 'column'), fields))
 
 
-def composer_empty(agent, screen, cursor):
+CODEX_IDLE_PROMPT = '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m'
+CODEX_IDLE_KEYS = '  \x1b[1m←\x1b[0m for agents · \x1b[1m?\x1b[0m for shortcuts'
+CODEX_STATUS_SEGMENT = r'\x1b\[38;2;\d+;\d+;\d+m[^\x1b]+\x1b\[39m'
+CODEX_STATUS_LINE = re.compile(rf'  {CODEX_STATUS_SEGMENT}(?: · {CODEX_STATUS_SEGMENT})*')
+
+
+def composer_empty(agent, screen, cursor, column=None):
     """Recognize a blank current composer, never a prompt quoted in scrollback."""
     if agent not in ('codex', 'claude') or not cursor.isdigit():
         return None
@@ -350,6 +452,11 @@ def composer_empty(agent, screen, cursor):
     line = ANSI.sub('', lines[row]).strip()
     if not line.startswith(marker):
         return None
+    if agent == 'codex' and lines[row] == CODEX_IDLE_PROMPT and column == '2':
+        footer = [raw for raw in lines[row + 1:] if ANSI.sub('', raw).strip()]
+        if (len(footer) >= 2 and footer[-1] == CODEX_IDLE_KEYS
+                and all(CODEX_STATUS_LINE.fullmatch(raw) for raw in footer[:-1])):
+            return True
     if line[len(marker):].strip():
         # Codex paints its startup suggestion dim; it is not submitted input.
         # Require the actual style and known placeholder, not just its text.
@@ -893,7 +1000,8 @@ def eligibility(socket, identity, pane, pane_pid, agent, transcript, fresh, git_
     if before is None:
         return {'decision': 'unknown', 'reason': 'unverified revision'}
     screen = tmux(socket, 'capture-pane', '-p', '-e', '-t', pane)
-    empty = None if screen.returncode else composer_empty(agent, screen.stdout, current['cursor'])
+    empty = None if screen.returncode else composer_empty(
+        agent, screen.stdout, current['cursor'], current.get('column'))
     if empty is not True:
         return {'decision': 'preserve' if empty is False else 'unknown', 'reason': 'draft or unrecognized composer'}
     state, prs = transcript_state(agent, transcript)
@@ -919,18 +1027,24 @@ def eligibility(socket, identity, pane, pane_pid, agent, transcript, fresh, git_
     return {'decision': 'terminate', 'reason': 'empty or completed session'}
 
 
-def detached(socket, identity, pane, pane_pid, tty, terminal_fd):
+def detached(socket, identity, pane, pane_pid, tty, terminal_fd, stamp=None, evidence=None):
     if not (socket.startswith('/') and re.fullmatch(r'\$\d+', identity)
             and re.fullmatch(r'%\d+', pane) and pane_pid.isdigit()):
         return 1
     # Use the original descriptor, never a device name which may be recycled.
-    lost = hung_up(terminal_fd)
+    evidence = evidence or {}
+    lost = evidence.get('terminal_revoked') if stamp else hung_up(terminal_fd)
     current = owner(socket, identity, pane, pane_pid)
+    if stamp and attachment_stamp(socket, identity) != stamp:
+        current = None
     if not lost or not current:
-        receipt(socket, identity, {'decision': 'preserve', 'reason': 'terminal still usable' if not lost else 'owner changed or attached'})
+        receipt(socket, identity, dict(evidence, decision='preserve',
+                                      reason='terminal still usable' if not lost else 'owner changed or attached'))
         return 0
     env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
     env['T_HOME'] = str(ROOT)
+    if stamp:
+        env[ATTACHMENT_ENV] = stamp
     # Source repository helpers explicitly: no personal dotfiles, no source
     # selector which could redirect this event into another development tree.
     script = '''
@@ -946,8 +1060,9 @@ _t_terminal_close_event "$@"
 '''
     result = run(['zsh', '-f', '-c', script, 't-terminal-close', socket, identity,
                   pane, pane_pid], env=env, timeout=90)
-    receipt(socket, identity, {'decision': 'terminate' if result.returncode == 0 else 'preserve',
-                              'reason': result.stderr[-2000:], 'code': result.returncode})
+    decision = 'preserve' if result.returncode else 'terminate'
+    reason = (result.stderr[-2000:].strip() or 'lifecycle refused cleanup') if result.returncode else 'session closed'
+    receipt(socket, identity, dict(evidence, decision=decision, reason=reason, code=result.returncode))
     return result.returncode
 
 

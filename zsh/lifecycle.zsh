@@ -195,6 +195,13 @@ _t_lifecycle_effect() {
       [[ $(_dev_session_sid "$1" "$2") == "$7" && $(_dev_agent_of_session "$1") == "$8" ]] || return 1
       recovery_receipt=$(python3 "$T_HOME/libexec/t_auto_recovery.py" prepare-close "$8" "$7") || return 1
       {
+        if [[ -n $4 && -n ${_T_TERMINAL_ATTACHMENT:-} ]]; then
+          [[ $(tmux show-options -qv -t "$immutable:" @t_terminal_attachment) == "$_T_TERMINAL_ATTACHMENT" &&
+             $(tmux display-message -p -t "$immutable:" '#{session_attached}') == 0 ]] || {
+            print -u2 't close: terminal reattached before cleanup'
+            return 1
+          }
+        fi
         python3 "$T_HOME/libexec/t_client_stop.py" stop "$client_token" || stop_code=$?
         if (( stop_code == 75 )); then
           # Auto close and redirected callers never escalate. Use the original

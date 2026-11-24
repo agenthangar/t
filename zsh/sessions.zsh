@@ -2246,7 +2246,7 @@ _t_terminal_close_event() {
 
 _t_terminal_close_guard() {
   local session=$1 dir=$2 socket=$3 identity=$4 pane=$5 pane_pid=$6 mode=${7:-check}
-  local agent sid tx fresh clean=0 clear=0 pid
+  local agent sid tx fresh clean=0 clear=0 pid verdict
   _DEV_PS_AT=0
   [[ $(tmux display-message -p -t "=$session:" '#{session_id}') == "$identity" ]] || return 1
   agent=$(_dev_agent_of_session "$session")
@@ -2262,8 +2262,11 @@ _t_terminal_close_guard() {
     python3 "$T_HOME/libexec/t_terminal_close.py" stop-previews "$socket" "$identity" "$pane" "$pane_pid" \
       "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" "$pid" "$$" >/dev/null
   else
-    python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
-      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid" >/dev/null
+    verdict=$(python3 "$T_HOME/libexec/t_terminal_close.py" check "$socket" "$identity" "$pane" "$pane_pid" \
+      "$agent" "$tx" "$fresh" "$clean" "$clear" "$sid") || {
+      [[ -z $verdict ]] || print -u2 -r -- "$verdict"
+      return 1
+    }
   fi
 }
 
