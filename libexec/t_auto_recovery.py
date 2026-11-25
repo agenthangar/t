@@ -944,13 +944,13 @@ def command(args, cfg=None, api=None):
             ('agent', 'sid', 'session', 'cwd', 'phase', 'paused', 'open', 'reason', 'next_retry')},
             'outcome': outcome(r)} for r in rows]}))
     else:
-        print('Automatic recovery: ' + ('enabled' if state['enabled'] else 'disabled') + ' · configure with t config')
-        print('Service: ' + ('running' if state['running'] else 'stopped'))
+        print('Automatic recovery  ' + ('Enabled' if state['enabled'] else 'Disabled'))
+        print('Background agent    ' + ('Running' if state['running'] else 'Stopped'))
         for row in sorted(rows, key=lambda row: (not row.get('open'), row.get('session', ''))):
             slot = row.get('session', '').removeprefix('dev-') or row['sid']
-            label = f"{slot} · {outcome(row)} · {row['agent']} · {row['sid']}"
+            label = f"{slot}  {outcome(row)}  {row['agent']}  {row['sid']}"
             reason = display_text(row.get('reason'))
-            print('  ' + label + (' · ' + reason if reason else ''))
+            print('  ' + label + ('  ' + reason if reason else ''))
         if not rows:
             print('  No enrolled sessions.')
     return 0

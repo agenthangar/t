@@ -212,7 +212,7 @@ def command(action, target, reinstall, interval):
             if compact:
                 print(NAMES[agent])
                 print(f'  {installed} · {live}')
-                print(f'  Starts at login: {login.lower()} · {cadence}')
+                print(f'  Starts at login: {login.lower()}  {cadence}')
             else:
                 print(f'{NAMES[agent]:<27} {installed:<14} {live:<12} {login:<15} {cadence}')
         return 0
