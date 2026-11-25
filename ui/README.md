@@ -429,6 +429,11 @@ deferred, restart-required and failed outcomes. Missing required recovery
 watchers are repaired only for verified live managed sessions with recovery
 enabled. No service starts without an eligible owner. Existing discovery
 retirement uses bounded private revision handshakes and never starts a daemon.
+Runtime inspection uses up to four workers for independent socket and session
+ownership checks. It leaves refused or vanished socket endpoints alone, tries
+surviving aliases of the same socket, and reports scoped deferrals when other
+endpoints cannot be inspected. Receipts retain discovery order. Runtime writes
+run sequentially with fresh ownership checks.
 
 Only indexed hooks with t's exact command grammar are rewritten; user hooks and
 development source pins are preserved. Compatible observers self-exec at their

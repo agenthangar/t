@@ -15293,6 +15293,7 @@ PERIODIC CHECKS
   For a Git checkout, fetch and fast-forward canonical main before relinking.
   Already-current installations skip setup. Routine Git and setup output is quiet;
   --all reports one result per host. Required prompts and errors remain visible.
+  Helper refresh skips private tmux sockets with no server listening.
   --relink repeats the selected source without fetching; --dev makes development
   available only inside the current t worktree, without changing shared links,
   hooks or settings. Each worktree automatically uses its own CLI and shell helpers;
