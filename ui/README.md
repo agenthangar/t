@@ -1166,8 +1166,10 @@ use the same summary and action layout as filters.
 Leave one blank row between refresh, filters, sort, legend, result shortcuts,
 and column headings. The first result follows the headings immediately. Reclaim
 these blank rows first on short screens. The legend follows the table order: Status, PRs, Agent.
-Status icons identify attached (●), last closed (↶), work in progress (↻), and
-a verified preview deployment (↗). Tab marks action targets with fzf’s green ✓.
+Status shows attached (●), last closed (↶), session-reported work in progress
+(↻), complete (✓), unknown (?), and verified preview (↗). The report belongs to
+the exact conversation and persists across pane exits. Details explain when the
+session has supplied no report. Tab marks action targets in a separate gutter.
 Matching legend entries and row icons use the same colors. The AGENT column
 shows terminal glyphs while full names remain searchable and visible in details.
 Column widths remain stable while filtering and sorting. Over the table,

@@ -1028,62 +1028,24 @@ def test_sequential_poll_uses_first_structured_result(history, tmp_path):
     assert [pr['number'] for pr in value['prs']] == [432]
 
 
-@pytest.mark.parametrize('mode', ['dirty', 'clean', 'open', 'new-sid', 'live-owner', 'stale-generation',
-                                  'new-branch', 'commits', 'published', 'published-pr', 'live-exact',
-                                  'no-generation', 'open-commits', 'saved-new-sid'])
-def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history, git_repo, mode):
-    workspace = Path(app.cfg.worktree_root) / 'repo/repo-1'
-    repo = app.cfg.repos['repo']
-    history.run(['git', '-C', repo, 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
-    app.cfg.worktree_paths = lambda alias, slot: [str(workspace)]
-    app.discovery_identities['repo'] = 'org/repo'
-    row = saved_row(app, git_repo, workspace)
-    rows = [row]
-    live = []
-    if mode not in ('clean', 'open'):
-        (workspace / 'tracked').write_text('local change\n')
-    if mode == 'open':
-        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
-    if mode == 'new-sid':
-        rows.append(saved_row(app, git_repo, workspace, sid='later', observed=2))
-    if mode == 'live-owner':
-        live.append(dict(agent='codex', sid='later', cwd=str(workspace)))
-    if mode in ('no-generation', 'live-exact'):
-        row['associations'][0]['generation'] = ''
-    if mode == 'live-exact':
-        live.append(dict(agent='codex', sid=row['sid'], cwd=str(workspace)))
-    if mode == 'saved-new-sid':
-        replacement = saved_row(app, git_repo, workspace, sid='later', observed=2)
-        replacement['associations'][0]['generation'] = ''
-        rows.append(replacement)
-    if mode == 'stale-generation':
-        row['associations'][0]['generation'] = 'previous'
-    if mode == 'new-branch':
-        history.run(['git', '-C', str(workspace), 'switch', '-c', 'other'])
-    if mode in ('commits', 'published', 'published-pr'):
-        row['prs'] = [dict(repo='org/repo', number=7, state='MERGED')]
-        cache = Path(os.environ['XDG_CACHE_HOME']) / 'claude-sessions/pr/org#repo#7.head'
-        cache.parent.mkdir(parents=True)
-        cache.write_text(git_repo)
-        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Follow-up'])
-        if mode == 'published':
-            Path(repo, 'tracked').write_text('local change\n')
-            history.run(['git', '-C', repo, 'commit', '-am', 'Squashed follow-up'])
-        if mode == 'published-pr':
-            (cache.parent / 'org#repo#8').write_text('MERGED')
-            tip = history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD'])
-            (cache.parent / 'org#repo#8.head').write_text(tip)
-        history.run(['git', '-C', repo, 'update-ref', 'refs/remotes/origin/main', 'main'])
-    if mode == 'open-commits':
-        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
-        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Open working branch'])
-        row['associations'].append({**row['associations'][0], 'evidence': 'close', 'observed': 2,
-                                    'commit': history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD']).strip()})
-    app.annotate_resume_work(rows, live)
-    fields = history.resume_candidate(row, 'repo', row['associations'][0], 'local').split('\t')
-    assert fields[14] == ('yes' if mode in ('dirty', 'commits', 'open-commits', 'live-exact') else '-')
-    if mode == 'new-sid':
-        assert rows[-1].get('work_in_progress') is True
+def test_resume_uses_durable_work_report_for_exact_conversation(history, store, tmp_path):
+    association = dict(workspace='/old/worktree', host='local', slot='1')
+    for sid in ('first', 'replacement'):
+        store.merge(conversation(sid=sid, associations=[association], work_in_progress=True))
+    store.report_work('codex', 'first', 'unfinished')
+    reopened = history.Store(store.directory)
+    try:
+        rows = {row['sid']: row for row in reopened.records()}
+        assert history.resume_candidate(rows['first'], 'repo', association, 'local').split('\t')[14] == 'unfinished'
+        assert history.resume_candidate(rows['replacement'], 'repo', association, 'local').split('\t')[14] == 'unknown'
+        reopened.report_work('codex', 'first', 'complete')
+        reopened.merge(conversation(sid='first', work_report={'state': 'unfinished', 'at': 1}))
+        first = next(row for row in reopened.records() if row['sid'] == 'first')
+        assert history.resume_candidate(first, 'repo', association, 'local').split('\t')[14] == 'complete'
+        remote = reopened.merge(conversation(sid='remote', work_report={'state': 'complete', 'at': 2}))
+        assert history.resume_candidate(remote, 'repo', association, 'mini').split('\t')[14] == 'complete'
+    finally:
+        reopened.close()
 
 
 def test_real_shaped_async_create_and_exact_poll_backfill_across_cache_append(app, history, tmp_path):

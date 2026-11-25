@@ -460,7 +460,7 @@ def test_resume_legend_matches_row_colors(filters, monkeypatch):
         return '\t'.join(['api', str(slot), f'sid{slot}', '/wt', 'date', 'title', location,
                           'history', '-', 'codex', '-', 'org/api', 'OPEN', closed, '-', work, '-', display])
 
-    saved = row(1, '-', '2026-11-21T10:00:00Z', 'yes', '! #42  ↴ #43  api  1  >_     Title').split('\t')
+    saved = row(1, '-', '2026-11-21T10:00:00Z', 'unfinished', '! #42  ↴ #43  api  1  >_     Title').split('\t')
     saved[-2] = 'yes'
     saved = '\t'.join(saved)
     attached = row(2, 'here', '-', '-', '—              api  2  >_     Title ●')

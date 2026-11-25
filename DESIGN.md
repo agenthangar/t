@@ -99,8 +99,8 @@ Use macOS key labels on macOS and the compact labels when space is tight.
 Each picker supplies the facets, sort choices, and actions that apply to it.
 
 Order the legend by table column and use matching glyphs, colors, and meanings
-in rows. In resume, the groups are Status, PRs, and Agent. Status shows attached
-(●), last verified close (↶), work in progress (↻), and verified preview (↗).
+in rows. In resume, the groups are Status, PRs, and Agent. Status shows attached (●), last verified close (↶), session-reported work
+status (↻ in progress, ✓ complete, ? unknown), and verified preview (↗).
 Keep the focus pointer, selection ✓, and status markers in distinct cells.
 Keep columns aligned when sorting and filtering. On horizontal scroll, headings
 and values move together while the query, controls, and marker gutter stay fixed.

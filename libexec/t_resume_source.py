@@ -44,6 +44,10 @@ def merge_records(rows):
             previous = merged[key]
             newer = row if row.get('updated', 0) >= previous.get('updated', 0) else previous
             combined = {**previous, **newer, **verified_title(row, previous)}
+            report = max((row.get('work_report', {}), previous.get('work_report', {})),
+                         key=lambda value: value.get('at', 0))
+            if report:
+                combined['work_report'] = report
             for field in ('associations', 'sources', 'prs', 'mentions'):
                 combined[field] = list({json.dumps(value, sort_keys=True): value
                     for value in previous.get(field, []) + row.get(field, [])}.values())

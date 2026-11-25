@@ -613,9 +613,7 @@ _t_resume() {
     if [[ $T_RESUME_LAST != 1 && -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
       live_identity="$history_fields[9]/$history_fields[4]"
       live_titles[$live_identity]=$title
-      if [[ ${history_fields[15]:--} == yes ]]; then
-        live_work[$live_identity/$history_fields[8]]=yes
-      fi
+      live_work[$live_identity]=${history_fields[15]:-unknown}
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
@@ -751,10 +749,7 @@ _t_resume() {
         f[6]=$live_titles[$live_identity]
       fi
       [[ $f[7] != app:* ]] || f[6]="Codex desktop · $f[6]"
-      [[ $live_host != here ]] || live_host=local
-      if [[ ${live_work[$live_identity/$live_host]:-} == yes ]]; then
-        f[16]=yes
-      fi
+      f[16]=${live_work[$live_identity]:-unknown}
     fi
     pr_first[i]='' pr_second[i]='' pr_extras[i]=''
     pr_first_width[i]=0 pr_second_width[i]=0

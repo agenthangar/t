@@ -27,7 +27,9 @@ PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗'
              '?': '37', '—': '37'}
 PR_CHIP = r'[↴○◌!×?] #\d+'
 RESUME_STATUS_WIDTH = 8
-RESUME_MARK_ROLES = {'●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
+WORK_STATUS = {'unfinished': ('↻', 'Work in progress'), 'complete': ('✓', 'Complete'),
+               'unknown': ('?', 'Unknown (no session work report)')}
+RESUME_MARK_ROLES = {'?': 'hint', '●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
 RESUME_AGENTS = {'codex': ('>_', 'agent-codex'), 'claude': ('*', 'agent-claude'),
                  'cursor': ('<>', 'key')}
 
@@ -46,7 +48,7 @@ def metadata(source, profile):
                 turn=fields[10] if len(fields) > 11 else '-',
                 pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN',
                 closed=fields[13] if len(fields) > 14 and location == '-' else '-',
-                work=len(fields) > 16 and fields[15] == 'yes',
+                work=fields[15] if len(fields) > 16 and fields[15] in WORK_STATUS else 'unknown',
                 preview=len(fields) > 17 and fields[16] == 'yes')
         else:
             if len(fields) < 7:
@@ -574,7 +576,7 @@ def resume_mark(text):
 def resume_legend(width, short, color, *, attached=True):
     close = '↶ close' if short else '↶ last closed'
     work = '↻ WIP' if width < 64 or short else '↻ work in progress'
-    status = (['● attached'] if attached else []) + [close, work, '↗ preview']
+    status = (['● attached'] if attached else []) + [close, work, '✓ complete', '? work unknown', '↗ preview']
     prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '? unknown', '— no PR']
     agents = {glyph: (name.capitalize(), role) for name, (glyph, role) in RESUME_AGENTS.items()}
     if short:
@@ -687,7 +689,7 @@ def mark_resume(source, records=None):
         record = records.get(key, {})
         attached = len(fields) >= 10 and fields[6] != '-'
         marks = ('●' if attached else ' ', '↶' if key == latest else ' ',
-                 '↻' if record.get('work') else ' ', '↗' if record.get('preview') else ' ')
+                 WORK_STATUS[record.get('work', 'unknown')][0], '↗' if record.get('preview') else ' ')
         prefix = ''.join(resume_mark(mark) if color and mark != ' ' else mark for mark in marks)
         display = fields[-1]
         if color:
@@ -702,6 +704,10 @@ def mark_resume(source, records=None):
 
 
 if __name__ == '__main__':
+    if sys.argv[1] == '--resume-details':
+        _, _, title, agent, status = sys.argv
+        print(f'{title}\n\nAgent  {agent}\nWork status  {WORK_STATUS.get(status, WORK_STATUS["unknown"])[1]}')
+        sys.exit(0)
     if sys.argv[1] == '--resume-mark':
         print(mark_resume(sys.stdin.read()))
         sys.exit(0)

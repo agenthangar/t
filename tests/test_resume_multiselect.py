@@ -47,7 +47,7 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     log = tmp_path / "fzf.log"
     live_record = '\t'.join(['1800000000', 'api', '4', 'live-thread', str(wt4), 'date',
                              'Named live conversation', 'local', 'codex', '-', 'org/api',
-                             'NONE', '-', '-', 'yes', 'name'])
+                             'NONE', '-', '-', 'unfinished', 'name'])
     live = (f"_dev_session_rows() {{ print -r -- 'live-thread\t{wt4}\tapi-4\tdetached\tactive\tLive work\tcodex'; }}; "
             f"_t_resume_history_candidates() {{ print -r -- '{live_record}'; }}; "
             "_dev_open_tab() { echo \"TAB $*\"; }; ")
@@ -370,7 +370,7 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
                             'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api',
-                            aggregate, '-', 'org/api#42:MERGED org/api#43:OPEN', 'yes', 'name'])
+                            aggregate, '-', 'org/api#42:MERGED org/api#43:OPEN', 'unfinished', 'name'])
         prompt = '\t'.join(['1800000000', 'api', '3', 'c3', str(zsh.home / 'code/.worktrees/api/3'),
                             'date', 'Task · #99 merged', 'local', 'claude', '-', 'org/api',
                             'NONE', '-', '-', '-', 'prompt'])

@@ -419,7 +419,7 @@ Tab mark ✓"
       # shellcheck disable=SC2016
       _t_picker_start='execute-silent(printf "%s" "$FZF_PORT" > "$T_PICKER_VIEWS/pan-port")'
       # shellcheck disable=SC2016
-      set -- --disabled --listen=127.0.0.1:0 --bind='f11:execute-silent(cp "$T_PICKER_VIEWS/pan-sync-request" "$T_PICKER_VIEWS/pan-sync-ack")' --bind='change:execute-silent(sh "$T_PICKER_TOGGLE" search {q})+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")' --preview='printf "%s\n\nAgent: %s\n" {-2} {10}' "$@"
+      set -- --disabled --listen=127.0.0.1:0 --bind='f11:execute-silent(cp "$T_PICKER_VIEWS/pan-sync-request" "$T_PICKER_VIEWS/pan-sync-ack")' --bind='change:execute-silent(sh "$T_PICKER_TOGGLE" search {q})+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")' "$@"
     fi
     if { [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = recovery ]; } && [ -n "$_t_picker_terminal" ] && [ "${_t_picker_size#* }" -gt 40 ] && [ "${_t_picker_size%% *}" -gt 14 ]; then
       case $_t_picker_fzf_help in
@@ -601,6 +601,10 @@ SH
   [ -z "$_t_picker_start" ] || set -- --bind="start:$_t_picker_start" "$@"
   if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then
     set -- --footer="$(cat "$_t_picker_dir/footer")" --footer-border=none "$@"
+  fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
+    # shellcheck disable=SC2016
+    set -- --preview='python3 "$T_PICKER_FILTER_HELPER" --resume-details {6} {10} {16}' "$@"
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ]; then
     # accept-non-empty on legacy fzf still exits when its total input is empty.

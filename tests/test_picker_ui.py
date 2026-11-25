@@ -1196,6 +1196,9 @@ def test_shared_resume_reference_real_picker_spacing_and_marks(picker):
     assert [positions[i + 1] - end for i, end in enumerate(endings)] == [2] * 5, frame
     assert positions[6] == positions[5] + 1, frame
     assert all(mark in lines[positions[6]] for mark in '↶↻')
+    keys('C-_')
+    wait('Work status  Work in progress')
+    keys('C-_')
     keys('Tab', 'Up', 'M-f')
     frame = wait('Hide filters', focused='Simplify the onboarding view')
     assert any('▸' in line and '✓' in line and 'Simplify the onboarding view' in line for line in frame.splitlines())

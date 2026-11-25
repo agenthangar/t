@@ -293,7 +293,15 @@ def rows(view, *, prefixed=True, repo=None, cli_only=False, remote_only=False,
 def candidates(view, aliases, slot=None):
     seen = set()
     all_repos = not aliases or aliases == ['--all']
-    for host in view.get('hosts', []):
+    hosts = view.get('hosts', [])
+    reports = {}
+    for host in hosts:
+        for row in (host.get('value') or {}).get('catalog', {}).get('conversations', []):
+            if report := row.get('work_report'):
+                key = (row['repo'], row['agent'], row['sid'])
+                if report['at'] >= reports.get(key, {}).get('at', 0):
+                    reports[key] = report
+    for host in hosts:
         for raw in (host.get('value') or {}).get('resume', []):
             fields = raw.split('\t')
             if len(fields) not in (12, 13, 14, 15, 16, 17) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
@@ -306,6 +314,8 @@ def candidates(view, aliases, slot=None):
             key = (fields[10], fields[8], fields[3])
             if key not in seen:
                 seen.add(key)
+                if len(fields) >= 15 and key in reports:
+                    fields[14] = reports[key]['state']
                 yield '\t'.join(fields)
 
 
@@ -350,20 +360,6 @@ def apply_remote(wire, previous):
     value.update(delta['fields'])
     value['catalog'] = {**delta['catalog'], 'conversations': list(records.values())}
     return value, delta['changed']
-
-
-def active_resume_owners(rows):
-    """Only the inventory's verified live targeting identities can prove ownership."""
-    owners = []
-    for line in rows.splitlines():
-        fields = line.split('\t')
-        if len(fields) < 7:
-            continue
-        sid, cwd, _, state, context, _, agent = fields[:7]
-        if (sid not in ('', '-') and cwd.startswith('/') and context == 'active'
-                and state in ('attached', 'detached', 'foreground', 'app') and agent in ('codex', 'claude')):
-            owners.append(dict(sid=sid, cwd=cwd, agent=agent))
-    return owners
 
 
 def collect(spec, api):
@@ -444,7 +440,6 @@ def collect(spec, api):
             records = catalog.get('conversations', [])
             if records:
                 history.pr_states(records)
-                history.annotate_resume_work(records, active_resume_owners(row_text))
             projections, dirty = {}, []
             for record in records:
                 key = _CACHE['record_key'](record)
@@ -578,6 +573,8 @@ class SnapshotStore:
                     if row.get('updated', 0) < old.get('updated', 0):
                         old, row = row, old
                     row.update(_verified_title(row, old))
+                    if old.get('work_report', {}).get('at', 0) > row.get('work_report', {}).get('at', 0):
+                        row['work_report'] = old['work_report']
                     for field in ('sources', 'associations'):
                         row[field] += old.get(field, [])
                 merged[key] = row

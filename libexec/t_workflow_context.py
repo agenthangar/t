@@ -20,6 +20,10 @@ if __name__ == '__main__':
     try:
         tool, cwd = sys.argv[1:3]
         text = context(tool, cwd)
+        if len(sys.argv) == 5:
+            appearance = runpy.run_path(str(Path(__file__).with_name('t_session_appearance.py')))
+            report = appearance['reporting_instructions'](tool, *sys.argv[3:5])
+            text = '\n\n'.join(part for part in (text, report) if part)
         if text:
             print(json.dumps({'additional_context': text} if tool == 'cursor' else {
                 'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': text}}))

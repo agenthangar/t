@@ -150,8 +150,12 @@ def validate(record):
         raise HistoryError('invalid history timestamp')
     if 'last_turn' in record:
         record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
-    if 'work_in_progress' in record and type(record['work_in_progress']) is not bool:
-        raise HistoryError('invalid work status')
+    report = record.get('work_report')
+    if 'work_report' in record and (
+            not isinstance(report, dict) or set(report) != {'state', 'at'}
+            or report['state'] not in ('unfinished', 'complete')
+            or type(report['at']) not in (int, float) or not 0 < report['at'] <= 253402300799):
+        raise HistoryError('invalid work report')
     if 'title_kind' in record and (not isinstance(record['title_kind'], str)
                                    or record['title_kind'] not in _RESUME_SOURCE['TITLE_KINDS']):
         raise HistoryError('invalid title provenance')
@@ -208,13 +212,32 @@ class Store:
         self.db.execute('create table if not exists conversations (key text primary key, record text not null)')
         self.db.execute('create table if not exists scans (path text primary key, stamp text, record text)')
         self.db.execute('create table if not exists prs (key text primary key, checked real, record text)')
+        self.db.execute('create table if not exists work_reports '
+                        '(agent text, sid text, state text, at real, primary key (agent, sid))')
         self.db.commit()
 
     def close(self):
         self.db.close()
 
-    def records(self):
-        return [json.loads(row[0]) for row in self.db.execute('select record from conversations')]
+    def records(self, *, local_reports_only=False):
+        rows = [json.loads(row[0]) for row in self.db.execute('select record from conversations')]
+        reports = {(agent, sid): dict(state=state, at=at) for agent, sid, state, at in
+                   self.db.execute('select agent, sid, state, at from work_reports')}
+        for row in rows:
+            if local_reports_only:
+                row.pop('work_report', None)
+            report = reports.get((row['agent'], row['sid']))
+            if report and report['at'] >= row.get('work_report', {}).get('at', 0):
+                row['work_report'] = report
+        return rows
+
+    def report_work(self, agent, sid, state):
+        at = time.time()
+        validate(dict(repo='local', agent=agent, sid=sid, work_report=dict(state=state, at=at)))
+        with self.db:
+            self.db.execute('insert into work_reports values (?,?,?,?) '
+                            'on conflict(agent,sid) do update set state=excluded.state, at=excluded.at '
+                            'where excluded.at >= work_reports.at', (agent, sid, state, at))
 
     @_spinner('Resetting session records')
     def forget_workspace(self, workspace, sid='', *, backup, evidence):
@@ -244,6 +267,7 @@ class Store:
         with self.db:
             self.db.executemany('delete from conversations where key=?', [(key,) for key, _ in selected])
             for _, row in selected:
+                self.db.execute('delete from work_reports where agent=? and sid=?', (row['agent'], row['sid']))
                 for source in row.get('sources', []):
                     if source.get('host') != 'local' or not source.get('path'):
                         continue
@@ -266,6 +290,8 @@ class Store:
         existing = self.db.execute('select record from conversations where key=?', (key,)).fetchone()
         old = json.loads(existing[0]) if existing else {}
         merged = {**old, **record, **_RESUME_SOURCE['verified_title'](record, old), 'version': VERSION}
+        if old.get('work_report', {}).get('at', 0) > record.get('work_report', {}).get('at', 0):
+            merged['work_report'] = old['work_report']
         for field in ('model', 'summary', 'interface'):
             incoming_known = record.get(field) not in (None, '', '-', 'unknown')
             old_known = old.get(field) not in (None, '', '-', 'unknown')
@@ -775,59 +801,7 @@ def resume_candidate(row, alias, association, host):
                               association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
                               clean(row['title']), host, row['agent'], row.get('last_turn', '-'), row['repo'],
                               state, _SORT['closed_time'](row), refs or '-',
-                              'yes' if row.get('work_in_progress') else '-', _RESUME_SOURCE['title_kind'](row), association.get('host') or '-']))
-
-
-def worktree_has_pending_work(workspace, branch, baselines, published_heads, deadline, *, exact_owner=False):
-    def git(*args, optional=False):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise HistoryError('work status deadline exceeded')
-        return run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', workspace, *args],
-                   timeout=min(1, remaining), optional=optional).strip()
-
-    try:
-        current = git('symbolic-ref', '--quiet', '--short', 'HEAD')
-        if not current or (current != branch and not exact_owner):
-            return False
-        if git('status', '--porcelain'):
-            return True
-        if not baselines:
-            return False
-        head = git('rev-parse', 'HEAD')
-        if head in baselines or head in published_heads():
-            return False
-        if not any(git('merge-base', head, baseline, optional=True) == baseline for baseline in baselines):
-            return False
-        default_refs = ('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master',
-                        'refs/heads/main', 'refs/heads/master')
-        refs = git('for-each-ref', '--format=%(refname)', *default_refs).splitlines()
-        base = next((ref for ref in default_refs if ref in refs), '')
-        if not base:
-            return False
-        common = git('merge-base', head, base)
-        if common == head:
-            return False
-        tree = git('rev-parse', 'HEAD^{tree}')
-        # A squash merge changes the commit ID but can publish the same tree.
-        return (tree != git('rev-parse', common + '^{tree}')
-                and tree not in git('log', '--first-parent', '--format=%T', common + '..' + base).splitlines())
-    except HistoryError:
-        return False
-
-
-def cached_merged_heads(directory, repo, deadline):
-    """Read the same repo-wide merged-head sidecars used by the live status."""
-    heads = set()
-    for path in directory.glob(repo.replace('/', '#') + '#*.head'):
-        if time.monotonic() >= deadline:
-            break
-        try:
-            if path.with_suffix('').read_text().strip() == 'MERGED':
-                heads.add(path.read_text().strip().lower())
-        except (OSError, UnicodeError):
-            continue
-    return heads
+                              row.get('work_report', {}).get('state', 'unknown'), _RESUME_SOURCE['title_kind'](row), association.get('host') or '-']))
 
 
 def compact_model(model, width):
@@ -1122,7 +1096,7 @@ class HistoryCommand:
                 except (OSError, ValueError, TypeError, AttributeError):
                     continue
         rows = []
-        for row in self.store.records():
+        for row in self.store.records(local_reports_only=True):
             row = dict(row)
             row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
             row['sources'] = [source for source in row.get('sources', []) if source.get('host') == 'local']
@@ -1265,7 +1239,7 @@ class HistoryCommand:
                 self.store.merge({**{key: original[key] for key in ('repo', 'agent', 'sid')}, **metadata})
                 self.catalog_changed_paths.add(name)
         rows = []
-        for original in self.store.records():
+        for original in self.store.records(local_reports_only=True):
             row = dict(original)
             row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
             row['sources'] = [source for source in row.get('sources', [])
@@ -1724,84 +1698,6 @@ class HistoryCommand:
                     pass
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
-
-    def annotate_resume_work(self, rows, live=()):
-        """Check each worktree against its exact live owner or captured generation."""
-        owners_by_path = {}
-        for owner in live:
-            owners_by_path.setdefault(owner['cwd'], set()).add((owner['agent'], owner['sid']))
-        by_workspace = {}
-        for row in rows:
-            row.pop('work_in_progress', None)
-            for association in row.get('associations', []):
-                if association.get('host') == 'local' and association.get('slot'):
-                    by_workspace.setdefault(association['workspace'], []).append((row, association))
-        deadline = time.monotonic() + 3
-        aliases = {**self.local_identities, **self.discovery_identities}
-        legacy = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
-        published = {}
-        def published_heads(repo):
-            if repo not in published:
-                published[repo] = cached_merged_heads(legacy, repo, deadline)
-            return published[repo]
-
-        def workspace_order(item):
-            workspace, entries = item
-            return workspace in owners_by_path, max(entry[1].get('observed', 0) for entry in entries)
-        for workspace, entries in sorted(by_workspace.items(), key=workspace_order, reverse=True):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            if not (Path(workspace) / '.git').is_file():
-                continue
-            owners = {owner for cwd, identities in owners_by_path.items()
-                      if cwd == workspace or cwd.startswith(workspace.rstrip('/') + '/') for owner in identities}
-            if len(owners) > 1:
-                continue
-            if owners:
-                matching = [(row, a) for row, a in entries if (row['agent'], row['sid']) in owners]
-            else:
-                matching = [(row, a) for row, a in entries if a.get('generation')]
-            if not matching:
-                continue
-            row, captured = max(matching, key=lambda entry: entry[1].get('observed', 0))
-            observed = captured.get('observed', 0)
-            if not owners and any((other['agent'], other['sid']) != (row['agent'], row['sid'])
-                   and evidence.get('observed', 0) >= observed for other, evidence in entries):
-                continue
-            latest = max(row['associations'], key=lambda entry: entry.get('observed', 0))
-            if latest['workspace'] != workspace or latest.get('host') != 'local':
-                continue
-            if not any(repo == row['repo'] and workspace in self.cfg.worktree_paths(alias, captured['slot'])
-                       for alias, repo in aliases.items() if alias in self.cfg.repos):
-                continue
-            current_generation = generation(workspace, timeout=min(1, remaining))
-            if not current_generation or (not owners and current_generation != captured['generation']):
-                continue
-            merged_heads = set()
-            for pr in row.get('prs', []):
-                if pr.get('state') != 'MERGED' or pr['repo'] != row['repo']:
-                    continue
-                try:
-                    head = (legacy / f'{pr["repo"].replace("/", "#")}#{pr["number"]}.head').read_text().strip()
-                except (OSError, UnicodeError):
-                    continue
-                if re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', head):
-                    merged_heads.add(head.lower())
-            repo = row['repo']
-            baselines = merged_heads
-            if not baselines:
-                revisions = [a for r, a in entries if r is row
-                             and (a.get('generation') == current_generation or owners)
-                             and re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', a.get('commit', ''))]
-                if revisions:
-                    initial = min(revisions, key=lambda a: a.get('observed', 0))
-                    baselines = {initial['commit'].lower()}
-            if worktree_has_pending_work(workspace, captured.get('branch'), baselines, lambda: published_heads(repo),
-                                         deadline, exact_owner=bool(owners)):
-                remaining = deadline - time.monotonic()
-                if remaining > 0 and generation(workspace, timeout=min(1, remaining)) == current_generation:
-                    row['work_in_progress'] = True
 
     def pick(self, rows, alias, limit=50, page=1, query='', multi=False):
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
@@ -2552,7 +2448,6 @@ class HistoryCommand:
             alias = local_alias or identity
             records = self.records(alias)
             self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
-            self.annotate_resume_work(records)
             for row in records:
                 key = (identity, row['agent'], row['sid'])
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
@@ -2563,9 +2458,6 @@ class HistoryCommand:
                     continue
                 association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
-                latest = max(row['associations'], key=lambda a: a.get('observed', 0))
-                if association != latest or source.get('host') != 'local':
-                    row = {**row, 'work_in_progress': False}
                 yield resume_candidate(row, alias, association, source.get('host') or '-')
 
     def execute(self, args):

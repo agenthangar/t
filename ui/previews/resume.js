@@ -155,7 +155,11 @@ if (new URLSearchParams(location.search).get('view') === 'resume') {
           : [];
     if (!picked.length) return;
     const detail = picked
-      .map((candidate) => fixture.rows[candidate].search.trim().replace(/ {2,}/g, ' · '))
+      .map((candidate) => {
+        const row = fixture.rows[candidate];
+        const title = row.search.trim().replace(/ {2,}/g, '  ');
+        return accept ? title : title + '\nWork status  ' + row.workLabel;
+      })
       .join('\n');
     modal.querySelector('.modal-content').innerHTML =
       '<h2>' +

@@ -46,6 +46,9 @@ def test_picker_reference_uses_native_rows_and_marker_vocab(monkeypatch):
     assert resume.resume_mark('↶') in controls['rows']['web-3']['status']
     assert '↶' in PLAIN.sub('', controls['rows']['web-3']['status'])
     assert '●' in PLAIN.sub('', controls['rows']['api-9']['status'])
+    assert '✓' in PLAIN.sub('', controls['rows']['api-2']['status'])
+    assert '?' in PLAIN.sub('', controls['rows']['web-1']['status'])
+    assert controls['rows']['web-1']['workLabel'] == 'Unknown (no session work report)'
     models = preview.model_controls(preview.sample_catalog())
     assert models['gapPriority'] == ['refresh-gap', 'filter-gap', 'sort-gap', 'results-gap', 'legend-gap']
     assert models['memoryStates']['false'] == {'icon': '✕', 'label': 'Blocked', 'color': 'red'}

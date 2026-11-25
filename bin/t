@@ -14522,7 +14522,8 @@ PICKER CONTROLS
   Wheel over the table to pan. STATUS stays fixed. Up and Down move focus,
   and Left and Right edit the search. Search includes offscreen text.
   PRS shows ↴ merged, ○ open, ◌ draft, ! conflict, × closed, or ? unknown.
-  STATUS shows ● attached, ↶ last closed, ↻ work in progress, and ↗ verified preview.
+  STATUS shows ● attached, ↶ last closed, and ↗ verified preview.
+  Work status comes from the session: ↻ in progress, ✓ complete, ? unknown.
   LAST TURN shows local date and time. TITLE uses the saved name when available.
   Prompt: identifies an opening prompt. REPO is present in every view.
   Run from outside a registered repo to browse all repos.

@@ -55,6 +55,19 @@ def test_rows_candidates_and_freshness_are_pure(adapter):
     assert len(list(adapter.candidates(snapshot, []))) == 1
 
 
+def test_candidate_keeps_latest_explicit_report_across_hosts(adapter):
+    snapshot = view()
+    local = snapshot['hosts'][0]
+    remote = copy.deepcopy(local)
+    remote['host'] = 'mini'
+    for host, report in [(local, {'state': 'unfinished', 'at': 1}), (remote, {'state': 'complete', 'at': 2})]:
+        host['value']['resume'][0] += '\t-\t-\t' + report['state']
+        host['value']['catalog'] = {'conversations': [dict(repo='org/api', agent='codex', sid='a', work_report=report)]}
+    snapshot['hosts'].append(remote)
+    row, = adapter.candidates(snapshot, ['api'])
+    assert row.split('\t')[14] == 'complete'
+
+
 def test_announcements_distinguish_warming_empty_offline(adapter, capsys):
     adapter.announce({'unavailable': True})
     assert 'unavailable' in capsys.readouterr().err
@@ -204,25 +217,15 @@ def test_catalog_projection_filters_and_preserves_repository_identity(adapter, m
     row, = adapter._catalog_candidates(data, history, 'mini')
     fields = row.split('\t')
     assert fields[1:4] == ['api', '2', 'saved']
-    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-', 'org/api#1:OPEN', '-', 'unknown']
-    record['work_in_progress'] = True
+    assert fields[7] == 'mini' and fields[10:] == ['org/api', 'OPEN', '-', 'org/api#1:OPEN', 'unknown', 'unknown', '-']
+    record['work_report'] = {'state': 'unfinished', 'at': 10001}
     record['title_kind'] = 'name'
-    assert next(adapter._catalog_candidates(data, history, 'mini')).split('\t')[14:] == ['yes', 'name']
+    assert next(adapter._catalog_candidates(data, history, 'mini')).split('\t')[14:] == ['unfinished', 'name', '-']
     history.worktree_enabled = lambda alias: False
     assert not list(adapter._catalog_candidates(data, history, 'mini'))
     history.worktree_enabled = lambda alias: True
     record['title'] = ''
     assert not list(adapter._catalog_candidates(data, history, 'mini'))
-
-
-def test_active_resume_owners_excludes_idle_and_unidentified_rows(adapter):
-    rows = '\n'.join([
-        'known\t/work/repo-1\trepo-1\tdetached\tactive\tTitle\tcodex',
-        'idle\t/work/repo-2\trepo-2\tattached\tidle\tTitle\tclaude',
-        '-\t/work/repo-3\trepo-3\tattached\tactive\tTitle\tcodex',
-        'loaded\t/work/repo-4\trepo:loaded\tapp\tactive\tTitle\tcodex',
-    ])
-    assert [owner['sid'] for owner in adapter.active_resume_owners(rows)] == ['known', 'loaded']
 
 
 def test_cli_adapters_use_cache_and_targeted_events(adapter, t_mod, monkeypatch, capsys):
