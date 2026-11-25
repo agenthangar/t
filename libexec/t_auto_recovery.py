@@ -1008,7 +1008,10 @@ class Runtime:
                    '_T_RESUME_ALLOW_UNAVAILABLE=0 _dev_with_launch_locks ' +
                    shlex.join([row['cwd'], row['sid'], task, session, row['cwd'],
                                row['sid'], row['agent'], launch, *extra]))
-        result = run(['zsh', '-lic', snippet], timeout=120)
+        # Login startup can source t from the pane's worktree. Keep the helper
+        # selection tied to this controller for the lifetime of its child shell.
+        env = {**os.environ, 'T_DEV_CONTEXT': str(ROOT), 'T_DEV_CONTEXT_OWNER': str(os.getpid())}
+        result = run(['zsh', '-lic', snippet], env=env, timeout=120)
         if result.returncode:
             raise ValueError(result.stderr.strip()[-1500:] or 'guarded session restore failed')
 
