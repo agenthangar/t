@@ -1107,12 +1107,12 @@ def test_resume_pan_excludes_details_preview_and_survives_resize_cancel(picker):
     wait('[OPEN]')
     # Toggle and mouse arrive together: use the post-toggle preview hitbox.
     keys('-l', '\x1f' + '\x1b[<65;12;33M' * 3)
-    frame = wait('ND-OF-TITLE')
     # A wheel event in the details pane is still handled by native fzf.
-    frame = wait('[OPEN]', focused='[OPEN]')
+    detail = 'Unknown (no session work report)'
+    frame = wait(detail, focused='[OPEN]')
     assert '<' not in next(line for line in frame.splitlines() if '▸' in line and 'filters ▸' not in line)
     keys('-l', '\x1f')
-    wait('[OPEN]', absent=('ND-OF-TITLE',))
+    wait('[OPEN]', absent=(detail,))
     keys.resize(32, 12)
     frame = wait('Edit filters', focused='[OPEN]', columns=32)
     focus = next(line for line in frame.splitlines() if '▸' in line and 'filters ▸' not in line)

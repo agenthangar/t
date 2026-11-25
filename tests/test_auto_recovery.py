@@ -767,7 +767,7 @@ if sys.argv[1] == 'app-server':
         writer = open(Path(os.environ['CODEX_HOME'])/'thread-writer-locks'/(sid + '.lock'), 'w')
         fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         reply = {{'thread': {{'id': sid, 'cwd': os.getcwd()}}, 'sandbox': {{'type': 'readOnly'}},
-                  'approvalPolicy': params['approvalPolicy']}}
+                  'approvalPolicy': 'on-request'}}
         with open({str(resumed)!r}, 'a') as record:
             record.write(json.dumps([os.environ['TMUX_PANE'], os.getcwd(), params]) + '\\n')
         print(json.dumps({{'id': message['id'], 'result': reply}}), flush=True)
@@ -798,7 +798,8 @@ else:
     monkeypatch.setenv('TMUX', socket+',0,0')
     enable(auto)
     row = session(auto, home, agent='codex', cwd=str(work), workspace=auto.workspace(work),
-                  transcript=str(rollout), phase='unknown', safe=False)
+                  transcript=str(rollout), phase='unknown', safe=False,
+                  options=['--sandbox', 'danger-full-access', '--ask-for-approval', 'never'])
     auto.Runtime().hold(row)
     [(holding_socket, name, pane, sid)] = auto.holding_panes()
     assert (holding_socket, name, sid) == (socket, row['session'], SID)
@@ -808,18 +809,13 @@ else:
             return tmux('capture-pane', '-p', '-t', pane).stdout
         until(lambda: label in capture(), timeout=10, detail=capture)
 
-    visible('Recovery holding pane')
+    visible('Resume conversation')
     assert tmux('send-keys', '-t', pane, 'Enter').returncode == 0
-    visible('Launch settings')
-    assert tmux('send-keys', '-t', pane, 'Down', 'Enter').returncode == 0
-    visible('Review resume')
-    assert tmux('send-keys', '-t', pane, 'Up', 'Enter').returncode == 0
     visible('Conversation resumed')
     assert not auto.holding_panes()
     assert tmux('display-message', '-p', '-t', pane, '#{session_name}|#{pane_id}|#{pane_current_path}').stdout.strip() == (
         f'{name}|{pane}|{work}')
-    assert [json.loads(line) for line in resumed.read_text().splitlines()] == [
-        [pane, str(work), {'threadId': SID, 'sandbox': 'read-only', 'approvalPolicy': 'on-request'}]]
+    assert [json.loads(line) for line in resumed.read_text().splitlines()] == [[pane, str(work), {'threadId': SID}]]
 
 
 def test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics(auto):
