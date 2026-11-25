@@ -625,10 +625,11 @@ def resume_health(health, width, color, refresh=False):
     if health.get('failed'):
         warnings.append('Update failed')
     style = lambda text, role: paint(text, role) if color else text
-    title = 'Refreshing ' + ', '.join(pending) if pending else timing
-    if width <= 28 and not pending:
+    active = bool(pending or health.get('refreshing'))
+    title = ('Refreshing ' + (', '.join(pending) or 'sessions')) if active else timing
+    if width <= 28 and not active:
         title = title.removeprefix('Last refresh ')
-    title_role = 'progress' if pending else 'action'
+    title_role = 'progress' if active else 'action'
     shortcut = ''
     if refresh:
         shortcut = key_labels('Ctrl-U' if width <= 40 else 'Ctrl-U refresh now', compact=width <= 40)
@@ -638,7 +639,7 @@ def resume_health(health, width, color, refresh=False):
     if shortcut:
         line += '  ' + style(shortcut, 'primary')
     neutral = []
-    if pending and last:
+    if active and last:
         neutral.append(timing)
     status_rows = [style(text, 'action') for text in pack(neutral, width, '  ')]
     outcomes = []

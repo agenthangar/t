@@ -1121,9 +1121,11 @@ the shared refresh continues.
 
 Interactive resume uses the same cold discovery and service recovery rail as
 open. In the picker, an in-flight refresh updates results as hosts finish.
-Ctrl-U refreshes the same discovery scope and preserves query, filters and
-sort. Ctrl-R filters by repository in the resume picker and refreshes plain
-slot history.
+Ctrl-U starts a refresh in the picker header and adopts results as hosts finish.
+Search, navigation and selection stay available while it runs. The picker
+keeps the query, filters and sort. With mark tracking, it keeps marks for rows
+that remain available. Ctrl-R filters by repository in the resume picker and
+refreshes plain slot history.
 
 When a saved selection needs transfer, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,

@@ -188,10 +188,9 @@ def picker(t_mod):
                 if not empty:
                     saved_resume_row(1, 'First Task')
                     saved_resume_row(2, 'Second Task')
-                if warm_resume:
-                    # Pause only the shared cache's local collector after seeding
-                    # its retained snapshot. The picker and its read-only zsh row
-                    # renderer still execute their real code.
+                if profile == 'public-resume-refresh':
+                    # Pause only the shared cache's local collector. The picker
+                    # and its read-only zsh renderer still execute real code.
                     stub = root / 'zsh'
                     stub.write_text('''#!/bin/sh
 case "$*" in
@@ -205,6 +204,7 @@ exec /bin/zsh "$@"
 ''')
                     stub.chmod(0o700)
                     env['PATH'] = directory + os.pathsep + env['PATH']
+                if warm_resume:
                     command = [str(ROOT / 'bin/t'), '__resume-candidates', '--all']
                     deadline = time.monotonic() + 8
                     while True:
@@ -326,6 +326,7 @@ exec /bin/zsh "$@"
         keys.has_pan_barrier = lambda: any(root.glob('t-picker.*/pan-sync-request'))
         keys.resize = lambda width, height: tmux('resize-window', '-x', str(width), '-y', str(height))
         keys.saved_resume_row = saved_resume_row
+        keys.hold_collector = lambda: (root / 'hold-collector').touch()
         keys.release_collector = lambda: (root / 'hold-collector').unlink(missing_ok=True)
         yield start, wait, keys, finish
         keys.release_collector()
@@ -369,7 +370,15 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     keys('Tab')
     wait('(1)', focused='First Task')
     keys.saved_resume_row(3, 'New Task')
+    keys.hold_collector()
     keys('C-u')
+    screen = wait('Refreshing local', absent=['Skip waiting'], focused='First Task')
+    assert '> Task' in screen and '(1)' in screen
+    keys('Up')
+    wait('Refreshing local', absent=['Skip waiting'], focused='Second Task')
+    keys('Down')
+    wait('Refreshing local', focused='First Task')
+    keys.release_collector()
     stable_ids = '--id-nth' in subprocess.check_output(['fzf', '--help'], text=True)
     screen = wait('3/3 (1)' if stable_ids else '3/3 (0)', focused='First Task' if stable_ids else None)
     assert 'New Task' in screen

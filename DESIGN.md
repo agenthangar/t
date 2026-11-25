@@ -86,9 +86,11 @@ useful controls. Narrow widths wrap within a section while keeping its breaks
 when height permits.
 
 Put the green Ctrl-U refresh action next to refresh status in resume. Active
-refresh uses bright cyan. Where there is room, show the previous refresh time
-and host outcomes. Current hosts use a green ✓, failed connections a red ×,
-and failure reasons amber. Retain a legacy result-count fallback for older fzf.
+refresh stays in the picker header and uses bright cyan. Keep search, navigation
+and selection available while results update. Where there is room, show the
+previous refresh time and host outcomes. Current hosts use a green ✓, failed
+connections a red ×, and failure reasons amber. Retain a legacy result-count
+fallback for older fzf.
 
 Place active filter values and their shortcuts on a summary row. Alt-F opens the
 inline editor in resume and the model reference. Ctrl-F pauses and restores

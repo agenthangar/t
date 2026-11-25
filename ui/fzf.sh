@@ -555,23 +555,23 @@ SH
       if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
         _t_picker_track=
         case $_t_picker_fzf_help:$T_PICKER_CLEAR_MARKS in *--track*:) _t_picker_track='track-current+' ;; esac
-        # fzf suspends keyboard handling while the shared refresh rail is up.
-        # shellcheck disable=SC2016
-        _t_picker_bind="${_t_picker_bind},ctrl-u:${_t_picker_track}${T_PICKER_CLEAR_MARKS}"'execute(sh -c "$T_PICKER_REFRESH_CALLBACK" </dev/tty >/dev/tty)+execute-silent(sh "$T_PICKER_TOGGLE" current)+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+        if [ "$T_PICKER_SESSION_FILTERS" = recovery ]; then
+          # Recovery refresh reads a local snapshot without waiting for hosts.
+          # shellcheck disable=SC2016
+          _t_picker_bind="${_t_picker_bind},ctrl-u:${_t_picker_track}${T_PICKER_CLEAR_MARKS}"'execute-silent(sh -c "$T_PICKER_REFRESH_CALLBACK")+execute-silent(sh "$T_PICKER_TOGGLE" current)+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+        elif [ -n "$_t_picker_viewport" ]; then
+          export FZF_API_KEY T_PICKER_TRACK="$_t_picker_track"
+          [ "${T_PICKER_PAN:-}" = 1 ] || FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+          : > "$_t_picker_dir/refresh-enabled"
+          # The action only queues a request. The worker renders and publishes
+          # updates through the same listener used for startup discovery.
+          # shellcheck disable=SC2016
+          _t_picker_bind="${_t_picker_bind},"'ctrl-u:execute-silent(touch "$T_PICKER_VIEWS/refresh-request")'
+          # shellcheck disable=SC2016
+          _t_picker_start="${_t_picker_start}${_t_picker_start:++}"'execute-silent(T_PICKER_OBSERVE=1 sh -c "exec $T_PICKER_REFRESH_CALLBACK" </dev/null >/dev/null 2>&1 & echo $! > "$T_PICKER_VIEWS/observe.pid")'
+          [ "${T_PICKER_PAN:-}" = 1 ] || set -- --listen=127.0.0.1:0 "$@"
+        fi
       fi
-      case ${T_PICKER_DISCOVERY_STATUS:-} in
-        *'"status": "refreshing"'*)
-          if [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ]; then
-            export FZF_API_KEY T_PICKER_TRACK="$_t_picker_track"
-            [ "${T_PICKER_PAN:-}" = 1 ] || FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
-            # The worker stages rows privately. fzf adopts them alongside its
-            # normal filter and sort actions through its authenticated listener.
-            # shellcheck disable=SC2016
-            _t_picker_start="${_t_picker_start}${_t_picker_start:++}"'execute-silent(T_PICKER_OBSERVE=1 sh -c "exec $T_PICKER_REFRESH_CALLBACK" </dev/null >/dev/null 2>&1 & echo $! > "$T_PICKER_VIEWS/observe.pid")'
-            set -- --listen=127.0.0.1:0 "$@"
-          fi
-          ;;
-      esac
     fi
     for _t_picker_spec in alt-t:turn alt-r:repo alt-g:agent alt-o:host alt-v:session; do
       if [ "$_t_picker_spec" = alt-t:turn ]; then

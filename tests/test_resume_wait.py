@@ -225,62 +225,50 @@ def test_resume_discovery_notice_survives_auth_and_filter_changes(filters, tmp_p
         assert 'Older or incomplete results' in header
 
 
-@pytest.mark.parametrize('outcome', ['cancel', 'unavailable', 'timeout', 'complete'])
-def test_explicit_resume_refresh_preserves_snapshot_on_failure(t_mod, monkeypatch, tmp_path, outcome):
+@pytest.mark.parametrize('outcome', ['unavailable', 'timeout', 'complete'])
+def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path, outcome):
     (tmp_path / 'discovery-status').write_text(json.dumps(dict(hosts=[dict(host='local', status='current')])))
-    for name in ('source', 'rows-0', 'columns'):
-        (tmp_path / name).write_text(f'old {name}')
-    running = view()
-    running['hosts'][0]['refreshing'] = True
-    finished = view()
-    replies = {'cancel': [running], 'unavailable': [{'unavailable': True}],
-               'timeout': [running], 'complete': [running, finished]}
-    sequence, calls, clock = iter(replies[outcome]), [], [100]
+    (tmp_path / 'refresh-enabled').touch()
+    (tmp_path / 'refresh-request').touch()
+    source = tmp_path / 'source'
+    source.write_text('old source')
+    updates, calls, clock = [], [], [100]
 
     def discover(cfg, **kwargs):
-        calls.append(kwargs['refresh'])
-        return next(sequence)
+        calls.append(kwargs)
+        if outcome == 'unavailable':
+            return {'unavailable': True}
+        return dict(hosts=[dict(host='local', status='refreshing' if len(calls) == 1 else 'current')])
 
-    def wait(refresh):
-        assert not refresh()
-        if outcome == 'cancel':
-            raise KeyboardInterrupt
-        if outcome in ('unavailable', 'timeout'):
-            clock[0] += 31
-        assert refresh()
-        return '__done__'
+    def repaint(directory, picker, status, rebuild=None):
+        updates.append(status)
+        (directory / 'discovery-status').write_text(json.dumps(status))
+        if rebuild:
+            rebuild(directory)
+        if len(updates) == 2:
+            (directory / 'refresh-enabled').unlink()
 
-    def rebuild(command, **kwargs):
-        # The spawner receives original flags and operates without input or a
-        # controlling terminal. It writes solely to the private staging directory.
-        import shlex
-        from pathlib import Path
-        options = shlex.split(command[-1])
-        destination = Path(next(part.partition('=')[2] for part in options if part.startswith('_T_RESUME_PICKER_SNAPSHOT=')))
-        assert options[-5:] == ['_t_resume', 'api', '4', '--days', 'all']
-        assert kwargs['stdin'] == t_mod.subprocess.DEVNULL and kwargs['start_new_session']
-        assert (destination / 'history').read_text() == 'new history\n'
-        for name in ('source', 'rows-0', 'columns'):
-            (destination / name).write_text(f'new {name}')
-        return SimpleNamespace(returncode=0)
+    def stage(directory, cache, view, aliases, slot, shell_args):
+        assert (aliases, slot, shell_args) == (['api'], '4', ['api', '4', '--days', 'all'])
+        (directory / 'source').write_text('new source')
 
+    monkeypatch.setitem(sys.modules, 't_picker_close', SimpleNamespace(Picker=lambda _: None))
+    monkeypatch.setattr(t_mod.signal, 'signal', lambda *a: None)
     monkeypatch.setattr(t_mod, 'Config', lambda: None)
-    monkeypatch.setattr(t_mod, '_resume_discovery_wait', wait)
+    monkeypatch.setattr(t_mod, '_resume_discovery_wait', lambda *_: pytest.fail('picker entered a refresh dialog'))
+    monkeypatch.setattr(t_mod, '_resume_picker_update', repaint)
+    monkeypatch.setattr(t_mod, '_resume_picker_stage', stage)
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(discover=discover, resume_health=lambda v: v))
     monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
-    monkeypatch.setattr(t_mod.subprocess, 'run', rebuild)
-    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(
-        discover=discover, resume_health=lambda v: dict(hosts=[], timed_out=v.get('wait_timed_out', False)),
-        rows=lambda _: 'local\tlive\n',
-        candidates=lambda v, aliases, slot: ['new history'] if aliases == ['api'] and slot == '4' else []))
-    assert t_mod._resume_picker_refresh(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == 0
-    status = json.loads((tmp_path / 'discovery-status').read_text())
-    if outcome in ('cancel', 'unavailable'):
-        assert (tmp_path / 'source').read_text() == 'old source'
-        assert status['cancelled' if outcome == 'cancel' else 'failed']
-    else:
-        assert (tmp_path / 'source').read_text() == 'new source'
-        assert status['timed_out'] == (outcome == 'timeout')
-    assert calls == ([True, False] if outcome == 'complete' else [True])
+    monkeypatch.setattr(t_mod.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + (dt if outcome == 'complete' else 31)))
+
+    assert t_mod._resume_picker_observe(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == 0
+    assert updates[0]['hosts'][0]['status'] == 'refreshing'
+    assert updates[1]['hosts'][0]['status'] == ('current' if outcome == 'complete' else 'timed out')
+    assert source.read_text() == ('new source' if outcome == 'complete' else 'old source')
+    assert calls[0]['refresh']
+    if outcome == 'complete':
+        assert calls[1]['observe']
 
 
 def test_observer_repaints_a_settled_host_before_a_pending_peer(t_mod, monkeypatch, tmp_path):
