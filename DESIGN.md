@@ -101,7 +101,9 @@ Each picker supplies the facets, sort choices, and actions that apply to it.
 Order the legend by table column and use matching glyphs, colors, and meanings
 in rows. In resume, the groups are Status, PRs, and Agent. Status shows attached (●), last verified close (↶), session-reported work
 status (↻ in progress, ✓ complete, ? unknown), and verified preview (↗).
-Keep the focus pointer, selection ✓, and status markers in distinct cells.
+Keep the focus pointer and selection ✓ in their own gutters. Give each status
+marker a fixed position and one cell of separation. Use readable contrast on
+selected and unselected rows.
 Keep columns aligned when sorting and filtering. On horizontal scroll, headings
 and values move together while the query, controls, and marker gutter stay fixed.
 Over the table, wheel up pans left and wheel down pans right. Show `<` and `>`

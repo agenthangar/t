@@ -439,6 +439,7 @@ def collect(spec, api):
                     scopes[repository['alias']] = scopes[repository['repo']] = roots
             records = catalog.get('conversations', [])
             if records:
+                history.branch_prs(records, refresh=bool(spec.get('reconcile')), budget=8)
                 history.pr_states(records)
             projections, dirty = {}, []
             for record in records:

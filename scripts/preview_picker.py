@@ -121,7 +121,7 @@ RESUME_CASES = [
     ('api', '9', 'claude', 'mini', '○ #38', 'OPEN', '2026-11-21', '-', True, 'unfinished', False, 'Review API response formats'),
     ('api', '5', 'cursor', 'local', '◌ #21', 'DRAFT', '2026-11-19', '-', False, 'unknown', True, 'Update the cache documentation'),
     ('web', '1', 'codex', 'mini', '! #37', 'UNKNOWN', '2026-11-18', '-', False, 'unknown', False, 'Prepare a responsive navigation preview'),
-    ('api', '2', 'codex', 'local', '—', 'NONE', '2026-11-17', '-', False, 'complete', False, 'Clean up the deployment checklist'),
+    ('api', '2', 'codex', 'local', '-', 'NONE', '2026-11-17', '-', False, 'complete', False, 'Clean up the deployment checklist'),
 ]
 
 

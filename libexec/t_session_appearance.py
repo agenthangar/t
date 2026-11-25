@@ -451,6 +451,10 @@ def signal(recovery, socket, pane, sid, owner_start, event, section='workflow', 
         set_option(tmux, pane, STAGE, json.dumps(dict(value, section=section, stage=stage)))
         paint_workflow(tmux, pane, workflow, policy, target['agent'], section, stage)
         tmux('refresh-client', '-S')
+    refresh_work_reports()
+
+
+def refresh_work_reports():
     if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
         helper('t_session_discovery')['event'](['local'])
 
@@ -628,6 +632,7 @@ def popup(recovery, socket, pane):
             if picked is None:
                 return
             section, stage = picked
+        reported = choice == 'stage' and (section == 'workflow' or stage == 'waiting')
         with locked_pane(recovery, socket, pane):
             if not recovery['current'](target):
                 raise ValueError('The managed conversation changed while the controls were open.')
@@ -635,10 +640,14 @@ def popup(recovery, socket, pane):
                 change_priority(tmux, pane, target, path, not enabled)
             else:
                 workflow, policy = workflow_for(target)
+                if reported:
+                    report_work(target, 'unfinished')
                 apply_current(tmux, pane, priority(path), section, stage, workflow, policy)
                 set_option(tmux, pane, STAGE, json.dumps(dict(sid=target['sid'], owner_start=target['start'],
                                                              section=section, stage=stage)))
                 paint_workflow(tmux, pane, workflow, policy, target['agent'], section, stage)
+        if reported:
+            refresh_work_reports()
     finally:
         ui.restore()
 

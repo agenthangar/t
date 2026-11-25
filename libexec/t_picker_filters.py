@@ -24,12 +24,12 @@ OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
 
 PR_STATES = {'MERGED', 'OPEN', 'CLOSED', 'NONE', 'UNKNOWN', 'MIXED'}
 PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗': '96',
-             '?': '37', '—': '37'}
+             '?': '37', '-': '37', '—': '37'}
 PR_CHIP = r'[↴○◌!×?] #\d+'
 RESUME_STATUS_WIDTH = 8
 WORK_STATUS = {'unfinished': ('↻', 'Work in progress'), 'complete': ('✓', 'Complete'),
                'unknown': ('?', 'Unknown (no session work report)')}
-RESUME_MARK_ROLES = {'?': 'hint', '●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
+RESUME_MARK_ROLES = {'?': 'action', '●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
 RESUME_AGENTS = {'codex': ('>_', 'agent-codex'), 'claude': ('*', 'agent-claude'),
                  'cursor': ('<>', 'key')}
 
@@ -577,7 +577,7 @@ def resume_legend(width, short, color, *, attached=True):
     close = '↶ close' if short else '↶ last closed'
     work = '↻ WIP' if width < 64 or short else '↻ work in progress'
     status = (['● attached'] if attached else []) + [close, work, '✓ complete', '? work unknown', '↗ preview']
-    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '? unknown', '— no PR']
+    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '? unknown', '- no PR']
     agents = {glyph: (name.capitalize(), role) for name, (glyph, role) in RESUME_AGENTS.items()}
     if short:
         return [line for line in pack(status, width, '  ')] if not color else [
@@ -601,7 +601,7 @@ def pr_color(text, symbol):
 
 
 def color_resume_prs(display):
-    if display.startswith(('— ', '? ')):
+    if display.startswith(('- ', '— ', '? ')):
         return pr_color(display[0], display[0]) + display[1:]
     leading = re.match(rf'^(?:{PR_CHIP})(?: +{PR_CHIP})?', display)
     if not leading:
@@ -690,7 +690,7 @@ def mark_resume(source, records=None):
         attached = len(fields) >= 10 and fields[6] != '-'
         marks = ('●' if attached else ' ', '↶' if key == latest else ' ',
                  WORK_STATUS[record.get('work', 'unknown')][0], '↗' if record.get('preview') else ' ')
-        prefix = ''.join(resume_mark(mark) if color and mark != ' ' else mark for mark in marks)
+        prefix = ' '.join(resume_mark(mark) if color and mark != ' ' else mark for mark in marks)
         display = fields[-1]
         if color:
             glyph, role = RESUME_AGENTS.get(record.get('agent'), ('?', 'action'))
@@ -698,7 +698,7 @@ def mark_resume(source, records=None):
                 agent_cell = rf'(?<=  ){re.escape(fields[0])} +{re.escape(fields[1])} +({re.escape(glyph)})(?=  )'
                 display = re.sub(agent_cell, lambda match: match[0][:-len(glyph)] + paint(glyph, role), display, count=1)
             display = color_resume_prs(display)
-        fields[-1] = prefix + ' ' * (RESUME_STATUS_WIDTH - len(marks)) + display
+        fields[-1] = prefix + ' ' * (RESUME_STATUS_WIDTH - (2 * len(marks) - 1)) + display
         result.append('\t'.join(fields))
     return '\n'.join(result)
 

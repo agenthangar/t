@@ -280,7 +280,7 @@ _t_resume() {
   local -A resume_hosts
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_emitted live_titles live_work
+  local -A history_seen history_emitted live_titles live_work live_prs
   local live_identity live_host
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
@@ -614,6 +614,7 @@ _t_resume() {
       live_identity="$history_fields[9]/$history_fields[4]"
       live_titles[$live_identity]=$title
       live_work[$live_identity]=${history_fields[15]:-unknown}
+      live_prs[$live_identity]=${history_fields[14]:--}
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
@@ -750,6 +751,9 @@ _t_resume() {
       fi
       [[ $f[7] != app:* ]] || f[6]="Codex desktop · $f[6]"
       f[16]=${live_work[$live_identity]:-unknown}
+      if [[ ${f[15]:--} == - ]]; then
+        f[15]=${live_prs[$live_identity]:--}
+      fi
     fi
     pr_first[i]='' pr_second[i]='' pr_extras[i]=''
     pr_first_width[i]=0 pr_second_width[i]=0
@@ -793,7 +797,7 @@ _t_resume() {
       pr_extras[i]="  +$(( pr_count - 2 ))"
     elif (( ! pr_count )); then
       case $f[13] in
-        NONE) pr_first[i]=—; pr_first_width[i]=1 ;;
+        NONE) pr_first[i]=-; pr_first_width[i]=1 ;;
         UNKNOWN) pr_first[i]='?'; pr_first_width[i]=1 ;;
         *) pr_first[i]=${(L)f[13]}; pr_first_width[i]=${#pr_first[i]} ;;
       esac

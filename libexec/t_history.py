@@ -1629,33 +1629,55 @@ class HistoryCommand:
                 rows.append(row)
         return _RESUME_SOURCE['merge_records'](rows)
 
-    def branch_prs(self, rows, refresh=False):
+    def branch_prs(self, rows, refresh=False, *, budget=None):
+        """Match cached or fetched PR heads to captured branch and commit pairs."""
+        evidence_by_row = []
         grouped = {}
+        deadline = time.monotonic() + budget if budget is not None else None
         for row in rows:
-            for association in row['associations']:
-                branch, commit = association.get('branch'), association.get('commit')
-                if branch and re.fullmatch(r'[a-fA-F0-9]{40,64}', str(commit)) and not row['repo'].startswith('local:'):
-                    grouped.setdefault(row['repo'], set()).add(branch)
+            if not REPO_IDENTITY.fullmatch(row['repo']):
+                continue
+            evidence = {(a.get('branch'), a.get('commit')) for a in row['associations']
+                        if a.get('branch') and re.fullmatch(r'[a-fA-F0-9]{40,64}', str(a.get('commit')))}
+            if evidence:
+                grouped.setdefault(row['repo'], set()).update(branch for branch, _ in evidence)
+                evidence_by_row.append((row, evidence))
+        known = {}
         for repo, branches in grouped.items():
-            key = 'branch-pr:' + repo + ':' + hashlib.sha256(json.dumps(sorted(branches)).encode()).hexdigest()
-            existing = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
-            prs = json.loads(existing[1]) if existing else []
-            if refresh:
-                owner, name = repo.split('/', 1)
-                fields = ' '.join(f'b{i}:pullRequests(headRefName:{json.dumps(branch)},first:100,states:[OPEN,CLOSED,MERGED]){{nodes{{number url headRefName headRefOid state}}}}' for i, branch in enumerate(sorted(branches)))
-                query = 'query{repository(owner:' + json.dumps(owner) + ',name:' + json.dumps(name) + '){' + fields + '}}'
-                try:
-                    data = json.loads(run(['gh', 'api', 'graphql', '-f', 'query=' + query], timeout=8))['data']['repository']
-                    prs = [dict(repo=repo, **pr) for batch in data.values() for pr in batch['nodes']]
-                    self.store.db.execute('insert or replace into prs values (?,?,?)', (key, time.time(), json.dumps(prs)))
-                    self.store.db.commit()
-                except (HistoryError, ValueError, KeyError, TypeError):
-                    pass
-            for row in rows:
-                evidence = {(a.get('branch'), a.get('commit')) for a in row['associations']}
-                associated = [dict(repo=pr['repo'], number=pr['number'], url=pr['url'], state=pr['state'], evidence='verified branch and commit') for pr in prs if pr['repo'] == row['repo'] and (pr['headRefName'], pr['headRefOid']) in evidence]
-                if associated:
-                    row.update(self.store.merge({**row, 'prs': row['prs'] + associated}))
+            names = sorted(branches)
+            for start in range(0, len(names), 25):
+                batch = names[start:start + 25]
+                key = 'branch-pr:' + repo + ':' + hashlib.sha256(json.dumps(batch).encode()).hexdigest()
+                cached = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
+                prs = json.loads(cached[1]) if cached else []
+                remaining = 8 if deadline is None else min(8, deadline - time.monotonic())
+                recent = cached and time.time() - cached[0] < 900
+                if refresh and remaining > 0 and (budget is None or not recent):
+                    owner, name = repo.split('/', 1)
+                    fields = ' '.join(f'b{i}:pullRequests(headRefName:{json.dumps(branch)},'
+                                      'first:50,states:[OPEN,CLOSED,MERGED]){nodes{number url headRefName headRefOid state}}'
+                                      for i, branch in enumerate(batch))
+                    query = 'query{repository(owner:' + json.dumps(owner) + ',name:' + json.dumps(name) + '){' + fields + '}}'
+                    try:
+                        data = json.loads(run(['gh', 'api', 'graphql', '-f', 'query=' + query],
+                                              timeout=remaining))['data']['repository']
+                        prs = [pr for connection in data.values() for pr in connection['nodes']]
+                        self.store.db.execute('insert or replace into prs values (?,?,?)', (key, time.time(), json.dumps(prs)))
+                        self.store.db.commit()
+                    except (HistoryError, ValueError, KeyError, TypeError):
+                        pass
+                for pr in prs:
+                    match = (repo, pr['headRefName'], pr['headRefOid'])
+                    known.setdefault(match, []).append(dict(repo=repo, number=pr['number'], url=pr['url'],
+                        state=pr['state'], evidence='verified branch and commit'))
+        for row, evidence in evidence_by_row:
+            associated = [pr for branch, commit in sorted(evidence)
+                          for pr in known.get((row['repo'], branch, commit), ())]
+            if associated:
+                existing = {(pr['repo'], pr['number']): pr for pr in row['prs']}
+                updated = [pr for pr in associated if existing.get((pr['repo'], pr['number'])) != pr]
+                if updated:
+                    row.update(self.store.merge({**row, 'prs': row['prs'] + updated}))
 
     def pr_states(self, rows, refresh=False):
         refs = {(p['repo'], p['number']) for row in rows for p in row['prs']}
@@ -2447,6 +2469,7 @@ class HistoryCommand:
                 continue
             alias = local_alias or identity
             records = self.records(alias)
+            self.branch_prs(records)
             self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
             for row in records:
                 key = (identity, row['agent'], row['sid'])

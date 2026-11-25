@@ -1169,7 +1169,10 @@ these blank rows first on short screens. The legend follows the table order: Sta
 Status shows attached (●), last closed (↶), session-reported work in progress
 (↻), complete (✓), unknown (?), and verified preview (↗). The report belongs to
 the exact conversation and persists across pane exits. Details explain when the
-session has supplied no report. Tab marks action targets in a separate gutter.
+session has supplied no report. Choosing an active workflow stage or Waiting on
+you reports unfinished work. Tab marks action targets in a separate gutter.
+Background discovery fills missing PR links when a captured branch and commit
+match a PR head.
 Matching legend entries and row icons use the same colors. The AGENT column
 shows terminal glyphs while full names remain searchable and visible in details.
 Column widths remain stable while filtering and sorting. Over the table,

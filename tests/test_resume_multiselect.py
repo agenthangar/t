@@ -60,7 +60,7 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
     assert "claude -r c1" in zsh.log.read_text()
     assert "codex resume" not in zsh.log.read_text()  # the live row keeps its owner
     rows = log.read_text().splitlines()
-    assert any(row.startswith("● ↻") and ">_" in row and "4 ●" not in row
+    assert any(row.startswith("●   ↻") and ">_" in row and "4 ●" not in row
                and "Named live conversation" in row for row in rows)
     assert any("3" in row and re.search(r"  \*  ", row) and "Fix login" in row for row in rows)
     assert "--with-nth=-1" in (tmp_path / "fzf.log.args").read_text()
