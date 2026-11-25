@@ -857,7 +857,6 @@
         "_t_with_progress 'Checking local sessions' _dev_session_rows_impl",
         "_t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl",
         "_t_with_progress 'Waiting for the previous agent to exit' _t_wait_for_exit_impl",
-        "_t_with_progress 'Waiting for the agent to accept input' _t_paste_wait_ready",
         "_t_wait_for_exit \"$pid\""
       ]
     },

@@ -19,7 +19,7 @@ CONTRACT = ROOT / "ui" / "command-contract.json"
 # A new public command must enter a noun/verb family instead of growing this set.
 LEGACY_SHORTCUTS = frozenset({
     "help", "open", "ls", "list", "kill", "restart", "push", "pop",
-    "resume", "history", "cd", "beam", "move", "read", "plan", "paste", "find", "on",
+    "resume", "history", "cd", "beam", "move", "read", "plan", "find", "on",
     "setup", "new", "checkout", "instructions", "login",
     "install", "integrate", "update", "permissions", "trust", "doctor",
 })
@@ -33,7 +33,7 @@ ISSUE_VERBS = {"list", "status", "start", "open"}
 # accepted verbs so extending one requires an intentional contract review.
 LEGACY_GROUP_VERBS = {
     "session": {"open", "list", "close", "restart", "push", "pop", "resume", "history", "cd",
-                "move", "read", "view-plan", "paste", "search", "goal", "recovery"},
+                "move", "read", "view-plan", "search", "goal", "recovery"},
     "repo": {"list", "cd", "locate", "create", "clone", "add"},
     "cursor": {"list", "resume", "send"},
     "hosts": {"list", "show", "add", "edit", "remove", "default", "reset", "run"},

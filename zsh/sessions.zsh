@@ -58,153 +58,6 @@ _t_wait_for_exit_impl() {
   while kill -0 "$pid" 2>/dev/null && (( n++ < 100 )); do sleep 0.05; done
 }
 
-_t_paste_wait_ready() {
-  local session=$1 waited=0
-  while (( waited < 30 )); do
-    _tpaste_claude_ready "$session" && break
-    sleep 1
-    (( waited++ ))
-  done
-  sleep 1
-}
-
-# the session's pane, else return 1. tpaste polls this after launching a fresh
-# session so it knows when the path can be delivered.
-_tpaste_claude_ready() {
-  local session="$1"
-  # The session bootstraps with `git …; claude`. While the git dance runs the
-  # pane's foreground command is git/zsh; once Claude (a Node CLI) takes over it
-  # becomes node. That process hand-off is a more robust readiness signal than
-  # matching Claude's TUI text, which changes between versions. To gate on the
-  # actual prompt instead, swap in a `tmux capture-pane -p` string match.
-  local cmd
-  cmd=$(tmux display-message -p -t "=$session:" '#{pane_current_command}' 2>/dev/null)
-  [[ $cmd == node ]] && return 0
-  _dev_agent_is_proc "$cmd" && return 0
-  return 1
-}
-
-# _t_paste [-n] [-p] [repo] [slot] — the `t paste` verb: paste an iCloud Drive screenshot/doc
-# path into a dev tmux session. Covers images (png/jpg/jpeg/heic) and docs (pdf/txt/md/csv/
-# docx) in the iCloud Drive root, newest first; fzf-picks when there is a TTY + fzf, else (or
-# with -n) falls back to the newest file. -p/--pick is a back-compat no-op (the picker is the
-# default). User-facing help lives in bin/t (`t paste -h`) — the shim routes -h there, so this
-# helper takes none of its own.
-_t_paste() {
-  local _T_PROGRESS=0
-  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
-  # The picker is the default; -n/--newest forces the no-prompt fast path.
-  # -p/--pick is kept as a no-op so old muscle memory/scripts still work.
-  local newest=0 arg
-  local -a _pos
-  for arg in "$@"; do
-    case "$arg" in
-      -n|--newest) newest=1 ;;
-      -p|--pick)   ;;
-      *)           _pos+=("$arg") ;;
-    esac
-  done
-  local repo="${_pos[1]}"
-  local slot="${_pos[2]}"
-  # Repo-aware: `t paste 4` ≡ `t paste <cwd-repo> 4`; bare `t paste` targets the
-  # $PWD repo's next free slot (see _t_infer_repo).
-  if [[ "$repo" == <-> && -z "$slot" ]]; then slot=$repo; repo=$(_t_infer_repo "$slot"); fi
-  [[ -z "$repo" ]] && repo=$(_t_infer_repo)
-  local _repo_selector _repo_selector_rc
-  _repo_selector=$(_dev_resolve_repo "$repo"); _repo_selector_rc=$?
-  (( _repo_selector_rc == 2 )) && return 2
-  (( _repo_selector_rc == 0 )) && repo=$_repo_selector
-  if [[ -z "$repo" ]]; then
-    echo "Usage: tpaste [-n] [repo] [slot]   (no repo: the one \$PWD is in; repo: one of ${(k)DEV_REPOS:-(none configured — see ${T_LOCAL_RC})})"
-    return 1
-  fi
-
-  local icloud="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
-  # verify iCloud Drive is accessible
-  if [[ ! -d "$icloud" ]]; then
-    echo "iCloud Drive not found at: $icloud"
-    return 1
-  fi
-  # collect pasteable files in the iCloud Drive root: images + docs, one flat
-  # set, newest-by-mtime wins. (Screenshots used to be a priority tier, but that
-  # made a just-exported PDF unreachable whenever any screenshot existed — the
-  # newest file IS the one you just saved, so the tiering bought nothing.)
-  # (N) is the nullglob qualifier: unmatched globs expand to nothing instead of
-  # raising zsh's "no matches found" error. Collect into an array first so an
-  # empty result never makes `ls` fall back to listing the current directory.
-  # extended_glob is needed for the parenthesized alternation in the filename
-  # pattern; local_options restores the caller's setopts on return. The leading
-  # (#i) makes the whole pattern case-INSENSITIVE — iPhone screenshots save as
-  # *.PNG (uppercase), and zsh globbing is case-sensitive even on macOS's
-  # case-insensitive filesystem, so a bare *.png silently skipped them.
-  setopt local_options extended_glob
-  local src
-  local -a files
-  files=("$icloud"/(#i)*.(png|jpg|jpeg|heic|pdf|txt|md|csv|docx)(N))
-
-  if (( ${#files} == 0 )); then
-    echo "No images or docs found in iCloud Drive ($icloud)"
-    return 1
-  fi
-
-  # Picker by default: open fzf whenever we have a TTY + fzf, unless -n forced
-  # the fast path. No TTY/fzf (or -n) falls back to the newest file by mtime.
-  if (( ! newest )) && [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
-    # ls -t sorts newest-first; show just the basename but return the full path
-    src=$(ls -t "${files[@]}" | _t_fzf_single paste 'Recent files' --prompt='tpaste> ' \
-          --delimiter=/ --with-nth=-1) || { local picker_rc=$?; (( picker_rc == 130 )) && echo "Cancelled."; return $picker_rc; }
-  else
-    src=$(ls -t "${files[@]}" | head -1)
-  fi
-
-  echo "Using: $src"
-
-  # find session
-  # repo→path map: see the global DEV_REPOS (defined near the cd shortcuts)
-
-  if [[ -z "${DEV_REPOS[$repo]}" ]]; then
-    echo "Unknown repo: $repo. Use one of: ${(k)DEV_REPOS:-(none configured — see ${T_LOCAL_RC})}"
-    return 1
-  fi
-
-  # no slot → the next FRESH slot (_dev_slot_fresh: no session, no worktree on disk, no
-  # lingering unmerged branch — the same rule `t open` uses), so the default is always
-  # a genuinely fresh session, never a dead slot's parked work. Unbounded like `t open
-  # --new`: slot numbers grow past 20 in practice, and a cap here read as "all in use".
-  if [[ -z "$slot" ]]; then
-    local n=1
-    while ! _dev_slot_fresh "$repo" "$n"; do (( n++ )); done
-    slot=$n
-  fi
-
-  local session="dev-${repo}-${slot}"
-
-  # existing session → Claude is already live, so paste straight in (no attach)
-  if tmux has-session -t "=$session:" 2>/dev/null; then
-    tmux send-keys -t "=$session:" "$src"
-    echo "Pasted path into $session — press Enter in that session to send to Claude."
-    return
-  fi
-
-  # new session → bootstrap Claude, wait for it to come up, queue the path, attach
-  local _pdir="${DEV_REPOS[$repo]}" _pskip=
-  if _dev_worktree_enabled "$repo"; then
-    local _pwt; _pwt="$(_dev_worktree_create "$repo" "$slot")"
-    if [[ -n $_pwt ]]; then _pdir="$_pwt"; _pskip=1
-    else _dev_worktree_refuse "$repo" "$slot"; return 1; fi
-  fi
-  echo "Starting $session for the file…"
-  _dev_new_session "$session" "$_pdir" "$(_dev_branch_for "$repo")" "$_pskip" || return 1
-
-  # wait (up to ~30s) for Claude's process to take over the pane; if the
-  # readiness check never matches this degrades to a plain 30s wait
-  _t_with_progress 'Waiting for the agent to accept input' _t_paste_wait_ready "$session"
-
-  tmux send-keys -t "=$session:" "$src"
-  echo "Queued path in $session — attaching; press Enter to send to Claude."
-  tmux attach-session -t "=$session:"
-}
-
 # ─── one-shot process/pane snapshot (the scan fast path) ─────────────────────────
 # Every "is this slot running claude, and which pid is it?" question used to fork:
 # a `tmux list-panes` per session, then `ps -o comm=` + `pgrep -P` per pid walking
@@ -1144,13 +997,13 @@ _dev_cwd_repo_dir() {
 }
 
 # _t_infer_repo [slot] — the repo ALIAS implied by $PWD, for the repo-aware verb
-# defaults (`t paste 4` in ~/code/financial-forecast → that repo's slot 4; bare
+# defaults (a numeric slot in the current repo; bare
 # `t open` → the repo you're standing in). _dev_cwd_repo_dir gives the DIR, but
 # slot verbs target session NAMES (dev-<alias>-<slot>) and several aliases can key
 # one dir (dot-* and dotfiles-* both root at ~/code/dotfiles) — so a LIVE dev-*
 # session rooted in this repo dir wins and the alias is read off the actual
 # session name: the exact <slot>'s session when one is given, else the dir's
-# first live session (so a bare `t open`/`t paste` joins the alias already in
+# first live session (so a bare `t open` joins the alias already in
 # use here instead of minting a sibling slot under a second alias). No live
 # session → the DEV_REPOS key for the dir: the key matching its basename, else
 # the shortest (the customary shorthand). Prints nothing / rc 1 outside any
@@ -2431,7 +2284,7 @@ _t_terminal_processes_clear() {
 # _dev_new_session <session> <dir> [branch] [skip_prepare] — create a detached tmux
 # session in <dir>, start logging, and launch Claude on <branch> (default $DEV_BRANCH).
 # Callers pass the repo's resolved branch (see _dev_branch_for) since the repo
-# alias isn't recoverable from <session> reliably. Shared by `dev` and `tpaste`
+# alias isn't recoverable from <session> reliably.
 # so the bootstrap (branch dance, geometry, logging) lives in one place; callers
 # attach (or not) and deliver input themselves afterwards.
 # skip_prepare (non-empty) suppresses the in-pane _dev_repo_prepare branch dance —
