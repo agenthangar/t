@@ -459,7 +459,9 @@ Receipts retain discovery order. Runtime writes run sequentially with fresh
 ownership checks.
 
 Only indexed hooks with t's exact command grammar are rewritten; user hooks and
-development source pins are preserved. Compatible observers self-exec at their
+development source pins are preserved. After a pane respawns, verified ownership
+allows `t` to refresh the detach hook's process ID. Recovery holding panes are
+skipped until the conversation resumes. Compatible observers self-exec at their
 own safe boundary with the same original PTY and singleton-lock descriptors,
 pending detach event and elapsed loss deadline. Legacy observers remain
 untouched until normal attachment. Legacy watchers whose old package source is

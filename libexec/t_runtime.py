@@ -539,21 +539,22 @@ def complete_migration(component, socket, target, record, live_target, deadline=
 
 def panes(socket):
     result = tmux(socket, 'list-panes', '-a', '-F',
-                  '#{session_id}|#{session_name}|#{pane_id}|#{pane_pid}|#{session_path}|#{pane_dead}')
+                  '#{session_id}|#{session_name}|#{pane_id}|#{pane_pid}|#{session_path}|'
+                  '#{pane_dead}|#{?@t_recovery_holding,1,0}')
     if result.returncode:
         raise ValueError('tmux server changed')
     rows = []
     for line in result.stdout.splitlines():
         fields = line.split('|')
-        if (len(fields) == 6 and re.fullmatch(r'\$\d+', fields[0])
+        if (len(fields) == 7 and re.fullmatch(r'\$\d+', fields[0])
                 and fields[1].startswith('dev-') and re.fullmatch(r'%\d+', fields[2])
-                and fields[3].isdigit() and fields[5] == '0'):
-            rows.append(dict(zip(('identity', 'session', 'pane', 'pane_pid', 'workspace', 'dead'), fields)))
+                and fields[3].isdigit() and fields[5:] == ['0', '0']):
+            rows.append(dict(zip(('identity', 'session', 'pane', 'pane_pid', 'workspace', 'dead'), fields[:6])))
     # Multi-pane sessions aren't a single verified t owner.
     return [row for row in rows if sum(other['identity'] == row['identity'] for other in rows) == 1]
 
 
-def parsed_hook(line, socket, pane):
+def parsed_hook(line, socket, pane, *, allow_stale_pid=False):
     """Recognize only t's exact hook grammar; filenames in user code are not ownership."""
     try:
         values = shlex.split(line)
@@ -581,6 +582,9 @@ def parsed_hook(line, socket, pane):
             return None
         expected = (['detached', rest[1], pane['identity'], pane['pane'], pane['pane_pid']]
                     if options else ['attached', rest[1]])
+        if options and allow_stale_pid and len(rest) == len(expected) and re.fullmatch(r'[1-9][0-9]*', rest[-1]):
+            # A respawn changes the PID while preserving the session and pane.
+            expected[-1] = rest[-1]
         return dict(key=key, source=source, argv=argv) if rest == expected else None
     except (ValueError, IndexError):
         return None
@@ -589,7 +593,7 @@ def parsed_hook(line, socket, pane):
 def hook_source(socket, pane):
     hooks = tmux(socket, 'show-hooks', '-t', pane['identity'] + ':')
     for line in hooks.stdout.splitlines():
-        value = parsed_hook(line, socket, pane)
+        value = parsed_hook(line, socket, pane, allow_stale_pid=True)
         if value and value['key'] == 'client-detached[50100]':
             return value['source']
     option = tmux(socket, 'show-options', '-qv', '-t', pane['identity'] + ':', '@t_runtime_source')
@@ -644,11 +648,11 @@ class Hooks:
         all_current = True
         for hook, wanted in expected.items():
             rows = [line for line in current.stdout.splitlines() if line.startswith(hook + ' ')]
-            if rows and parsed_hook(rows[0], socket, pane) is None:
-                return outcome('deferred', 'reserved hook index contains a user hook: ' + hook,
-                               reason_code='user-hook-conflict', next_action='remove or relocate the custom hook, then run t update')
             if rows:
-                parsed = parsed_hook(rows[0], socket, pane)
+                parsed = parsed_hook(rows[0], socket, pane, allow_stale_pid=True)
+                if parsed is None:
+                    return outcome('deferred', 'reserved hook index contains a user hook: ' + hook,
+                                   reason_code='user-hook-conflict', next_action='remove or relocate the custom hook, then run t update')
                 if (Path(parsed['source']) / '.git').is_file() and os.path.realpath(parsed['source']) != str(ROOT):
                     return outcome('deferred', 'development runtime remains pinned',
                                    reason_code='pinned-source', next_action='update from the owning development worktree')
