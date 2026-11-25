@@ -37,6 +37,10 @@ review and cancellation behave as shown. Follow the
 [planning preview contract](ui/README.md#planning-previews) when a workflow
 calls for a planning prototype.
 
+For direct commands, show a sample report on load and keep the commands and
+next actions discoverable as the terminal narrows. Follow the
+[direct command preview guidance](ui/README.md#direct-command-previews).
+
 ## Vertical spacing
 
 Use spacing to show which controls belong together. Keep a label and its short
@@ -172,3 +176,11 @@ labels, `Tab ✓` spacing, and the filled Filters ON and Sort labels. Place
 result shortcuts below the filter and sort controls. Do not add a selectable fake session row for
 New. Show the status legend in the bottom footer where supported; older fzf
 keeps a compact header legend and short terminals prioritize rows and controls.
+
+### Recovery picker
+
+Recovery uses the shared multi-select picker with inline FILTER and SORT controls
+from the model library. Show Open pane, Status unknown, and Restoring in the status
+column and legend. Align legend category labels and corresponding marker columns
+vertically; indent wrapped items to the marker column. Return opens or resumes the
+exact selected conversation. Keep state and query through filtering and resize.

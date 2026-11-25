@@ -5785,8 +5785,9 @@ class _RailUI:
         st, width = self.st, self.cols()
         head = self.head(label) + [self.rail]
         hints, current = [], ""
+        separator = getattr(self, "key_separator", " · ")
         for part in self.labels(keys).split(" · "):
-            candidate = f"{current} · {part}" if current else part
+            candidate = current + separator + part if current else part
             if _display_width(candidate) > width - 4 and current:
                 hints.extend(_wrap_columns(current, width - 4))
                 current = part
@@ -5799,7 +5800,7 @@ class _RailUI:
             head = head[:1]
             footer = [f"  {st.y}{hint}{st.r}" for hint in hints]
         if self.lines() <= 10:
-            brief = self.labels("↑↓/jk · space ✓ · enter · q/esc · Ctrl-C")
+            brief = self.labels("↑↓/jk · space ✓ · enter · q/esc · Ctrl-C").replace(" · ", separator)
             footer = [f"  {st.y}{line}{st.r}" for line in _wrap_columns(brief, width - 4)]
         if primary:
             key, action, detail = primary
@@ -12862,7 +12863,7 @@ def cmd_mcp(cfg, args):
 
 def cmd_automatic_recovery(cfg, args):
     try:
-        return _automatic_recovery()['command'](args, cfg)
+        return _automatic_recovery()['command'](args, cfg, globals())
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         print('t recovery: ' + str(exc), file=sys.stderr)
         return 1
@@ -13011,7 +13012,7 @@ COMMAND_GROUPS = {
               "background": {verb: ("agent", "background", verb)
                              for verb in ("status", "install", "start", "stop", "restart")}},
     "system": {"integrate": ("integrate",), "update": ("update",),
-               "recovery": {"status": ("system", "recovery", "status")},
+               "recovery": {verb: ("system", "recovery", verb) for verb in ("status", "run", "agent")},
                "apps": {v: ("system", "apps", v) for v in ("install", "status")},
                "diagnose": ("doctor",), "advisories": ("__advisories",),
                "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
@@ -13288,6 +13289,19 @@ def _group_help(group):
 TARGET is cleanup, recovery, or all. Stop applies to this login.
 Status checks installation, live state, and effective login startup on this host.
 Run t help agent background <verb> for details.
+""")
+    if group == 'system recovery':
+        return _wrap_help("""USAGE
+  t system recovery <verb>
+
+COMMANDS
+  status  Show recovery and background agent status
+  run     Open or resume tracked sessions
+  agent   Show background agent commands
+
+Use t system recovery run --all to request an immediate recovery check.
+Enable automatic recovery in t config.
+Run t help system recovery <verb> for details.
 """)
     if group in ('system recovery', 'session recovery'):
         verbs = ('status',) if group.startswith('system') else ('pause', 'resume', 'status')
@@ -15434,9 +15448,17 @@ PERIODIC CHECKS
         rp = resources.add_parser('recovery', help='automatic recovery status and session eligibility')
         rp.set_defaults(scope=scope)
         actions = rp.add_subparsers(dest='action', required=True)
-        for action in (('status',) if scope == 'system' else ('pause', 'resume', 'status')):
-            leaf = actions.add_parser(action, help=('show read-only recovery status' if action == 'status' else action + ' automatic recovery eligibility'),
-                description='Configure automatic recovery in t config. Session controls accept [repo] [slot] or an exact conversation ID; infer the current workspace only when unambiguous. They never stop a running agent.')
+        for action in (('status', 'run', 'agent') if scope == 'system' else ('pause', 'resume', 'status')):
+            descriptions = {'status': 'show read-only recovery status',
+                            'run': 'open or resume tracked sessions',
+                            'agent': 'show background agent commands',
+                            'pause': 'pause automatic recovery for a session',
+                            'resume': 'restore automatic recovery eligibility for a session'}
+            leaf = actions.add_parser(action, help=descriptions[action],
+                description=("Choose tracked sessions to open or resume. Use --all to request a recovery check without a restart."
+                             if action == 'run' else descriptions[action].capitalize() + '.'))
+            if action == 'run':
+                leaf.add_argument('--all', action='store_true', help='request an immediate recovery check for all eligible sessions')
             if scope == 'session':
                 leaf.add_argument('repo', nargs='?', help='repository alias or exact conversation ID; infer current workspace when omitted')
                 leaf.add_argument('slot', nargs='?', help='slot number')

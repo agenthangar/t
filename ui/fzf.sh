@@ -305,7 +305,7 @@ Tab mark ✓"
   export T_PICKER_VIEWS="$_t_picker_dir" T_PICKER_SESSION_MASK=
   printf '%s' "${T_PICKER_NOTICE:-}" > "$_t_picker_dir/discovery-notice"
   case ${T_PICKER_SESSION_FILTERS:-} in
-    open|resume|list) T_PICKER_SESSION_MASK=1 ;;
+    open|resume|recovery|list) T_PICKER_SESSION_MASK=1 ;;
     kill) T_PICKER_SESSION_MASK=3 ;;
   esac
   if [ -n "$T_PICKER_SESSION_MASK" ]; then
@@ -324,7 +324,7 @@ Tab mark ✓"
       [ $(( _t_picker_mask & 2 )) = 0 ] || _t_picker_second=shown
       case $T_PICKER_SESSION_FILTERS in
         list) _t_picker_filters="All sessions" ;;
-        resume) _t_picker_filters="Ctrl-L live: $_t_picker_first" ;;
+        resume|recovery) _t_picker_filters="Ctrl-L live: $_t_picker_first" ;;
         open) _t_picker_filters="Ctrl-T attached: $_t_picker_first" ;;
         kill) _t_picker_filters="Ctrl-T attached: $_t_picker_first${_t_picker_filter_separator}Ctrl-P pending: $_t_picker_second" ;;
       esac
@@ -377,7 +377,7 @@ Tab mark ✓"
   if [ -n "$_t_picker_source" ] || [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ] || [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
     : > "$_t_picker_dir/source"
     [ -z "$_t_picker_source" ] || printf '%s\n' "$_t_picker_source" > "$_t_picker_dir/source"
-    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ]; then
+    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = recovery ]; then
       # fzf 0.58 added --header-border and began using the actual marker and
       # pointer widths for header indentation. Older versions assume two cells.
       if [ -n "$_t_picker_columns" ]; then
@@ -396,7 +396,7 @@ Tab mark ✓"
     T_PICKER_HEADER_WIDTH=${_t_picker_size#* }
     [ "${T_PICKER_HEADER_WIDTH:-0}" -gt 0 ] || T_PICKER_HEADER_WIDTH=${COLUMNS:-80}
     T_PICKER_HEADER_WIDTH=$(( T_PICKER_HEADER_WIDTH - 12 ))
-    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_compact" ]; then
+    if { [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = recovery ]; } && [ -n "$_t_picker_compact" ]; then
       T_PICKER_HEADER_WIDTH=$(( ${_t_picker_size#* } - 5 ))
     fi
     if [ -n "$_t_picker_size" ] && [ "${_t_picker_size%% *}" -gt 0 ] && [ "${_t_picker_size%% *}" -le 14 ]; then
@@ -406,7 +406,7 @@ Tab mark ✓"
     fi
     export T_PICKER_HEADER_WIDTH
     export T_PICKER_FILTER_HELPER="$T_HOME/libexec/t_picker_filters.py"
-    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_viewport" ] && [ -n "$_t_picker_columns" ] && [ -r "$T_HOME/libexec/t_picker_viewport.py" ]; then
+    if { [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = recovery ]; } && [ -n "$_t_picker_viewport" ] && [ -n "$_t_picker_columns" ] && [ -r "$T_HOME/libexec/t_picker_viewport.py" ]; then
       export T_PICKER_PAN=1 T_PICKER_COLUMNS="$_t_picker_columns" T_PICKER_PAN_HEADER_PAD=0
       case $_t_picker_fzf_help in *--header-border*) ;; *) T_PICKER_PAN_HEADER_PAD=2 ;; esac
       export T_PICKER_PAN_FRAME_ROWS=6
@@ -421,13 +421,15 @@ Tab mark ✓"
       # shellcheck disable=SC2016
       set -- --disabled --listen=127.0.0.1:0 --bind='f11:execute-silent(cp "$T_PICKER_VIEWS/pan-sync-request" "$T_PICKER_VIEWS/pan-sync-ack")' --bind='change:execute-silent(sh "$T_PICKER_TOGGLE" search {q})+reload-sync(cat "$T_PICKER_CURRENT")+transform-header(cat "$T_PICKER_CURRENT_HEADER")' --preview='printf "%s\n\nAgent: %s\n" {-2} {10}' "$@"
     fi
-    if [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] && [ -n "$_t_picker_terminal" ] && [ "${_t_picker_size#* }" -gt 40 ] && [ "${_t_picker_size%% *}" -gt 14 ]; then
+    if { [ "${T_PICKER_SESSION_FILTERS:-}" = resume ] || [ "${T_PICKER_SESSION_FILTERS:-}" = recovery ]; } && [ -n "$_t_picker_terminal" ] && [ "${_t_picker_size#* }" -gt 40 ] && [ "${_t_picker_size%% *}" -gt 14 ]; then
       case $_t_picker_fzf_help in
         *--info-command*)
           printf 1 > "$_t_picker_dir/info-command"
+          export T_PICKER_INFO_SEPARATOR=' · '
+          [ "$T_PICKER_SESSION_FILTERS" != recovery ] || T_PICKER_INFO_SEPARATOR='  '
           # Keep fzf's native counts and selected count intact.
           # shellcheck disable=SC2016
-          set -- --info-command='count=$(cat "$T_PICKER_VIEWS/hidden-count"); if [ "${T_PICKER_COLOR:-0}" = 1 ] && [ "$count" != 0 ]; then printf "%s · \033[1m%s hidden\033[0m" "$FZF_INFO" "$count"; else printf "%s · %s hidden" "$FZF_INFO" "$count"; fi' "$@"
+          set -- --info-command='count=$(cat "$T_PICKER_VIEWS/hidden-count"); if [ "${T_PICKER_COLOR:-0}" = 1 ] && [ "$count" != 0 ]; then printf "%s%s\033[1m%s hidden\033[0m" "$FZF_INFO" "$T_PICKER_INFO_SEPARATOR" "$count"; else printf "%s%s%s hidden" "$FZF_INFO" "$T_PICKER_INFO_SEPARATOR" "$count"; fi' "$@"
           ;;
       esac
     fi
@@ -495,7 +497,7 @@ SH
     _t_picker_second_key=
     case $T_PICKER_SESSION_FILTERS in
       list) _t_picker_first_key= ;;
-      resume) _t_picker_first_key=ctrl-l:first ;;
+      resume|recovery) _t_picker_first_key=ctrl-l:first ;;
       open)
         _t_picker_first_key=ctrl-t:first
         [ -z "${T_PICKER_FILTER_HELPER:-}" ] || _t_picker_second_key=ctrl-u:unattached
@@ -511,7 +513,7 @@ SH
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     _t_picker_bind=
     _t_picker_specs='ctrl-a:off ctrl-l:on ctrl-f:toggle-filters ctrl-x:reset-filters ctrl-t:state ctrl-g:match-agent ctrl-o:match-host ctrl-r:match-repo ctrl-s:toggle-sort ctrl-y:next-sort alt-s:toggle-sort'
-    if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
+    if [ "$T_PICKER_SESSION_FILTERS" = resume ] || [ "$T_PICKER_SESSION_FILTERS" = recovery ]; then
       _t_picker_specs="$_t_picker_specs ctrl-d:merged"
     else
       _t_picker_specs="$_t_picker_specs ctrl-d:match-interface"
@@ -521,6 +523,9 @@ SH
     fi
     if [ "$T_PICKER_SESSION_FILTERS" = list ]; then
       _t_picker_specs='ctrl-a:all ctrl-f:default ctrl-g:agent ctrl-d:interface ctrl-o:host ctrl-r:repo'
+    fi
+    if [ "$T_PICKER_SESSION_FILTERS" = recovery ]; then
+      _t_picker_specs='ctrl-f:clear-filters ctrl-x:reset-filters ctrl-t:state ctrl-d:merged ctrl-r:match-repo ctrl-g:match-agent ctrl-o:match-host ctrl-y:next-sort ctrl-s:toggle-sort'
     fi
     for _t_picker_spec in $_t_picker_specs; do
       _t_picker_key=${_t_picker_spec%:*} _t_picker_action=${_t_picker_spec#*:}
@@ -535,10 +540,12 @@ SH
   fi
   if [ -n "${T_PICKER_FILTER_HELPER:-}" ]; then
     set -- --no-sort "$@"
-    if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
+    if [ "$T_PICKER_SESSION_FILTERS" = resume ] || [ "$T_PICKER_SESSION_FILTERS" = recovery ]; then
+      if [ "$T_PICKER_SESSION_FILTERS" = resume ]; then
       # Disclosure changes the header while retaining focus and marks.
       # shellcheck disable=SC2016
       _t_picker_bind="$_t_picker_bind,"'alt-f:execute-silent(sh "$T_PICKER_TOGGLE" edit-filters)+transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+      fi
       _t_picker_bind="${_t_picker_bind},alt-m:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" merged)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
       if [ "${T_PICKER_RESUME_LAST:-}" = 1 ]; then
         # Unlike accepting a row, this action also works with no search matches.
@@ -589,7 +596,7 @@ SH
     set -- --bind='ctrl-n:execute-silent(touch "$T_PICKER_VIEWS/new-session")+abort' "$@"
   fi
   if [ "${T_PICKER_HEADER_HEIGHT:-24}" -le 14 ]; then
-    case ${T_PICKER_SESSION_FILTERS:-} in open|resume|kill|list) set -- --info=inline "$@" ;; esac
+    case ${T_PICKER_SESSION_FILTERS:-} in open|resume|recovery|kill|list) set -- --info=inline "$@" ;; esac
   fi
   [ -z "$_t_picker_start" ] || set -- --bind="start:$_t_picker_start" "$@"
   if [ "${T_PICKER_NATIVE_FOOTER:-}" = 1 ] && [ -f "$_t_picker_dir/footer" ]; then

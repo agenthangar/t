@@ -775,28 +775,33 @@ def test_history_failure_exits_without_reopening_picker(app, history, monkeypatc
 
 
 @pytest.mark.parametrize('failure', ['', 'error', 'cancel', 'tab'])
-def test_multi_resume_starts_all_before_attach_and_stops_on_failure(app, history, monkeypatch, capsys, failure):
+def test_multi_resume_starts_all_before_attach_and_keeps_successes(app, history, monkeypatch, capsys, failure):
     rows = [conversation(sid=str(i)) for i in range(3)]
     events = []
-    def resume(alias, row, **kwargs):
-        assert kwargs == {'return_owner': True}
-        events.append(('resume', row['sid']))
-        if row['sid'] == '1' and failure in ('error', 'cancel'):
-            raise (history.HistoryCancelled('cancelled') if failure == 'cancel' else history.HistoryError('writer held'))
-        return dict(host='local', slot='repo-' + row['sid'], sid=row['sid'], cwd='/repo/' + row['sid'], agent='codex')
-    monkeypatch.setattr(app, 'resume', resume)
+    def prepare(requests, kind):
+        assert kind == 'history'
+        assert [r['row']['sid'] for r in requests] == ['0', '1', '2']
+        results = []
+        for request in requests:
+            sid = request['row']['sid']
+            events.append(('resume', sid))
+            owner = dict(host='local', slot='repo-'+sid, sid=sid, cwd='/repo/'+sid, agent='codex')
+            code = (130 if failure == 'cancel' else 1) if sid == '1' and failure in ('error', 'cancel') else 0
+            results.append(dict(code=code, output=json.dumps(owner), error='writer held' if code else ''))
+        return results
+    original = history.runpy.run_path
+    monkeypatch.setattr(history.runpy, 'run_path', lambda path, *a, **k:
+                        {'prepare': prepare} if str(path).endswith('/t_session_batch.py') else original(path, *a, **k))
     monkeypatch.setattr(app, 'attach', lambda owner: events.append(('attach', owner['sid'])) or 0)
     monkeypatch.setattr(history.subprocess, 'call', lambda argv: events.append(('tab', argv[-1])) or (1 if failure == 'tab' else 0))
     assert app.resume_many('repo', rows) == (130 if failure == 'cancel' else 1 if failure else 0)
-    if failure in ('error', 'cancel'):
-        assert events == [('resume', '0'), ('resume', '1')]
-        assert 'Already resumed; attach:' in capsys.readouterr().err
+    assert events[:3] == [('resume', str(i)) for i in range(3)]
+    if failure == 'cancel':
+        assert len(events) == 3
+        assert 'Ready to open' in capsys.readouterr().err
     else:
-        assert events[:3] == [('resume', str(i)) for i in range(3)]
-        assert [event[0] for event in events[3:]] == (['tab'] if failure == 'tab' else ['tab', 'tab', 'attach'])
-        assert all('_t_history_attach' in event[1] and '_dev_open_tab' in event[1] for event in events if event[0] == 'tab')
-        if failure == 'tab':
-            assert 'Could not open tab; attach:' in capsys.readouterr().err
+        assert events[-1] == ('attach', '0')
+        assert sum(event[0] == 'tab' for event in events) == (1 if failure == 'error' else 2)
 
 
 def test_multi_resume_live_owner_returns_identity_without_attaching(app, history, monkeypatch):

@@ -46,6 +46,22 @@ at the selected delivery checkpoint. Never relink shared installed commands to a
 development worktree. Workflow configuration owns preview timing and approval;
 this document defines how to make the previews faithful and safe.
 
+### Direct command previews
+
+Open with one labeled example that shows the exact command and its output.
+Provide a separate, visible list of the affected commands and relevant sibling
+verbs, grouped as they are in help. Mark proposed commands. Each shortcut runs
+the simulated command in one activation, and the terminal still accepts typed
+commands. At narrow widths stack the command list and terminal with a visible
+link between them. Let tall reports grow or scroll so every choice can be read.
+
+For commands that act on several items, show each affected item's identity,
+outcome, and any reason that changes what the user can do next. Put one exact
+next command beside each actionable item. Show further choices in that
+command’s help or menu. Keep service controls under the agent entry point. Verify
+that the initial example, all choices, and the resulting output stay reachable
+with the keyboard at normal and compact sizes.
+
 ## Explicit discovery wait and last closed resume
 
 `t session resume [REPO [SLOT]] --last [--wait]` resumes the unique most
@@ -1881,7 +1897,7 @@ The cleanup interval is 15 minutes by default. Enter whole minutes from 1 to 1,4
 or use **Use default**. Review and save applies the setting to future closures.
 
 `t agent background status [TARGET]` prints a static installation, runtime,
-effective login startup, and check interval table. Recovery shows `on restart`.
+effective login startup, and check interval table. Recovery shows `continuous`.
 Narrow terminals stack the values. Status never prompts or changes service state.
 On macOS, installation and lifecycle controls accept `cleanup`, `recovery`, or
 `all` as explicit targets:
@@ -1911,14 +1927,28 @@ service and hooks without relinking the shared command.
 Disabling removes those integrations without stopping running agents. The setting
 is not propagated to other hosts or written to shell configuration.
 
-`t system recovery status [--json]` and
-`t session recovery status [repo] [slot] [--json]` are read-only detail/machine
-outputs. `t session recovery pause|resume [repo] [slot]` are direct eligibility
-actions. An exact conversation ID is also accepted; missing targets infer only an
-unambiguous current workspace. These commands never open a picker, update prompt,
-or submit a continuation. There is no public recovery enable/disable command.
-Session details expose phase, pause, eligibility, and retry reason. See
-[automatic recovery](../docs/automatic-recovery.md) for the runtime contract.
+`t system recovery` prints help. `status` prints recovery and background-agent
+state. `status --json` retains machine-readable session details. `agent` lists
+the background-agent commands, including targetless `t agent background status`.
+
+`t system recovery run` opens a shared multi-select session picker. It lists
+tracked conversations still marked open on the current host. Return opens the
+verified live or holding pane, or resumes the exact saved conversation. Tab marks
+multiple sessions. The status markers are Open pane, Status unknown, and Restoring.
+Filter choices and sort choices stay inline, following the model library style.
+Legend labels and markers align vertically. Ctrl-F clears filters, Ctrl-X resets,
+Ctrl-T cycles status, Ctrl-D hides merged PRs, Ctrl-R/G/O match repo/agent/host,
+Ctrl-Y cycles sort, Ctrl-S pauses/resumes sorting, and Ctrl-U refreshes.
+
+`t system recovery run --all` requests a fresh pass from the running background
+agent and prints each tracked session's result. It works during the current login
+and after restart. It preserves pauses, explicit closes, launch validation and
+uncertain-delivery checks. The command never enables or restarts the service.
+
+`t session recovery status [repo] [slot] [--json]` is read-only.
+`t session recovery pause|resume [repo] [slot]` changes eligibility. An exact
+conversation ID is accepted, and missing targets infer only an unambiguous current
+workspace. See [automatic recovery](../docs/automatic-recovery.md).
 
 ## Standalone companion: nosleep
 
@@ -2441,3 +2471,14 @@ records its immutable repository ID; push, clone and alias registration retry th
 same approved commit only after identity and remote-main checks. Existing local
 paths and unknown remotes are never adopted. Local registration, trust and merge
 settings follow repository creation helpers; configured remote hosts are excluded.
+
+### Parallel session resume
+
+Multiple selections in session resume and recovery run prepare concurrently.
+Selection authorizes fresh-worktree recovery at the recorded revision when the
+original workspace is unavailable. Each worker verifies its exact conversation
+and workspace under the existing ownership locks. Repository allocation releases
+its lock once the destination is reserved, allowing independent startups to
+overlap. Ready sessions open even when another selection fails. One progress row
+tracks the batch, and failures appear together. Cancelling stops preparation
+workers and keeps already started sessions available through their exact receipts.

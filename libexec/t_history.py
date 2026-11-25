@@ -1969,35 +1969,31 @@ class HistoryCommand:
         return f"dev-{owner['slot']}\t{owner['cwd']}\t{terminal}"
 
     def resume_many(self, alias, rows):
+        batch = runpy.run_path(str(Path(self.root)/'libexec/t_session_batch.py'))
+        results = batch['prepare']([dict(alias=alias, row=row) for row in rows], 'history')
         owners = []
-        for index, row in enumerate(rows):
-            try:
-                owner = self.resume_with_repair(alias, row, return_owner=True)
-                self.attach_command(owner)  # Reject unsupported owners before tab handling.
-                owners.append(owner)
-            except HistoryCancelled:
-                print(f'Resume cancelled: {row["agent"]} {row["sid"]}', file=sys.stderr)
-                for owner in owners:
-                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
-                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
-                return 130
-            except (HistoryError, OSError, ValueError) as error:
-                print(f'Resume stopped after an error\nSelection: {row["agent"]} {row["sid"]}\nReason: {error}', file=sys.stderr)
-                print('Retry selection: t session resume ' + shlex.quote(alias), file=sys.stderr)
-                for owner in owners:
-                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
-                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
-                return 1
+        failed = False
+        for row, result in zip(rows, results):
+            if result['code']:
+                reason = result['error'].strip().splitlines()
+                print(f"{row['agent']} {row['sid']}  " + (reason[-1] if reason else 'Resume failed'), file=sys.stderr)
+                failed = True
+                continue
+            owner = json.loads(result['output'])
+            self.attach_command(owner)
+            owners.append(owner)
+        if any(r['code'] == 130 for r in results):
+            for owner in owners:
+                print('Ready to open  '+shlex.join(self.attach_command(owner)), file=sys.stderr)
+            return 130
         for owner in owners[1:]:
             command = shlex.join(self.attach_command(owner))
-            if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(command))):
-                print('Could not open tab; attach: ' + command, file=sys.stderr)
-                for ready in owners:
-                    print('Already resumed; attach: ' + shlex.join(self.attach_command(ready)), file=sys.stderr)
-                return 1
+            if subprocess.call(self.shell('_dev_open_tab '+shlex.quote(command))):
+                print('Ready to open  '+command, file=sys.stderr)
+                failed = True
         if owners:
-            return self.attach(owners[0])
-        return 0
+            return self.attach(owners[0]) or int(failed)
+        return 130 if any(r['code'] == 130 for r in results) else int(failed)
 
     def fallback(self, alias):
         options = [dict(repo=self.identity(alias), sid=name, agent='revision', title=title, updated=0, associations=[], sources=[], prs=[], mentions=[]) for name, title in [('main', 'Historical revision unavailable: start from current main'), ('cancel', 'Cancel and keep history available')]]
@@ -2289,6 +2285,12 @@ class HistoryCommand:
         try:
             return self.resume(alias, row, **options)
         except WriterBusy as error:
+            if os.environ.get('T_RESUME_BATCH') == '1':
+                if isinstance(error, UnknownWorkspaceWriter) and not options.get('prepare_only'):
+                    offer = self.fresh_resume_offer(alias, row, error.workspace)
+                    if offer is not None:
+                        return self.resume(alias, row, fresh=offer, **options)
+                raise
             # The shell captures the resulting owner on stdout. Its explicit
             # terminal marker lets the shared rail use stderr without putting
             # escape sequences in that owner or prompting redirected callers.
@@ -2408,7 +2410,7 @@ class HistoryCommand:
             row = {**row, '_in_place': True}
             revision = original_tip
         elif fresh is None:
-            if not original_tip and repair_terminal():
+            if not original_tip and repair_terminal() and os.environ.get('T_RESUME_BATCH') != '1':
                 candidate = next(self.free_destinations(alias, owners), None)
                 if not candidate:
                     raise HistoryError('no free slot is available')
@@ -2463,8 +2465,10 @@ class HistoryCommand:
                 self.prepared_destination = dict(destination=destination, slot=slot, created=created,
                         generation=generation(destination), revision=revision,
                         branch=run(['git', '-C', destination, 'branch', '--show-current']).strip())
-                print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
+                if os.environ.get('T_RESUME_BATCH') != '1':
+                    print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
+                    fcntl.flock(lock, fcntl.LOCK_UN)
                     final_owners = self.owners(True)
                     if any(owner['sid'] == row['sid'] and owner['agent'] == row['agent'] for owner in final_owners) or self.destination_busy(alias, slot, (destination,), final_owners):
                         raise HistoryError('conversation or workspace became live before restore; rerun t resume')

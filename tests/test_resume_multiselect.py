@@ -55,7 +55,7 @@ def test_resume_multi_opens_selected_live_slot_and_revives_dead_slot(zsh, tmp_pa
             FAKE_SESSIONS="dev-api-4", FAKE_SESSION_PATH=str(wt4))
     assert "rc=0" in r.stdout, r.stdout
     assert "TAB t open api 4 --cli --local" in r.stdout, r.stdout
-    assert "Resuming c1 in dev-api-3" in r.stdout, r.stdout
+    assert "api 3  Ready" in r.stdout, r.stdout
     assert "attach-session -t =dev-api-3:" in zsh.log.read_text()
     assert "claude -r c1" in zsh.log.read_text()
     assert "codex resume" not in zsh.log.read_text()  # the live row keeps its owner

@@ -353,6 +353,9 @@ def pick_value(directory, name, records, current):
 
 def render(directory, profile, action, width, columns='', facet=None, identity=()):
     directory = Path(directory)
+    if profile == 'recovery':
+        from t_recovery_picker import render as render_recovery
+        return render_recovery(directory, action, width, facet, identity)
     if os.environ.get('T_PICKER_PAN') == '1' and (directory / 'pan-size').exists():
         height, width = map(int, (directory / 'pan-size').read_text().split())
         os.environ['T_PICKER_HEADER_HEIGHT'] = str(height)

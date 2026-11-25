@@ -322,24 +322,27 @@ def holding_rows():
 
 def holding_resume_notice(error):
     if isinstance(error, subprocess.TimeoutExpired):
-        return 'Resume timed out. Choose Review launch settings to try again.'
+        return 'Resume timed out. Choose Resume conversation to try again.'
     # The shell writes incidental scan warnings before the final blocking reason.
     lines = str(error).strip().splitlines()
     cause = display_text(lines[-1]) if lines else ''
     if cause == 'warning: t: saved conversation ownership is unknown because a local or configured host scan failed':
         return ('Couldn’t check whether this conversation is already open on this computer. '
-                'Choose Review launch settings to try again.')
+                'Choose Resume conversation to try again.')
     owner_prefix = 't: saved conversation is already live in '
     if cause.startswith(owner_prefix):
         return f'This conversation is already open in {cause[len(owner_prefix):]}. Retry after that session closes.'
     if not cause or cause.startswith('warning:') or cause == 'guarded session restore failed':
-        return 'Couldn’t resume this conversation. Choose Review launch settings to try again.'
-    return 'Couldn’t resume — ' + cause.removeprefix('t recovery: ').removeprefix('t: ')
+        return 'Couldn’t resume this conversation. Choose Resume conversation to try again.'
+    return 'Couldn’t resume. ' + cause.removeprefix('t recovery: ').removeprefix('t: ')
 
 
 def holding(agent, sid, generation):
     identity = key(agent, sid)
+    os.environ['T_DEV_CONTEXT'] = str(ROOT)
+    os.environ['T_DEV_CONTEXT_OWNER'] = str(os.getpid())
     ui = runpy.run_path(str(ROOT/'bin/t'))['_RailUI']()
+    ui.key_separator = '  '
     runtime = Runtime()
     notice = ''
     while True:
@@ -351,29 +354,18 @@ def holding(agent, sid, generation):
         context = [('Working on', display_text(info.get('title')) or 'Saved conversation'),
                    ('Agent', agent.title()), ('Conversation', sid),
                    ('Workspace', display_text(row['cwd'])),
-                   ('Reason', 'Original launch settings could not be verified')]
+                   ('Status', 'Open pane')]
         if info.get('last_turn'):
             context.insert(-1, ('Last turn', display_text(info['last_turn'])))
         ui.raw()
         pane_menu = False
         try:
-            action = ui.pick(slot + ' · Recovery holding pane',
-                             [('review', 'Review launch settings'), ('dismiss', 'Dismiss holding pane'),
+            action = ui.pick(slot + '  Recovery',
+                             [('resume', 'Resume conversation'), ('dismiss', 'Dismiss holding pane'),
                               ('back', 'Detach')], context=context, back_label='detach', notice=notice)
             notice = ''
-            if action == 'review':
+            if action == 'resume':
                 pane_menu = True
-                choices = {
-                    'codex': [('default', 'Current Codex defaults'), ('restricted', 'Read only')],
-                    'claude': [('default', 'Current Claude defaults'), ('restricted', 'Plan mode')],
-                }.get(agent, [('default', 'Current native agent defaults')])
-                selection = ui.pick('Launch settings', choices, back_label='back')
-                if not selection:
-                    continue
-                action = ui.pick('Review resume', [('resume', 'Resume this conversation'), ('back', 'Back')],
-                                 default=1, context=[('Launch settings', dict(choices)[selection]),
-                                                     ('Conversation', sid),
-                                                     'The agent will wait for input.'], back_label='back')
             elif action == 'dismiss':
                 pane_menu = True
                 action = ui.pick('Dismiss this holding pane?',
@@ -404,8 +396,7 @@ def holding(agent, sid, generation):
             # This explicit selection authorizes current defaults. Discard all
             # partially recovered options and require a fresh managed launch.
             try:
-                options = {'codex': ['--sandbox', 'read-only', '-a', 'on-request'],
-                           'claude': ['--permission-mode', 'plan']}.get(agent, []) if selection == 'restricted' else []
+                options = []
                 runtime.restore({**latest, 'safe': True, 'executable': {'cursor': 'cursor-agent'}.get(agent, agent),
                                  'options': options}, '', pane=pane)
                 return 0
@@ -831,9 +822,90 @@ def restore_close(receipt):
     update(change)
 
 
-def command(args, cfg=None):
+def request_pass(timeout=30):
+    """Ask the lock-owning worker for one fresh pass, without restarting it."""
+    if not enabled():
+        raise ValueError('Recovery disabled. Enable it in t config.')
+    heartbeat = read(root()/'heartbeat.json')
+    instance = heartbeat.get('instance')
+    if not status()['running'] or not instance:
+        raise ValueError('Recovery agent unavailable. Run t agent background start recovery.')
+    request_id = uuid.uuid4().hex
+    requests = root()/'requests'
+    request = requests/(request_id+'.json')
+    receipt = requests/(request_id+'.done')
+    write(request, {'instance': instance, 'at': time.time()})
+    deadline = time.monotonic()+timeout
+    try:
+        while time.monotonic() < deadline:
+            if receipt.exists():
+                result = read(receipt)
+                if result.get('error'):
+                    raise ValueError(result['error'])
+                return result['sessions']
+            if not enabled() or manually_stopped():
+                raise ValueError('Recovery agent stopped before completing the check.')
+            current = read(root()/'heartbeat.json')
+            if current.get('instance') != instance:
+                raise ValueError('Recovery agent changed. Run the check again.')
+            time.sleep(.1)
+        raise ValueError('Recovery check timed out. Run t system recovery status.')
+    finally:
+        request.unlink(missing_ok=True)
+        receipt.unlink(missing_ok=True)
+
+
+def requested_pass(engine, instance):
+    requests = root()/'requests'
+    pending = []
+    for path in sorted(requests.glob('*.json')):
+        value = read(path)
+        if value.get('instance') == instance and 0 <= time.time()-value.get('at', 0) < 30:
+            pending.append(path)
+        else:
+            path.unlink(missing_ok=True)
+    if not pending:
+        return False
+    try:
+        engine.tick(force=True)
+        result = {'sessions': [row for row in status()['sessions'] if row.get('open')]}
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        result = {'error': display_text(str(exc))}
+    for path in pending:
+        if path.exists():
+            write(path.with_suffix('.done'), result)
+            path.unlink(missing_ok=True)
+    for path in requests.glob('*.done'):
+        if time.time()-path.stat().st_mtime > 60:
+            path.unlink(missing_ok=True)
+    return True
+
+
+def command(args, cfg=None, api=None):
+    if args.scope == 'system' and args.action == 'agent':
+        print('t agent background status\n'
+              't agent background install recovery\n'
+              't agent background start recovery\n'
+              't agent background stop recovery\n'
+              't agent background restart recovery')
+        return 0
+    if args.scope == 'system' and args.action == 'run':
+        if not getattr(args, 'all', False):
+            return helper('t_recovery_picker')['command'](cfg, api)
+        rows = request_pass()
+        if not rows:
+            print('No sessions to recover.')
+        for row in rows:
+            name = row.get('session', '').removeprefix('dev-') or row['sid']
+            reason = 'Paused' if row.get('paused') else display_text(row.get('reason')) or 'Status unknown'
+            print(name + '  ' + reason)
+        return 0
     state = status()
     rows = state['sessions']
+    if args.scope == 'system' and not getattr(args, 'json', False):
+        print('Automatic recovery  ' + ('Enabled' if state['enabled'] else 'Disabled'))
+        print('Background agent    ' + ('Running' if state['running'] else 'Stopped'))
+        return 0
     if args.scope == 'session':
         targets = [getattr(args, 'repo', None), getattr(args, 'slot', None)]
         if cfg and targets[0] and targets[0].isdigit() and not targets[1]:
@@ -1003,8 +1075,14 @@ class Runtime:
 
     def shell(self, row, task, launch, *extra):
         session = row.get('session') or ('t-cursor-'+row['sid'] if row['agent'] == 'cursor' else '')
-        snippet = ('export PATH=' + shlex.quote(str(ROOT/'bin')) + ':"$PATH"; '
-                   'source ' + shlex.quote(str(ROOT/'t.plugin.zsh')) + '; '
+        # A holding pane runs in the recovered workspace. Pin this invocation to
+        # the worker's source so that workspace's older t checkout cannot replace
+        # the shell helpers used by this worker.
+        snippet = ('export T_DEV_CONTEXT=' + shlex.quote(str(ROOT)) + ' T_DEV_CONTEXT_OWNER=$$; '
+                   'export PATH=' + shlex.quote(str(ROOT/'bin')) + ':"$PATH"; rehash; '
+                   'source ' + shlex.quote(str(ROOT/'t.plugin.zsh')) + ' || exit $?; '
+                   '[[ "$T_HOME" == ' + shlex.quote(str(ROOT)) + ' ]] || { '
+                   'print -u2 "Recovery source changed while loading shell helpers"; exit 1; }; '
                    '_T_RESUME_ALLOW_UNAVAILABLE=0 _dev_with_launch_locks ' +
                    shlex.join([row['cwd'], row['sid'], task, session, row['cwd'],
                                row['sid'], row['agent'], launch, *extra]))
@@ -1044,9 +1122,11 @@ class Engine:
                 row.update(values)
         update(change)
 
-    def tick(self):
+    def tick(self, force=False):
         if not enabled():
             return
+        if force:
+            self.runtime.inventory = None
         owners = self.runtime.live()
         enroll(owners)
         current_boot = boot()
@@ -1068,7 +1148,8 @@ class Engine:
                 info = helper('t_recovery')['process'](row['supervisor_pid'])
                 if info.get('start') and info['start'] == row.get('supervisor_start'):
                     continue
-            if row.get('next_retry', 0) > time.time():
+            if row.get('next_retry', 0) > time.time() and not (
+                    force and row.get('reason') == 'Waiting for connection'):
                 continue
             with locked('session-'+hashlib.sha256(identity.encode()).hexdigest()+'.lock'):
                 latest = read(root()/'journal.json')['sessions'][identity]
@@ -1091,7 +1172,7 @@ class Engine:
                 raise ValueError('workspace is missing or has been replaced')
             if not find_holding(row):
                 self.runtime.hold(row)
-            self.save(identity, generation, outcome='holding', reason='Review launch settings before resuming')
+            self.save(identity, generation, outcome='holding', reason='Open pane')
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             self.save(identity, generation, outcome='blocked', reason=str(exc)[:500],
                       next_retry=time.time()+300)
@@ -1155,11 +1236,12 @@ def watch():
             return 0
         stop_marker().unlink(missing_ok=True)
         engine = Engine()
+        instance = uuid.uuid4().hex
         stopped = threading.Event()
         digest = source_digest()
         def heartbeat():
             while not stopped.is_set():
-                write(root()/'heartbeat.json', {'at': time.time(), 'pid': os.getpid(),
+                write(root()/'heartbeat.json', {'at': time.time(), 'pid': os.getpid(), 'instance': instance,
                                                 'source': str(ROOT), 'digest': digest})
                 stopped.wait(10)
         thread = threading.Thread(target=heartbeat, daemon=True)
@@ -1167,7 +1249,8 @@ def watch():
         try:
             while enabled():
                 try:
-                    engine.tick()
+                    if not requested_pass(engine, instance):
+                        engine.tick()
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     write(root()/'error.json', {'at': time.time(), 'reason': str(exc)[:1500]})
                 time.sleep(5)
