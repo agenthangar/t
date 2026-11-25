@@ -56,6 +56,9 @@ def test_request_refuses_disabled_stopped_and_changed_worker(auto, monkeypatch):
     enable(auto)
     with pytest.raises(ValueError, match='unavailable'):
         auto.request_pass(.01)
+    auto.write(auto.root()/'heartbeat.json', {'at': time.time()})
+    with pytest.raises(ValueError, match='update required'):
+        auto.request_pass(.1)
     auto.write(auto.root()/'heartbeat.json', {'at': time.time(), 'instance': 'old'})
     real_write = auto.write
     def replace(path, data):

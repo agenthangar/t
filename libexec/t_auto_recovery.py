@@ -828,8 +828,10 @@ def request_pass(timeout=30):
         raise ValueError('Recovery disabled. Enable it in t config.')
     heartbeat = read(root()/'heartbeat.json')
     instance = heartbeat.get('instance')
-    if not status()['running'] or not instance:
+    if not status()['running']:
         raise ValueError('Recovery agent unavailable. Run t agent background start recovery.')
+    if not instance:
+        raise ValueError('Recovery agent update required. Save Automatic recovery in t config.')
     request_id = uuid.uuid4().hex
     requests = root()/'requests'
     request = requests/(request_id+'.json')
