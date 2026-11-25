@@ -150,8 +150,12 @@ def validate(record):
         raise HistoryError('invalid history timestamp')
     if 'last_turn' in record:
         record['last_turn'] = _DISPLAY['_turn_timestamp'](record['last_turn'])
-    if 'work_in_progress' in record and type(record['work_in_progress']) is not bool:
-        raise HistoryError('invalid work status')
+    report = record.get('work_report')
+    if 'work_report' in record and (
+            not isinstance(report, dict) or set(report) != {'state', 'at'}
+            or report['state'] not in ('unfinished', 'complete')
+            or type(report['at']) not in (int, float) or not 0 < report['at'] <= 253402300799):
+        raise HistoryError('invalid work report')
     if 'title_kind' in record and (not isinstance(record['title_kind'], str)
                                    or record['title_kind'] not in _RESUME_SOURCE['TITLE_KINDS']):
         raise HistoryError('invalid title provenance')
@@ -208,13 +212,32 @@ class Store:
         self.db.execute('create table if not exists conversations (key text primary key, record text not null)')
         self.db.execute('create table if not exists scans (path text primary key, stamp text, record text)')
         self.db.execute('create table if not exists prs (key text primary key, checked real, record text)')
+        self.db.execute('create table if not exists work_reports '
+                        '(agent text, sid text, state text, at real, primary key (agent, sid))')
         self.db.commit()
 
     def close(self):
         self.db.close()
 
-    def records(self):
-        return [json.loads(row[0]) for row in self.db.execute('select record from conversations')]
+    def records(self, *, local_reports_only=False):
+        rows = [json.loads(row[0]) for row in self.db.execute('select record from conversations')]
+        reports = {(agent, sid): dict(state=state, at=at) for agent, sid, state, at in
+                   self.db.execute('select agent, sid, state, at from work_reports')}
+        for row in rows:
+            if local_reports_only:
+                row.pop('work_report', None)
+            report = reports.get((row['agent'], row['sid']))
+            if report and report['at'] >= row.get('work_report', {}).get('at', 0):
+                row['work_report'] = report
+        return rows
+
+    def report_work(self, agent, sid, state):
+        at = time.time()
+        validate(dict(repo='local', agent=agent, sid=sid, work_report=dict(state=state, at=at)))
+        with self.db:
+            self.db.execute('insert into work_reports values (?,?,?,?) '
+                            'on conflict(agent,sid) do update set state=excluded.state, at=excluded.at '
+                            'where excluded.at >= work_reports.at', (agent, sid, state, at))
 
     @_spinner('Resetting session records')
     def forget_workspace(self, workspace, sid='', *, backup, evidence):
@@ -244,6 +267,7 @@ class Store:
         with self.db:
             self.db.executemany('delete from conversations where key=?', [(key,) for key, _ in selected])
             for _, row in selected:
+                self.db.execute('delete from work_reports where agent=? and sid=?', (row['agent'], row['sid']))
                 for source in row.get('sources', []):
                     if source.get('host') != 'local' or not source.get('path'):
                         continue
@@ -266,6 +290,8 @@ class Store:
         existing = self.db.execute('select record from conversations where key=?', (key,)).fetchone()
         old = json.loads(existing[0]) if existing else {}
         merged = {**old, **record, **_RESUME_SOURCE['verified_title'](record, old), 'version': VERSION}
+        if old.get('work_report', {}).get('at', 0) > record.get('work_report', {}).get('at', 0):
+            merged['work_report'] = old['work_report']
         for field in ('model', 'summary', 'interface'):
             incoming_known = record.get(field) not in (None, '', '-', 'unknown')
             old_known = old.get(field) not in (None, '', '-', 'unknown')
@@ -775,59 +801,7 @@ def resume_candidate(row, alias, association, host):
                               association['workspace'], datetime.datetime.fromtimestamp(updated).strftime('%b %d %H:%M'),
                               clean(row['title']), host, row['agent'], row.get('last_turn', '-'), row['repo'],
                               state, _SORT['closed_time'](row), refs or '-',
-                              'yes' if row.get('work_in_progress') else '-', _RESUME_SOURCE['title_kind'](row), association.get('host') or '-']))
-
-
-def worktree_has_pending_work(workspace, branch, baselines, published_heads, deadline, *, exact_owner=False):
-    def git(*args, optional=False):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise HistoryError('work status deadline exceeded')
-        return run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', workspace, *args],
-                   timeout=min(1, remaining), optional=optional).strip()
-
-    try:
-        current = git('symbolic-ref', '--quiet', '--short', 'HEAD')
-        if not current or (current != branch and not exact_owner):
-            return False
-        if git('status', '--porcelain'):
-            return True
-        if not baselines:
-            return False
-        head = git('rev-parse', 'HEAD')
-        if head in baselines or head in published_heads():
-            return False
-        if not any(git('merge-base', head, baseline, optional=True) == baseline for baseline in baselines):
-            return False
-        default_refs = ('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master',
-                        'refs/heads/main', 'refs/heads/master')
-        refs = git('for-each-ref', '--format=%(refname)', *default_refs).splitlines()
-        base = next((ref for ref in default_refs if ref in refs), '')
-        if not base:
-            return False
-        common = git('merge-base', head, base)
-        if common == head:
-            return False
-        tree = git('rev-parse', 'HEAD^{tree}')
-        # A squash merge changes the commit ID but can publish the same tree.
-        return (tree != git('rev-parse', common + '^{tree}')
-                and tree not in git('log', '--first-parent', '--format=%T', common + '..' + base).splitlines())
-    except HistoryError:
-        return False
-
-
-def cached_merged_heads(directory, repo, deadline):
-    """Read the same repo-wide merged-head sidecars used by the live status."""
-    heads = set()
-    for path in directory.glob(repo.replace('/', '#') + '#*.head'):
-        if time.monotonic() >= deadline:
-            break
-        try:
-            if path.with_suffix('').read_text().strip() == 'MERGED':
-                heads.add(path.read_text().strip().lower())
-        except (OSError, UnicodeError):
-            continue
-    return heads
+                              row.get('work_report', {}).get('state', 'unknown'), _RESUME_SOURCE['title_kind'](row), association.get('host') or '-']))
 
 
 def compact_model(model, width):
@@ -1122,7 +1096,7 @@ class HistoryCommand:
                 except (OSError, ValueError, TypeError, AttributeError):
                     continue
         rows = []
-        for row in self.store.records():
+        for row in self.store.records(local_reports_only=True):
             row = dict(row)
             row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
             row['sources'] = [source for source in row.get('sources', []) if source.get('host') == 'local']
@@ -1265,7 +1239,7 @@ class HistoryCommand:
                 self.store.merge({**{key: original[key] for key in ('repo', 'agent', 'sid')}, **metadata})
                 self.catalog_changed_paths.add(name)
         rows = []
-        for original in self.store.records():
+        for original in self.store.records(local_reports_only=True):
             row = dict(original)
             row['associations'] = [a for a in row.get('associations', []) if a.get('host') == 'local']
             row['sources'] = [source for source in row.get('sources', [])
@@ -1655,33 +1629,55 @@ class HistoryCommand:
                 rows.append(row)
         return _RESUME_SOURCE['merge_records'](rows)
 
-    def branch_prs(self, rows, refresh=False):
+    def branch_prs(self, rows, refresh=False, *, budget=None):
+        """Match cached or fetched PR heads to captured branch and commit pairs."""
+        evidence_by_row = []
         grouped = {}
+        deadline = time.monotonic() + budget if budget is not None else None
         for row in rows:
-            for association in row['associations']:
-                branch, commit = association.get('branch'), association.get('commit')
-                if branch and re.fullmatch(r'[a-fA-F0-9]{40,64}', str(commit)) and not row['repo'].startswith('local:'):
-                    grouped.setdefault(row['repo'], set()).add(branch)
+            if not REPO_IDENTITY.fullmatch(row['repo']):
+                continue
+            evidence = {(a.get('branch'), a.get('commit')) for a in row['associations']
+                        if a.get('branch') and re.fullmatch(r'[a-fA-F0-9]{40,64}', str(a.get('commit')))}
+            if evidence:
+                grouped.setdefault(row['repo'], set()).update(branch for branch, _ in evidence)
+                evidence_by_row.append((row, evidence))
+        known = {}
         for repo, branches in grouped.items():
-            key = 'branch-pr:' + repo + ':' + hashlib.sha256(json.dumps(sorted(branches)).encode()).hexdigest()
-            existing = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
-            prs = json.loads(existing[1]) if existing else []
-            if refresh:
-                owner, name = repo.split('/', 1)
-                fields = ' '.join(f'b{i}:pullRequests(headRefName:{json.dumps(branch)},first:100,states:[OPEN,CLOSED,MERGED]){{nodes{{number url headRefName headRefOid state}}}}' for i, branch in enumerate(sorted(branches)))
-                query = 'query{repository(owner:' + json.dumps(owner) + ',name:' + json.dumps(name) + '){' + fields + '}}'
-                try:
-                    data = json.loads(run(['gh', 'api', 'graphql', '-f', 'query=' + query], timeout=8))['data']['repository']
-                    prs = [dict(repo=repo, **pr) for batch in data.values() for pr in batch['nodes']]
-                    self.store.db.execute('insert or replace into prs values (?,?,?)', (key, time.time(), json.dumps(prs)))
-                    self.store.db.commit()
-                except (HistoryError, ValueError, KeyError, TypeError):
-                    pass
-            for row in rows:
-                evidence = {(a.get('branch'), a.get('commit')) for a in row['associations']}
-                associated = [dict(repo=pr['repo'], number=pr['number'], url=pr['url'], state=pr['state'], evidence='verified branch and commit') for pr in prs if pr['repo'] == row['repo'] and (pr['headRefName'], pr['headRefOid']) in evidence]
-                if associated:
-                    row.update(self.store.merge({**row, 'prs': row['prs'] + associated}))
+            names = sorted(branches)
+            for start in range(0, len(names), 25):
+                batch = names[start:start + 25]
+                key = 'branch-pr:' + repo + ':' + hashlib.sha256(json.dumps(batch).encode()).hexdigest()
+                cached = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
+                prs = json.loads(cached[1]) if cached else []
+                remaining = 8 if deadline is None else min(8, deadline - time.monotonic())
+                recent = cached and time.time() - cached[0] < 900
+                if refresh and remaining > 0 and (budget is None or not recent):
+                    owner, name = repo.split('/', 1)
+                    fields = ' '.join(f'b{i}:pullRequests(headRefName:{json.dumps(branch)},'
+                                      'first:50,states:[OPEN,CLOSED,MERGED]){nodes{number url headRefName headRefOid state}}'
+                                      for i, branch in enumerate(batch))
+                    query = 'query{repository(owner:' + json.dumps(owner) + ',name:' + json.dumps(name) + '){' + fields + '}}'
+                    try:
+                        data = json.loads(run(['gh', 'api', 'graphql', '-f', 'query=' + query],
+                                              timeout=remaining))['data']['repository']
+                        prs = [pr for connection in data.values() for pr in connection['nodes']]
+                        self.store.db.execute('insert or replace into prs values (?,?,?)', (key, time.time(), json.dumps(prs)))
+                        self.store.db.commit()
+                    except (HistoryError, ValueError, KeyError, TypeError):
+                        pass
+                for pr in prs:
+                    match = (repo, pr['headRefName'], pr['headRefOid'])
+                    known.setdefault(match, []).append(dict(repo=repo, number=pr['number'], url=pr['url'],
+                        state=pr['state'], evidence='verified branch and commit'))
+        for row, evidence in evidence_by_row:
+            associated = [pr for branch, commit in sorted(evidence)
+                          for pr in known.get((row['repo'], branch, commit), ())]
+            if associated:
+                existing = {(pr['repo'], pr['number']): pr for pr in row['prs']}
+                updated = [pr for pr in associated if existing.get((pr['repo'], pr['number'])) != pr]
+                if updated:
+                    row.update(self.store.merge({**row, 'prs': row['prs'] + updated}))
 
     def pr_states(self, rows, refresh=False):
         refs = {(p['repo'], p['number']) for row in rows for p in row['prs']}
@@ -1724,84 +1720,6 @@ class HistoryCommand:
                     pass
         for row in rows:
             row['prs'] = [{**p, **cached.get((p['repo'], p['number']), {})} for p in row['prs']]
-
-    def annotate_resume_work(self, rows, live=()):
-        """Check each worktree against its exact live owner or captured generation."""
-        owners_by_path = {}
-        for owner in live:
-            owners_by_path.setdefault(owner['cwd'], set()).add((owner['agent'], owner['sid']))
-        by_workspace = {}
-        for row in rows:
-            row.pop('work_in_progress', None)
-            for association in row.get('associations', []):
-                if association.get('host') == 'local' and association.get('slot'):
-                    by_workspace.setdefault(association['workspace'], []).append((row, association))
-        deadline = time.monotonic() + 3
-        aliases = {**self.local_identities, **self.discovery_identities}
-        legacy = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
-        published = {}
-        def published_heads(repo):
-            if repo not in published:
-                published[repo] = cached_merged_heads(legacy, repo, deadline)
-            return published[repo]
-
-        def workspace_order(item):
-            workspace, entries = item
-            return workspace in owners_by_path, max(entry[1].get('observed', 0) for entry in entries)
-        for workspace, entries in sorted(by_workspace.items(), key=workspace_order, reverse=True):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            if not (Path(workspace) / '.git').is_file():
-                continue
-            owners = {owner for cwd, identities in owners_by_path.items()
-                      if cwd == workspace or cwd.startswith(workspace.rstrip('/') + '/') for owner in identities}
-            if len(owners) > 1:
-                continue
-            if owners:
-                matching = [(row, a) for row, a in entries if (row['agent'], row['sid']) in owners]
-            else:
-                matching = [(row, a) for row, a in entries if a.get('generation')]
-            if not matching:
-                continue
-            row, captured = max(matching, key=lambda entry: entry[1].get('observed', 0))
-            observed = captured.get('observed', 0)
-            if not owners and any((other['agent'], other['sid']) != (row['agent'], row['sid'])
-                   and evidence.get('observed', 0) >= observed for other, evidence in entries):
-                continue
-            latest = max(row['associations'], key=lambda entry: entry.get('observed', 0))
-            if latest['workspace'] != workspace or latest.get('host') != 'local':
-                continue
-            if not any(repo == row['repo'] and workspace in self.cfg.worktree_paths(alias, captured['slot'])
-                       for alias, repo in aliases.items() if alias in self.cfg.repos):
-                continue
-            current_generation = generation(workspace, timeout=min(1, remaining))
-            if not current_generation or (not owners and current_generation != captured['generation']):
-                continue
-            merged_heads = set()
-            for pr in row.get('prs', []):
-                if pr.get('state') != 'MERGED' or pr['repo'] != row['repo']:
-                    continue
-                try:
-                    head = (legacy / f'{pr["repo"].replace("/", "#")}#{pr["number"]}.head').read_text().strip()
-                except (OSError, UnicodeError):
-                    continue
-                if re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', head):
-                    merged_heads.add(head.lower())
-            repo = row['repo']
-            baselines = merged_heads
-            if not baselines:
-                revisions = [a for r, a in entries if r is row
-                             and (a.get('generation') == current_generation or owners)
-                             and re.fullmatch(r'[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?', a.get('commit', ''))]
-                if revisions:
-                    initial = min(revisions, key=lambda a: a.get('observed', 0))
-                    baselines = {initial['commit'].lower()}
-            if worktree_has_pending_work(workspace, captured.get('branch'), baselines, lambda: published_heads(repo),
-                                         deadline, exact_owner=bool(owners)):
-                remaining = deadline - time.monotonic()
-                if remaining > 0 and generation(workspace, timeout=min(1, remaining)) == current_generation:
-                    row['work_in_progress'] = True
 
     def pick(self, rows, alias, limit=50, page=1, query='', multi=False):
         with tempfile.TemporaryDirectory(prefix='t-history-') as directory:
@@ -1969,35 +1887,31 @@ class HistoryCommand:
         return f"dev-{owner['slot']}\t{owner['cwd']}\t{terminal}"
 
     def resume_many(self, alias, rows):
+        batch = runpy.run_path(str(Path(self.root)/'libexec/t_session_batch.py'))
+        results = batch['prepare']([dict(alias=alias, row=row) for row in rows], 'history')
         owners = []
-        for index, row in enumerate(rows):
-            try:
-                owner = self.resume_with_repair(alias, row, return_owner=True)
-                self.attach_command(owner)  # Reject unsupported owners before tab handling.
-                owners.append(owner)
-            except HistoryCancelled:
-                print(f'Resume cancelled: {row["agent"]} {row["sid"]}', file=sys.stderr)
-                for owner in owners:
-                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
-                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
-                return 130
-            except (HistoryError, OSError, ValueError) as error:
-                print(f'Resume stopped after an error\nSelection: {row["agent"]} {row["sid"]}\nReason: {error}', file=sys.stderr)
-                print('Retry selection: t session resume ' + shlex.quote(alias), file=sys.stderr)
-                for owner in owners:
-                    print('Already resumed; attach: ' + shlex.join(self.attach_command(owner)), file=sys.stderr)
-                print(f'Not attempted: {len(rows) - index - 1} selection(s)', file=sys.stderr)
-                return 1
+        failed = False
+        for row, result in zip(rows, results):
+            if result['code']:
+                reason = result['error'].strip().splitlines()
+                print(f"{row['agent']} {row['sid']}  " + (reason[-1] if reason else 'Resume failed'), file=sys.stderr)
+                failed = True
+                continue
+            owner = json.loads(result['output'])
+            self.attach_command(owner)
+            owners.append(owner)
+        if any(r['code'] == 130 for r in results):
+            for owner in owners:
+                print('Ready to open  '+shlex.join(self.attach_command(owner)), file=sys.stderr)
+            return 130
         for owner in owners[1:]:
             command = shlex.join(self.attach_command(owner))
-            if subprocess.call(self.shell('_dev_open_tab ' + shlex.quote(command))):
-                print('Could not open tab; attach: ' + command, file=sys.stderr)
-                for ready in owners:
-                    print('Already resumed; attach: ' + shlex.join(self.attach_command(ready)), file=sys.stderr)
-                return 1
+            if subprocess.call(self.shell('_dev_open_tab '+shlex.quote(command))):
+                print('Ready to open  '+command, file=sys.stderr)
+                failed = True
         if owners:
-            return self.attach(owners[0])
-        return 0
+            return self.attach(owners[0]) or int(failed)
+        return 130 if any(r['code'] == 130 for r in results) else int(failed)
 
     def fallback(self, alias):
         options = [dict(repo=self.identity(alias), sid=name, agent='revision', title=title, updated=0, associations=[], sources=[], prs=[], mentions=[]) for name, title in [('main', 'Historical revision unavailable: start from current main'), ('cancel', 'Cancel and keep history available')]]
@@ -2289,6 +2203,12 @@ class HistoryCommand:
         try:
             return self.resume(alias, row, **options)
         except WriterBusy as error:
+            if os.environ.get('T_RESUME_BATCH') == '1':
+                if isinstance(error, UnknownWorkspaceWriter) and not options.get('prepare_only'):
+                    offer = self.fresh_resume_offer(alias, row, error.workspace)
+                    if offer is not None:
+                        return self.resume(alias, row, fresh=offer, **options)
+                raise
             # The shell captures the resulting owner on stdout. Its explicit
             # terminal marker lets the shared rail use stderr without putting
             # escape sequences in that owner or prompting redirected callers.
@@ -2408,7 +2328,7 @@ class HistoryCommand:
             row = {**row, '_in_place': True}
             revision = original_tip
         elif fresh is None:
-            if not original_tip and repair_terminal():
+            if not original_tip and repair_terminal() and os.environ.get('T_RESUME_BATCH') != '1':
                 candidate = next(self.free_destinations(alias, owners), None)
                 if not candidate:
                     raise HistoryError('no free slot is available')
@@ -2463,8 +2383,10 @@ class HistoryCommand:
                 self.prepared_destination = dict(destination=destination, slot=slot, created=created,
                         generation=generation(destination), revision=revision,
                         branch=run(['git', '-C', destination, 'branch', '--show-current']).strip())
-                print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
+                if os.environ.get('T_RESUME_BATCH') != '1':
+                    print(f'Preparing {row["agent"]} {row["sid"]} in {destination} at {revision}', file=sys.stderr)
                 with self.launch_claims(destination, row['sid']):
+                    fcntl.flock(lock, fcntl.LOCK_UN)
                     final_owners = self.owners(True)
                     if any(owner['sid'] == row['sid'] and owner['agent'] == row['agent'] for owner in final_owners) or self.destination_busy(alias, slot, (destination,), final_owners):
                         raise HistoryError('conversation or workspace became live before restore; rerun t resume')
@@ -2547,8 +2469,8 @@ class HistoryCommand:
                 continue
             alias = local_alias or identity
             records = self.records(alias)
+            self.branch_prs(records)
             self.pr_states(records)  # Cache only; picker reloads never fetch PR state.
-            self.annotate_resume_work(records)
             for row in records:
                 key = (identity, row['agent'], row['sid'])
                 if key in seen or not row.get('title') or not row.get('sources') or not row.get('associations'):
@@ -2559,9 +2481,6 @@ class HistoryCommand:
                     continue
                 association = max(associations, key=lambda a: a.get('observed', 0))
                 source = max(row['sources'], key=lambda s: (s.get('updated', 0), s.get('size', 0)))
-                latest = max(row['associations'], key=lambda a: a.get('observed', 0))
-                if association != latest or source.get('host') != 'local':
-                    row = {**row, 'work_in_progress': False}
                 yield resume_candidate(row, alias, association, source.get('host') or '-')
 
     def execute(self, args):

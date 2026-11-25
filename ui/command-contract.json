@@ -6,7 +6,7 @@
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "Air shared picker or inline menu: cyan headings, muted hints, explicit dark cyan focus; Enter selects one target. Native macOS key labels change presentation only.",
     "multi": "Air shared picker or inline checklist: green check in its own gutter beside focus pointer. Tab marks searchable rows; Enter accepts marks or focused row. Width and height preserve controls and focused identity. RailUI checklists use Space to toggle and Enter to accept only checked items, including none. An explicit empty choice is an exclusive reset; choosing real items clears it and clearing the last real item restores it.",
-    "filtered": "Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state; highlight it whenever the enabled state filter narrows the view, including defaults. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn; resume defaults to verified last close when known, otherwise last turn. Resume also offers last closed through Ctrl-Y and marks the unique latest closure with \u21b6 independently of filtering or sort. Both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover. Session search treats spaces and punctuation as literal phrase text, ignoring case; Tab marks rows. Ctrl-K closes the focused open row.",
+    "filtered": "Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state; highlight it whenever the enabled state filter narrows the view, including defaults. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn; resume defaults to verified last close when known, otherwise last turn. Resume also offers last closed through Ctrl-Y and marks the unique latest closure with ↶ independently of filtering or sort. Both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Issue pickers retain Ctrl-A all and Ctrl-F defaults. Filters narrow the same snapshot and never rediscover. Session search treats spaces and punctuation as literal phrase text, ignoring case; Tab marks rows. Ctrl-K closes the focused open row.",
     "wizard": "Stage edits and review before applying with the shared Rail UI.",
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
@@ -795,7 +795,7 @@
             "tests/test_offline_discovery.py::test_open_offline_protocol_returns_error_without_empty_inventory",
             "tests/test_offline_discovery.py::test_local_only_discovery_does_not_require_network"
           ],
-          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until explicit Ctrl-N or cancellation, never implicitly starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview. Ctrl-N explicitly starts fresh local work in the scoped repository, or first selects a registered local repository for an unscoped browse. Inclusive discovery does not choose the destination. Explicit remote browsing retains --new routing and does not expose Ctrl-N. Verified empty and filtered-empty lists stay open; Enter does nothing and Esc cancels without creation. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection\u2019s attach command, continues the batch and returns nonzero. Show retained results immediately; use the shared skippable wait/recovery rail only when no usable snapshot exists. Persist a warning for explicitly accepted older/partial results across filter changes. Transport/authentication failures pause one hour across aliases/context; collector failures retry with bounded short backoff. Explicit Retry or t hosts reset HOST allows an early retry. Before remote-inclusive open discovery, a known OS network denial or missing IPv4 and IPv6 routes returns an immediate error directing to t open --local. This caller-local probe sends no packets, performs no DNS and never marks shared host caches failed.",
+          "notes": "Browse local and registered remote hosts by default; --local restricts discovery without changing explicit-target or fresh-session routing. Default is unattached CLI sessions. Legacy remote interface metadata remains readable. Ctrl-K kills only the focused row independently of multi-selection marks through guarded close dispatch; keep the picker open and remove successfully closed rows from cached views without rediscovery, preserving query, filters and other marks on both supported fzf versions. Failed or canceled closes keep their row and report the outcome. Killing the last row leaves an empty picker until explicit Ctrl-N or cancellation, never implicitly starting a session. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Progress follows the displayed continued-work marker, not current computation or completion. Search is preserved and hidden marks removed. Snapshot scope, action semantics, compact rows and selection gutter remain unchanged. LAST TURN stays visible alongside session and task, using local-time timestamps shortened on narrow screens. No preview. Ctrl-N explicitly starts fresh local work in the scoped repository, or first selects a registered local repository for an unscoped browse. Inclusive discovery does not choose the destination. Explicit remote browsing retains --new routing and does not expose Ctrl-N. Verified empty and filtered-empty lists stay open; Enter does nothing and Esc cancels without creation. One selection attaches here. Multiple selections each open in a new Terminal or iTerm2 window, including the first, leaving the invoking terminal available. Commands target only newly created windows without keystrokes or activate calls. Preserve exact host and foreground/session identities. Failed or unsupported window creation reports each unopened selection’s attach command, continues the batch and returns nonzero. Show retained results immediately; use the shared skippable wait/recovery rail only when no usable snapshot exists. Persist a warning for explicitly accepted older/partial results across filter changes. Transport/authentication failures pause one hour across aliases/context; collector failures retry with bounded short backoff. Explicit Retry or t hosts reset HOST allows an early retry. Before remote-inclusive open discovery, a known OS network denial or missing IPv4 and IPv6 routes returns an immediate error directing to t open --local. This caller-local probe sends no packets, performs no DNS and never marks shared host caches failed.",
           "layout": "inherit"
         },
         "explicit": {
@@ -967,7 +967,7 @@
       },
       "native_agents": "Terminal session launch/resume uses the native ~/.local/bin fallback, preserving PATH and shell wrappers; no global PATH changes.",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn \u2193 or text \u2191; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh local allocation reserves monotonically increasing numbers under a canonical-repository counter lock, then validates and creates under the workspace launch claim. It never reclaims old branches or queries remote desktop reservations. Cached origin or local default refs supply a pinned commit; one detached worker fetches origin refs every five minutes and observes t-managed update, push and merge refresh requests. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, unknown background task or open PR. Direct-agent Python static previews with exact native identities, safe import environment and verified loopback listeners may receive individual TERM signals after all guards pass; any changed identity, unsupported work, surviving preview or incomplete cleanup preserves the session. Explicit detach and unknown evidence retain the session; history and worktrees are preserved. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
+      "notes": "Terminal launches run without echoing internal shell commands or exit instructions; agent output and diagnostics remain visible. Newly allocated worktrees with a verified device/inode identity record unresolved Codex sibling writers in the lifecycle receipt without a host-wide launch refusal. Reused, restored and debris workspaces retain unidentified-writer refusals. Known same-workspace writers, tmux/foreground owners, reservations and unsafe ownership stores still block. Saved resume and transfer checks remain strict. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Launch hooks capture revision evidence before detaching history writes and transcript enrichment. Cache invalidations do not wait for the service and carry no deferred live-row overlays. Ownership, launch settings, usage attribution and workspace preparation remain synchronous; active checkouts are never changed in the background. Sort labels show last turn ↓ or text ↑; preserve last turn, repository, agent, host and session choices and Ctrl-S/Ctrl-Y controls. Fresh local allocation reserves monotonically increasing numbers under a canonical-repository counter lock, then validates and creates under the workspace launch claim. It never reclaims old branches or queries remote desktop reservations. Cached origin or local default refs supply a pinned commit; one detached worker fetches origin refs every five minutes and observes t-managed update, push and merge refresh requests. Foreground preflight reads identity/cwd without title or label enrichment. Cached inventory never proves absence of live ownership. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, unknown background task or open PR. Direct-agent Python static previews with exact native identities, safe import environment and verified loopback listeners may receive individual TERM signals after all guards pass; any changed identity, unsupported work, surviving preview or incomplete cleanup preserves the session. Explicit detach and unknown evidence retain the session; history and worktrees are preserved. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "picker"
     },
     "session list": {
@@ -1104,7 +1104,7 @@
         "watchers": {
           "label": "WATCHER",
           "position": "before_last_turn_started_at",
-          "unknown": "\u2014",
+          "unknown": "—",
           "meaning": "Cached verified watcher identity and active or stale state; full IDs and results remain in details."
         }
       },
@@ -1170,7 +1170,7 @@
             "tests/test_external_codex.py::test_external_picker_renders_and_reveals_hidden_sessions"
           ],
           "confirmation": "enter",
-          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Filtering preserves search and removes hidden marks without discovery or scope expansion. Standalone terminal clients and verified loaded Codex app conversations remain in the all-results view; existing attachment/pending filters and hidden counts are preserved. Managed clients are deduplicated from supervised backends. External app handles are browse-only and refuse close with guidance to use Codex; never stop a shared service.",
+          "notes": "Displayed columns have a non-selectable aligned header preserved across filter changes. Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to verified last close when known, otherwise last turn; both retain repository, agent, host and session. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Filtering preserves search and removes hidden marks without discovery or scope expansion. Standalone terminal clients and verified loaded Codex app conversations remain in the all-results view; existing attachment/pending filters and hidden counts are preserved. Managed clients are deduplicated from supervised backends. External app handles are browse-only and refuse close with guidance to use Codex; never stop a shared service.",
           "layout": "inherit"
         },
         "explicit": {
@@ -1422,7 +1422,7 @@
             "tests/test_picker_ui.py::test_resume_adopts_warm_background_discovery_without_a_keypress",
             "tests/test_picker_filters.py::test_resume_pr_badges_color_only_the_leading_labels"
           ],
-          "notes": "Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row\u2019s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to last closed when verified close evidence exists, otherwise last turn; all existing sort choices remain. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Filtering preserves search and removes hidden marks without discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is verified last close newest first when available, otherwise actual last user turn; unknown times sort last, without pinning live rows. A fixed-width \u21b6 cell marks the unique latest verified closure in the available snapshot. Ties suppress the marker. The result counter shows the hidden count, with a header fallback on legacy fzf. Active filters show each shortcut beside its value. Alt-F opens the inline editor. Filter and sort actions sit below their summaries. In the full header, blank rows precede filters, sort, the LEGEND heading, and the columns. The LEGEND heading has its own row. The legend follows table order: Status, PRs, Agent, above unheaded result hotkeys. Spaces separate legend entries. The last closed, work in progress, attached, and PR symbols use matching colors in the legend and rows. Return or Enter, Esc, and Tab use bright written labels. Later launches/resumes, user turns, and live ownership invalidate earlier close evidence. Ctrl-Y cycles last closed, last turn, repository, agent, host/origin and session using immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Filters, reset and on/off preserve the selected sort; Ctrl-Y includes both recency choices. Search preserves the selected order. Narrow headers use compact Mac Control and Option labels or their terminal equivalents. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership. Retained local and remote conversations use the same guarded allocation; historical slots are provenance, duplicate local copies launch once, and selections sharing an original slot receive independent destinations. Allocation checks local paths and tmux names under repository aliases and rechecks before restore. Extra local tabs use --cli --local. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof. Ctrl-B resumes the unique latest verified close using the same command scope and bounded discovery as --last --wait, independent of search, filters, marks and the date window. A green Ctrl-U refresh action sits next to refresh status and refreshes the same discovery scope. Refreshes active at entry update the picker as hosts finish. Active refresh is bright cyan. While refreshing, previous refresh time and amber host warnings appear on separate rows when space permits. Query, filters and sort choices persist across refresh. Ctrl-R still filters by repo. Aligned high-contrast headers label STATUS, PRS, REPO, SLOT, AGENT, LAST TURN, TITLE, and optional HOST. TITLE prefers the recorded conversation name and labels opening-prompt fallback. REPO always appears. A fixed STATUS column shows attached sessions, verified last closure, work in progress, and verified preview deployments. Column positions remain fixed through filters and sorts. PRS shows up to two vertically aligned state icons and PR numbers, plus a count of additional PRs. LAST TURN is the local date and time to the minute. A wheel over the table pans the columns under their headings and preserves the fixed STATUS cells, full search text, and exact selection. The green STATUS dot identifies attached sessions that open in place. Ctrl-D toggles hiding only explicitly MERGED rows, enabling filters; Ctrl-A disables and Ctrl-L restores this choice, Reset clears it. Multiple associated PRs must all be merged; mixed, unknown and no-PR rows remain. The merged hotkey is highlighted while active. State is immutable snapshot metadata, never inferred from task text.",
+          "notes": "Ctrl-F toggles filters without leaving the list; Ctrl-X resets filters. Ctrl-T cycles state. Ctrl-G/O/R matches the highlighted row’s agent/host/repo; repeat the shortcut to clear that filter. Ctrl-D matches interface (CLI or desktop) in open and close. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Open defaults to last turn. Resume defaults to last closed when verified close evidence exists, otherwise last turn; all existing sort choices remain. Unknown turn timestamps sort last. Close offers repository, agent, host and session. Turning filters or sorting off preserves their choices. Sorting off restores snapshot order. Filtering preserves search and removes hidden marks without discovery or scope expansion. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Default order is verified last close newest first when available, otherwise actual last user turn; unknown times sort last, without pinning live rows. A fixed-width ↶ cell marks the unique latest verified closure in the available snapshot. Ties suppress the marker. The result counter shows the hidden count, with a header fallback on legacy fzf. Active filters show each shortcut beside its value. Alt-F opens the inline editor. Filter and sort actions sit below their summaries. In the full header, blank rows precede filters, sort, the LEGEND heading, and the columns. The LEGEND heading has its own row. The legend follows table order: Status, PRs, Agent, above unheaded result hotkeys. Spaces separate legend entries. The last closed, work in progress, attached, and PR symbols use matching colors in the legend and rows. Return or Enter, Esc, and Tab use bright written labels. Later launches/resumes, user turns, and live ownership invalidate earlier close evidence. Ctrl-Y cycles last closed, last turn, repository, agent, host/origin and session using immutable snapshot sorting; text modes ascend with newest turn and stable identity ties and natural numeric session slots. Filters, reset and on/off preserve the selected sort; Ctrl-Y includes both recency choices. Search preserves the selected order. Narrow headers use compact Mac Control and Option labels or their terminal equivalents. Saved metadata refreshes on registered hosts by repository identity by default; --remote remains compatible. Canonical and verified renamed roots and swept rollouts are included. Exact IDs determine live ownership. Retained local and remote conversations use the same guarded allocation; historical slots are provenance, duplicate local copies launch once, and selections sharing an original slot receive independent destinations. Allocation checks local paths and tmux names under repository aliases and rechecks before restore. Extra local tabs use --cli --local. Only selected transcripts are fetched. All-repository discovery includes repositories registered only on a reachable host and orphan Codex rollouts with exact Git metadata, even without local registrations. Metadata browsing and cancellation never clone or register repositories. Only a selected saved identity may create its guarded local checkout. GitHub transfers match only authenticated immutable repository IDs; selected different-name identities require fresh proof. Ctrl-B resumes the unique latest verified close using the same command scope and bounded discovery as --last --wait, independent of search, filters, marks and the date window. A green Ctrl-U action refreshes the same discovery scope in the picker. Search and navigation remain usable. Both manual refresh and refresh active at entry update rows as hosts finish. Active refresh is bright cyan. While refreshing, previous refresh time and amber host warnings appear on separate rows when space permits. Query, filters and sort choices persist across refresh. Ctrl-R still filters by repo. Aligned high-contrast headers label STATUS, PRS, REPO, SLOT, AGENT, LAST TURN, TITLE, and optional HOST. TITLE prefers the recorded conversation name and labels opening-prompt fallback. REPO always appears. A fixed STATUS column shows attached sessions, verified last closure, reported work status, and verified preview deployments. Work reports persist per conversation and show unfinished, complete, or unknown. Each status marker has a fixed cell with spacing. Background discovery associates PRs from matching captured branch and commit evidence. Column positions remain fixed through filters and sorts. PRS shows up to two vertically aligned state icons and PR numbers, plus a count of additional PRs. LAST TURN is the local date and time to the minute. A wheel over the table pans the columns under their headings and preserves the fixed STATUS cells, full search text, and exact selection. The green STATUS dot identifies attached sessions that open in place. Ctrl-D toggles hiding only explicitly MERGED rows, enabling filters; Ctrl-A disables and Ctrl-L restores this choice, Reset clears it. Multiple associated PRs must all be merged; mixed, unknown and no-PR rows remain. The merged hotkey is highlighted while active. State is immutable snapshot metadata, never inferred from task text.",
           "layout": "inherit"
         },
         "explicit": {
@@ -1592,7 +1592,7 @@
         ]
       },
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
-      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width \u21b6 marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, unknown background task or open PR. Direct-agent Python static previews with exact native identities, safe import environment and verified loopback listeners may receive individual TERM signals after all guards pass; any changed identity, unsupported work, surviving preview or incomplete cleanup preserves the session. Explicit detach and unknown evidence retain the session; history and worktrees are preserved. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact. Resume table wheel-up pans left and wheel-down right without Shift; horizontal wheel follows direction. Query, controls and selection gutter remain fixed. Header and rows share a cell viewport; canonical rows preserve search and output identities. Pan retains query cursor, marks and focus. Wheel over controls/details remains native. No new command or flags.",
+      "notes": "Claude and Codex use guarded t transfers. Legacy native-handoff settings are ignored; older peers receive an explicit t policy. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn ↓, text ↑). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width ↶ marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Unresolved native writers receive a bounded 30-second metadata-settling wait with fresh checks. Known conflicts, healthy checks and allocator-proven fresh workspaces do not wait; expiry never authorizes a launch. Retained snapshots open immediately. Cold discovery and service loss use shared wait/recovery controls. Inventory TTL is 24 hours; failure retries and activity checks are independent. On terminal loss, managed sessions close only with verified empty/completed work and no draft, pending changes, unknown background task or open PR. Direct-agent Python static previews with exact native identities, safe import environment and verified loopback listeners may receive individual TERM signals after all guards pass; any changed identity, unsupported work, surviving preview or incomplete cleanup preserves the session. Explicit detach and unknown evidence retain the session; history and worktrees are preserved. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact. Resume table wheel-up pans left and wheel-down right without Shift; horizontal wheel follows direction. Query, controls and selection gutter remain fixed. Header and rows share a cell viewport; canonical rows preserve search and output identities. Pan retains query cursor, marks and focus. Wheel over controls/details remains native. No new command or flags.",
       "source_reconciliation": {
         "scope": "selected local and cross-host saved conversations",
         "checkpoint": "verified source workspace; normal Git identity/hooks; tracked, staged and nonignored untracked code",
@@ -1775,7 +1775,7 @@
       "display_schema": "history_information",
       "progress": "Terminal-only discovery stages on stderr; no progress in redirected output, JSON, or remote protocols.",
       "visibility": "hidden-compatibility",
-      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn \u2193, text \u2191). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width \u21b6 marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
+      "notes": "Internal saved-conversation implementation; hidden compatibility route. Use session resume publicly. Discovery reads one RAM cache API; 24-hour inventory reconciliation retains rows; active namespaces observe local activity every five seconds and remote generations every thirty seconds. SQLite is restart persistence only. Lifecycle actions verify ownership live and update affected records; attach schedules activity without expiring history. Sort labels include direction (last closed/last turn ↓, text ↑). Slot-specific resume history offers Ctrl-S toggle and Ctrl-Y cycling through last closed, last turn, repository, agent, host and session. Verified close or actual last-turn sorting happens before pagination, unknown last. A fixed-width ↶ marker identifies the unique latest recorded closure when discovery is complete. Sort changes clear marks and reset page; search, paging and refresh retain choices; off restores snapshot order. Available eligible results in the requested discovery scope return immediately. With none and refresh pending, automatically observe one bounded 30-second refresh, including redirected/JSON routes. Explicit -w / --wait also waits with retained results. Settled empty/failure returns immediately; timeout retains the final snapshot/notice without another retry rail. Ctrl-C 130 leaves shared refresh running. Picker visibility filters/search never rediscover; explicit targets remain exact.",
       "layout": "history"
     },
     "session cd": {
@@ -3124,11 +3124,18 @@
           "layout": "inherit"
         },
         "finished_session_cleanup_interval": {
-          "argv": ["config", "open"],
+          "argv": [
+            "config",
+            "open"
+          ],
           "when": "Finished session cleanup is selected under Background agents",
-          "patterns": ["wizard"],
+          "patterns": [
+            "wizard"
+          ],
           "read_only": false,
-          "tests": ["tests/test_config.py::test_cleanup_interval_stages_only_valid_minutes"],
+          "tests": [
+            "tests/test_config.py::test_cleanup_interval_stages_only_valid_minutes"
+          ],
           "notes": "Stage whole minutes from 1 to 1439, or restore the 15-minute default. Shared review controls all writes. The saved setting applies to future terminal losses.",
           "layout": "rail"
         },
@@ -3629,7 +3636,7 @@
           "layout": "inherit"
         }
       },
-      "notes": "Static installation, live state, login startup, and cadence. Recovery cadence is on restart.",
+      "notes": "Static installation, live state, login startup, and cadence. Recovery checks run continuously and on demand.",
       "layout": "plain"
     },
     "agent background install": {
@@ -4269,7 +4276,7 @@
         }
       },
       "hook_review": "Explain Codex CLI /hooks; never grant hook trust.",
-      "notes": "Read-only launch resources include aggregate PTY/process evidence and bounded recent macOS kernel failure counts. No test PTYs, launch retries, raw kernel logs, or tmux restarts; unavailable evidence never implies health. Recent session attempts defaults to five; --recent N selects 1\u201320. Recorded failures retain stage, operation exit code and bounded stderr; log excerpts use attempt boundaries, with unknown, missing, rotated and unreadable evidence labeled. Diagnosis never writes records or reads transcripts.",
+      "notes": "Read-only launch resources include aggregate PTY/process evidence and bounded recent macOS kernel failure counts. No test PTYs, launch retries, raw kernel logs, or tmux restarts; unavailable evidence never implies health. Recent session attempts defaults to five; --recent N selects 1–20. Recorded failures retain stage, operation exit code and bounded stderr; log excerpts use attempt boundaries, with unknown, missing, rotated and unreadable evidence labeled. Diagnosis never writes records or reads transcripts.",
       "layout": "plain"
     },
     "repo add": {
@@ -4866,7 +4873,7 @@
           "tests": [
             "tests/test_remote_commands.py::test_remote_host_picker_requires_explicit_enter_and_cancel"
           ],
-          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host\u2019s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH.",
+          "notes": "Single host picker waits for Enter even with one host; missing session uses shared selection on the source/target host. Cancellation returns 130. Unavailable registered hosts warn and are skipped; discovery retains local and reachable rows. SSH failures report status and bounded terminal-safe stderr without asserting host downtime; scanner stdin is disconnected. Saved resumes retain local locks and known-owner checks, but cannot verify ownership on unavailable hosts. Local scan failures remain fatal. Host picker says Resume saved work on which host? and Browse this host’s saved conversations; selected host supplies saved history and runs the resumed session. SSH alias/target context is subordinate to the action heading. Host-first positionals; explicit --host retains repo/slot compatibility. Ambiguous legacy targets fail before SSH.",
           "layout": "inherit"
         },
         "explicit": {
@@ -11559,7 +11566,7 @@
           "layout": "inherit"
         }
       },
-      "notes": "Clear the actual target\u2019s one-hour discovery failure cooldown across aliases and repository views. Mark snapshots stale without connecting, changing registration, or touching sessions. The next discovery may retry.",
+      "notes": "Clear the actual target’s one-hour discovery failure cooldown across aliases and repository views. Mark snapshots stale without connecting, changing registration, or touching sessions. The next discovery may retry.",
       "layout": "plain"
     },
     "remote hosts reset": {
@@ -12815,7 +12822,8 @@
           "layout": "machine"
         }
       },
-      "layout": "plain"
+      "layout": "plain",
+      "notes": "Read-only host status. JSON retains session details."
     },
     "session recovery pause": {
       "patterns": [
@@ -12969,7 +12977,8 @@
           "layout": "inherit"
         }
       },
-      "layout": "mixed"
+      "layout": "mixed",
+      "notes": "Read-only host status. JSON retains session details."
     },
     "remote session recovery status": {
       "patterns": [
@@ -13342,6 +13351,177 @@
         }
       },
       "layout": "rail"
+    },
+    "system recovery agent": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "plain",
+      "scope": "current host recovery journal",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_recovery_run.py::test_command_routes_and_status",
+        "tests/test_recovery_run.py::test_picker_filters_and_sort"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "recovery",
+            "agent"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_recovery_run.py::test_command_routes_and_status"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "plain"
+    },
+    "system recovery run": {
+      "patterns": [
+        "multi",
+        "filtered",
+        "action",
+        "detail"
+      ],
+      "renderer": "fzf",
+      "scope": "current host recovery journal",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_recovery_run.py::test_command_routes_and_status",
+        "tests/test_recovery_run.py::test_picker_filters_and_sort"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "system",
+            "recovery",
+            "run"
+          ],
+          "patterns": [
+            "multi",
+            "filtered",
+            "action",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_recovery_run.py::test_picker_filters_and_sort"
+          ],
+          "layout": "inherit"
+        },
+        "all": {
+          "argv": [
+            "system",
+            "recovery",
+            "run",
+            "--all"
+          ],
+          "patterns": [
+            "action",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_recovery_run.py::test_requests_coalesce_without_restarting_worker"
+          ],
+          "layout": "plain"
+        }
+      },
+      "layout": "picker"
+    },
+    "remote system recovery agent": {
+      "patterns": [
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "selected host recovery journal",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_recovery_run.py::test_command_routes_and_status",
+        "tests/test_recovery_run.py::test_picker_filters_and_sort"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "recovery",
+            "agent"
+          ],
+          "patterns": [
+            "detail"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_recovery_run.py::test_command_routes_and_status"
+          ],
+          "layout": "inherit"
+        }
+      },
+      "layout": "mixed",
+      "remote_policy": "query"
+    },
+    "remote system recovery run": {
+      "patterns": [
+        "multi",
+        "filtered",
+        "action",
+        "detail"
+      ],
+      "renderer": "mixed",
+      "scope": "selected host recovery journal",
+      "confirmation": "none",
+      "tests": [
+        "tests/test_recovery_run.py::test_command_routes_and_status",
+        "tests/test_recovery_run.py::test_picker_filters_and_sort"
+      ],
+      "modes": {
+        "default": {
+          "argv": [
+            "remote",
+            "system",
+            "recovery",
+            "run"
+          ],
+          "patterns": [
+            "multi",
+            "filtered",
+            "action",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_recovery_run.py::test_picker_filters_and_sort"
+          ],
+          "layout": "inherit"
+        },
+        "all": {
+          "argv": [
+            "remote",
+            "system",
+            "recovery",
+            "run",
+            "--all"
+          ],
+          "patterns": [
+            "action",
+            "detail"
+          ],
+          "read_only": false,
+          "tests": [
+            "tests/test_recovery_run.py::test_requests_coalesce_without_restarting_worker"
+          ],
+          "layout": "plain"
+        }
+      },
+      "layout": "mixed",
+      "remote_policy": "single"
     }
   },
   "display_schemas": {
@@ -13436,10 +13616,10 @@
         }
       ],
       "status_marks": {
-        "attached": "\u25cf",
-        "detached": "\u25cb",
-        "active_context": "\u2713",
-        "still_in_progress": "\u21bb"
+        "attached": "●",
+        "detached": "○",
+        "active_context": "✓",
+        "still_in_progress": "↻"
       },
       "layouts": {
         "table": {
@@ -13720,8 +13900,8 @@
         "tests/test_command_behavior.py::test_history_display_contract_preserves_unknowns_preview_and_json"
       ],
       "status_marks": {
-        "saved": "\u00b7",
-        "archived": "\u25a1",
+        "saved": "·",
+        "archived": "□",
         "missing": "!"
       }
     }
@@ -14080,11 +14260,11 @@
       "bin/t:_RailUI"
     ],
     "macos_labels": [
-      "\u2303T",
-      "\u2303S",
-      "\u21a9 Return",
-      "\u238b Esc",
-      "\u21e5 Tab"
+      "⌃T",
+      "⌃S",
+      "↩ Return",
+      "⎋ Esc",
+      "⇥ Tab"
     ],
     "other_labels": [
       "Ctrl-T",
@@ -14236,7 +14416,7 @@
           "tests": [
             "tests/test_nosleep_hotspot.py::test_setup_prompts_locally_and_only_enables_after_keychain_success"
           ],
-          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config \u2192 Nosleep or nosleep config.",
+          "notes": "Compatibility setup route; new users configure hotspot settings and credentials through t config → Nosleep or nosleep config.",
           "layout": "plain"
         }
       },

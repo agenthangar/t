@@ -84,7 +84,7 @@ def test_status_is_readonly_and_does_not_create_state(auto, capsys):
     auto.command(SimpleNamespace(scope='system', action='status', json=True))
     assert json.loads(capsys.readouterr().out)['enabled'] is False
     auto.command(SimpleNamespace(scope='system', action='status', json=False))
-    assert 'No enrolled sessions' in capsys.readouterr().out
+    assert 'Background agent    Stopped' in capsys.readouterr().out
     assert not auto.root().exists()
     assert auto.prefix('codex') == []
     assert auto.detail('codex', SID) is None
@@ -668,7 +668,7 @@ _dev_fg_rows() {{ :; }}
         assert {p[1] for p in holders} == {f'dev-api-{i}' for i in range(1, 4)}, auto.status()
         assert len({p[2] for p in holders}) == 3
     for _, name, pane, sid in holders:
-        until(lambda: 'Recovery holding pane' in tmux('capture-pane', '-p', '-t', pane).stdout)
+        until(lambda: 'Recovery' in tmux('capture-pane', '-p', '-t', pane).stdout)
         assert tmux('display-message', '-p', '-t', pane, '#{session_attached}').stdout.strip() == '0'
         assert sid in tmux('capture-pane', '-p', '-t', pane).stdout
     first, second, third = sorted(holders, key=lambda pane: pane[1])
@@ -680,14 +680,10 @@ _dev_fg_rows() {{ :; }}
         until(lambda: title in tmux('capture-pane', '-p', '-t', holder[2]).stdout,
               detail=lambda: tmux('capture-pane', '-p', '-t', holder[2]).stdout)
 
-    keys(first, 'Enter')
-    wait_for(first, 'Launch settings')
-    keys(first, 'Enter')
-    wait_for(first, 'Review resume')
     scans = home/'ssh-scans'
     scans.write_text('')
     (home/'known-owner').write_text(f'{first[3]}\t/other/worktree\tdemo-9\tdetached\tactive\tExisting writer\tclaude\n')
-    keys(first, 'Up', 'Enter')
+    keys(first, 'Enter')
     wait_for(first, 'This conversation is already open in demo-9 on offline.')
     failed_frame = tmux('capture-pane', '-p', '-t', first[2]).stdout
     assert 'Retry' in failed_frame
@@ -696,12 +692,6 @@ _dev_fg_rows() {{ :; }}
     assert tmux('show-options', '-qv', '-t', '='+first[1]+':', '@t_recovery_holding').stdout.strip() == first[3]
     (home/'known-owner').unlink()
     keys(first, 'Enter')
-    wait_for(first, 'Launch settings')
-    retry_frame = tmux('capture-pane', '-p', '-t', first[2]).stdout
-    assert 'already open in demo-9' not in retry_frame
-    keys(first, 'Enter')
-    wait_for(first, 'Review resume')
-    keys(first, 'Up', 'Enter')
     until(lambda: (home/'resumed').exists(), detail=lambda: tmux('capture-pane', '-p', '-t', first[2]).stdout)
     assert 'offline.invalid' in scans.read_text()
     assert (home/'resumed').read_text().splitlines() == [first[2], '--resume', first[3]]
@@ -777,7 +767,7 @@ if sys.argv[1] == 'app-server':
         writer = open(Path(os.environ['CODEX_HOME'])/'thread-writer-locks'/(sid + '.lock'), 'w')
         fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         reply = {{'thread': {{'id': sid, 'cwd': os.getcwd()}}, 'sandbox': {{'type': 'readOnly'}},
-                  'approvalPolicy': params['approvalPolicy']}}
+                  'approvalPolicy': 'on-request'}}
         with open({str(resumed)!r}, 'a') as record:
             record.write(json.dumps([os.environ['TMUX_PANE'], os.getcwd(), params]) + '\\n')
         print(json.dumps({{'id': message['id'], 'result': reply}}), flush=True)
@@ -808,7 +798,8 @@ else:
     monkeypatch.setenv('TMUX', socket+',0,0')
     enable(auto)
     row = session(auto, home, agent='codex', cwd=str(work), workspace=auto.workspace(work),
-                  transcript=str(rollout), phase='unknown', safe=False)
+                  transcript=str(rollout), phase='unknown', safe=False,
+                  options=['--sandbox', 'danger-full-access', '--ask-for-approval', 'never'])
     auto.Runtime().hold(row)
     [(holding_socket, name, pane, sid)] = auto.holding_panes()
     assert (holding_socket, name, sid) == (socket, row['session'], SID)
@@ -818,18 +809,13 @@ else:
             return tmux('capture-pane', '-p', '-t', pane).stdout
         until(lambda: label in capture(), timeout=10, detail=capture)
 
-    visible('Recovery holding pane')
+    visible('Resume conversation')
     assert tmux('send-keys', '-t', pane, 'Enter').returncode == 0
-    visible('Launch settings')
-    assert tmux('send-keys', '-t', pane, 'Down', 'Enter').returncode == 0
-    visible('Review resume')
-    assert tmux('send-keys', '-t', pane, 'Up', 'Enter').returncode == 0
     visible('Conversation resumed')
     assert not auto.holding_panes()
     assert tmux('display-message', '-p', '-t', pane, '#{session_name}|#{pane_id}|#{pane_current_path}').stdout.strip() == (
         f'{name}|{pane}|{work}')
-    assert [json.loads(line) for line in resumed.read_text().splitlines()] == [
-        [pane, str(work), {'threadId': SID, 'sandbox': 'read-only', 'approvalPolicy': 'on-request'}]]
+    assert [json.loads(line) for line in resumed.read_text().splitlines()] == [[pane, str(work), {'threadId': SID}]]
 
 
 def test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics(auto):
@@ -838,10 +824,10 @@ def test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics(auto
                    'warning: t: saved conversation ownership is unknown because a local or configured host scan failed')
     assert auto.holding_resume_notice(ValueError(diagnostics)) == (
         'Couldn’t check whether this conversation is already open on this computer. '
-        'Choose Review launch settings to try again.')
+        'Choose Resume conversation to try again.')
     assert auto.holding_resume_notice(ValueError('warning: dev: peer SSH diagnostic: timeout\n'
                                                 't recovery: workspace changed before recovery')) == (
-        'Couldn’t resume — workspace changed before recovery')
+        'Couldn’t resume. workspace changed before recovery')
 
 
 def test_supervisor_inflight_and_changed_generation_prevent_second_launch(auto, tmp_path, monkeypatch):

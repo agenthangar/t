@@ -86,7 +86,7 @@ def test_cleanup_service_lifecycle(launchd, capsys):
     assert backend.command('status', None, False, '30') == 0
     output = capsys.readouterr().out
     assert re.search(r'Finished session cleanup.*Installed.*Running.*Disabled.*Every 30 min', output)
-    assert re.search(r'Automatic recovery.*Not installed.*Stopped.*Disabled.*on restart', output)
+    assert re.search(r'Automatic recovery.*Not installed.*Stopped.*Disabled.*continuous', output)
     assert all(action in ('print', 'print-disabled') for action, *_ in calls[-2:])
 
 

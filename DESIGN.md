@@ -37,6 +37,10 @@ review and cancellation behave as shown. Follow the
 [planning preview contract](ui/README.md#planning-previews) when a workflow
 calls for a planning prototype.
 
+For direct commands, show a sample report on load and keep the commands and
+next actions discoverable as the terminal narrows. Follow the
+[direct command preview guidance](ui/README.md#direct-command-previews).
+
 ## Vertical spacing
 
 Use spacing to show which controls belong together. Keep a label and its short
@@ -82,9 +86,11 @@ useful controls. Narrow widths wrap within a section while keeping its breaks
 when height permits.
 
 Put the green Ctrl-U refresh action next to refresh status in resume. Active
-refresh uses bright cyan. Where there is room, show the previous refresh time
-and host outcomes. Current hosts use a green ✓, failed connections a red ×,
-and failure reasons amber. Retain a legacy result-count fallback for older fzf.
+refresh stays in the picker header and uses bright cyan. Keep search, navigation
+and selection available while results update. Where there is room, show the
+previous refresh time and host outcomes. Current hosts use a green ✓, failed
+connections a red ×, and failure reasons amber. Retain a legacy result-count
+fallback for older fzf.
 
 Place active filter values and their shortcuts on a summary row. Alt-F opens the
 inline editor in resume and the model reference. Ctrl-F pauses and restores
@@ -95,9 +101,11 @@ Use macOS key labels on macOS and the compact labels when space is tight.
 Each picker supplies the facets, sort choices, and actions that apply to it.
 
 Order the legend by table column and use matching glyphs, colors, and meanings
-in rows. In resume, the groups are Status, PRs, and Agent. Status shows attached
-(●), last verified close (↶), work in progress (↻), and verified preview (↗).
-Keep the focus pointer, selection ✓, and status markers in distinct cells.
+in rows. In resume, the groups are Status, PRs, and Agent. Status shows attached (●), last verified close (↶), session-reported work
+status (↻ in progress, ✓ complete, ? unknown), and verified preview (↗).
+Keep the focus pointer and selection ✓ in their own gutters. Give each status
+marker a fixed position and one cell of separation. Use readable contrast on
+selected and unselected rows.
 Keep columns aligned when sorting and filtering. On horizontal scroll, headings
 and values move together while the query, controls, and marker gutter stay fixed.
 Over the table, wheel up pans left and wheel down pans right. Show `<` and `>`
@@ -172,3 +180,11 @@ labels, `Tab ✓` spacing, and the filled Filters ON and Sort labels. Place
 result shortcuts below the filter and sort controls. Do not add a selectable fake session row for
 New. Show the status legend in the bottom footer where supported; older fzf
 keeps a compact header legend and short terminals prioritize rows and controls.
+
+### Recovery picker
+
+Recovery uses the shared multi-select picker with inline FILTER and SORT controls
+from the model library. Show Open pane, Status unknown, and Restoring in the status
+column and legend. Align legend category labels and corresponding marker columns
+vertically; indent wrapped items to the marker column. Return opens or resumes the
+exact selected conversation. Keep state and query through filtering and resize.

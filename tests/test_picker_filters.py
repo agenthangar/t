@@ -460,23 +460,27 @@ def test_resume_legend_matches_row_colors(filters, monkeypatch):
         return '\t'.join(['api', str(slot), f'sid{slot}', '/wt', 'date', 'title', location,
                           'history', '-', 'codex', '-', 'org/api', 'OPEN', closed, '-', work, '-', display])
 
-    saved = row(1, '-', '2026-11-21T10:00:00Z', 'yes', '! #42  ↴ #43  api  1  >_     Title').split('\t')
+    saved = row(1, '-', '2026-11-21T10:00:00Z', 'unfinished', '! #42  ↴ #43  api  1  >_     Title').split('\t')
     saved[-2] = 'yes'
     saved = '\t'.join(saved)
-    attached = row(2, 'here', '-', '-', '—              api  2  >_     Title ●')
+    attached = row(2, 'here', '-', '-', '-              api  2  >_     Title ●')
     saved, attached = [line.split('\t')[-1] for line in filters.mark_resume(saved + '\n' + attached).splitlines()]
     legend = '\n'.join(filters.resume_legend(100, False, True))
     for symbol, label, code, display in [
         ('↶', 'last closed', '36', saved), ('↻', 'work in progress', '33', saved),
-        ('●', 'attached', '92', attached), ('!', 'conflict', '33', saved),
+        ('●', 'attached', '92', attached), ('?', 'work unknown', '37', attached),
+        ('!', 'conflict', '33', saved),
         ('↗', 'preview', '1;96', saved), ('↴', 'merged', '95', saved),
-        ('—', 'no PR', '37', attached),
+        ('-', 'no PR', '37', attached),
     ]:
         assert f'\x1b[{code}m{symbol} {label}\x1b[0m' in legend
-        assert re.search(rf'\x1b\[{code}m{symbol}(?: #\d+)?\x1b\[0m', display)
+        assert re.search(rf'\x1b\[{code}m{re.escape(symbol)}(?: #\d+)?\x1b\[0m', display)
     assert '\x1b[94m>_ Codex\x1b[0m' in legend
     assert '\x1b[94m>_\x1b[0m' in saved and '\x1b[94m>_\x1b[0m' in attached
     assert attached.endswith('Title ●')
+    plain = lambda text: re.sub(r'\x1b\[[0-9;]*m', '', text)
+    assert plain(saved)[:filters.RESUME_STATUS_WIDTH] == '  ↶ ↻ ↗ '
+    assert plain(attached)[:filters.RESUME_STATUS_WIDTH] == '●   ?   '
 
 
 @pytest.mark.parametrize('platform,enter', [('darwin', 'Return'), ('linux', 'Enter')])

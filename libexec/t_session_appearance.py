@@ -410,6 +410,72 @@ def toggle_priority(recovery, socket, pane):
             raise
 
 
+def report_work(target, state):
+    history = helper('t_history')
+    store = history['Store']()
+    try:
+        store.report_work(target['agent'], target['sid'], state)
+    finally:
+        store.close()
+
+
+def signal(recovery, socket, pane, sid, owner_start, event, section='workflow', stage=''):
+    """Accept an explicit progress report from the current pane owner."""
+    with locked_pane(recovery, socket, pane):
+        target = verified_target(recovery, socket, pane)
+        if not target or (target['sid'], target['start']) != (sid, owner_start):
+            raise ValueError('The report does not match the current conversation.')
+        if event not in ('enter', 'waiting', 'resume', 'complete'):
+            raise ValueError('Unknown work report.')
+        tmux = lambda *args: recovery['tmux'](socket, *args)
+        workflow, policy = workflow_for(target)
+        current = stage_for(tmux, pane, target)
+        previous = load_option(tmux, pane, STAGE)
+        resume = previous.get('resume', current) if current == ('session', 'waiting') else current
+        value = dict(sid=sid, owner_start=owner_start)
+        if event == 'enter':
+            stages = {'planning', 'implementation', 'review', 'delivery', *policy.get('stage_backgrounds', {}).get('workflow', {})}
+            if section != 'workflow' or stage not in stages:
+                raise ValueError('Unknown workflow stage.')
+        elif event == 'waiting':
+            value['resume'] = resume
+            section, stage = 'session', 'waiting'
+        elif event == 'resume':
+            section, stage = resume
+        else:
+            section, stage = 'session', 'idle'
+        if not recovery['current'](target):
+            raise ValueError('The conversation changed before the report was saved.')
+        report_work(target, 'complete' if event == 'complete' else 'unfinished')
+        apply_current(tmux, pane, priority(priority_path(target)), section, stage, workflow, policy)
+        set_option(tmux, pane, STAGE, json.dumps(dict(value, section=section, stage=stage)))
+        paint_workflow(tmux, pane, workflow, policy, target['agent'], section, stage)
+        tmux('refresh-client', '-S')
+    refresh_work_reports()
+
+
+def refresh_work_reports():
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        helper('t_session_discovery')['event'](['local'])
+
+
+def reporting_instructions(tool, sid, pid):
+    if tool not in ('codex', 'claude') or not pid.isdigit():
+        return ''
+    socket = os.environ.get('TMUX', '').rsplit(',', 2)[0]
+    pane = os.environ.get('TMUX_PANE', '')
+    if not socket.startswith('/') or not re.fullmatch(r'%[0-9]+', pane):
+        return ''
+    start = helper('t_recovery')['process'](pid).get('start')
+    if not start:
+        return ''
+    prefix = shlex.join([sys.executable, str(Path(__file__).resolve()), 'signal', socket, pane, sid, start])
+    return (f'Session work status: run `{prefix} resume` when you start or resume a task, '
+            f'`{prefix} waiting` when paused for the user, and `{prefix} complete` when the task is complete. '
+            f'When entering a workflow stage use `{prefix} enter workflow STAGE`. '
+            'Report completion only when the task itself is done.')
+
+
 def refresh(recovery, socket, pane, sid=None, agent_pid=None):
     with locked_pane(recovery, socket, pane):
         target = verified_target(recovery, socket, pane)
@@ -566,6 +632,7 @@ def popup(recovery, socket, pane):
             if picked is None:
                 return
             section, stage = picked
+        reported = choice == 'stage' and (section == 'workflow' or stage == 'waiting')
         with locked_pane(recovery, socket, pane):
             if not recovery['current'](target):
                 raise ValueError('The managed conversation changed while the controls were open.')
@@ -573,10 +640,14 @@ def popup(recovery, socket, pane):
                 change_priority(tmux, pane, target, path, not enabled)
             else:
                 workflow, policy = workflow_for(target)
+                if reported:
+                    report_work(target, 'unfinished')
                 apply_current(tmux, pane, priority(path), section, stage, workflow, policy)
                 set_option(tmux, pane, STAGE, json.dumps(dict(sid=target['sid'], owner_start=target['start'],
                                                              section=section, stage=stage)))
                 paint_workflow(tmux, pane, workflow, policy, target['agent'], section, stage)
+        if reported:
+            refresh_work_reports()
     finally:
         ui.restore()
 
@@ -584,7 +655,7 @@ def popup(recovery, socket, pane):
 if __name__ == '__main__':
     action, socket, *args = sys.argv[1:]
     actions = {'install': install, 'refresh': refresh, 'refresh-registered': refresh_registered,
-               'popup': popup, 'toggle': toggle_priority}
+               'popup': popup, 'toggle': toggle_priority, 'signal': signal}
     if action in actions:
         recovery = helper('t_recovery')
         if action == 'refresh-registered' and socket == 'default':
@@ -593,5 +664,8 @@ if __name__ == '__main__':
             try:
                 actions[action](recovery, socket, *args)
             except (OSError, ValueError, RuntimeError) as exc:
+                if action == 'signal':
+                    print(str(exc), file=sys.stderr)
+                    sys.exit(1)
                 if action in ('popup', 'toggle'):
                     recovery['tmux'](socket, 'display-message', '-t', args[0], 't: ' + str(exc))

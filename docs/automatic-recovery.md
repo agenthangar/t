@@ -9,14 +9,30 @@ recovery uses it. A canonical update migrates an enabled service and its hooks
 to the installed version and retains the journal. If the worker fails to start,
 the updater restores the previous registration.
 
+`t system recovery run` lists tracked sessions still marked open on this host.
+Tracking starts with managed launches after recovery is enabled. The worker also
+adopts verified running sessions in existing t slots. Saved history alone does
+not enroll a session. Return opens a live or holding pane or resumes the exact
+saved conversation. Tab selects several. The three status markers are Open pane,
+Status unknown and Restoring.
+
+`run --all` asks the existing worker for one fresh recovery pass without a restart.
+It prints session outcomes, preserves paused/closed state and uncertain-delivery
+protections, and requires the recovery service to be enabled and running. Repeated
+requests share a worker pass when pending together. A timeout can leave the worker
+finishing that pass; check status before retrying. Human `status` shows host state;
+`status --json` also includes session details. `agent` lists service commands.
+
 The user LaunchAgent runs after login, including after a reboot. It restores
 eligible CLI conversations in detached tmux sessions on their original host and
 in their existing workspace. It does not unlock FileVault, log you in, open
 desktop applications, or recreate deleted worktrees. `nosleep` remains manual.
 
 ```sh
-t agent background status recovery
+t agent background status
 t system recovery status
+t system recovery run
+t system recovery run --all
 t system recovery status --json
 t session recovery status api 1
 t session recovery pause api 1
@@ -63,9 +79,8 @@ need a subsequent managed launch for full lifecycle observation. Each verified
 numbered slot with unknown launch settings gets its own detached holding pane.
 After login, run `t open` to browse these slots or `t open <repo> <slot>` to
 attach directly. The pane shows the conversation ID, agent, workspace, and the
-saved task title and last turn when available. Review the proposed launch
-settings to resume that conversation in the same pane, or dismiss just that
-slot. Discarded workspaces and conflicting owners appear in recovery status.
+saved task title and last turn when available. Choose Resume conversation to launch the exact conversation with current agent
+defaults and wait for input, or dismiss just that slot. Discarded workspaces and conflicting owners appear in recovery status.
 Missing lifecycle evidence
 never authorizes automatic continuation. Codex profile, remote-server, OSS, and other
 unsupported invocation modes still launch normally without automatic supervision.

@@ -288,7 +288,8 @@ def relay(command):  # pragma: no cover - isolated real-PTY lifecycle matrix tes
             os.environ['T_PICKER_HEADER_WIDTH'] = str(max(3, width - inset))
             (directory / 'pan-size').write_text(f'{height} {max(3, width - inset)}')
             (directory / 'pan-query').write_text(before['query'])
-            render(directory, 'resume', 'current', max(3, width - inset), os.environ.get('T_PICKER_COLUMNS', ''))
+            render(directory, os.environ.get('T_PICKER_SESSION_FILTERS', 'resume'),
+                   'current', max(3, width - inset), os.environ.get('T_PICKER_COLUMNS', ''))
             projected = (directory / 'current').read_text()
             if projected != previous:
                 picker.request('reload-sync(cat "$T_PICKER_CURRENT")')

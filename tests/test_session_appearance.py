@@ -290,3 +290,28 @@ def test_local_activity_uses_the_managed_title_and_keeps_its_activity(appearance
     assert 'Result ready' in local.render('right', tmp_path, socket, '%0')
     tmux('set-option', '-t', 'dev-colors-1', 'status', 'on')
     assert 'Color terminal stages' in local.render('left', tmp_path, socket, '%0')
+
+
+def test_work_signal_records_task_state_for_verified_owner(appearance, server, tmp_path, monkeypatch):
+    socket, tmux = server
+    target = dict(agent='codex', sid='thread', start='owner-start')
+    monkeypatch.setattr(appearance, 'verified_target', lambda *_: target)
+    monkeypatch.setattr(appearance, 'priority_path', lambda _: tmp_path/'priority')
+    monkeypatch.setattr(appearance, 'workflow_for', lambda _: (appearance.helper('t_workflow'), {}))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path/'state'))
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path/'cache'))
+    monkeypatch.setenv('T_DISCOVERY_COLLECTOR', '1')
+    recovery = {**appearance.helper('t_recovery'), 'current': lambda _: True}
+    history = appearance.helper('t_history')
+    store = history['Store']()
+    try:
+        store.merge(dict(repo='org/repo', agent='codex', sid='thread'))
+        with pytest.raises(ValueError, match='current conversation'):
+            appearance.signal(recovery, socket, '%0', 'thread', 'stale-owner', 'complete')
+        assert 'work_report' not in store.records()[0]
+        for event, status in [('resume', 'unfinished'), ('waiting', 'unfinished'),
+                              ('complete', 'complete'), ('resume', 'unfinished')]:
+            appearance.signal(recovery, socket, '%0', 'thread', 'owner-start', event)
+            assert store.records()[0]['work_report']['state'] == status
+    finally:
+        store.close()

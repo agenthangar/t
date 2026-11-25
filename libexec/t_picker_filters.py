@@ -24,10 +24,12 @@ OPEN_FACETS = {'agent': ('Ctrl-G', 'agent'), 'progress': ('Ctrl-P', 'progress'),
 
 PR_STATES = {'MERGED', 'OPEN', 'CLOSED', 'NONE', 'UNKNOWN', 'MIXED'}
 PR_COLORS = {'↴': '95', '○': '92', '◌': '37', '!': '33', '×': '91', '↗': '96',
-             '?': '37', '—': '37'}
+             '?': '37', '-': '37', '—': '37'}
 PR_CHIP = r'[↴○◌!×?] #\d+'
 RESUME_STATUS_WIDTH = 8
-RESUME_MARK_ROLES = {'●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
+WORK_STATUS = {'unfinished': ('↻', 'Work in progress'), 'complete': ('✓', 'Complete'),
+               'unknown': ('?', 'Unknown (no session work report)')}
+RESUME_MARK_ROLES = {'?': 'action', '●': 'primary', '✓': 'primary', '↶': 'heading', '↻': 'warning', '↗': 'progress'}
 RESUME_AGENTS = {'codex': ('>_', 'agent-codex'), 'claude': ('*', 'agent-claude'),
                  'cursor': ('<>', 'key')}
 
@@ -46,7 +48,7 @@ def metadata(source, profile):
                 turn=fields[10] if len(fields) > 11 else '-',
                 pr=fields[12] if len(fields) > 12 and fields[12] in PR_STATES else 'UNKNOWN',
                 closed=fields[13] if len(fields) > 14 and location == '-' else '-',
-                work=len(fields) > 16 and fields[15] == 'yes',
+                work=fields[15] if len(fields) > 16 and fields[15] in WORK_STATUS else 'unknown',
                 preview=len(fields) > 17 and fields[16] == 'yes')
         else:
             if len(fields) < 7:
@@ -353,6 +355,9 @@ def pick_value(directory, name, records, current):
 
 def render(directory, profile, action, width, columns='', facet=None, identity=()):
     directory = Path(directory)
+    if profile == 'recovery':
+        from t_recovery_picker import render as render_recovery
+        return render_recovery(directory, action, width, facet, identity)
     if os.environ.get('T_PICKER_PAN') == '1' and (directory / 'pan-size').exists():
         height, width = map(int, (directory / 'pan-size').read_text().split())
         os.environ['T_PICKER_HEADER_HEIGHT'] = str(height)
@@ -571,8 +576,8 @@ def resume_mark(text):
 def resume_legend(width, short, color, *, attached=True):
     close = '↶ close' if short else '↶ last closed'
     work = '↻ WIP' if width < 64 or short else '↻ work in progress'
-    status = (['● attached'] if attached else []) + [close, work, '↗ preview']
-    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '? unknown', '— no PR']
+    status = (['● attached'] if attached else []) + [close, work, '✓ complete', '? work unknown', '↗ preview']
+    prs = ['↴ merged', '○ open', '◌ draft', '! conflict', '× closed', '? unknown', '- no PR']
     agents = {glyph: (name.capitalize(), role) for name, (glyph, role) in RESUME_AGENTS.items()}
     if short:
         return [line for line in pack(status, width, '  ')] if not color else [
@@ -596,7 +601,7 @@ def pr_color(text, symbol):
 
 
 def color_resume_prs(display):
-    if display.startswith(('— ', '? ')):
+    if display.startswith(('- ', '— ', '? ')):
         return pr_color(display[0], display[0]) + display[1:]
     leading = re.match(rf'^(?:{PR_CHIP})(?: +{PR_CHIP})?', display)
     if not leading:
@@ -620,10 +625,11 @@ def resume_health(health, width, color, refresh=False):
     if health.get('failed'):
         warnings.append('Update failed')
     style = lambda text, role: paint(text, role) if color else text
-    title = 'Refreshing ' + ', '.join(pending) if pending else timing
-    if width <= 28 and not pending:
+    active = bool(pending or health.get('refreshing'))
+    title = ('Refreshing ' + (', '.join(pending) or 'sessions')) if active else timing
+    if width <= 28 and not active:
         title = title.removeprefix('Last refresh ')
-    title_role = 'progress' if pending else 'action'
+    title_role = 'progress' if active else 'action'
     shortcut = ''
     if refresh:
         shortcut = key_labels('Ctrl-U' if width <= 40 else 'Ctrl-U refresh now', compact=width <= 40)
@@ -633,7 +639,7 @@ def resume_health(health, width, color, refresh=False):
     if shortcut:
         line += '  ' + style(shortcut, 'primary')
     neutral = []
-    if pending and last:
+    if active and last:
         neutral.append(timing)
     status_rows = [style(text, 'action') for text in pack(neutral, width, '  ')]
     outcomes = []
@@ -684,8 +690,8 @@ def mark_resume(source, records=None):
         record = records.get(key, {})
         attached = len(fields) >= 10 and fields[6] != '-'
         marks = ('●' if attached else ' ', '↶' if key == latest else ' ',
-                 '↻' if record.get('work') else ' ', '↗' if record.get('preview') else ' ')
-        prefix = ''.join(resume_mark(mark) if color and mark != ' ' else mark for mark in marks)
+                 WORK_STATUS[record.get('work', 'unknown')][0], '↗' if record.get('preview') else ' ')
+        prefix = ' '.join(resume_mark(mark) if color and mark != ' ' else mark for mark in marks)
         display = fields[-1]
         if color:
             glyph, role = RESUME_AGENTS.get(record.get('agent'), ('?', 'action'))
@@ -693,12 +699,16 @@ def mark_resume(source, records=None):
                 agent_cell = rf'(?<=  ){re.escape(fields[0])} +{re.escape(fields[1])} +({re.escape(glyph)})(?=  )'
                 display = re.sub(agent_cell, lambda match: match[0][:-len(glyph)] + paint(glyph, role), display, count=1)
             display = color_resume_prs(display)
-        fields[-1] = prefix + ' ' * (RESUME_STATUS_WIDTH - len(marks)) + display
+        fields[-1] = prefix + ' ' * (RESUME_STATUS_WIDTH - (2 * len(marks) - 1)) + display
         result.append('\t'.join(fields))
     return '\n'.join(result)
 
 
 if __name__ == '__main__':
+    if sys.argv[1] == '--resume-details':
+        _, _, title, agent, status = sys.argv
+        print(f'{title}\n\nAgent  {agent}\nWork status  {WORK_STATUS.get(status, WORK_STATUS["unknown"])[1]}')
+        sys.exit(0)
     if sys.argv[1] == '--resume-mark':
         print(mark_resume(sys.stdin.read()))
         sys.exit(0)

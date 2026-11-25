@@ -775,28 +775,33 @@ def test_history_failure_exits_without_reopening_picker(app, history, monkeypatc
 
 
 @pytest.mark.parametrize('failure', ['', 'error', 'cancel', 'tab'])
-def test_multi_resume_starts_all_before_attach_and_stops_on_failure(app, history, monkeypatch, capsys, failure):
+def test_multi_resume_starts_all_before_attach_and_keeps_successes(app, history, monkeypatch, capsys, failure):
     rows = [conversation(sid=str(i)) for i in range(3)]
     events = []
-    def resume(alias, row, **kwargs):
-        assert kwargs == {'return_owner': True}
-        events.append(('resume', row['sid']))
-        if row['sid'] == '1' and failure in ('error', 'cancel'):
-            raise (history.HistoryCancelled('cancelled') if failure == 'cancel' else history.HistoryError('writer held'))
-        return dict(host='local', slot='repo-' + row['sid'], sid=row['sid'], cwd='/repo/' + row['sid'], agent='codex')
-    monkeypatch.setattr(app, 'resume', resume)
+    def prepare(requests, kind):
+        assert kind == 'history'
+        assert [r['row']['sid'] for r in requests] == ['0', '1', '2']
+        results = []
+        for request in requests:
+            sid = request['row']['sid']
+            events.append(('resume', sid))
+            owner = dict(host='local', slot='repo-'+sid, sid=sid, cwd='/repo/'+sid, agent='codex')
+            code = (130 if failure == 'cancel' else 1) if sid == '1' and failure in ('error', 'cancel') else 0
+            results.append(dict(code=code, output=json.dumps(owner), error='writer held' if code else ''))
+        return results
+    original = history.runpy.run_path
+    monkeypatch.setattr(history.runpy, 'run_path', lambda path, *a, **k:
+                        {'prepare': prepare} if str(path).endswith('/t_session_batch.py') else original(path, *a, **k))
     monkeypatch.setattr(app, 'attach', lambda owner: events.append(('attach', owner['sid'])) or 0)
     monkeypatch.setattr(history.subprocess, 'call', lambda argv: events.append(('tab', argv[-1])) or (1 if failure == 'tab' else 0))
     assert app.resume_many('repo', rows) == (130 if failure == 'cancel' else 1 if failure else 0)
-    if failure in ('error', 'cancel'):
-        assert events == [('resume', '0'), ('resume', '1')]
-        assert 'Already resumed; attach:' in capsys.readouterr().err
+    assert events[:3] == [('resume', str(i)) for i in range(3)]
+    if failure == 'cancel':
+        assert len(events) == 3
+        assert 'Ready to open' in capsys.readouterr().err
     else:
-        assert events[:3] == [('resume', str(i)) for i in range(3)]
-        assert [event[0] for event in events[3:]] == (['tab'] if failure == 'tab' else ['tab', 'tab', 'attach'])
-        assert all('_t_history_attach' in event[1] and '_dev_open_tab' in event[1] for event in events if event[0] == 'tab')
-        if failure == 'tab':
-            assert 'Could not open tab; attach:' in capsys.readouterr().err
+        assert events[-1] == ('attach', '0')
+        assert sum(event[0] == 'tab' for event in events) == (1 if failure == 'error' else 2)
 
 
 def test_multi_resume_live_owner_returns_identity_without_attaching(app, history, monkeypatch):
@@ -1023,62 +1028,24 @@ def test_sequential_poll_uses_first_structured_result(history, tmp_path):
     assert [pr['number'] for pr in value['prs']] == [432]
 
 
-@pytest.mark.parametrize('mode', ['dirty', 'clean', 'open', 'new-sid', 'live-owner', 'stale-generation',
-                                  'new-branch', 'commits', 'published', 'published-pr', 'live-exact',
-                                  'no-generation', 'open-commits', 'saved-new-sid'])
-def test_resume_work_is_independent_and_bound_to_captured_worktree(app, history, git_repo, mode):
-    workspace = Path(app.cfg.worktree_root) / 'repo/repo-1'
-    repo = app.cfg.repos['repo']
-    history.run(['git', '-C', repo, 'worktree', 'add', '-b', 'dev/repo-1', str(workspace), git_repo])
-    app.cfg.worktree_paths = lambda alias, slot: [str(workspace)]
-    app.discovery_identities['repo'] = 'org/repo'
-    row = saved_row(app, git_repo, workspace)
-    rows = [row]
-    live = []
-    if mode not in ('clean', 'open'):
-        (workspace / 'tracked').write_text('local change\n')
-    if mode == 'open':
-        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
-    if mode == 'new-sid':
-        rows.append(saved_row(app, git_repo, workspace, sid='later', observed=2))
-    if mode == 'live-owner':
-        live.append(dict(agent='codex', sid='later', cwd=str(workspace)))
-    if mode in ('no-generation', 'live-exact'):
-        row['associations'][0]['generation'] = ''
-    if mode == 'live-exact':
-        live.append(dict(agent='codex', sid=row['sid'], cwd=str(workspace)))
-    if mode == 'saved-new-sid':
-        replacement = saved_row(app, git_repo, workspace, sid='later', observed=2)
-        replacement['associations'][0]['generation'] = ''
-        rows.append(replacement)
-    if mode == 'stale-generation':
-        row['associations'][0]['generation'] = 'previous'
-    if mode == 'new-branch':
-        history.run(['git', '-C', str(workspace), 'switch', '-c', 'other'])
-    if mode in ('commits', 'published', 'published-pr'):
-        row['prs'] = [dict(repo='org/repo', number=7, state='MERGED')]
-        cache = Path(os.environ['XDG_CACHE_HOME']) / 'claude-sessions/pr/org#repo#7.head'
-        cache.parent.mkdir(parents=True)
-        cache.write_text(git_repo)
-        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Follow-up'])
-        if mode == 'published':
-            Path(repo, 'tracked').write_text('local change\n')
-            history.run(['git', '-C', repo, 'commit', '-am', 'Squashed follow-up'])
-        if mode == 'published-pr':
-            (cache.parent / 'org#repo#8').write_text('MERGED')
-            tip = history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD'])
-            (cache.parent / 'org#repo#8.head').write_text(tip)
-        history.run(['git', '-C', repo, 'update-ref', 'refs/remotes/origin/main', 'main'])
-    if mode == 'open-commits':
-        row['prs'] = [dict(repo='org/repo', number=7, state='OPEN')]
-        history.run(['git', '-C', str(workspace), 'commit', '-am', 'Open working branch'])
-        row['associations'].append({**row['associations'][0], 'evidence': 'close', 'observed': 2,
-                                    'commit': history.run(['git', '-C', str(workspace), 'rev-parse', 'HEAD']).strip()})
-    app.annotate_resume_work(rows, live)
-    fields = history.resume_candidate(row, 'repo', row['associations'][0], 'local').split('\t')
-    assert fields[14] == ('yes' if mode in ('dirty', 'commits', 'open-commits', 'live-exact') else '-')
-    if mode == 'new-sid':
-        assert rows[-1].get('work_in_progress') is True
+def test_resume_uses_durable_work_report_for_exact_conversation(history, store, tmp_path):
+    association = dict(workspace='/old/worktree', host='local', slot='1')
+    for sid in ('first', 'replacement'):
+        store.merge(conversation(sid=sid, associations=[association], work_in_progress=True))
+    store.report_work('codex', 'first', 'unfinished')
+    reopened = history.Store(store.directory)
+    try:
+        rows = {row['sid']: row for row in reopened.records()}
+        assert history.resume_candidate(rows['first'], 'repo', association, 'local').split('\t')[14] == 'unfinished'
+        assert history.resume_candidate(rows['replacement'], 'repo', association, 'local').split('\t')[14] == 'unknown'
+        reopened.report_work('codex', 'first', 'complete')
+        reopened.merge(conversation(sid='first', work_report={'state': 'unfinished', 'at': 1}))
+        first = next(row for row in reopened.records() if row['sid'] == 'first')
+        assert history.resume_candidate(first, 'repo', association, 'local').split('\t')[14] == 'complete'
+        remote = reopened.merge(conversation(sid='remote', work_report={'state': 'complete', 'at': 2}))
+        assert history.resume_candidate(remote, 'repo', association, 'mini').split('\t')[14] == 'complete'
+    finally:
+        reopened.close()
 
 
 def test_real_shaped_async_create_and_exact_poll_backfill_across_cache_append(app, history, tmp_path):

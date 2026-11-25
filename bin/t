@@ -619,51 +619,6 @@ def _resume_picker_publish(directory, snapshot):
             (snapshot / name).replace(directory / name)
 
 
-def _resume_picker_refresh(directory, aliases, slot, shell_args):
-    """Refresh the retained snapshot and reapply the existing resume row rules."""
-    cache, cfg = _session_discovery(), Config()
-    fields = ['rows', 'resume']
-    deadline = time.monotonic() + 30
-    view, requested = None, False
-
-    def refresh():
-        nonlocal view, requested
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            view = dict(view or {}, wait_timed_out=True)
-            return True
-        latest = cache['discover'](cfg, fields=fields, refresh=not requested,
-                                   deadline=time.monotonic() + min(remaining, 1))
-        if latest.get('unavailable'):
-            view = dict(view or {}, wait_unavailable=True)
-            return False
-        view = latest
-        requested = not view.get('loading')
-        return requested and not any(host.get('refreshing') for host in view.get('hosts', []))
-
-    status_file = directory / 'discovery-status'
-    try:
-        cancelled = _resume_discovery_wait(refresh) == 'skip'
-    except KeyboardInterrupt:
-        cancelled = True
-    with tempfile.TemporaryDirectory(prefix='refresh-', dir=directory) as temporary:
-        snapshot = Path(temporary)
-        if cancelled or not view or view.get('wait_unavailable'):
-            status = json.loads(status_file.read_text()) if status_file.stat().st_size else {}
-            status['cancelled' if cancelled else 'failed'] = True
-        else:
-            status = cache['resume_health'](view)
-            try:
-                _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args)
-                _resume_picker_publish(directory, snapshot)
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                status = json.loads(status_file.read_text()) if status_file.stat().st_size else {}
-                status['failed'] = True
-        (snapshot / 'discovery-status').write_text(json.dumps(status))
-        (snapshot / 'discovery-status').replace(status_file)
-    return 0
-
-
 def _resume_picker_adopt(directory):
     """Commit a staged snapshot only inside fzf's serialized action loop."""
     snapshot = directory / 'observed'
@@ -678,8 +633,41 @@ def _resume_picker_adopt(directory):
     return 0
 
 
+def _resume_picker_update(directory, picker, status, rebuild=None):
+    """Stage an update, then let fzf adopt it with its current filters and query."""
+    snapshot = directory / 'observed'
+    snapshot.mkdir()
+    base = (directory / 'discovery-status').read_text()
+    try:
+        if rebuild:
+            try:
+                rebuild(snapshot)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                status['failed'] = True
+                for path in snapshot.iterdir():
+                    path.unlink()
+        reload_rows = (snapshot / 'source').exists()
+        (snapshot / 'discovery-status').write_text(json.dumps(status))
+        (snapshot / 'base').write_text(base)
+        picker.deadline = time.monotonic() + 5
+        picker.request('execute-silent(T_PICKER_ADOPT=1 sh -c "$T_PICKER_REFRESH_CALLBACK"; '
+                       'sh "$T_PICKER_TOGGLE" current && touch "$T_PICKER_VIEWS/observed/ready")')
+        ready = snapshot / 'ready'
+        while not ready.exists():
+            if time.monotonic() >= picker.deadline:
+                raise TimeoutError('picker update timed out')
+            time.sleep(.05)
+        action = 'transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+        if reload_rows:
+            preserve = os.environ.get('T_PICKER_TRACK', '') + os.environ.get('T_PICKER_CLEAR_MARKS', '')
+            action += '+' + preserve + 'reload-sync(cat "$T_PICKER_CURRENT")'
+        picker.request(action)
+    finally:
+        shutil.rmtree(snapshot, ignore_errors=True)
+
+
 def _resume_picker_observe(directory, aliases, slot, shell_args):
-    """Adopt settled results from discovery already running when the picker opened."""
+    """Update the existing picker as discovery settles, including Ctrl-U requests."""
     sys.path.insert(0, str(Path(_t_source_root()) / 'libexec'))
     from t_picker_close import Picker
 
@@ -688,75 +676,69 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
 
     signal.signal(signal.SIGTERM, stop)
     status_file = directory / 'discovery-status'
-    pending = {host['host'] for host in json.loads(status_file.read_text())['hosts'] if host['status'] == 'refreshing'}
+    request = directory / 'refresh-request'
+    status = json.loads(status_file.read_text())
+    pending = {host['host'] for host in status['hosts'] if host['status'] == 'refreshing'}
     cache, cfg = _session_discovery(), Config()
     picker = Picker(0)
     deadline = time.monotonic() + 30
-    snapshot = directory / 'observed'
+    manual = force = False
     try:
-        while pending:
-            base = status_file.read_text()
-            value = json.loads(base)
-            previous = {host['host']: host for host in value['hosts']}
-            pending = {host for host in pending if previous.get(host, {}).get('status') == 'refreshing'}
-            if not pending:
-                break
+        while pending or manual or (directory / 'refresh-enabled').is_file():
+            if request.is_file():
+                request.unlink(missing_ok=True)
+                if not manual:
+                    manual = force = True
+                    deadline = time.monotonic() + 30
+                    status = json.loads(status_file.read_text())
+                    status.pop('failed', None)
+                    status.pop('unavailable', None)
+                    status['refreshing'] = True
+                    pending = {host['host'] for host in status['hosts']}
+                    status['hosts'] = [{**host, 'status': 'refreshing'} for host in status['hosts']]
+                    _resume_picker_update(directory, picker, status)
+            if not pending and not manual:
+                time.sleep(.15)
+                continue
             remaining = deadline - time.monotonic()
-            timed_out = remaining <= 0
-            if timed_out:
-                # A host can still be running when the picker stops observing it.
-                # Report the wait timeout and keep the last adopted rows.
-                updated = {**value, 'hosts': [{**host, 'status': 'timed out'}
-                           if host['host'] in pending else host for host in value['hosts']]}
-            else:
-                view = cache['discover'](cfg, observe=True, deadline=time.monotonic() + min(remaining, 1))
-                if view.get('unavailable'):
-                    time.sleep(.25)
-                    continue
-                updated = cache['resume_health'](view)
-                settled = {host['host'] for host in updated['hosts']
-                           if host['host'] in pending and host['status'] != 'refreshing'}
-                if not settled:
-                    time.sleep(.25)
-                    continue
-                # Hosts not pending at picker entry need no watcher. A routine
-                # observation of them may start while a tracked peer settles.
+            if remaining <= 0:
+                status = json.loads(status_file.read_text())
+                status.pop('refreshing', None)
+                status['hosts'] = [{**host, 'status': 'timed out'} if host['host'] in pending else host
+                                   for host in status['hosts']]
+                if not pending:
+                    status['failed'] = True
+                _resume_picker_update(directory, picker, status)
+                pending.clear()
+                manual = force = False
+                continue
+            options = {'refresh': True} if force else {'observe': True}
+            view = cache['discover'](cfg, **options, deadline=time.monotonic() + min(remaining, 1))
+            if view.get('unavailable') or view.get('loading'):
+                time.sleep(.25)
+                continue
+            force = False
+            updated = cache['resume_health'](view)
+            if not manual:
+                previous = {host['host']: host for host in json.loads(status_file.read_text())['hosts']}
+                # Other hosts can start an unrelated refresh while we observe.
                 updated['hosts'] = [previous.get(host['host'], host)
                                     if host['status'] == 'refreshing' and host['host'] not in pending else host
                                     for host in updated['hosts']]
-            snapshot.mkdir()
-            try:
-                if not timed_out:
-                    _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args)
-                (snapshot / 'discovery-status').write_text(json.dumps(updated))
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                # Keep the visible inventory if the rebuild fails. Still clear
-                # the spinner for hosts that have reached a terminal state.
-                updated['failed'] = True
-                for name in ('all', 'rows-1', 'source', 'rows-0', 'columns'):
-                    (snapshot / name).unlink(missing_ok=True)
-                (snapshot / 'discovery-status').write_text(json.dumps(updated))
-            (snapshot / 'base').write_text(base)
-            preserve = os.environ.get('T_PICKER_TRACK', '') + os.environ.get('T_PICKER_CLEAR_MARKS', '')
-            picker.deadline = time.monotonic() + 5
-            picker.request('execute-silent(T_PICKER_ADOPT=1 sh -c "$T_PICKER_REFRESH_CALLBACK"; '
-                           'sh "$T_PICKER_TOGGLE" current && touch "$T_PICKER_VIEWS/observed/ready")')
-            ready = snapshot / 'ready'
-            while not ready.exists() and time.monotonic() < picker.deadline:
-                time.sleep(.05)
-            if not ready.exists():
-                break
-            # Publish the freshly written header before a tracked reload starts.
-            # fzf drops header actions received while its input is being reloaded.
-            picker.request('transform-header(cat "$T_PICKER_CURRENT_HEADER")+' + preserve
-                           + 'reload-sync(cat "$T_PICKER_CURRENT")')
-            shutil.rmtree(snapshot)
-            # The next iteration reads the status actually accepted by fzf.
-            # A concurrent Ctrl-U may have committed something newer.
+            refreshing = {host['host'] for host in updated['hosts'] if host['status'] == 'refreshing'}
+            if pending - refreshing or (manual and not refreshing):
+                _resume_picker_update(directory, picker, updated,
+                    lambda snapshot: _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args))
+            if manual:
+                pending = refreshing
+                manual = bool(pending)
+            else:
+                pending &= refreshing
+            if pending:
+                time.sleep(.25)
     except (KeyboardInterrupt, OSError, ValueError, TimeoutError):
         pass
     finally:
-        shutil.rmtree(snapshot, ignore_errors=True)
         (directory / 'observe.pid').unlink(missing_ok=True)
     return 0
 
@@ -5785,8 +5767,9 @@ class _RailUI:
         st, width = self.st, self.cols()
         head = self.head(label) + [self.rail]
         hints, current = [], ""
+        separator = getattr(self, "key_separator", " · ")
         for part in self.labels(keys).split(" · "):
-            candidate = f"{current} · {part}" if current else part
+            candidate = current + separator + part if current else part
             if _display_width(candidate) > width - 4 and current:
                 hints.extend(_wrap_columns(current, width - 4))
                 current = part
@@ -5799,7 +5782,7 @@ class _RailUI:
             head = head[:1]
             footer = [f"  {st.y}{hint}{st.r}" for hint in hints]
         if self.lines() <= 10:
-            brief = self.labels("↑↓/jk · space ✓ · enter · q/esc · Ctrl-C")
+            brief = self.labels("↑↓/jk · space ✓ · enter · q/esc · Ctrl-C").replace(" · ", separator)
             footer = [f"  {st.y}{line}{st.r}" for line in _wrap_columns(brief, width - 4)]
         if primary:
             key, action, detail = primary
@@ -12876,7 +12859,7 @@ def cmd_mcp(cfg, args):
 
 def cmd_automatic_recovery(cfg, args):
     try:
-        return _automatic_recovery()['command'](args, cfg)
+        return _automatic_recovery()['command'](args, cfg, globals())
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         print('t recovery: ' + str(exc), file=sys.stderr)
         return 1
@@ -13025,7 +13008,7 @@ COMMAND_GROUPS = {
               "background": {verb: ("agent", "background", verb)
                              for verb in ("status", "install", "start", "stop", "restart")}},
     "system": {"integrate": ("integrate",), "update": ("update",),
-               "recovery": {"status": ("system", "recovery", "status")},
+               "recovery": {verb: ("system", "recovery", verb) for verb in ("status", "run", "agent")},
                "apps": {v: ("system", "apps", v) for v in ("install", "status")},
                "diagnose": ("doctor",), "advisories": ("__advisories",),
                "usage": {v: ("system", "usage", v) for v in ("list", "show")}},
@@ -13302,6 +13285,19 @@ def _group_help(group):
 TARGET is cleanup, recovery, or all. Stop applies to this login.
 Status checks installation, live state, and effective login startup on this host.
 Run t help agent background <verb> for details.
+""")
+    if group == 'system recovery':
+        return _wrap_help("""USAGE
+  t system recovery <verb>
+
+COMMANDS
+  status  Show recovery and background agent status
+  run     Open or resume tracked sessions
+  agent   Show background agent commands
+
+Use t system recovery run --all to request an immediate recovery check.
+Enable automatic recovery in t config.
+Run t help system recovery <verb> for details.
 """)
     if group in ('system recovery', 'session recovery'):
         verbs = ('status',) if group.startswith('system') else ('pause', 'resume', 'status')
@@ -14522,7 +14518,8 @@ PICKER CONTROLS
   Wheel over the table to pan. STATUS stays fixed. Up and Down move focus,
   and Left and Right edit the search. Search includes offscreen text.
   PRS shows ↴ merged, ○ open, ◌ draft, ! conflict, × closed, or ? unknown.
-  STATUS shows ● attached, ↶ last closed, ↻ work in progress, and ↗ verified preview.
+  STATUS shows ● attached, ↶ last closed, and ↗ verified preview.
+  Work status comes from the session: ↻ in progress, ✓ complete, ? unknown.
   LAST TURN shows local date and time. TITLE uses the saved name when available.
   Prompt: identifies an opening prompt. REPO is present in every view.
   Run from outside a registered repo to browse all repos.
@@ -15449,9 +15446,17 @@ PERIODIC CHECKS
         rp = resources.add_parser('recovery', help='automatic recovery status and session eligibility')
         rp.set_defaults(scope=scope)
         actions = rp.add_subparsers(dest='action', required=True)
-        for action in (('status',) if scope == 'system' else ('pause', 'resume', 'status')):
-            leaf = actions.add_parser(action, help=('show read-only recovery status' if action == 'status' else action + ' automatic recovery eligibility'),
-                description='Configure automatic recovery in t config. Session controls accept [repo] [slot] or an exact conversation ID; infer the current workspace only when unambiguous. They never stop a running agent.')
+        for action in (('status', 'run', 'agent') if scope == 'system' else ('pause', 'resume', 'status')):
+            descriptions = {'status': 'show read-only recovery status',
+                            'run': 'open or resume tracked sessions',
+                            'agent': 'show background agent commands',
+                            'pause': 'pause automatic recovery for a session',
+                            'resume': 'restore automatic recovery eligibility for a session'}
+            leaf = actions.add_parser(action, help=descriptions[action],
+                description=("Choose tracked sessions to open or resume. Use --all to request a recovery check without a restart."
+                             if action == 'run' else descriptions[action].capitalize() + '.'))
+            if action == 'run':
+                leaf.add_argument('--all', action='store_true', help='request an immediate recovery check for all eligible sessions')
             if scope == 'session':
                 leaf.add_argument('repo', nargs='?', help='repository alias or exact conversation ID; infer current workspace when omitted')
                 leaf.add_argument('slot', nargs='?', help='slot number')
@@ -15850,7 +15855,7 @@ def _main(argv):
             return _resume_picker_adopt(directory)
         if os.environ.get('T_PICKER_OBSERVE') == '1':
             return _resume_picker_observe(directory, aliases, slot, shell_args)
-        return _resume_picker_refresh(directory, aliases, slot, shell_args)
+        return 2
     if argv and argv[0] == '__resume-candidates' and os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
         aliases, slot = argv[1:], None
         if aliases[:1] == ['--diagnostics-file']:

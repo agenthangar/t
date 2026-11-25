@@ -17,6 +17,34 @@ _t_resume_batch_stop() {
 }
 
 
+# One preparation worker. The caller retains selection order and owns attachment.
+_t_resume_parallel_one() {
+  emulate -L zsh
+  local -a fields
+  fields=("${(@ps:\t:)1}")
+  local host=$2 source_host=$3 repo=$fields[1] slot=$fields[2] sid=$fields[3]
+  local cwd=$fields[4] agent=${fields[10]:-claude} receipt session
+  if [[ $fields[8] == history ]]; then
+    local mode=launch
+    [[ -z $host ]] || mode=transfer
+    receipt=$(_t_resume_history_launch "$repo" "$sid" "$agent" "$mode" "${fields[12]:--}" "$slot" "$cwd" "${source_host:--}") || return $?
+    if [[ -z $host ]]; then
+      print -r -- "$receipt"
+      return
+    fi
+    session=${receipt%%$'\t'*}; cwd=${receipt#*$'\t'}
+  fi
+  if [[ -n $host ]]; then
+    session=$(_t_resume_on_host "$host" "$sid" "$cwd" "$agent" detach) || return $?
+    print -r -- "$session"$'\t'"$cwd"
+  else
+    cwd=$(_dev_ensure_session_cwd "$cwd") || return $?
+    session="dev-$repo-$slot"
+    _dev_resume_session "$session" "$cwd" "$sid" "$agent" >&2 || return $?
+    print -r -- "$session"$'\t'"$cwd"
+  fi
+}
+
 # A destination on resume applies to saved history. Live owners may only attach
 # on that same host; moving an owner uses the guarded move transaction.
 _t_resume_host_check() {
@@ -252,7 +280,7 @@ _t_resume() {
   local -A resume_hosts
   local history_rows history_rc=0 history_row history_key
   local -a history_fields history_keep
-  local -A history_seen history_emitted live_titles live_work
+  local -A history_seen history_emitted live_titles live_work live_prs
   local live_identity live_host
   local -a history_scope=("${(@)repos}")
   [[ -n $all_mode ]] && history_scope=(--all)
@@ -585,9 +613,8 @@ _t_resume() {
     if [[ $T_RESUME_LAST != 1 && -n ${live_sid[$history_fields[4]]:-} && ${live_sid_agent[$history_fields[4]]:-} == $history_fields[9] ]]; then
       live_identity="$history_fields[9]/$history_fields[4]"
       live_titles[$live_identity]=$title
-      if [[ ${history_fields[15]:--} == yes ]]; then
-        live_work[$live_identity/$history_fields[8]]=yes
-      fi
+      live_work[$live_identity]=${history_fields[15]:-unknown}
+      live_prs[$live_identity]=${history_fields[14]:--}
       sidlive+=("$history_fields[2]"$'\t'"$history_fields[4]"$'\t'"$history_fields[5]"$'\t'"${live_sid[$history_fields[4]]}"$'\t'"${history_fields[10]:--}")
       continue
     fi
@@ -723,9 +750,9 @@ _t_resume() {
         f[6]=$live_titles[$live_identity]
       fi
       [[ $f[7] != app:* ]] || f[6]="Codex desktop · $f[6]"
-      [[ $live_host != here ]] || live_host=local
-      if [[ ${live_work[$live_identity/$live_host]:-} == yes ]]; then
-        f[16]=yes
+      f[16]=${live_work[$live_identity]:-unknown}
+      if [[ ${f[15]:--} == - ]]; then
+        f[15]=${live_prs[$live_identity]:--}
       fi
     fi
     pr_first[i]='' pr_second[i]='' pr_extras[i]=''
@@ -770,7 +797,7 @@ _t_resume() {
       pr_extras[i]="  +$(( pr_count - 2 ))"
     elif (( ! pr_count )); then
       case $f[13] in
-        NONE) pr_first[i]=—; pr_first_width[i]=1 ;;
+        NONE) pr_first[i]=-; pr_first_width[i]=1 ;;
         UNKNOWN) pr_first[i]='?'; pr_first_width[i]=1 ;;
         *) pr_first[i]=${(L)f[13]}; pr_first_width[i]=${#pr_first[i]} ;;
       esac
@@ -977,6 +1004,31 @@ _t_resume() {
       echo "t resume --fg resumes ONE conversation inline in this terminal — mark a single row (or drop --fg)." >&2
       return 1
     fi
+    local batch_dir batch_index=0 batch_name batch_rc=0 mp_failed=0
+    batch_dir=$(mktemp -d "${TMPDIR:-/tmp}/t-resume-batch.XXXXXX") || return 1
+    # Capture the loaded integration once so workers retain caller overrides.
+    {
+      print -r -- "export T_DEV_CONTEXT=${(q)T_HOME} T_DEV_CONTEXT_OWNER=\$\$"
+      print -r -- "export PATH=${(q)T_HOME}/bin:\$PATH"
+      print -r -- "source ${(q)T_HOME}/t.plugin.zsh || exit \$?"
+      for batch_name in DEV_REPOS DEV_BRANCHES REMOTE_HOSTS DEV_WORKTREE DEV_OPEN_MODE DEV_AGENT DEV_MODEL DEV_EFFORT DEV_FAST DEV_HANDOFF; do
+        typeset -p "$batch_name" 2>/dev/null
+      done
+      functions -m '_dev_*' '_t_*' '_codex_*' '_claude_*' 'tmux'
+    } > "$batch_dir/environment.zsh"
+    for pick in "${(@)picks}"; do
+      (( batch_index++ ))
+      f=("${(@ps:\t:)pick}")
+      [[ ${f[7]:--} == - ]] || continue
+      {
+        print -r -- "source ${(q)batch_dir}/environment.zsh || exit \$?"
+        print -r -- "_t_resume_parallel_one ${(q)pick} ${(q)on_host} ${(q)${resume_hosts[$f[1]/${f[10]:-claude}/$f[3]/$f[4]]:--}}"
+      } > "$batch_dir/$batch_index.zsh"
+    done
+    if ! python3 "$T_HOME/libexec/t_session_batch.py" scripts "$batch_dir"; then
+      rm -rf -- "$batch_dir"
+      return 130
+    fi
     local -A mp_taken mp_attach mp_exact
     local -a mp_owner
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
@@ -1009,32 +1061,26 @@ _t_resume() {
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --host ${(q)mp_loc}")
         continue
       fi
-      if [[ $f[8] == history && -n $on_host ]]; then
-        mp_cwd=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" transfer "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$mp_agent/$sid/$wt]:--}") || {
-          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation preparation failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
-          return "$mp_rc"
-        }
-        mp_session=${mp_cwd%%$'\t'*}; wt=${mp_cwd#*$'\t'}; slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
-        _t_resume_history_registered "$repo" || {
-          _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable' "$mp_remaining" "${mp_ready[@]}"
-          return 1
-        }
-      elif [[ $f[8] == history ]]; then
-        mp_session=$(_t_resume_history_launch "$repo" "$sid" "$mp_agent" launch "${f[12]:--}" "$slot" "$wt" "${resume_hosts[$repo/$mp_agent/$sid/$wt]:--}") || {
-          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'saved conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
-          return "$mp_rc"
-        }
+      batch_rc=$(<"$batch_dir/$mp_index.status")
+      if (( batch_rc )); then
+        mp_failed=1
+        print -u2 -r -- "$repo $slot  $(tail -n 1 "$batch_dir/$mp_index.err")"
+        continue
+      fi
+      mp_session=$(<"$batch_dir/$mp_index.out")
+      if [[ $f[8] == history && -z $on_host ]]; then
         mp_owner=("${(@ps:\t:)mp_session}")
-        (( $#mp_owner == 3 )) || { print -u2 't resume: incomplete terminal receipt'; return 1; }
+        if (( $#mp_owner != 3 )); then
+          mp_failed=1
+          print -u2 -- "$repo $slot  Incomplete terminal receipt"
+          continue
+        fi
         mp_session=$mp_owner[1]
         slot=${mp_session##*-}; repo=${${mp_session#dev-}%-*}
         mp_exact[$repo/$slot]="${mp_session#dev-}"$'\t'"$sid"$'\t'"$mp_owner[2]"$'\t'"$mp_agent"$'\t'"$mp_owner[3]"
         mp_attach[$repo/$slot]="source ${(q)T_HOME}/t.plugin.zsh; _t_history_attach ${(q)${mp_session#dev-}} ${(q)sid} ${(q)mp_owner[2]} ${(q)mp_agent} ${(q)mp_owner[3]}"
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
-        _t_resume_history_registered "$repo" || {
-          _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'repository registration unavailable after launch' "$mp_remaining" "${mp_ready[@]}"
-          return 1
-        }
+        _t_resume_history_registered "$repo" || { mp_failed=1; continue; }
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot
         else
@@ -1046,14 +1092,9 @@ _t_resume() {
         _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'slot already used by an earlier selection' "$mp_remaining" "${mp_ready[@]}"
         return 1
       fi
+      mp_taken[$repo/$slot]=1
       if [[ -n $on_host ]]; then
-        # every mark lands DETACHED on the host; the first is attached below
-        mp_taken[$repo/$slot]=1
-        echo "Resuming ${sid:0:8} ($repo $slot) on $on_host"
-        mp_session=$(_t_resume_on_host "$on_host" "$sid" "$wt" "$mp_agent" detach) || {
-          mp_rc=$?; _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" "landing on $on_host failed; see diagnostic above" "$mp_remaining" "${mp_ready[@]}"
-          return "$mp_rc"
-        }
+        mp_session=${mp_session%%$'\t'*}
         mp_ready+=("t session open ${(q)${${mp_session#dev-}%-*}} ${(q)${mp_session##*-}} --cli --host ${(q)on_host}")
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot; mp_first_session=$mp_session
@@ -1062,19 +1103,7 @@ _t_resume() {
         fi
         continue
       fi
-      if ! mp_cwd=$(_dev_ensure_session_cwd "$wt"); then
-        _t_resume_batch_stop 1 "$mp_identity" "$mp_retry" 'could not rebuild worktree; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
-        return 1
-      fi
-      mp_taken[$repo/$slot]=1
-      mp_session="dev-${repo}-${slot}"
-      echo "Resuming ${sid:0:8} in $mp_session ($mp_cwd)"
-      _dev_resume_session "$mp_session" "$mp_cwd" "$sid" "$mp_agent" || {
-        mp_rc=$?
-        unset 'mp_taken[$repo/$slot]'
-        _t_resume_batch_stop "$mp_rc" "$mp_identity" "$mp_retry" 'conversation launch failed; see diagnostic above' "$mp_remaining" "${mp_ready[@]}"
-        return "$mp_rc"
-      }
+      print -r -- "$repo $slot  Ready"
       mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
       if [[ -z $mp_first_repo ]]; then
         mp_first_repo=$repo; mp_first_slot=$slot
@@ -1082,6 +1111,8 @@ _t_resume() {
         mp_rest+=("$repo $slot")
       fi
     done
+    rm -rf -- "$batch_dir"
+    (( ! mp_failed )) || print -u2 -- 'Some sessions could not resume. Ready sessions will open.'
     # A live mark gets the same attachment path as a single pick. When no dead
     # mark revived, attach the first live row here; otherwise give each live
     # owner a tab alongside the extra revived rows.
@@ -1117,7 +1148,9 @@ _t_resume() {
       mp_live_slot=$mp_live_fields[3]; mp_live_alias=$mp_live_fields[4]
       if [[ -n ${mp_live_fields[5]:-} && $mp_live_fields[5] != - ]]; then
         _t_resume_live_attach "$mp_live_loc" "$mp_live_repo-$mp_live_slot" "${mp_live_fields[@]:4}"
-        return
+        batch_rc=$?
+        (( batch_rc )) && return "$batch_rc"
+        return "$mp_failed"
       fi
       case $mp_live_loc in
         fg:here)  _dev_open_fg "$mp_live_alias" ;;
@@ -1125,7 +1158,9 @@ _t_resume() {
         here)     _dev_open_picks "local"$'\t'"$mp_live_repo"$'\t'"$mp_live_slot" ;;
         *)        _dev_remote_attach "$mp_live_loc"$'\t'"$mp_live_repo"$'\t'"$mp_live_slot" "" ;;
       esac
-      return
+      batch_rc=$?
+      (( batch_rc )) && return "$batch_rc"
+      return "$mp_failed"
     fi
     if [[ -n $on_host ]]; then
       # Open every extra remote landing on the exact target host before the
@@ -1142,7 +1177,9 @@ _t_resume() {
       else
         echo "Attach with: t session open ${${mp_first_session#dev-}%-*} ${mp_first_session##*-} --host $on_host"
       fi
-      return
+      batch_rc=$?
+      (( batch_rc )) && return "$batch_rc"
+      return "$mp_failed"
     fi
     # Every revived slot beyond the first opens in its OWN terminal tab, each
     # running the ordinary `t open` attach (_dev_open_tab); the first attaches
@@ -1173,7 +1210,9 @@ _t_resume() {
           return 1
         }
     fi
-    return
+    batch_rc=$?
+    (( batch_rc )) && return "$batch_rc"
+    return "$mp_failed"
   fi
   pick=$picks[1]
   f=("${(@ps:\t:)pick}")

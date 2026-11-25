@@ -208,11 +208,11 @@ def command(action, target, reinstall, interval):
             print(f'{"BACKGROUND AGENT":<27} {"INSTALLATION":<14} {"STATUS":<12} {"STARTS AT LOGIN":<15} CHECK INTERVAL')
         for agent in agents:
             installed, live, login = status(agent)
-            cadence = f'Every {interval} min' if agent == 'cleanup' else 'on restart'
+            cadence = f'Every {interval} min' if agent == 'cleanup' else 'continuous'
             if compact:
                 print(NAMES[agent])
                 print(f'  {installed} · {live}')
-                print(f'  Starts at login: {login.lower()} · {cadence}')
+                print(f'  Starts at login: {login.lower()}  {cadence}')
             else:
                 print(f'{NAMES[agent]:<27} {installed:<14} {live:<12} {login:<15} {cadence}')
         return 0

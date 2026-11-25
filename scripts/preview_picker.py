@@ -117,11 +117,11 @@ def model_controls(catalog):
 
 
 RESUME_CASES = [
-    ('web', '3', 'codex', 'local', '↴ #14', 'MERGED', '2026-11-20', '2026-11-21', False, True, False, 'Simplify the onboarding view'),
-    ('api', '9', 'claude', 'mini', '○ #38', 'OPEN', '2026-11-21', '-', True, False, False, 'Review API response formats'),
-    ('api', '5', 'cursor', 'local', '◌ #21', 'DRAFT', '2026-11-19', '-', False, False, True, 'Update the cache documentation'),
-    ('web', '1', 'codex', 'mini', '! #37', 'UNKNOWN', '2026-11-18', '-', False, False, False, 'Prepare a responsive navigation preview'),
-    ('api', '2', 'codex', 'local', '—', 'NONE', '2026-11-17', '-', False, False, False, 'Clean up the deployment checklist'),
+    ('web', '3', 'codex', 'local', '↴ #14', 'MERGED', '2026-11-20', '2026-11-21', False, 'unfinished', False, 'Simplify the onboarding view'),
+    ('api', '9', 'claude', 'mini', '○ #38', 'OPEN', '2026-11-21', '-', True, 'unfinished', False, 'Review API response formats'),
+    ('api', '5', 'cursor', 'local', '◌ #21', 'DRAFT', '2026-11-19', '-', False, 'unknown', True, 'Update the cache documentation'),
+    ('web', '1', 'codex', 'mini', '! #37', 'UNKNOWN', '2026-11-18', '-', False, 'unknown', False, 'Prepare a responsive navigation preview'),
+    ('api', '2', 'codex', 'local', '-', 'NONE', '2026-11-17', '-', False, 'complete', False, 'Clean up the deployment checklist'),
 ]
 
 
@@ -135,7 +135,8 @@ def resume_fixture():
         display = columns.format(pr, repo, slot, resume.RESUME_AGENTS[agent][0], host, day + ' 12:00', title)
         lines.append('\t'.join((repo, slot, f'{repo}-{slot}', '/example', day, title,
                                 host if attached else '-', 'fixture', host, agent, turn, '-', pr_state,
-                                closed, '-', 'yes' if work else 'no', 'yes' if preview else 'no', display)))
+                                closed, '-', work,
+                                'yes' if preview else 'no', display)))
     return columns.format(*headings), '\n'.join(lines)
 
 
@@ -151,7 +152,8 @@ def resume_controls():
         status = re.match(r'(?:(?:\x1b\[[0-9;]+m)*[^\x1b]){' +
                           str(resume.RESUME_STATUS_WIDTH) + r'}', display)[0]
         rows[fields[2]] = {**records[tuple(fields[:3])], 'attached': fields[6] != '-',
-                           'status': status, 'display': display[len(status):], 'search': plain + ' ' + fields[9]}
+                           'status': status, 'workLabel': resume.WORK_STATUS[records[tuple(fields[:3])]['work']][1],
+                           'display': display[len(status):], 'search': plain + ' ' + fields[9]}
     filters = {}
     choices = [dict.fromkeys(('agent', 'host', 'repo'), None)]
     for name in ('agent', 'host', 'repo'):
