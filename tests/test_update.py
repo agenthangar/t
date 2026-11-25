@@ -28,6 +28,32 @@ def discovery_retirements(t_mod, monkeypatch):
     return calls
 
 
+@pytest.mark.parametrize('tty,environment,dim', [
+    (True, {}, True), (False, {}, False), (True, {'NO_COLOR': ''}, False),
+    (True, {'TERM': 'dumb'}, False), (True, {'CLICOLOR': '0'}, False),
+])
+def test_runtime_report_dims_deferred_inventory_details(t_mod, monkeypatch, capsys, tty, environment, dim):
+    monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: tty)
+    monkeypatch.setenv('TERM', 'xterm')
+    for name in ('NO_COLOR', 'CLICOLOR'):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    t_mod._t_runtime_report({'results': [
+        dict(component='inventory', status='deferred', server='/tmp/tmux-test',
+             reason='unreachable private tmux socket was preserved', next_action='check the tmux server'),
+        dict(component='terminalhooks', status='failed', session='dev-test-1', reason='hook refresh failed'),
+    ]})
+
+    detail = '  /tmp/tmux-test inventory: unreachable private tmux socket was preserved; check the tmux server'
+    assert capsys.readouterr().err.splitlines() == [
+        't runtime: deferred inventory; failed terminalhooks',
+        f'\033[2m{detail}\033[0m' if dim else detail,
+        '  dev-test-1 terminalhooks: hook refresh failed',
+    ]
+
+
 @pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
 def test_update_all_alias_and_exclusive_modes(t_mod, prefix):
     parser = t_mod.build_parser()
