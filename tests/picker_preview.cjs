@@ -45,7 +45,7 @@ async function resumeReference(page, compact) {
   await page.goto(target + '?view=resume');
   const focused = page.locator('.result-row.selected');
   assert.equal(await focused.getAttribute('data-session'), 'web-3');
-  assert.match(await focused.locator('.fixed-gutter').innerText(), /↶↻/);
+  assert.match(await focused.locator('.fixed-gutter').innerText(), /↶ ↻/);
   assert.match(await page.locator('#filter').innerText(), /Saved only/);
   if (!compact) await verifySpacing(page, false);
   await page.keyboard.press('Tab');
