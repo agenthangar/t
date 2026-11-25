@@ -3,6 +3,8 @@
 Receipts are retry evidence, never ownership. tmux, native process identity and
 cooperative acknowledgements establish each target again on every update.
 """
+from concurrent.futures import ThreadPoolExecutor
+import errno
 import fcntl
 import hashlib
 import itertools
@@ -12,15 +14,19 @@ from pathlib import Path
 import re
 import runpy
 import shlex
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = 1
+PROBE_WORKERS = 4
+_MODULE_LOCK = threading.Lock()
 _SOCKET_ALIASES = {}
 FILES = {
     'terminalhooks': ('libexec/t_terminal_close.py', 'libexec/t_runtime_dispatch.py'),
@@ -149,7 +155,9 @@ def tmux(socket, *args):
 
 
 def module(name):
-    return runpy.run_path(str(ROOT / 'libexec' / name))
+    # run_path temporarily changes sys.argv and sys.modules for the whole process.
+    with _MODULE_LOCK:
+        return runpy.run_path(str(ROOT / 'libexec' / name))
 
 
 def native(pid, deadline=None):
@@ -286,9 +294,8 @@ def socket_hints():
     hints = set()
     if os.environ.get('TMUX'):
         hints.add(os.environ['TMUX'].split(',')[0])
-    default = command(['tmux', 'display-message', '-p', '#{socket_path}'])
-    if default.returncode == 0:
-        hints.add(default.stdout.strip())
+    # tmux's default socket is in this same namespace. Discover it with the
+    # other endpoints so it also gets the listener check before calling tmux.
     for parent in {Path('/tmp'), Path(os.environ.get('TMUX_TMPDIR') or '/tmp')}:
         directory = parent / ('tmux-' + str(os.getuid()))
         if directory.is_dir() and not directory.is_symlink():
@@ -371,23 +378,54 @@ def same_socket(left, right):
         return False
 
 
-def server_inventory(hints):
-    """Choose tmux's spelling once per verified server; retain old namespaces."""
-    servers = {}
-    for hint in hints:
-        identity = socket_identity(hint)
-        if identity is None:
-            continue
-        if identity in servers:
-            servers[identity]['aliases'].add(hint)
+def socket_has_no_listener(path):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.setblocking(False)
+            return connection.connect_ex(path) in (errno.ECONNREFUSED, errno.ENOENT)
+    except OSError:
+        # Keep inspecting permission errors and other inconclusive probes.
+        return False
+
+
+def inspect_server(candidate):
+    identity, aliases = candidate
+    unavailable = None
+    inspected = set()
+    for hint in aliases:
+        if socket_has_no_listener(hint) or socket_identity(hint) != identity:
             continue
         result = tmux(hint, 'display-message', '-p', '#{socket_path}')
         reported = result.stdout.strip()
-        path = reported if not result.returncode and same_socket(hint, reported) else hint
-        servers[identity] = dict(socket=path, aliases={hint, path, os.path.realpath(path)}, identity=identity)
-    for identity, server in servers.items():
-        _SOCKET_ALIASES[identity] = server['aliases']
-    return list(servers.values())
+        preferred = reported if not result.returncode and socket_identity(reported) == identity else hint
+        for path in (preferred, hint):
+            if path in inspected or socket_identity(path) != identity:
+                continue
+            inspected.add(path)
+            server = dict(socket=path, aliases={*aliases, path, os.path.realpath(path)}, identity=identity)
+            try:
+                server['panes'] = panes(path)
+            except ValueError:
+                if unavailable is None and socket_identity(path) == identity:
+                    unavailable = dict(server, panes=None)
+                continue
+            if socket_identity(path) == identity:
+                return server
+    return unavailable
+
+
+def server_inventory(hints):
+    """Inspect each socket identity once, using surviving aliases as needed."""
+    servers = {}
+    for hint in hints:
+        identity = socket_identity(hint)
+        if identity is not None:
+            servers.setdefault(identity, []).append(hint)
+    with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
+        inventory = [server for server in pool.map(inspect_server, servers.items()) if server is not None]
+    for server in inventory:
+        _SOCKET_ALIASES[server['identity']] = server['aliases']
+    return inventory
 
 
 def socket_aliases(socket):
@@ -782,6 +820,31 @@ class Discovery:
 ADAPTERS = (Hooks(), Worker('terminalobserver'), Worker('recoverywatcher'), Discovery())
 
 
+def inspect_pane(context, socket, pane):
+    """Return a scoped deferral, or None when the pane is eligible."""
+    target = dict(component='terminalhooks', target=socket + ':' + pane['identity'],
+                  protocol=PROTOCOL, server=socket, session=pane['session'])
+    source = hook_source(socket, pane)
+    if not source:
+        return dict(target, target=pane['identity'], status='deferred',
+                    reason='runtime source cannot be verified; use normal attachment',
+                    reason_code='unverified-source', next_action='attach normally with t session open')
+    if not source_owned(source, context['roots']):
+        return dict(target, status='deferred', reason='pinned or unrelated runtime source is preserved',
+                    reason_code='pinned-source', next_action='update from the owning development worktree')
+    try:
+        if not same_owner(socket, pane, ROOT):
+            return dict(target, status='deferred', reason='supported live session owner could not be verified',
+                        reason_code='unverified-owner', next_action='attach normally after the session owner is ready')
+        preflight = Hooks().inspect(context, (socket, pane))
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.SubprocessError) as error:
+        return dict(target, status='deferred', reason='session changed during hook preflight: ' + str(error),
+                    reason_code='session-unavailable', next_action='retry t update after the session settles')
+    if preflight['status'] == 'deferred':
+        return dict(target, **preflight)
+    return None
+
+
 def reconcile(previous_sources=(), bootstrap_install=False):
     if (ROOT / '.git').is_file():
         return dict(protocol=PROTOCOL, source=str(ROOT), results=[dict(component='source', status='deferred',
@@ -792,48 +855,27 @@ def reconcile(previous_sources=(), bootstrap_install=False):
     context = dict(roots=roots, previous_sources=list(previous_sources), panes={})
     targets = {adapter.name: [] for adapter in ADAPTERS}
     results = []
-    for server in server_inventory(socket_hints()):
+    inventory = server_inventory(socket_hints())
+    with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
+        preflights = [
+            [pool.submit(inspect_pane, context, server['socket'], pane) for pane in server['panes'] or ()]
+            for server in inventory
+        ]
+    for server, checks in zip(inventory, preflights):
         socket = server['socket']
         eligible = []
-        try:
-            observed = panes(socket)
-        except ValueError:
+        if server['panes'] is None:
             results.append(dict(component='inventory', target=socket, status='deferred',
                                 reason='unreachable private tmux socket was preserved', protocol=PROTOCOL, server=socket,
                                 reason_code='socket-unreachable', next_action='check the tmux server, then retry t update'))
             continue
-        for pane in observed:
-            source = hook_source(socket, pane)
-            if not source:
-                results.append(dict(component='terminalhooks', target=pane['identity'], status='deferred',
-                                    reason='runtime source cannot be verified; use normal attachment', protocol=PROTOCOL, server=socket, session=pane['session'],
-                                    reason_code='unverified-source', next_action='attach normally with t session open'))
-            if source and not source_owned(source, roots):
-                results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
-                    server=socket, session=pane['session'], status='deferred', protocol=PROTOCOL,
-                    reason='pinned or unrelated runtime source is preserved', reason_code='pinned-source',
-                    next_action='update from the owning development worktree'))
-            if source_owned(source, roots):
-                if not same_owner(socket, pane, ROOT):
-                    results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
-                        server=socket, session=pane['session'], status='deferred', protocol=PROTOCOL,
-                        reason='supported live session owner could not be verified', reason_code='unverified-owner',
-                        next_action='attach normally after the session owner is ready'))
-                    continue
-                try:
-                    preflight = Hooks().inspect(context, (socket, pane))
-                except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.SubprocessError) as error:
-                    results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
-                        server=socket, session=pane['session'], protocol=PROTOCOL, status='deferred',
-                        reason='session changed during hook preflight: ' + str(error),
-                        reason_code='session-unavailable', next_action='retry t update after the session settles'))
-                    continue
-                if preflight['status'] == 'deferred':
-                    results.append(dict(component='terminalhooks', target=socket + ':' + pane['identity'],
-                        server=socket, session=pane['session'], protocol=PROTOCOL, **preflight))
-                    continue
-                eligible.append(pane)
-                targets['terminalhooks'].append((socket, pane))
+        for pane, check in zip(server['panes'], checks):
+            deferred = check.result()
+            if deferred is not None:
+                results.append(deferred)
+                continue
+            eligible.append(pane)
+            targets['terminalhooks'].append((socket, pane))
         if not eligible:
             continue
         context['panes'][socket] = eligible
@@ -853,7 +895,7 @@ def reconcile(previous_sources=(), bootstrap_install=False):
                 session_name=next(pane['session'] for pane in eligible if pane['identity'] == parts[2]))))
             seen.add(path)
         state = terminal['event_path'](socket, '').parent
-        for path in state.glob('*.runtime.json'):
+        for path in sorted(state.glob('*.runtime.json')):
             record = read(path)
             if same_socket(record.get('socket', ''), socket) and path not in seen and source_owned(record.get('source'), roots):
                 targets['terminalobserver'].append((path, socket, None))

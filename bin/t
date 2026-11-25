@@ -8991,14 +8991,18 @@ def _t_runtime_report(value):
             counts.setdefault(label, set()).add((item.get('server', ''), item.get('target', '')))
         print('t runtime: ' + '; '.join(label + (f' ({count})' if count > 1 else '')
                                        for label, targets in counts.items() for count in [len(targets)]), file=sys.stderr)
+        style = Style(tty=sys.stderr.isatty() and os.environ.get('CLICOLOR') != '0')
         reported = set()
         for item in changed:
             key = (item['component'], item.get('reason', ''), item.get('server', ''), item.get('session', ''), item.get('target', ''))
             if item['status'] in ('failed', 'deferred', 'restart-required') and key[1] and key not in reported:
                 location = item.get('session') or item.get('server') or item.get('target', '')
                 action = item.get('next_action', '')
-                print('  ' + (location + ' ' if location else '') + key[0] + ': ' + key[1]
-                      + ('; ' + action if action else ''), file=sys.stderr)
+                detail = ('  ' + (location + ' ' if location else '') + key[0] + ': ' + key[1]
+                          + ('; ' + action if action else ''))
+                if item['component'] == 'inventory' and item['status'] == 'deferred':
+                    detail = style.y + detail + style.r
+                print(detail, file=sys.stderr)
                 reported.add(key)
 
 
@@ -9034,7 +9038,17 @@ def _t_update_result(args, status, source=None, previous_sources=()):
     if status == "updated":
         _t_refs_refresh(_t_source_root())
     if not getattr(args, "_update_batch", False):
-        print(f"t: {status}", flush=True)
+        message = f"t: {status}"
+        if (runtime_result == 0 and sys.stdout.isatty() and not os.environ.get("T_UPDATE_QUIET")
+                and os.environ.get("TERM") != "dumb"):
+            style = Style(tty=os.environ.get("CLICOLOR") != "0")
+            label = "t is up to date" if status == "up to date" else "Updated t"
+            message = f"{style.g}✓{style.r} {label}"
+            if source:
+                revision = _t_release_version(source) or _t_source_git(source, "rev-parse", "--short", "HEAD")
+                if revision:
+                    message += f" {style.y}({revision}){style.r}"
+        print(message, flush=True)
     return runtime_result
 
 
@@ -15290,6 +15304,7 @@ PERIODIC CHECKS
   For a Git checkout, fetch and fast-forward canonical main before relinking.
   Already-current installations skip setup. Routine Git and setup output is quiet;
   --all reports one result per host. Required prompts and errors remain visible.
+  Helper refresh skips private tmux sockets with no server listening.
   --relink repeats the selected source without fetching; --dev makes development
   available only inside the current t worktree, without changing shared links,
   hooks or settings. Each worktree automatically uses its own CLI and shell helpers;

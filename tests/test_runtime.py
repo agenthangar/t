@@ -1,13 +1,16 @@
 """Runtime updates use cooperative owner-bound protocols in isolated state."""
 from copy import deepcopy
+import errno
 import fcntl
 import json
 import os
 from pathlib import Path
 import pty
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -171,15 +174,20 @@ def test_real_noop_update_repairs_hooks_without_agent_or_job_signals(lifecycle, 
     for hook in ('client-detached[50100]', 'client-attached[50100]', 'client-session-changed[50100]'):
         assert _run([str(base / 'bin/tmux'), 'set-hook', '-u', '-t', '=dev-repo-1:', hook], env=env, cwd=base).returncode == 0
     assert terminal['install']('dev-repo-1') == 0
-    socket = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', '=dev-repo-1:', '#{socket_path}'], env=env, cwd=base).stdout.strip()
+    live_socket = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', '=dev-repo-1:', '#{socket_path}'], env=env, cwd=base).stdout.strip()
+    stale_socket = Path(live_socket).with_name('stale')
+    with socket.socket(socket.AF_UNIX) as closed:
+        closed.bind(str(stale_socket))
     # Reconcile uses verified supplied socket hints, never another user's server.
-    monkeypatch.setattr(runtime, 'socket_hints', lambda: [socket])
+    monkeypatch.setattr(runtime, 'socket_hints', lambda: [str(stale_socket), live_socket])
     marker = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', '=dev-repo-1:', '#{pane_pid}'], env=env, cwd=base).stdout
     assert _run([str(base / 'bin/tmux'), 'set-hook', '-u', '-t', '=dev-repo-1:', 'client-detached[50100]'], env=env, cwd=base).returncode == 0
     job = subprocess.Popen(['sleep', '30'], cwd=base, env=env)
     try:
         first = runtime.reconcile()
         assert not first['failed'], first
+        assert stale_socket.is_socket()
+        assert all(item.get('server') != str(stale_socket) for item in first['results'])
         assert any(item['component'] == 'terminalhooks' and item['status'] == 'updated' for item in first['results']), json.dumps(first, indent=2)
         second = runtime.reconcile()
         assert not second['failed']
@@ -379,7 +387,6 @@ def test_required_missing_recovery_watcher_is_repaired_only_after_enable(lifecyc
 
 @pytest.fixture
 def alias_server(runtime, monkeypatch):
-    import socket
     import tempfile
     with tempfile.TemporaryDirectory(prefix='t-hotfix-', dir='/tmp') as directory:
         base = Path(directory)
@@ -389,6 +396,7 @@ def alias_server(runtime, monkeypatch):
         canonical, alias = str(real / 'private/server'), str(base / 'alias/private/server')
         server = socket.socket(socket.AF_UNIX)
         server.bind(canonical)
+        server.listen()
         def tmux(socket, *args):
             return subprocess.CompletedProcess(args, 0, canonical + '\n' if 'display-message' in args else '', '')
         monkeypatch.setattr(runtime, 'tmux', tmux)
@@ -399,16 +407,192 @@ def alias_server(runtime, monkeypatch):
 
 
 def test_server_inventory_deduplicates_verified_aliases_and_keeps_distinct_sockets(runtime, alias_server):
-    import socket
     canonical, alias = alias_server
     other = str(Path(canonical).parent.parent / 'server')
     with socket.socket(socket.AF_UNIX) as second:
         second.bind(other)
+        second.listen()
         inventory = runtime.server_inventory([alias, canonical, other])
         assert len(inventory) == 2
         assert inventory[0]['socket'] == canonical
         assert {alias, canonical} <= inventory[0]['aliases']
         assert inventory[0]['identity'] != inventory[1]['identity']
+
+
+def test_discovery_skips_refused_default_socket_but_reports_failed_live_inventory(runtime, alias_server, monkeypatch):
+    live, _ = alias_server
+    socket_root = Path(live).parents[2]
+    directory = socket_root / f'tmux-{os.getuid()}'
+    directory.mkdir(mode=0o700)
+    stale = directory / 'default'
+    with socket.socket(socket.AF_UNIX) as closed:
+        closed.bind(str(stale))
+    monkeypatch.setenv('TMUX_TMPDIR', str(socket_root))
+    monkeypatch.setenv('TMUX', live + ',1,0')
+    calls = []
+
+    def command(argv):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 1, '', 'could not inspect live server')
+
+    monkeypatch.setattr(runtime, 'command', command)
+    monkeypatch.setattr(runtime, 'tmux', lambda path, *args: command(['tmux', '-S', path, *args]))
+    hints = runtime.socket_hints()
+    assert {str(stale), live} <= set(hints)
+    monkeypatch.setattr(runtime, 'socket_hints', lambda: [str(stale), live])
+    monkeypatch.setattr(runtime.Discovery, 'inspect', lambda *a: runtime.outcome('current'))
+    report = runtime.reconcile()
+    assert stale.is_socket()
+    assert [call[:4] for call in calls] == [('tmux', '-S', live, 'display-message'), ('tmux', '-S', live, 'list-panes')]
+    rows = [row for row in report['results'] if row['component'] == 'inventory']
+    assert [(row['server'], row['reason_code']) for row in rows] == [(live, 'socket-unreachable')]
+    assert not report['failed']
+
+
+@pytest.mark.parametrize('error', [errno.EACCES, errno.EAGAIN, OSError(errno.ENAMETOOLONG, 'socket path too long')])
+def test_ambiguous_socket_probe_retains_scoped_diagnostic(runtime, alias_server, monkeypatch, error):
+    live, _ = alias_server
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def setblocking(self, value): assert not value
+        def connect_ex(self, path):
+            assert path == live
+            if isinstance(error, OSError):
+                raise error
+            return error
+
+    monkeypatch.setattr(socket, 'socket', lambda *args: Connection())
+    monkeypatch.setattr(runtime, 'socket_hints', lambda: [live])
+    monkeypatch.setattr(runtime, 'tmux', lambda *args: subprocess.CompletedProcess(args, 1, '', 'unavailable'))
+    monkeypatch.setattr(runtime.Discovery, 'inspect', lambda *a: runtime.outcome('current'))
+    report = runtime.reconcile()
+    assert [(row['server'], row['reason_code']) for row in report['results'] if row['component'] == 'inventory'] == [
+        (live, 'socket-unreachable')]
+    assert not report['failed']
+
+
+@pytest.mark.parametrize('stage', ['connect', 'inventory'])
+def test_disappearing_socket_alias_falls_back_to_surviving_name(runtime, alias_server, monkeypatch, stage):
+    canonical, alias = alias_server
+    directory_link = Path(alias).parents[1]
+    calls = []
+    probe = runtime.socket_has_no_listener
+
+    def listener(path):
+        if path == alias and stage == 'connect':
+            directory_link.unlink()
+        return probe(path)
+
+    def tmux(path, command, *args):
+        calls.append((path, command))
+        if command == 'list-panes' and path == alias:
+            directory_link.unlink()
+            return subprocess.CompletedProcess(args, 1, '', '')
+        return subprocess.CompletedProcess(args, 0, path + '\n' if command == 'display-message' else '', '')
+
+    monkeypatch.setattr(runtime, 'socket_has_no_listener', listener)
+    monkeypatch.setattr(runtime, 'tmux', tmux)
+    inventory = runtime.server_inventory([alias, canonical])
+    alias_calls = [(alias, 'display-message'), (alias, 'list-panes')] if stage == 'inventory' else []
+    assert calls == alias_calls + [(canonical, 'display-message'), (canonical, 'list-panes')]
+    assert [(row['socket'], row['panes']) for row in inventory] == [(canonical, [])]
+    assert inventory[0]['identity'] == runtime.socket_identity(canonical)
+    assert inventory[0]['aliases'] == {alias, canonical, os.path.realpath(canonical)}
+
+
+def test_inventory_bounds_parallel_socket_checks_and_preserves_order(runtime, monkeypatch):
+    paths = [f'/private/test-server-{index}' for index in range(6)]
+    entered = threading.Barrier(4, timeout=5)
+    second_finished = threading.Event()
+    workers = set()
+    lock = threading.Lock()
+
+    def probe(path):
+        with lock:
+            workers.add(threading.get_ident())
+        if path in paths[:4]:
+            entered.wait()
+        if path == paths[0]:
+            assert second_finished.wait(5)
+        return False
+
+    def panes(path):
+        if path == paths[1]:
+            second_finished.set()
+        return []
+
+    monkeypatch.setattr(runtime, 'socket_identity', lambda path: (1, paths.index(path)))
+    monkeypatch.setattr(runtime, 'socket_has_no_listener', probe)
+    monkeypatch.setattr(runtime, 'tmux', lambda path, *args: subprocess.CompletedProcess(args, 0, path, ''))
+    monkeypatch.setattr(runtime, 'panes', panes)
+    assert [row['socket'] for row in runtime.server_inventory(paths)] == paths
+    assert len(workers) == 4
+
+
+def test_reconcile_bounds_owner_checks_and_serializes_hook_writes(runtime, monkeypatch):
+    panes = [dict(identity=f'${index}', session=f'dev-r-{index}') for index in range(6)]
+    entered = threading.Barrier(4, timeout=5)
+    second_finished = threading.Event()
+    main_thread = threading.get_ident()
+    workers = set()
+    lock = threading.Lock()
+    loads = []
+    operations = []
+
+    def owner(server, pane, source):
+        worker = threading.get_ident()
+        if worker == main_thread:
+            operations.append(('recheck', pane['session']))
+            return True
+        with lock:
+            workers.add(worker)
+        if pane in panes[:4]:
+            entered.wait()
+        runtime.module('t_terminal_close.py')
+        if pane == panes[0]:
+            assert second_finished.wait(5)
+        elif pane == panes[1]:
+            second_finished.set()
+        return pane not in panes[:2]
+
+    def install(session, **options):
+        assert threading.get_ident() == main_thread
+        operations.append(('install', session))
+        return 0
+
+    def module(path):
+        with lock:
+            loads.append(path)
+            assert len(loads) == 1
+        try:
+            time.sleep(.005)
+            return dict(install=install, event_path=lambda *args: runtime.ROOT / 'test.events')
+        finally:
+            with lock:
+                loads.pop()
+
+    inventory = [dict(socket='/private/server1', panes=panes[:2]), dict(socket='/private/server2', panes=panes[2:])]
+    monkeypatch.setattr(runtime, 'server_inventory', lambda *args: inventory)
+    monkeypatch.setattr(runtime, 'socket_hints', lambda: [])
+    monkeypatch.setattr(runtime, 'hook_source', lambda *args: str(runtime.ROOT))
+    monkeypatch.setattr(runtime, 'same_owner', owner)
+    monkeypatch.setattr(runtime, 'legacy_workers', lambda *args: [])
+    monkeypatch.setattr(runtime.runpy, 'run_path', module)
+    monkeypatch.setattr(runtime, 'tmux', lambda path, *args: subprocess.CompletedProcess(args, 0, 'T_RECOVERY_DISABLE=1\n', ''))
+    monkeypatch.setattr(runtime.Hooks, 'inspect', lambda self, context, target:
+                        runtime.outcome('current' if ('install', target[1]['session']) in operations else 'updated'))
+    monkeypatch.setattr(runtime.Discovery, 'inspect', lambda *args: runtime.outcome('current'))
+
+    report = runtime.reconcile()
+    assert len(workers) == 4
+    assert not report['failed']
+    hooks = [row for row in report['results'] if row['component'] == 'terminalhooks']
+    assert [(row['session'], row['status']) for row in hooks] == [
+        (pane['session'], 'deferred' if pane in panes[:2] else 'updated') for pane in panes]
+    assert operations == [(action, pane['session']) for pane in panes[2:] for action in ('recheck', 'install')]
+    assert runtime.read(runtime.private_root() / 'last-reconcile.json') == report
 
 
 def test_exact_owned_historical_hooks_parse_without_user_wrapper_adoption(runtime, alias_server):
@@ -556,9 +740,8 @@ def test_attachment_cooperatively_adopts_old_format_held_observer(runtime, sourc
 
 def test_disappearing_hook_target_retains_scoped_receipt_and_reconciles_other_components(runtime, monkeypatch):
     pane = dict(identity='$1', session='dev-r-1', pane='%1', pane_pid='123', workspace='/work', dead='0')
-    monkeypatch.setattr(runtime, 'server_inventory', lambda *a: [dict(socket='/private/server')])
+    monkeypatch.setattr(runtime, 'server_inventory', lambda *a: [dict(socket='/private/server', panes=[pane])])
     monkeypatch.setattr(runtime, 'socket_hints', lambda: [])
-    monkeypatch.setattr(runtime, 'panes', lambda *a: [pane])
     monkeypatch.setattr(runtime, 'hook_source', lambda *a: str(runtime.ROOT))
     monkeypatch.setattr(runtime, 'same_owner', lambda *a: True)
     monkeypatch.setattr(runtime.Hooks, 'inspect', lambda *a: (_ for _ in ()).throw(ValueError('session disappeared')))
