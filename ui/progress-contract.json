@@ -425,6 +425,22 @@
       "kind": "passthrough",
       "reason": "The native agent owns terminal rendering, input, progress and approval prompts."
     },
+    "libexec/t_recovery_picker.py:command:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "The shared fzf picker renders the recovery list and receives terminal input until selection or cancellation."
+    },
+    "libexec/t_recovery_picker.py:command:subprocess.call": {
+      "kind": "passthrough",
+      "reason": "The selected conversations hand off to terminal tab launchers or the interactive session attach command."
+    },
+    "libexec/t_session_batch.py:run_jobs:subprocess.Popen": {
+      "kind": "phase",
+      "reason": "The batch runner captures worker output and reports completed preparations with one Resuming counter."
+    },
+    "libexec/t_session_batch.py:run_jobs:time.sleep": {
+      "kind": "phase",
+      "reason": "The batch runner polls for completed preparations and updates the same Resuming counter."
+    },
     "libexec/t_client_stop.py:run:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded ownership probes run in the private close and recovery workers. The callers own the terminal and render diagnostics."
@@ -783,11 +799,15 @@
     },
     "bin/t:_resume_picker_stage:subprocess.run": {
       "kind": "protocol",
-      "reason": "Builds an immutable snapshot with a bounded shell child while the resume picker or refresh rail owns the terminal."
+      "reason": "Builds an immutable snapshot with a bounded shell child while the resume picker owns the terminal."
+    },
+    "bin/t:_resume_picker_update:time.sleep": {
+      "kind": "protocol",
+      "reason": "The resume discovery worker waits up to five seconds for the picker to adopt a staged update. The picker displays its own refresh status."
     },
     "bin/t:_resume_picker_observe:time.sleep": {
       "kind": "background",
-      "reason": "The bounded discovery observer polls in the background while the active picker displays the refresh status."
+      "reason": "The worker watches for refresh requests and observes bounded discovery without writing to the picker's terminal."
     },
     "libexec/t_session_models.py:run:subprocess.call": {
       "kind": "passthrough",

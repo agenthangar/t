@@ -1960,8 +1960,9 @@ Ctrl-T cycles status, Ctrl-D hides merged PRs, Ctrl-R/G/O match repo/agent/host,
 Ctrl-Y cycles sort, Ctrl-S pauses/resumes sorting, and Ctrl-U refreshes.
 
 `t system recovery run --all` requests a fresh pass from the running background
-agent and prints each tracked session's result. It works during the current login
-and after restart. It preserves pauses, explicit closes, launch validation and
+agent and prints each tracked session's result. A terminal shows `Checking recovery`
+while waiting. It works during the current login and after restart. It preserves
+pauses, explicit closes, launch validation and
 uncertain-delivery checks. The command never enables or restarts the service.
 
 `t session recovery status [repo] [slot] [--json]` is read-only.

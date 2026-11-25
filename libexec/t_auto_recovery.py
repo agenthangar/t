@@ -839,18 +839,20 @@ def request_pass(timeout=30):
     write(request, {'instance': instance, 'at': time.time()})
     deadline = time.monotonic()+timeout
     try:
-        while time.monotonic() < deadline:
-            if receipt.exists():
-                result = read(receipt)
-                if result.get('error'):
-                    raise ValueError(result['error'])
-                return result['sessions']
-            if not enabled() or manually_stopped():
-                raise ValueError('Recovery agent stopped before completing the check.')
-            current = read(root()/'heartbeat.json')
-            if current.get('instance') != instance:
-                raise ValueError('Recovery agent changed. Run the check again.')
-            time.sleep(.1)
+        _spinner = helper('t_progress')['spinner']
+        with _spinner('Checking recovery'):
+            while time.monotonic() < deadline:
+                if receipt.exists():
+                    result = read(receipt)
+                    if result.get('error'):
+                        raise ValueError(result['error'])
+                    return result['sessions']
+                if not enabled() or manually_stopped():
+                    raise ValueError('Recovery agent stopped before completing the check.')
+                current = read(root()/'heartbeat.json')
+                if current.get('instance') != instance:
+                    raise ValueError('Recovery agent changed. Run the check again.')
+                time.sleep(.1)
         raise ValueError('Recovery check timed out. Run t system recovery status.')
     finally:
         request.unlink(missing_ok=True)
