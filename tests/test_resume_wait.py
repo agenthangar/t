@@ -225,7 +225,7 @@ def test_resume_discovery_notice_survives_auth_and_filter_changes(filters, tmp_p
         assert 'Older or incomplete results' in header
 
 
-@pytest.mark.parametrize('outcome', ['unavailable', 'timeout', 'complete'])
+@pytest.mark.parametrize('outcome', ['unavailable', 'timeout', 'complete', 'slow'])
 def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path, outcome):
     (tmp_path / 'discovery-status').write_text(json.dumps(dict(hosts=[dict(host='local', status='current')])))
     (tmp_path / 'refresh-enabled').touch()
@@ -260,14 +260,16 @@ def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path,
     monkeypatch.setattr(t_mod, '_resume_picker_stage', stage)
     monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(discover=discover, resume_health=lambda v: v))
     monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
-    monkeypatch.setattr(t_mod.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + (dt if outcome == 'complete' else 31)))
+    delay = {'unavailable': 31, 'timeout': 126, 'slow': 45}
+    monkeypatch.setattr(t_mod.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + delay.get(outcome, dt)))
 
     assert t_mod._resume_picker_observe(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == 0
     assert updates[0]['hosts'][0]['status'] == 'refreshing'
-    assert updates[1]['hosts'][0]['status'] == ('current' if outcome == 'complete' else 'timed out')
-    assert source.read_text() == ('new source' if outcome == 'complete' else 'old source')
+    complete = outcome in ('complete', 'slow')
+    assert updates[1]['hosts'][0]['status'] == ('current' if complete else 'timed out')
+    assert source.read_text() == ('new source' if complete else 'old source')
     assert calls[0]['refresh']
-    if outcome == 'complete':
+    if complete:
         assert calls[1]['observe']
 
 
