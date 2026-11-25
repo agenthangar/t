@@ -28,6 +28,82 @@ def discovery_retirements(t_mod, monkeypatch):
     return calls
 
 
+@pytest.mark.parametrize('tty,environment,dim', [
+    (True, {}, True), (False, {}, False), (True, {'NO_COLOR': ''}, False),
+    (True, {'TERM': 'dumb'}, False), (True, {'CLICOLOR': '0'}, False),
+])
+def test_runtime_report_dims_deferred_inventory_details(t_mod, monkeypatch, capsys, tty, environment, dim):
+    monkeypatch.setattr(t_mod.sys.stderr, 'isatty', lambda: tty)
+    monkeypatch.setenv('TERM', 'xterm')
+    for name in ('NO_COLOR', 'CLICOLOR'):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    t_mod._t_runtime_report({'results': [
+        dict(component='inventory', status='deferred', server='/tmp/tmux-test',
+             reason='unreachable private tmux socket was preserved', next_action='check the tmux server'),
+        dict(component='terminalhooks', status='failed', session='dev-test-1', reason='hook refresh failed'),
+    ]})
+
+    detail = '  /tmp/tmux-test inventory: unreachable private tmux socket was preserved; check the tmux server'
+    assert capsys.readouterr().err.splitlines() == [
+        't runtime: deferred inventory; failed terminalhooks',
+        f'\033[2m{detail}\033[0m' if dim else detail,
+        '  dev-test-1 terminalhooks: hook refresh failed',
+    ]
+
+
+@pytest.mark.parametrize('status,tty,environment,runtime_result,expected', [
+    ('up to date', True, {}, 0, '\033[32m✓\033[0m t is up to date'),
+    ('updated', True, {}, 0, '\033[32m✓\033[0m Updated t'),
+    ('up to date', True, {'NO_COLOR': ''}, 0, '✓ t is up to date'),
+    ('updated', True, {'CLICOLOR': '0'}, 0, '✓ Updated t'),
+    ('up to date', True, {'TERM': 'dumb'}, 0, 't: up to date'),
+    ('updated', True, {'T_UPDATE_QUIET': '1'}, 0, 't: updated'),
+    ('up to date', False, {'CLICOLOR': '1'}, 0, 't: up to date'),
+    ('updated', True, {}, 1, 't: updated'),
+])
+def test_update_result_styles_interactive_success(t_mod, monkeypatch, capsys, status, tty, environment,
+                                                  runtime_result, expected):
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: tty)
+    monkeypatch.setenv('TERM', 'xterm')
+    for name in ('NO_COLOR', 'CLICOLOR', 'T_UPDATE_QUIET'):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(t_mod, '_t_reconcile_runtime', lambda *args: runtime_result)
+    monkeypatch.setattr(t_mod, '_t_refs_refresh', lambda *args: None)
+
+    args = argparse.Namespace()
+    assert t_mod._t_update_result(args, status, '/sample/source') == runtime_result
+    assert args._update_status == status
+    assert capsys.readouterr().out == expected + '\n'
+
+
+@pytest.mark.parametrize('release,revision', [('v0.6.1', 'v0.6.1'), (None, '123abcd')])
+def test_update_result_displays_revision_of_result_source(t_mod, monkeypatch, capsys, tmp_path, release, revision):
+    source = tmp_path / 'installed'
+    source.mkdir()
+    if release:
+        (source / '.t-release-version').write_text(release + '\n')
+        (source / '.t-install-version').write_text('1\n')
+
+    def git(root, *args):
+        assert not release and root == str(source) and args == ('rev-parse', '--short', 'HEAD')
+        return revision
+
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setenv('TERM', 'xterm')
+    for name in ('NO_COLOR', 'CLICOLOR', 'T_UPDATE_QUIET'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(t_mod, '_t_source_root', lambda: '/old/executable')
+    monkeypatch.setattr(t_mod, '_t_source_git', git)
+
+    assert t_mod._t_update_result(argparse.Namespace(), 'up to date', str(source)) == 0
+    assert capsys.readouterr().out == f'\033[32m✓\033[0m t is up to date \033[2m({revision})\033[0m\n'
+
+
 @pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
 def test_update_all_alias_and_exclusive_modes(t_mod, prefix):
     parser = t_mod.build_parser()
