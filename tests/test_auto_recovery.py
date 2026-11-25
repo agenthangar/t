@@ -3,13 +3,16 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
 import pytest
 
 from conftest import REPO_ROOT, load_script
+from _install_helpers import git
 from test_recovery_tmux import terminal, until
 
 SID = '01234567-89ab-cdef-0123-456789abcdef'
@@ -709,6 +712,124 @@ _dev_fg_rows() {{ :; }}
     monkeypatch.setattr(auto.Runtime, 'live', lambda self: [dict(agent='claude', sid=first[3])])
     auto.Engine().tick()
     assert auto.holding_panes() == [third]
+
+
+@pytest.mark.skipif(not shutil.which('tmux') or not shutil.which('zsh'), reason='tmux and zsh required')
+def test_holding_resume_uses_controller_helpers_in_older_worktree(terminal, monkeypatch):
+    _, tmux, tmux_command, env, home = terminal
+    installed = home/'installed'
+    installed.mkdir()
+    # Commit the selector assets to create a real related worktree. The older
+    # source loads normally, but lacks the recovery function used on Resume.
+    for name in ('.t-install-version', 't.plugin.zsh'):
+        shutil.copy2(REPO_ROOT/name, installed/name)
+    for name in ('bin', 'libexec', 'ui', 'zsh'):
+        shutil.copytree(REPO_ROOT/name, installed/name, ignore=shutil.ignore_patterns('__pycache__'))
+    git('init', '-qb', 'main', cwd=installed)
+    git('add', '.t-install-version', 'bin/t', 't.plugin.zsh', 'libexec/t_dev.py', 'libexec/t_repos.py',
+        cwd=installed)
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false',
+        'commit', '-qm', 'Install selector', cwd=installed)
+    work = home/'older worktree'
+    git('worktree', 'add', '-qb', 'dev/t-old', str(work), cwd=installed)
+    for name in ('ui', 'zsh'):
+        shutil.copytree(installed/name, work/name)
+    resume = work/'zsh/resume.zsh'
+    old_helpers = resume.read_text()
+    assert '_t_auto_resume_holding_claimed()' in old_helpers
+    resume.write_text(old_helpers.replace('_t_auto_resume_holding_claimed()', '_fixture_missing_helper()'))
+
+    auto = load_script(installed/'libexec/t_auto_recovery.py', 'holding_from_installed')
+    bins = home/'bin'
+    bins.mkdir()
+    (bins/'t').symlink_to(installed/'bin/t')
+    tmux_wrapper = bins/'tmux'
+    tmux_wrapper.write_text('#!/bin/sh\nexec ' + auto.shlex.join(tmux_command) + ' "$@"\n')
+    tmux_wrapper.chmod(0o755)
+    env.update(PATH=str(bins)+os.pathsep+env['PATH'], CODEX_HOME=str(home/'codex-home'),
+               T_LOCAL_RC=str(home/'local.zsh'))
+    for name in ('PATH', 'CODEX_HOME', 'T_LOCAL_RC'):
+        monkeypatch.setenv(name, env[name])
+    for name in ('T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER'):
+        monkeypatch.delenv(name, raising=False)
+    (home/'local.zsh').touch()
+    (home/'.zshrc').write_text(f'''
+export PATH="$HOME/bin:$PATH"
+source {auto.shlex.quote(str(installed/'t.plugin.zsh'))}
+_dev_fg_rows() {{ :; }}
+''')
+    probe = subprocess.run(['zsh', '-lic', 'print -r -- "$T_HOME"; (( $+functions[_t_auto_resume_holding_claimed] ))'],
+                           cwd=work, env=env, capture_output=True, text=True, timeout=10)
+    assert probe.returncode == 1 and probe.stdout.strip() == str(work)
+
+    resumed = home/'resumed.jsonl'
+    codex = bins/'codex'
+    codex.write_text(f'''#!{sys.executable}
+import fcntl, json, os, runpy, socket, sys, time
+from pathlib import Path
+
+if sys.argv[1] == 'app-server':
+    for line in sys.stdin:
+        message = json.loads(line)
+        params = message['params']
+        assert message['method'] == 'thread/resume'
+        sid = params['threadId']
+        writer = open(Path(os.environ['CODEX_HOME'])/'thread-writer-locks'/(sid + '.lock'), 'w')
+        fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        reply = {{'thread': {{'id': sid, 'cwd': os.getcwd()}}, 'sandbox': {{'type': 'readOnly'}},
+                  'approvalPolicy': params['approvalPolicy']}}
+        with open({str(resumed)!r}, 'a') as record:
+            record.write(json.dumps([os.environ['TMUX_PANE'], os.getcwd(), params]) + '\\n')
+        print(json.dumps({{'id': message['id'], 'result': reply}}), flush=True)
+else:
+    _, remote, verb, sid = sys.argv[1:]
+    assert verb == 'resume'
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(remote.removeprefix('unix://'))
+    peer = runpy.run_path({str(installed/'libexec/t_codex_socket.py')!r})['WebSocket'](
+        sock.makefile('rb'), sock.makefile('wb'), time.monotonic()+15)
+    peer.handshake()
+    peer.send(json.dumps({{'id': 1, 'method': 'thread/resume', 'params': {{'threadId': sid}}}}).encode())
+    assert json.loads(peer.receive())['result']['thread']['id'] == sid
+    print('Conversation resumed', flush=True)
+    while os.read(0, 1):
+        pass
+''')
+    codex.chmod(0o755)
+    codex_home = Path(env['CODEX_HOME'])
+    (codex_home/'thread-writer-locks').mkdir(parents=True)
+    rollout = codex_home/f'sessions/2026/11/25/rollout-2026-11-25T00-00-00-{SID}.jsonl'
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(json.dumps(dict(type='session_meta', payload=dict(id=SID, cwd=str(work),
+                                                                         cli_version='0.160.0'))) + '\n')
+
+    assert tmux('new-session', '-d', '-s', 'anchor', 'sleep', '60').returncode == 0
+    socket = tmux('display-message', '-p', '-t', '=anchor:', '#{socket_path}').stdout.strip()
+    monkeypatch.setenv('TMUX', socket+',0,0')
+    enable(auto)
+    row = session(auto, home, agent='codex', cwd=str(work), workspace=auto.workspace(work),
+                  transcript=str(rollout), phase='unknown', safe=False)
+    auto.Runtime().hold(row)
+    [(holding_socket, name, pane, sid)] = auto.holding_panes()
+    assert (holding_socket, name, sid) == (socket, row['session'], SID)
+
+    def visible(label):
+        def capture():
+            return tmux('capture-pane', '-p', '-t', pane).stdout
+        until(lambda: label in capture(), timeout=10, detail=capture)
+
+    visible('Recovery holding pane')
+    assert tmux('send-keys', '-t', pane, 'Enter').returncode == 0
+    visible('Launch settings')
+    assert tmux('send-keys', '-t', pane, 'Down', 'Enter').returncode == 0
+    visible('Review resume')
+    assert tmux('send-keys', '-t', pane, 'Up', 'Enter').returncode == 0
+    visible('Conversation resumed')
+    assert not auto.holding_panes()
+    assert tmux('display-message', '-p', '-t', pane, '#{session_name}|#{pane_id}|#{pane_current_path}').stdout.strip() == (
+        f'{name}|{pane}|{work}')
+    assert [json.loads(line) for line in resumed.read_text().splitlines()] == [
+        [pane, str(work), {'threadId': SID, 'sandbox': 'read-only', 'approvalPolicy': 'on-request'}]]
 
 
 def test_holding_notice_explains_local_scan_failure_without_ssh_diagnostics(auto):
