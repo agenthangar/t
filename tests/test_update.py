@@ -81,6 +81,29 @@ def test_update_result_styles_interactive_success(t_mod, monkeypatch, capsys, st
     assert capsys.readouterr().out == expected + '\n'
 
 
+@pytest.mark.parametrize('release,revision', [('v0.6.1', 'v0.6.1'), (None, '123abcd')])
+def test_update_result_displays_revision_of_result_source(t_mod, monkeypatch, capsys, tmp_path, release, revision):
+    source = tmp_path / 'installed'
+    source.mkdir()
+    if release:
+        (source / '.t-release-version').write_text(release + '\n')
+        (source / '.t-install-version').write_text('1\n')
+
+    def git(root, *args):
+        assert not release and root == str(source) and args == ('rev-parse', '--short', 'HEAD')
+        return revision
+
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setenv('TERM', 'xterm')
+    for name in ('NO_COLOR', 'CLICOLOR', 'T_UPDATE_QUIET'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(t_mod, '_t_source_root', lambda: '/old/executable')
+    monkeypatch.setattr(t_mod, '_t_source_git', git)
+
+    assert t_mod._t_update_result(argparse.Namespace(), 'up to date', str(source)) == 0
+    assert capsys.readouterr().out == f'\033[32m✓\033[0m t is up to date \033[2m({revision})\033[0m\n'
+
+
 @pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
 def test_update_all_alias_and_exclusive_modes(t_mod, prefix):
     parser = t_mod.build_parser()

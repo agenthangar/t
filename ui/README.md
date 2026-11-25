@@ -418,7 +418,8 @@ per host: `up to date`, `updated`, or `failed (exit N)`. Suppress routine Git/se
 chatter while streaming required prompts and actionable diagnostics. Quiet local
 Git checks use the shared terminal spinner; redirected output stays static.
 Successful local updates show a green check beside `t is up to date` or `Updated t`
-on an interactive terminal. The check stays visible with color disabled. Quiet,
+on an interactive terminal, followed by the installed release version or Git short
+commit when available. The check stays visible with color disabled. Quiet,
 redirected and dumb-terminal output use the plain `t: up to date` and `t: updated`
 lines consumed by remote updates.
 Already-current installations skip setup; failed setup is retried. `--relink`

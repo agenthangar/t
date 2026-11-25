@@ -9061,6 +9061,10 @@ def _t_update_result(args, status, source=None, previous_sources=()):
             style = Style(tty=os.environ.get("CLICOLOR") != "0")
             label = "t is up to date" if status == "up to date" else "Updated t"
             message = f"{style.g}✓{style.r} {label}"
+            if source:
+                revision = _t_release_version(source) or _t_source_git(source, "rev-parse", "--short", "HEAD")
+                if revision:
+                    message += f" {style.y}({revision}){style.r}"
         print(message, flush=True)
     return runtime_result
 
