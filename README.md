@@ -33,6 +33,23 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
+## Install
+
+With Homebrew on macOS or Linux, run:
+
+```sh
+brew install agenthangar/tap/t
+```
+
+To install the latest tagged release directly, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3
+```
+
+Run `t` in a terminal to start guided setup. See [prerequisites and setup](#setup)
+for dependencies and shell setup details.
+
 ## Work from anywhere
 
 - **Start with your agent.** `t session open my-project` gives Claude Code an isolated
@@ -60,7 +77,7 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 **Coming soon:** [Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
 
-## Install
+## Setup
 
 You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pickers,
 `gh` for GitHub integration, and `rsync`/SSH for moving sessions between hosts.
@@ -72,16 +89,9 @@ the [playground guide](docs/playground.md).
 On macOS, the [rnnr menu-bar companion](apps/rnnr/README.md) shows detached
 sessions and opens the existing Terminal flows. Build it from this checkout.
 
-With Homebrew:
-
-```sh
-brew install agenthangar/tap/t
-t
-```
-
-Homebrew installs the formula without changing your home directory. Run `t` in a
-terminal for guided setup: choose agents, review shell and agent integrations,
-select repositories, and start a session. Missing agent tools are optional installs.
+Homebrew installs the formula without changing your home directory. Guided setup
+lets you choose agents, review shell and agent integrations, select repositories,
+and start a session. Missing agent tools are optional installs.
 The review shows the commands and configuration changes before applying them.
 Setup and terminal session launch find native agents in `~/.local/bin` before that
 directory is on your shell's `PATH`. Choose agent sign-ins separately: select
@@ -118,14 +128,9 @@ output never start onboarding. Bare `t` without a terminal prints help.
 If an older installation shadows Homebrew, `type -a t` identifies which copy your
 shell is running. `t system integrate` remains available for explicit maintenance.
 
-Or install a versioned release directly:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3
-```
-
-This installs the latest tagged release under `~/.local/share/t/releases/` and
-links the command into `~/bin`. No repository checkout or pip packages are needed.
+The direct release installer places the latest tagged release under
+`~/.local/share/t/releases/` and links the command into `~/bin`. No repository
+checkout or pip packages are needed.
 The installer verifies the release archive's SHA-256 checksum before unpacking it.
 Set `XDG_DATA_HOME` or `T_INSTALL_DIR` to choose another installation location.
 You can also download and inspect the installer before running it with Python 3.
