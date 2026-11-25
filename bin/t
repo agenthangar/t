@@ -9055,7 +9055,13 @@ def _t_update_result(args, status, source=None, previous_sources=()):
     if status == "updated":
         _t_refs_refresh(_t_source_root())
     if not getattr(args, "_update_batch", False):
-        print(f"t: {status}", flush=True)
+        message = f"t: {status}"
+        if (runtime_result == 0 and sys.stdout.isatty() and not os.environ.get("T_UPDATE_QUIET")
+                and os.environ.get("TERM") != "dumb"):
+            style = Style(tty=os.environ.get("CLICOLOR") != "0")
+            label = "t is up to date" if status == "up to date" else "Updated t"
+            message = f"{style.g}✓{style.r} {label}"
+        print(message, flush=True)
     return runtime_result
 
 

@@ -417,6 +417,10 @@ SSH targets in alias order (duplicate targets run once). Report one concise resu
 per host: `up to date`, `updated`, or `failed (exit N)`. Suppress routine Git/setup
 chatter while streaming required prompts and actionable diagnostics. Quiet local
 Git checks use the shared terminal spinner; redirected output stays static.
+Successful local updates show a green check beside `t is up to date` or `Updated t`
+on an interactive terminal. The check stays visible with color disabled. Quiet,
+redirected and dumb-terminal output use the plain `t: up to date` and `t: updated`
+lines consumed by remote updates.
 Already-current installations skip setup; failed setup is retried. `--relink`
 explicitly repairs links/integrations and reviews deferred instruction migration.
 `--local` still switches sources when another source is installed.

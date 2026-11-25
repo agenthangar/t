@@ -54,6 +54,33 @@ def test_runtime_report_dims_deferred_inventory_details(t_mod, monkeypatch, caps
     ]
 
 
+@pytest.mark.parametrize('status,tty,environment,runtime_result,expected', [
+    ('up to date', True, {}, 0, '\033[32m✓\033[0m t is up to date'),
+    ('updated', True, {}, 0, '\033[32m✓\033[0m Updated t'),
+    ('up to date', True, {'NO_COLOR': ''}, 0, '✓ t is up to date'),
+    ('updated', True, {'CLICOLOR': '0'}, 0, '✓ Updated t'),
+    ('up to date', True, {'TERM': 'dumb'}, 0, 't: up to date'),
+    ('updated', True, {'T_UPDATE_QUIET': '1'}, 0, 't: updated'),
+    ('up to date', False, {'CLICOLOR': '1'}, 0, 't: up to date'),
+    ('updated', True, {}, 1, 't: updated'),
+])
+def test_update_result_styles_interactive_success(t_mod, monkeypatch, capsys, status, tty, environment,
+                                                  runtime_result, expected):
+    monkeypatch.setattr(t_mod.sys.stdout, 'isatty', lambda: tty)
+    monkeypatch.setenv('TERM', 'xterm')
+    for name in ('NO_COLOR', 'CLICOLOR', 'T_UPDATE_QUIET'):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(t_mod, '_t_reconcile_runtime', lambda *args: runtime_result)
+    monkeypatch.setattr(t_mod, '_t_refs_refresh', lambda *args: None)
+
+    args = argparse.Namespace()
+    assert t_mod._t_update_result(args, status, '/sample/source') == runtime_result
+    assert args._update_status == status
+    assert capsys.readouterr().out == expected + '\n'
+
+
 @pytest.mark.parametrize("prefix", [["system", "update"], ["update"]])
 def test_update_all_alias_and_exclusive_modes(t_mod, prefix):
     parser = t_mod.build_parser()
