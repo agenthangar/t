@@ -681,7 +681,11 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
     pending = {host['host'] for host in status['hosts'] if host['status'] == 'refreshing'}
     cache, cfg = _session_discovery(), Config()
     picker = Picker(0)
-    deadline = time.monotonic() + 30
+    # Keep observing until the discovery service's 120-second collector can
+    # settle. The picker remains interactive throughout the wait.
+    observe_timeout = 125
+    started = time.monotonic()
+    deadline = started + (observe_timeout if pending else 30)
     manual = force = False
     try:
         while pending or manual or (directory / 'refresh-enabled').is_file():
@@ -689,7 +693,8 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                 request.unlink(missing_ok=True)
                 if not manual:
                     manual = force = True
-                    deadline = time.monotonic() + 30
+                    started = time.monotonic()
+                    deadline = started + 30
                     status = json.loads(status_file.read_text())
                     status.pop('failed', None)
                     status.pop('unavailable', None)
@@ -726,6 +731,8 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                                     if host['status'] == 'refreshing' and host['host'] not in pending else host
                                     for host in updated['hosts']]
             refreshing = {host['host'] for host in updated['hosts'] if host['status'] == 'refreshing'}
+            if refreshing:
+                deadline = started + observe_timeout
             if pending - refreshing or (manual and not refreshing):
                 _resume_picker_update(directory, picker, updated,
                     lambda snapshot: _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args))

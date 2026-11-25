@@ -30,7 +30,7 @@ _LIFECYCLE = runpy.run_path(str(Path(__file__).with_name("t_lifecycle.py")))
 _CLIENT_STOP = runpy.run_path(str(Path(__file__).with_name('t_client_stop.py')))
 
 VERSION = 1
-PARSER_VERSION = 8
+PARSER_VERSION = 9
 _DISPLAY = runpy.run_path(str(Path(__file__).with_name('t_session_details.py')))
 _CACHE_REQUEST = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))['request']
 _RESUME_SOURCE = runpy.run_path(str(Path(__file__).with_name('t_resume_source.py')))
@@ -375,7 +375,7 @@ def pr_refs(text):
             for repo, number in PR_URL.findall(text)]
 
 
-JS_STRING = r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"
+JS_STRING = r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"
 
 
 def js_structure(source):
@@ -402,8 +402,15 @@ def literal_commands(source):
     if len(objects) != 1:
         return []
     start, end, masked = objects[0]
-    if not (re.fullmatch(r'\s*text\s*\(\s*await\s+tools\.exec_command\s*\(\s*', masked[:start])
-            and re.fullmatch(r'\s*\)\s*\)\s*;?\s*', masked[end + 1:])):
+    prefix, suffix = masked[:start], masked[end + 1:]
+    assignment = re.fullmatch(r'\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+tools\.exec_command\s*\(\s*', prefix)
+    if assignment:
+        result = re.escape(assignment[1])
+        wrapped = re.fullmatch(r'\s*\)\s*;\s*text\s*\(\s*' + result + r'\s*\)\s*;?\s*', suffix)
+    else:
+        wrapped = (re.fullmatch(r'\s*text\s*\(\s*await\s+tools\.exec_command\s*\(\s*', prefix)
+                   and re.fullmatch(r'\s*\)\s*\)\s*;?\s*', suffix))
+    if not wrapped:
         return []
     obj = masked[start + 1:end]
     properties = [match for match in re.finditer(r'\bcmd\s*:', obj)
@@ -414,6 +421,9 @@ def literal_commands(source):
     value = re.match(r'\s*(' + JS_STRING + ')', source[value_start:end], re.S)
     if not value or not re.match(r'\s*(?:,|$)', masked[value_start + value.end():end]):
         return []
+    if value[1].startswith('`'):
+        template = value[1][1:-1]
+        return [template] if '${' not in template and '\\' not in template else []
     try:
         return [ast.literal_eval(value[1])]
     except (ValueError, SyntaxError):
@@ -441,13 +451,19 @@ def poll_key(call, args):
         match = re.fullmatch(
             r'\s*text\(await tools\.write_stdin\(\s*\{([^{}]*)\}\s*\)\s*\)\s*;?'
             r'(\s*text\(await tools\.exec_command\(\s*\{[^{}]*\}\s*\)\s*\)\s*;?)?\s*', masked)
+        assigned = re.fullmatch(
+            r'\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+tools\.write_stdin\(\s*\{([^{}]*)\}\s*\)'
+            r'\s*;\s*text\(\s*\1\s*\)\s*;?\s*', masked)
+        group, first_only = 1, bool(match and match[2])
+        if assigned:
+            match, group = assigned, 2
         if match:
-            obj = match[1]
+            obj = match[group]
             session = re.search(r'\bsession_id\s*:\s*([0-9]+)\s*(?=,|$)', obj)
             chars = re.search(r'\bchars\s*:', obj)
             if session and (not chars or re.match(r'''\s*(?:""|'')\s*(?=,|$)''', args[
-                    match.start(1) + chars.end():match.end(1)])):
-                return 'session:' + session[1], bool(match[2])
+                    match.start(group) + chars.end():match.end(group)])):
+                return 'session:' + session[1], first_only
     if isinstance(args, dict):
         name = str(call.get('name') or '').split('.')[-1]
         if name == 'write_stdin' and type(args.get('session_id')) is int and args.get('chars', '') == '':
@@ -502,6 +518,15 @@ def process_output(value, first_only=False):
     return '\n'.join(stdout).strip(), statuses, running
 
 
+def pr_setup(words):
+    # A literal here-document can prepare the PR body without printing a URL.
+    if (len(words) == 5 and words[:2] == ['cat', '>'] and words[3] in ('<<', '<<-')
+            and re.fullmatch(r'[A-Za-z0-9_]+', words[4])):
+        return True
+    return (words[0] == 'test' or words[:4] == ['t', 'runners', 'runs', 'inspect']
+            or words[0] == 'git' and words[1:2] in (['fetch'], ['merge-base'], ['push'], ['rev-parse'], ['diff']))
+
+
 def tool_pr_command(command):
     """Extract actual gh invocations, excluding quoted prose/printf and PR bodies."""
     if not isinstance(command, str):
@@ -533,10 +558,19 @@ def tool_pr_command(command):
             statement = []
         else:
             statement.append(token)
-    # One successful shell result proves an unbranched sole gh invocation.
-    # Mixed/control-flow commands cannot safely attribute arbitrary stdout URLs.
-    if len(statements) != 1 or any(re.fullmatch(r'[;&|()\n]*[&|()][;&|()\n]*', token) for token in tokens):
+    # Only a final, unbranched gh invocation can account for the final stdout
+    # line. Allow known setup steps when the exit status is also recorded.
+    if not statements or any(re.fullmatch(r'[;&|()\n]*[&|()][;&|()\n]*', token) for token in tokens):
         return []
+    if len(statements) > 1:
+        setup = statements[:-1]
+        guarded = setup[0] in (['set', '-e'], ['set', '-eu'], ['set', '-euo', 'pipefail'])
+        if guarded:
+            setup = setup[1:]
+        if not all(pr_setup(words) and (guarded or words[0] == 'cat') for words in setup):
+            return []
+        preparation = True
+        statements = statements[-1:]
     out = []
     for words in statements:
         while words and (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]) or words[0] in ('command', 'env')):
@@ -563,6 +597,16 @@ def tool_pr_command(command):
                 numbers = [dict(number=int(target), repo=repo)]
         out.append(dict(refs=refs, numbers=numbers, action=words[2], repo=repo, explicit_exit=bool(preparation)))
     return out
+
+
+def pr_output_line(output):
+    lines = output.strip().splitlines()
+    for index, line in enumerate(lines):
+        if (line.startswith('hint: if you need to wait for this pull request')
+                and all(not item.strip() or item.startswith(('  ', 'hint: ')) for item in lines[index + 1:])):
+            lines = lines[:index]
+            break
+    return lines[-1].strip() if lines else ''
 
 
 def transcript(path, agent, previous=None, *, metadata_only=False):
@@ -678,7 +722,7 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                         if not evidence or failed:
                             continue
                         if running:
-                            item = dict(evidence=evidence, last_line=output.splitlines()[-1] if output else inherited.get('last_line', ''))
+                            item = dict(evidence=evidence, last_line=pr_output_line(output) if output else inherited.get('last_line', ''))
                             for identifier in running:
                                 pending[identifier] = item
                         else:
@@ -688,7 +732,7 @@ def transcript(path, agent, previous=None, *, metadata_only=False):
                                 record['prs'].extend(item['refs'])
                                 record.setdefault('pr_numbers', []).extend(item['numbers'])
                                 if item['action'] == 'create':
-                                    last_line = output.splitlines()[-1].strip() if output else inherited.get('last_line', '').strip()
+                                    last_line = pr_output_line(output) if output else inherited.get('last_line', '').strip()
                                     if PR_URL.fullmatch(last_line):
                                         refs = pr_refs(last_line)
                                         record['prs'].extend(ref for ref in refs if not item['repo'] or item['repo'] == ref['repo'])
@@ -1655,27 +1699,32 @@ class HistoryCommand:
                 if refresh and remaining > 0 and (budget is None or not recent):
                     owner, name = repo.split('/', 1)
                     fields = ' '.join(f'b{i}:pullRequests(headRefName:{json.dumps(branch)},'
-                                      'first:50,states:[OPEN,CLOSED,MERGED]){nodes{number url headRefName headRefOid state}}'
+                                      'first:50,states:[OPEN,CLOSED,MERGED]){nodes{number url headRefName headRefOid state '
+                                      'commits(last:8){nodes{commit{oid}}}}}'
                                       for i, branch in enumerate(batch))
                     query = 'query{repository(owner:' + json.dumps(owner) + ',name:' + json.dumps(name) + '){' + fields + '}}'
                     try:
                         data = json.loads(run(['gh', 'api', 'graphql', '-f', 'query=' + query],
                                               timeout=remaining))['data']['repository']
                         prs = [pr for connection in data.values() for pr in connection['nodes']]
-                        self.store.db.execute('insert or replace into prs values (?,?,?)', (key, time.time(), json.dumps(prs)))
+                        checked = time.time()
+                        states = [(f'{repo}#{pr["number"]}', checked, json.dumps(dict(state=pr['state']))) for pr in prs]
+                        self.store.db.execute('insert or replace into prs values (?,?,?)', (key, checked, json.dumps(prs)))
+                        self.store.db.executemany('insert or replace into prs values (?,?,?)', states)
                         self.store.db.commit()
                     except (HistoryError, ValueError, KeyError, TypeError):
                         pass
                 for pr in prs:
-                    match = (repo, pr['headRefName'], pr['headRefOid'])
-                    known.setdefault(match, []).append(dict(repo=repo, number=pr['number'], url=pr['url'],
-                        state=pr['state'], evidence='verified branch and commit'))
+                    commits = {pr['headRefOid'], *(node['commit']['oid'] for node in pr.get('commits', {}).get('nodes', []))}
+                    verified = dict(repo=repo, number=pr['number'], url=pr['url'], state=pr['state'], evidence='verified branch and commit')
+                    for commit in commits:
+                        known.setdefault((repo, pr['headRefName'], commit), []).append(verified)
         for row, evidence in evidence_by_row:
-            associated = [pr for branch, commit in sorted(evidence)
-                          for pr in known.get((row['repo'], branch, commit), ())]
+            associated = {pr['number']: pr for branch, commit in sorted(evidence)
+                          for pr in known.get((row['repo'], branch, commit), ())}
             if associated:
                 existing = {(pr['repo'], pr['number']): pr for pr in row['prs']}
-                updated = [pr for pr in associated if existing.get((pr['repo'], pr['number'])) != pr]
+                updated = [pr for pr in associated.values() if existing.get((pr['repo'], pr['number'])) != pr]
                 if updated:
                     row.update(self.store.merge({**row, 'prs': row['prs'] + updated}))
 

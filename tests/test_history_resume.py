@@ -734,10 +734,15 @@ def test_branch_pr_attribution_requires_matching_commit_on_reused_branch(app, hi
     other = store.merge(conversation(sid='replacement', associations=[dict(workspace='/repo/1', slot='1', host='local', branch='dev/repo-1', commit='b' * 40)]))
     calls = []
     response = {'data': {'repository': {'b0': {'nodes': [dict(number=1, url='https://github.com/org/repo/pull/1', headRefName='dev/repo-1', headRefOid='a' * 40, state='MERGED'), dict(number=2, url='https://github.com/org/repo/pull/2', headRefName='dev/repo-1', headRefOid='b' * 40, state='OPEN')]}}}}
+    first_pr = response['data']['repository']['b0']['nodes'][0]
+    first_pr.update(headRefOid='c' * 40, commits={'nodes': [{'commit': {'oid': 'a' * 40}}]})
     monkeypatch.setattr(history, 'run', lambda argv, **k: (calls.append(argv), json.dumps(response))[1])
     app.branch_prs([row, other], refresh=True)
     assert [p['number'] for p in row['prs']] == [1]
     assert [p['number'] for p in other['prs']] == [2]
+    receipt = dict(prs=[dict(repo='org/repo', number=1)])
+    app.pr_states([receipt])
+    assert receipt['prs'][0]['state'] == 'MERGED'
     app.branch_prs([row, other])
     assert len(calls) == 1
     monkeypatch.setattr(history, 'run', lambda *a, **k: (_ for _ in ()).throw(history.HistoryError('offline')))
@@ -1108,6 +1113,8 @@ def test_async_cell_wait_preserves_known_invocation_and_requires_success(app, hi
     'text(await tools.exec_command({cmd: "gh pr create"})); text(await tools.exec_command({cmd:"printf unrelated"}));',
     'text(await tools.exec_command({cmd: "gh pr create" + " --dry-run"}));',
     'if (false) text(await tools.exec_command({cmd:"gh pr create"}));',
+    'const result=await tools.exec_command({cmd:`gh pr create ${args}`});text(result);',
+    'const result=await tools.exec_command({cmd:"gh pr create"});text(other);',
 ])
 def test_custom_exec_pr_evidence_requires_actual_unambiguous_invocation(app, history, tmp_path, source):
     workspace = Path(app.cfg.worktree_root) / 'repo/1'
@@ -1127,6 +1134,30 @@ def test_shell_branches_and_heredoc_prose_do_not_prove_a_created_pr(app, history
     rows = codex_rows(workspace, sid='selected') + [tool_event('candidate', 'text(await tools.exec_command({cmd:' + json.dumps(command) + '}));'),
              tool_output('candidate', exit_code=0, output='https://github.com/org/repo/pull/9')]
     assert history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')['prs'] == []
+
+
+@pytest.mark.parametrize('setup', ["cat > /tmp/body <<'EOF'\nPR body\nEOF", 'set -e\ngit push -u origin branch'])
+@pytest.mark.parametrize('succeeded', [True, False])
+def test_pr_create_recovers_a_static_template_with_a_single_result(app, history, tmp_path, setup, succeeded):
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    script = 'const result=await tools.exec_command({cmd:`' + setup + '\ngh pr create --repo org/repo`});text(result);'
+    rows = codex_rows(workspace, sid='selected') + [tool_event('create', script),
+            tool_output('create', exit_code=0 if succeeded else 1, output='https://github.com/org/repo/pull/9')]
+    result = history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')
+    assert [pr['number'] for pr in result['prs']] == ([9] if succeeded else [])
+
+
+def test_pr_create_retains_url_before_github_hint_after_assigned_poll(app, history, tmp_path):
+    workspace = Path(app.cfg.worktree_root) / 'repo/1'
+    url = 'https://github.com/org/repo/pull/9'
+    rows = codex_rows(workspace, sid='selected') + [
+        tool_event('create', 'const result=await tools.exec_command({cmd:`gh pr create`});text(result);'),
+        tool_output('create', session_id=42, exit_code=None, output=''),
+        tool_event('poll', 'const result=await tools.write_stdin({session_id:42,chars:""});text(result);'),
+        tool_output('poll', exit_code=0, output=url + '\nhint: if you need to wait for this pull request\n  gh event listen --resource ' + url),
+    ]
+    result = history.transcript(transcript_file(tmp_path / 'rollout-selected.jsonl', rows), 'codex')
+    assert [pr['url'] for pr in result['prs']] == [url]
 
 
 def test_parser_upgrade_rebackfills_unchanged_cached_transcript(app, history, tmp_path):
