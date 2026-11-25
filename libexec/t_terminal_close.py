@@ -155,7 +155,7 @@ def install(session, socket=None, expected=None, source=None):
             rows = [line for line in existing.stdout.splitlines() if line.startswith(hook + ' ')]
             if not rows:
                 continue
-            parsed = utilities['parsed_hook'](rows[0], socket, binding)
+            parsed = utilities['parsed_hook'](rows[0], socket, binding, allow_stale_pid=owner is not None)
             if parsed is None:
                 print('t runtime: ' + session + ' ' + hook +
                       ': custom hook preserved; relocate it before retrying t update', file=sys.stderr)

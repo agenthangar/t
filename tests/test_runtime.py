@@ -79,7 +79,13 @@ def test_hook_parser_rejects_user_wrappers_and_preserves_the_reserved_slot(runti
     commands = helper['hook_commands']('/socket', pane)
     line = 'client-detached[50100] ' + commands['client-detached[50100]']
     assert runtime.parsed_hook(line, '/socket', pane)
-    assert runtime.parsed_hook("client-detached[50100] run-shell -b 'echo t_terminal_close.py'", '/socket', pane) is None
+    respawned = dict(pane, pane_pid='456')
+    assert runtime.parsed_hook(line, '/socket', respawned) is None
+    assert runtime.parsed_hook(line, '/socket', respawned, allow_stale_pid=True)
+    assert runtime.parsed_hook(line, '/other', respawned, allow_stale_pid=True) is None
+    assert runtime.parsed_hook(line, '/socket', dict(respawned, pane='%2'), allow_stale_pid=True) is None
+    custom = "client-detached[50100] run-shell -b 'echo t_terminal_close.py'"
+    assert runtime.parsed_hook(custom, '/socket', pane, allow_stale_pid=True) is None
     monkeypatch.setattr(runtime, 'tmux', lambda *a: subprocess.CompletedProcess(a, 0,
         "client-detached[50100] run-shell -b 'echo t_terminal_close.py'\n", ''))
     assert runtime.Hooks().inspect({}, ('/socket', pane))['status'] == 'deferred'
@@ -180,8 +186,15 @@ def test_real_noop_update_repairs_hooks_without_agent_or_job_signals(lifecycle, 
         closed.bind(str(stale_socket))
     # Reconcile uses verified supplied socket hints, never another user's server.
     monkeypatch.setattr(runtime, 'socket_hints', lambda: [str(stale_socket), live_socket])
-    marker = _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', '=dev-repo-1:', '#{pane_pid}'], env=env, cwd=base).stdout
-    assert _run([str(base / 'bin/tmux'), 'set-hook', '-u', '-t', '=dev-repo-1:', 'client-detached[50100]'], env=env, cwd=base).returncode == 0
+    [pane] = runtime.panes(live_socket)
+    binding = dict(pane, pane_pid=str(int(pane['pane_pid']) + 1))
+    key = 'client-detached[50100]'
+    stale_hook = terminal['hook_commands'](live_socket, binding)[key]
+    assert runtime.tmux(live_socket, 'set-hook', '-t', pane['identity'] + ':', key, stale_hook).returncode == 0
+    holder = '=dev-repo-2:'
+    assert runtime.tmux(live_socket, 'new-session', '-d', '-s', 'dev-repo-2', 'sleep', '30').returncode == 0
+    assert runtime.tmux(live_socket, 'set-option', '-t', holder, '@t_recovery_holding', 'saved-conversation').returncode == 0
+    holding_hooks = runtime.tmux(live_socket, 'show-hooks', '-t', holder).stdout
     job = subprocess.Popen(['sleep', '30'], cwd=base, env=env)
     try:
         first = runtime.reconcile()
@@ -189,11 +202,16 @@ def test_real_noop_update_repairs_hooks_without_agent_or_job_signals(lifecycle, 
         assert stale_socket.is_socket()
         assert all(item.get('server') != str(stale_socket) for item in first['results'])
         assert any(item['component'] == 'terminalhooks' and item['status'] == 'updated' for item in first['results']), json.dumps(first, indent=2)
+        assert all(item.get('session') != 'dev-repo-2' for item in first['results'])
+        assert runtime.tmux(live_socket, 'show-hooks', '-t', holder).stdout == holding_hooks
+        hooks = runtime.tmux(live_socket, 'show-hooks', '-t', pane['identity'] + ':').stdout.splitlines()
+        [repaired] = [line for line in hooks if line.startswith(key + ' ')]
+        assert runtime.parsed_hook(repaired, live_socket, pane)
         second = runtime.reconcile()
         assert not second['failed']
         assert all(item['status'] == 'current' for item in second['results']), second
         assert job.poll() is None
-        assert _run([str(base / 'bin/tmux'), 'display-message', '-p', '-t', '=dev-repo-1:', '#{pane_pid}'], env=env, cwd=base).stdout == marker
+        assert runtime.panes(live_socket) == [pane]
     finally:
         job.terminate()
         job.wait(timeout=5)
