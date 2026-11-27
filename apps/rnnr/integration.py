@@ -70,7 +70,11 @@ def state(client, action):
     command = transport.get("command")
     if command != RN:
         # Per-tool policies and customized launch options belong to the user.
-        if any(entry.get(key) for key in ("enabled_tools", "disabled_tools", "tool_timeout_sec", "startup_timeout_sec")):
+        transport_fields = {"command", "args", "type", "env", "env_vars", "cwd"}
+        entry_fields = {"name", "enabled", "disabled_reason", "transport", "auth_status"}
+        if any(value is not None for key, value in transport.items() if key not in transport_fields):
+            return "custom"
+        if transport is not entry and any(value is not None for key, value in entry.items() if key not in entry_fields):
             return "custom"
         if not known_legacy(command):
             return "custom"
