@@ -577,6 +577,7 @@ class _Memory:
         self.entries, self.generations, self.artifacts = {}, {}, {}
         self.failures, self.reset_epochs = {}, {}
         self.active_targets = set()
+        self.instance = os.urandom(12).hex()
         self.waiting = {}
         self.overlays = {}
         self.export_versions = {}
@@ -625,6 +626,8 @@ class _Memory:
                         or ('value' in entry and not isinstance(entry['value'], dict))):
                     continue
                 entry['refreshing'] = False
+                entry.pop('refresh_revision', None)
+                entry.pop('peer_ticket', None)
                 entry['pending'] = False
                 entry.pop('last_used', None)
                 entry.pop('requested', None)
@@ -801,19 +804,27 @@ class _Memory:
                         entry['last_used'] = now
                     retry = failure.get('retry_at', 0)
                     missing = any(field not in entry.get('value', {}) for field in payload.get('fields', []) if field in ('rows', 'resume', 'catalog', 'mcp', 'scopes'))
-                    force = payload.get('refresh') is True and spec['target'] not in self.active_targets and not entry.get('pending')
+                    # Live commands request their own local inventory and verified details.
+                    # Forcing historical reconciliation here would compete with the foreground read.
+                    force_request = payload.get('refresh') is True and not (
+                        spec['target'] == 'local' and self.inventory and payload.get('live') == 'wait')
+                    force = force_request and spec['target'] not in self.active_targets and not entry.get('pending')
                     stale = bool(entry.get('dirty')) or not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
                     if not observe:
                         if spec['target'] == 'local':
                             due = stale or missing or entry.get('pending') or 'catalog' not in entry.get('value', {}) or now - entry['checked'] > LOCAL_INTERVAL
                             if due or force:
                                 entry['requested'] = True
+                        if force_request and not entry['refreshing'] and not entry.get('pending'):
+                            entry['force_refresh'] = True
+                            entry['requested'] = True
+                            entry['next_poll'] = 0
                         if force and not self.loading and not entry['refreshing']:
                             entry['force_refresh'] = True
                             self._start(key, entry)
                         elif spec['target'] == 'local':
                             self._schedule(key, entry)
-                        elif ((stale or missing or entry.get('pending')) and not self.loading
+                        elif ((stale or missing or entry.get('pending') or entry.get('requested')) and not self.loading
                               and not entry['refreshing'] and spec['target'] not in self.active_targets
                               and now >= retry and now >= entry.get('next_poll', 0)):
                             self._start(key, entry)
@@ -829,13 +840,17 @@ class _Memory:
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
                                       observed=entry.get('observed', entry['checked']),
                                       resume_pr_auth_failed=auth_failed,
-                                      timings=entry.get('timings', {}),
+                                      timings=entry.get('timings', {}), refresh_revision=entry.get('refresh_revision', 0),
+                                      refresh_requested=entry.get('refresh_revision', 0) + int(
+                                          bool(entry['refreshing'] or entry.get('pending') or
+                                               entry.get('requested') and (force_request or now >= retry))),
                                       **({'enriched': entry.get('terminals')} if payload.get('live') else {}),
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
                 else:
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
-                                      checked=0, stale=True, refreshing=False, error='', retry_at=0, value=None))
+                                      checked=0, stale=True, refreshing=False, error='', retry_at=0, value=None,
+                                      refresh_revision=0, refresh_requested=int(self.loading)))
             if self.inventory and payload.get('live'):
                 for host in hosts:
                     if host['target'] == 'local':
@@ -843,7 +858,7 @@ class _Memory:
                             host['live_requested'] = self.inventory.request(explicit=payload.get('live') == 'wait')
                         self.inventory.project(host, host.pop('enriched', None))
                         host['refreshing'] |= host.get('live_pending', False)
-            return dict(hosts=hosts, loading=self.loading, persistence_error=self.persistence_error)
+            return dict(hosts=hosts, loading=self.loading, persistence_error=self.persistence_error, instance=self.instance)
 
     def _start(self, key, entry):
         target = entry['spec']['target']
@@ -883,7 +898,9 @@ class _Memory:
                                         'refresh': payload.get('refresh') is True})
         host = view['hosts'][0]
         value = host.get('value')
-        health = {k: host.get(k) for k in ('checked', 'observed', 'refreshing', 'error', 'error_kind')}
+        health = {k: host.get(k) for k in ('checked', 'observed', 'refreshing', 'error', 'error_kind',
+                                            'refresh_revision', 'refresh_requested')}
+        health['instance'] = self.instance
         if value is None or 'catalog' not in value:
             return dict(protocol=2, pending=True, health=health)
         token = _digest(value)
@@ -924,6 +941,8 @@ class _Memory:
             if spec['target'] == 'local':
                 terminals = self.inventory.terminals() if self.inventory else None
                 spec['live_only'] = not entry.get('value')
+            if entry.get('peer_ticket'):
+                spec['peer_ticket'] = entry['peer_ticket']
             if spec['target'] != 'local' and entry.get('value'):
                 spec['previous'] = copy.deepcopy(entry['value'])
         target = spec['target']
@@ -977,6 +996,7 @@ class _Memory:
                 entry['timings'] = {**((value or {}).pop('_timings', {})), 'total_seconds': round(time.monotonic() - started, 4)}
                 if value is not None:
                     if value.pop('_pending', False):
+                        entry['peer_ticket'] = value.get('_peer_ticket')
                         entry['next_poll'] = self.clock() + 1
                         entry['pending'] = True
                         entry['requested'] = target == 'local'
@@ -998,6 +1018,9 @@ class _Memory:
                         if value.get('_legacy_remote'):
                             entry['next_poll'] = self.clock() + FAILURE_TTL
                         self.overlays.pop(spec['target'], None)
+                if error or not entry.get('pending'):
+                    entry.pop('peer_ticket', None)
+                    entry['refresh_revision'] = entry.get('refresh_revision', 0) + 1
                 self.persist()
         if target == 'local' and self.inventory:
             _report('enrichment', status)

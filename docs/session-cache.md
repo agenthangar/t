@@ -56,9 +56,11 @@ automatically observe one bounded refresh for up to 30 seconds. The automatic
 wait ends as soon as an observation contains eligible scoped results, even
 while another host or the local history catalog is still refreshing. This also applies
 to redirected output and history JSON. Available scoped results and settled
-empty/failure results return immediately. Explicit `--wait` observes refresh even
-when results exist. For open and list, it also starts or joins a fresh local tmux
-inventory despite an enrichment cooldown. Presentation-only filters use the displayed rows.
+empty/failure results return immediately. Explicit `--wait` starts or joins one request per selected host. It waits for
+those requests to complete or fail, including scans longer than 30 seconds.
+Local numbered slots use a foreground owner and transcript check for first-display
+details. The global history collector can continue independently. Ctrl-U requests
+another refresh in an active picker. Presentation-only filters use the displayed rows.
 
 Timeout or service loss retains the final available snapshot and incomplete notice;
 it never enters another waiting or retry rail. Incomplete emptiness never launches

@@ -34,8 +34,8 @@ def notify_ready(address=None):
 
 
 def scan():
-    # A single tmux invocation collects all slots. The stamped SID only matches
-    # already verified metadata. It is never published as proof of ownership.
+    # Read one tmux snapshot. A stamp change can invalidate metadata during a lookup.
+    # Reusing a stamp on a different terminal cannot establish ownership.
     path = socket_path()
     fmt = '|'.join(('#{socket_path}', '#{pid}', '#{session_id}', '#{session_name}',
                     '#{?session_attached,attached,detached}', '#{DEV_AGENT}',
@@ -144,9 +144,8 @@ class Inventory:
                     rows.append(line)
             for label, slot in self.slots.items():
                 fields = numbered.get(label)
-                if not (fields and fields[1] == slot['cwd'] and (
-                        (enriched or {}).get(label) == slot['terminal'] or
-                        (fields[0] != '-' and fields[0] == slot['stamp']))):
+                if not (fields and fields[1] == slot['cwd']
+                        and (enriched or {}).get(label) == slot['terminal']):
                     fields = ['-', slot['cwd'], label, slot['state'], 'unknown', '-', slot['agent']]
                 fields[3] = slot['state']
                 rows.append('\t'.join(fields))

@@ -844,6 +844,10 @@
     "libexec/t_terminal_close.py:attached:time.sleep": {
       "kind": "background",
       "reason": "Private attachment hooks wait at most two seconds for a scoped pending observer migration to publish its live fingerprint. They have no foreground terminal; verification must not paint over the attached agent."
+    },
+    "libexec/t_picker_close.py:completed_rows:subprocess.run": {
+      "kind": "background",
+      "reason": "The active picker owns terminal feedback while its observer checks close eligibility."
     }
   },
   "shell": [

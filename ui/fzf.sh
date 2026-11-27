@@ -223,6 +223,9 @@ SH
 # Ctrl-L on. Generic filtered lists retain Ctrl-A all and Ctrl-F defaults.
 _t_fzf_filtered() (
   [ -z "${ZSH_VERSION:-}" ] || _t_fzf_worker _t_fzf_filtered "$@"
+  if [ "${T_DISCOVERY_COLLECTOR:-}" = 1 ]; then
+    unset T_OPEN_OBSERVE
+  fi
   _t_picker_default=$1 _t_picker_all=$2 _t_picker_action=$3
   _t_picker_label=$4 _t_picker_legend=$5 _t_picker_show_all=$6
   _t_picker_with_attached=${T_PICKER_WITH_ATTACHED:-}
@@ -307,6 +310,7 @@ Tab mark ✓"
   case ${T_PICKER_SESSION_FILTERS:-} in
     open|resume|recovery|list) T_PICKER_SESSION_MASK=1 ;;
     kill) T_PICKER_SESSION_MASK=3 ;;
+    move) T_PICKER_SESSION_MASK=1 ;;
   esac
   if [ -n "$T_PICKER_SESSION_MASK" ]; then
     cp "$T_PICKER_DEFAULT" "$_t_picker_dir/rows-0"
@@ -372,7 +376,13 @@ Tab mark ✓"
   case $_t_picker_fzf_help in *--listen*) _t_picker_viewport=$_t_picker_terminal ;; esac
   _t_picker_start=
   case $_t_picker_fzf_help in
-    *--id-nth*) set -- --id-nth=1,2,3 "$@"; T_PICKER_CLEAR_MARKS= ;;
+    *--id-nth*)
+      if [ "${T_PICKER_SESSION_FILTERS:-}" = move ]; then
+        set -- --id-nth=1,2,3,7 "$@"
+      else
+        set -- --id-nth=1,2,3 "$@"
+      fi
+      T_PICKER_CLEAR_MARKS= ;;
   esac
   if [ -n "$_t_picker_source" ] || [ -n "${T_PICKER_REFRESH_CALLBACK:-}" ] || [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
     : > "$_t_picker_dir/source"
@@ -581,19 +591,31 @@ SH
       _t_picker_bind="${_t_picker_bind},${_t_picker_key}:${T_PICKER_CLEAR_MARKS}execute-silent(sh \"\$T_PICKER_TOGGLE\" sort-$_t_picker_action)+reload-sync(cat \"\$T_PICKER_CURRENT\")+transform-header(cat \"\$T_PICKER_CURRENT_HEADER\")"
     done
   fi
-  if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ -n "${T_PICKER_KILL_CALLBACK:-}" ]; then
+  if [ -n "${T_OPEN_OBSERVE:-}" ] || { [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ -n "${T_PICKER_KILL_CALLBACK:-}" ]; }; then
     _t_picker_start='unbind(change)'
-    if [ "${T_OPEN_OBSERVE:-}" = local ]; then
+    if [ -n "${T_OPEN_OBSERVE:-}" ]; then
       # The observer reads the daemon's lightweight tmux inventory only.
       # shellcheck disable=SC2016
       _t_picker_start='unbind(change)+execute-silent(python3 "$T_HOME/bin/t" __open-picker-observe </dev/null >/dev/null 2>&1 & echo $! > "$T_PICKER_VIEWS/observe.pid")'
+    fi
+    # Shared observers keep the existing picker and selection state.
+    if [ -n "${T_OPEN_OBSERVE:-}" ]; then
+      printf '%s' '{}' > "$_t_picker_dir/discovery-status"
     fi
     # The action removes a cached row, then restores marks on both fzf versions.
     # HTTP updates run only after execute returns, outside fzf's blocked loop.
     export FZF_API_KEY
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
+    if [ -n "${T_OPEN_OBSERVE:-}" ]; then
+      set -- --bind='ctrl-u:execute-silent(touch "$T_PICKER_VIEWS/refresh-request")' "$@"
+    fi
+    # The fzf action shell expands these variables when the key is pressed.
+    # shellcheck disable=SC2016
     set -- --listen=127.0.0.1:0 --bind='change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(ctrl-n)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+  fi
+  if [ "${T_PICKER_SESSION_FILTERS:-}" != open ] && [ -n "${T_OPEN_OBSERVE:-}" ]; then
+    set -- --bind='ctrl-k:ignore' "$@"
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
     # No row placeholder is needed: this binding also works in an empty list

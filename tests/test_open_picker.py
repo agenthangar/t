@@ -64,7 +64,7 @@ def test_open_picker_does_not_run_callers_exit_hook_in_subshell(zsh, tmp_path):
     assert 'PICKER_RC=0' in result.stdout
 
 
-def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
+def test_bare_open_inside_worktree_scopes_repository(zsh, tmp_path):
     env = picker_stub(tmp_path)
     result = zsh(ROWS + r'''
       mkdir -p "$HOME/code/.worktrees/api/9"
@@ -75,18 +75,16 @@ def test_bare_open_inside_worktree_shows_every_detail_and_repo(zsh, tmp_path):
     ''', _tty=True, TZ='UTC', **env)
     assert result.returncode == 0, result.stdout
     rows = (tmp_path / "picker.log").read_text().splitlines()
-    assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4', 'web-6', 'web:abcdef12']
+    assert [row.split('\t')[1] for row in rows] == ['api-2', 'api-4']
     display = [row.split('\t')[-1].rstrip() for row in rows]
     assert all('STATUS' not in row for row in display)
     heading = (tmp_path / 'picker.log.header').read_text().splitlines()[-1]
-    assert heading.split() == ['REPO', 'SLOT', 'AGENT', 'HOST', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON', 'LAST', 'TURN']
+    assert heading.split() == ['SLOT', 'AGENT', 'HOST', 'UI', 'STATUS', 'MODEL', 'WORKING', 'ON', 'LAST', 'TURN']
     assert '● ✓ ↻' in display[0] and '› cli' in display[0]
     assert '⬡ codex' in display[0] and 'gpt-test-astra' in display[0]
     assert 'First task · #12 merged, still in progress' in display[0]
     assert '2026-10-23' in display[0]
     assert '▣ desktop' in display[1] and 'No conversation recorded' in display[1]
-    assert '(idle — no conversation)' in display[2]
-    assert 'claude-test-model' in display[3] and 'Foreground task' in display[3]
     assert 'CLI api 2 --local' in result.stdout
 
 
@@ -605,3 +603,38 @@ def test_explicit_remote_browse_disables_local_new_action(zsh):
     ''', _tty=True)
     assert result.returncode == 130 and 'UNEXPECTED' not in result.stdout
     assert 'NEW=disabled' in result.stdout + result.stderr
+
+
+def test_open_selected_refuses_changed_conversation_in_same_terminal(zsh):
+    result = zsh(r'''
+      _dev_session_sid() { print replacement; }
+      _t_open_existing() { print UNEXPECTED_ATTACH; }
+      _t_open_selected $'local\tapi-2\tdetached\tTask\tTask\t14/$2\toriginal' '' ''
+      print "RC=$?"
+    ''')
+    assert 'RC=1' in result.stdout
+    assert 'selected conversation changed' in result.stderr
+    assert 'UNEXPECTED_ATTACH' not in result.stdout
+
+
+def test_open_remote_numbered_selection_rechecks_conversation(zsh):
+    result = zsh(r'''
+      REMOTE_HOSTS=(mini user@mini)
+      _dev_remote_scan_with_timeout() { print -u2 "VERIFY $1 $2"; print replacement; }
+      _t_dev() { print UNEXPECTED_ATTACH; }
+      _t_open_selected $'mini\tapi-2\tdetached\tTask\tTask\t\toriginal' '' ''
+      print "RC=$?"
+    ''')
+    assert 'RC=1' in result.stdout
+    assert 'VERIFY user@mini _dev_session_sid dev-api-2' in result.stderr
+    assert 'UNEXPECTED_ATTACH' not in result.stdout
+
+
+def test_open_desktop_selection_uses_its_existing_action(zsh):
+    result = zsh(r'''
+      _dev_session_sid() { print -u2 UNEXPECTED_PROBE; return 1; }
+      _t_open_selected $'local\tworkspace-2\tapp\tTask\tTask\t\tdesktop-id' '' ''
+      print "RC=$?"
+    ''')
+    assert 'UNEXPECTED_PROBE' not in result.stderr
+    assert 'retired integration' in result.stderr

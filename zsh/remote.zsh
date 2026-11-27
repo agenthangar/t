@@ -1257,7 +1257,7 @@ _t_remote_open_local() {
 # Canonical move always browses when no exact target is given. The released
 # beam shortcut retains its implicit-current behavior in _t_beam.
 _t_session_move() {
-  local arg host= receive= from_host= here= pick= remote= exact= fg= detach= all=
+  local arg host= receive= from_host= here= pick= remote=1 exact= fg= detach= all=
   local -a args=("$@") pos
   while (( $# )); do
     arg=$1; shift
@@ -1286,6 +1286,26 @@ _t_session_move() {
   (( $#pos <= 2 )) || { print -u2 't session move: expected [repo] [slot]'; return 2; }
   [[ -z $fg || -z $detach ]] || { print -u2 't session move: --fg and --detach are mutually exclusive'; return 2; }
   [[ -z $all || $#pos == 0 ]] || { print -u2 't session move: --all cannot be combined with a repository or slot'; return 2; }
+  if [[ -n $T_SESSION_SOURCE ]]; then
+    local allowed_source=${T_SESSION_SOURCE#host:}
+    if [[ $T_SESSION_SOURCE == local && -n $here ]]; then
+      print -u2 't session move: --here requires a remote source'; return 2
+    fi
+    if [[ -n $from_host && $T_SESSION_SOURCE != all && $from_host != $allowed_source &&
+          ! ( $T_SESSION_SOURCE == remote && $from_host != local ) ]]; then
+      print -u2 't session move: source host is outside --source scope'; return 2
+    fi
+    if [[ $T_SESSION_SOURCE == local ]]; then
+      remote=
+    elif [[ $T_SESSION_SOURCE != (all|remote) && -z $from_host ]]; then
+      # A named source constrains candidate discovery, without selecting a destination.
+      args+=(--from "$allowed_source")
+      local T_MOVE_SOURCE_ONLY=1
+      local T_MOVE_REMOTE=1
+      _t_remote move "${args[@]}"
+      return $?
+    fi
+  fi
   if [[ $from_host == local && -z $here ]]; then
     local T_MOVE_REMOTE=0
     _t_remote move "${args[@]}"
@@ -1339,7 +1359,7 @@ _t_remote() {
     return $?
   fi
   local host= source= sid= all= pick= remote=${T_MOVE_REMOTE:-1} repo= slot= arg rows row scope= scope_rel= wt_rel= cwd_rel= selected= source_target= target=
-  local -a pos flags fields candidates format_args chosen move_args selections displays excluded completed_rows unattempted
+  local -a pos flags fields candidates format_args chosen move_args selections excluded completed_rows unattempted
   local -A seen scoped_source_rows
   local scoped_rows scoped_rc scoped_row scope_verified
   local -a scoped_fields
@@ -1475,6 +1495,7 @@ _t_remote() {
 
     return
   fi
+  [[ $T_SESSION_SOURCE != local ]] || source=local
   [[ -n $source || $remote == 1 ]] || source=local
   # Explicit source + exact target uses the existing guarded source resolver.
   if [[ -n $source && -z $pick && ( -n $sid || -n $slot ) ]]; then
@@ -1543,24 +1564,17 @@ _t_remote() {
       [[ -t 0 ]] && command -v fzf >/dev/null 2>&1 || { print -u2 't session move: session selection requires a terminal and fzf; name --from and a repo and slot or --session ID'; return 1; }
       [[ -n $repo ]] && format_args+=(--repo)
       [[ $source != local ]] && format_args+=(--remote)
-      rows=$(print -rl -- "${candidates[@]}" | python3 "$T_HOME/bin/t" __session-picker-rows --compact "${format_args[@]}") || return 1
-      displays=("${(@f)rows}")
-      local snapshot_index
-      for (( snapshot_index=1; snapshot_index <= $#displays; snapshot_index++ )); do
-        displays[$snapshot_index]+=$'\t'$snapshot_index
-      done
-      rows=${(F)displays}
-      local heading='Current local sessions'
-      [[ $source != local ]] && heading='Current local and remote CLI sessions'
-      selected=$(print -r -- "$rows" | _t_fzf_multi move "$heading" --delimiter=$'\t' --with-nth=5,4 --no-hscroll --prompt='move> ') || return $?
+      rows=$(print -rl -- "${candidates[@]}" | T_PICKER_OWNER_IDS=1 python3 "$T_HOME/bin/t" __session-picker-rows --compact "${format_args[@]}") || return 1
+      local heading='Current CLI sessions'
+      selected=$(T_SESSION_SOURCE="${source:-${T_SESSION_SOURCE:-all}}" T_OPEN_OBSERVE=all T_OPEN_REPO="$repo" T_OPEN_REMOTE=1 \
+        T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$heading" T_PICKER_SESSION_FILTERS=move \
+        _t_fzf_filtered "$rows" "$rows" move all '' '' --with-nth=5,4 --prompt='move> ') || return $?
       [[ -n $selected ]] || return 130
-      # Match the complete rendered record, not a potentially reused slot label.
-      # Indexing preserves distinct IDs even when host and display labels agree.
       local display i key
       for display in "${(@f)selected}"; do
-        i=${display##*$'\t'}
-        [[ $i == <-> ]] && (( i >= 1 && i <= $#displays )) && [[ $display == "$displays[$i]" ]] || return 1
-        row=$candidates[$i]
+        fields=("${(@ps:\t:)display}")
+        row=$(print -rn -- "$fields[8]" | python3 -c 'import base64,sys; print(base64.b64decode(sys.stdin.buffer.read()).decode())') || return 1
+        [[ -n $row ]] || { print -u2 't session move: selected session changed or closed; select it again'; return 1; }
         chosen=("${(@ps:\t:)row}")
         key="${REMOTE_HOSTS[$chosen[1]]:-$chosen[1]}"$'\t'"$chosen[2]"$'\t'"$chosen[3]"$'\t'"$chosen[4]"$'\t'"$chosen[8]"
         [[ -n ${seen[$key]:-} ]] || { selections+=("$row"); seen[$key]=1; }

@@ -226,7 +226,7 @@ def test_resume_discovery_notice_survives_auth_and_filter_changes(filters, tmp_p
 
 
 @pytest.mark.parametrize('outcome', ['unavailable', 'timeout', 'complete', 'slow'])
-def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path, outcome):
+def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path, outcome, adapter):
     (tmp_path / 'discovery-status').write_text(json.dumps(dict(hosts=[dict(host='local', status='current')])))
     (tmp_path / 'refresh-enabled').touch()
     (tmp_path / 'refresh-request').touch()
@@ -238,7 +238,9 @@ def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path,
         calls.append(kwargs)
         if outcome == 'unavailable':
             return {'unavailable': True}
-        return dict(hosts=[dict(host='local', status='refreshing' if len(calls) == 1 else 'current')])
+        state = 'refreshing' if len(calls) == 1 else 'timed out' if outcome == 'timeout' else 'current'
+        return dict(hosts=[dict(host='local', status=state, refreshing=state == 'refreshing',
+                                error='probe timed out' if state == 'timed out' else '')])
 
     def repaint(directory, picker, status, rebuild=None):
         updates.append(status)
@@ -258,16 +260,20 @@ def test_manual_picker_refresh_uses_inline_updates(t_mod, monkeypatch, tmp_path,
     monkeypatch.setattr(t_mod, '_resume_discovery_wait', lambda *_: pytest.fail('picker entered a refresh dialog'))
     monkeypatch.setattr(t_mod, '_resume_picker_update', repaint)
     monkeypatch.setattr(t_mod, '_resume_picker_stage', stage)
-    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(discover=discover, resume_health=lambda v: v))
+    monkeypatch.setattr(t_mod, '_session_discovery', lambda: dict(discover=discover, resume_health=lambda v: v,
+                                                              requested_refresh=adapter.requested_refresh))
     monkeypatch.setattr(t_mod.time, 'monotonic', lambda: clock[0])
     delay = {'unavailable': 31, 'timeout': 126, 'slow': 45}
     monkeypatch.setattr(t_mod.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + delay.get(outcome, dt)))
 
-    assert t_mod._resume_picker_observe(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == 0
+    assert t_mod._resume_picker_observe(tmp_path, ['api'], '4', ['api', '4', '--days', 'all']) == (1 if outcome == 'unavailable' else 0)
     assert updates[0]['hosts'][0]['status'] == 'refreshing'
     complete = outcome in ('complete', 'slow')
-    assert updates[1]['hosts'][0]['status'] == ('current' if complete else 'timed out')
-    assert source.read_text() == ('new source' if complete else 'old source')
+    if outcome == 'unavailable':
+        assert updates[-1]['unavailable'] and len(calls) == 1
+    else:
+        assert updates[-1]['hosts'][0]['status'] == ('current' if complete else 'timed out')
+    assert source.read_text() == ('old source' if outcome == 'unavailable' else 'new source')
     assert calls[0]['refresh']
     if complete:
         assert calls[1]['observe']
@@ -279,7 +285,8 @@ def test_observer_repaints_a_settled_host_before_a_pending_peer(t_mod, monkeypat
         return dict(hosts=[dict(host='local', status=local), dict(host='mini', status=mini)])
     status_file.write_text(json.dumps(status('refreshing', 'refreshing')))
     clock, observed = [0], []
-    def discover(_, *, observe, deadline):
+    def discover(_, *, observe, deadline, fields):
+        assert fields == ['rows', 'resume']
         assert observe and deadline > clock[0]
         return status('current', 'refreshing' if not observed else 'unreachable')
     def stage(snapshot, *args):

@@ -411,8 +411,9 @@ def test_resume_refresh_action_is_green_beside_the_status(filters, monkeypatch):
     monkeypatch.setenv('TERM', 'xterm-256color')
     healthy = {'hosts': [{'host': 'local', 'status': 'current', 'checked': 1700000000}]}
     pending = {'hosts': [{'host': 'local', 'status': 'refreshing', 'checked': 1700000000}]}
+    monkeypatch.setattr(filters.time, 'monotonic', lambda: 0)
     shortcut = filters.key_labels('Ctrl-U refresh now')
-    for status, prefix in ((healthy, '\x1b[37mLast refresh '), (pending, '\x1b[1;96mRefreshing local\x1b[0m  ')):
+    for status, prefix in ((healthy, '\x1b[37mLast refresh '), (pending, '\x1b[1;96m⠋ Refreshing local\x1b[0m  ')):
         line = filters.resume_health(status, 120, True, True)[0]
         assert line.startswith(prefix)
         assert f'  \x1b[92m{shortcut}\x1b[0m' in line
@@ -428,7 +429,7 @@ def test_resume_refresh_separates_progress_timing_and_host_warnings(filters, mon
         {'host': 'dev', 'status': 'current'},
     ]}
     lines = filters.resume_health(health, 80, True, True)
-    assert lines[0].startswith('\x1b[1;96mRefreshing local\x1b[0m')
+    assert ' Refreshing local\x1b[0m' in lines[0]
     assert lines[1].startswith('\x1b[37mLast refresh ')
     assert '\x1b[92m✓\x1b[0m\x1b[37m dev' in lines[2]
     assert '\x1b[91m×\x1b[0m\x1b[37m mini\x1b[0m\x1b[33m timed out' in lines[2]
@@ -436,7 +437,7 @@ def test_resume_refresh_separates_progress_timing_and_host_warnings(filters, mon
     monkeypatch.setenv('T_PICKER_HEADER_HEIGHT', '12')
     compact = filters.resume_health(health, 27, False, True)
     assert len(compact) == 2
-    assert compact[0] == 'Refreshing local  ' + filters.key_labels('Ctrl-U', compact=True)
+    assert compact[0][2:] == 'Refreshing local  ' + filters.key_labels('Ctrl-U', compact=True)
     assert compact[1] == '× mini timed out'
 
 
@@ -814,3 +815,15 @@ def test_open_last_turn_sort_uses_timestamp_not_display_text(filters, tmp_path):
     assert (root / 'current').read_text().splitlines() == ROWS
     filters.render(root, 'open', 'toggle-sort', 100)
     assert (root / 'current').read_text().splitlines()[0] == ROWS[2]
+
+
+def test_refresh_spinner_advances_and_stops(filters, monkeypatch):
+    pending = {'hosts': [{'host': 'local', 'status': 'refreshing'}]}
+    monkeypatch.setattr(filters.time, 'monotonic', lambda: 0)
+    first = filters.resume_health(pending, 80, False, True)[0]
+    monkeypatch.setattr(filters.time, 'monotonic', lambda: .24)
+    second = filters.resume_health(pending, 80, False, True)[0]
+    assert first != second
+    assert 'Refreshing local' in first and 'Refreshing local' in second
+    settled = filters.resume_health({'hosts': [{'host': 'local', 'status': 'current'}]}, 80, False, True)[0]
+    assert not any(frame in settled for frame in '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')

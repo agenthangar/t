@@ -26,7 +26,7 @@ UNSUPPORTED = {
 QUERIES = frozenset({
     'system usage list', 'system recovery status', 'system recovery agent',
     'eval config list', 'eval benchmarks list', 'eval runs list',
-    'session list', 'repo list', 'repo locate', 'issue list', 'issue status',
+    'session list', 'session recovery status', 'repo list', 'repo locate', 'issue list', 'issue status',
     'cursor list', 'hosts list', 'hosts show', 'workflow list', 'workflow context',
     'workflow instructions show', 'config show', 'config models list',
     'config models show', 'config models runtime status', 'config models runtime list', 'config models inference status', 'config models requests list',
