@@ -536,17 +536,11 @@ def _header(st, scope):
 
 
 def _ls_scope(cfg, repo, all_repos, cwd):
-    """Resolve an explicit `t ls [repo] [-a]` scope, independent of cwd.
+    """Resolve explicit repository scope, or infer it from the current checkout.
 
-    Bare lists include every repository, matching bare open. An explicit repo
-    returns its canonical directory and worktree root; otherwise ("", "").
-
-    An explicit repo is the scope from ANY directory — `t ls dot -r` from ~ was the
-    ask, and every other slot verb already takes `<repo>` this way. Unknown alias →
-    ValueError naming the choices (never a silent fall-through to the cwd repo,
-    which would render the WRONG repo under a heading that looks right). Combined
-    with -a it is a contradiction and is refused rather than one flag quietly
-    winning."""
+    Outside a registered checkout or worktree, and with --all, return an empty
+    scope. Unknown explicit selectors fail instead of widening the results.
+    """
     if repo:
         if all_repos:
             raise ValueError("t ls: a repo and --all are contradictory — pick one")
@@ -557,6 +551,14 @@ def _ls_scope(cfg, repo, all_repos, cwd):
         scope = cfg.repos[repo]
     else:
         scope = ""
+        if not all_repos:
+            matches = [path for path in cfg.repos.values() if
+                       os.path.realpath(cwd) == os.path.realpath(path) or
+                       os.path.realpath(cwd).startswith(os.path.realpath(path) + os.sep) or
+                       os.path.realpath(cwd).startswith(os.path.realpath(os.path.join(
+                           cfg.worktree_root, os.path.basename(path))) + os.sep)]
+            if matches:
+                scope = max(matches, key=len)
     wt_scope = os.path.join(cfg.worktree_root, os.path.basename(os.path.normpath(scope))) if scope else ""
     return scope, wt_scope
 
@@ -687,6 +689,7 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
     started = time.monotonic()
     deadline = started + (observe_timeout if pending else 30)
     manual = force = False
+    completion = None
     try:
         while pending or manual or (directory / 'refresh-enabled').is_file():
             if request.is_file():
@@ -694,7 +697,7 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                 if not manual:
                     manual = force = True
                     started = time.monotonic()
-                    deadline = started + 30
+                    deadline = float('inf')
                     status = json.loads(status_file.read_text())
                     status.pop('failed', None)
                     status.pop('unavailable', None)
@@ -718,11 +721,17 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                 manual = force = False
                 continue
             options = {'refresh': True} if force else {'observe': True}
-            view = cache['discover'](cfg, **options, deadline=time.monotonic() + min(remaining, 1))
-            if view.get('unavailable') or view.get('loading'):
+            view = cache['discover'](cfg, **options, fields=['rows', 'resume', 'catalog'] if slot else ['rows', 'resume'],
+                                     deadline=time.monotonic() + min(remaining, 1))
+            if view.get('unavailable'):
+                _resume_picker_update(directory, picker, dict(unavailable=True, hosts=status.get('hosts', [])))
+                return 1
+            if force:
+                completion = cache['requested_refresh'](view)
+            force = False
+            if view.get('loading'):
                 time.sleep(.25)
                 continue
-            force = False
             updated = cache['resume_health'](view)
             if not manual:
                 previous = {host['host']: host for host in json.loads(status_file.read_text())['hosts']}
@@ -732,13 +741,18 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                                     for host in updated['hosts']]
             refreshing = {host['host'] for host in updated['hosts'] if host['status'] == 'refreshing'}
             if refreshing:
-                deadline = started + observe_timeout
-            if pending - refreshing or (manual and not refreshing):
+                deadline = float('inf') if manual else started + observe_timeout
+            finished = bool(manual and completion and completion(view))
+            if pending - refreshing or finished:
                 _resume_picker_update(directory, picker, updated,
                     lambda snapshot: _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args))
+            elif refreshing:
+                _resume_picker_update(directory, picker, updated)
             if manual:
                 pending = refreshing
-                manual = bool(pending)
+                manual = not finished
+                if finished:
+                    pending.clear()
             else:
                 pending &= refreshing
             if pending:
@@ -764,16 +778,21 @@ def cmd_ls(cfg, args):
         text = zsh_capture(command)
     else:
         cache = _session_discovery()
+        repo = next((name for name, path in cfg.repos.items() if path == scope), None)
+        projection = dict(prefixed=args.remote, repo=repo,
+                          local_roots=[root for root in (scope, wt_scope) if root])
         def usable(snapshot):
-            text = cache['rows'](snapshot, prefixed=args.remote)
-            return bool(_scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope))
+            return bool(cache['rows'](snapshot, **projection))
         view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False),
-                                           usable=usable, fresh_local=True, local=not args.remote, fields=['rows'])
+                                           usable=usable, fresh_local=True, local=not args.remote, fields=['rows', 'scopes', 'catalog'] if scope else ['rows'],
+                                           roots=[root for root in (scope, wt_scope) if root])
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
-        text = cache['rows'](view, prefixed=args.remote)
-    rows = _scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope)
+        text = cache['rows'](view, **projection)
+    rows = _parse_rows(text, host_prefixed=args.remote)
+    if view is None:
+        rows = _scope_filter(rows, scope, wt_scope)
     if not rows:
         if view and any(h.get('value') is None or h.get('refreshing') or h.get('error')
                         for h in view.get('hosts', [])):
@@ -1365,16 +1384,32 @@ def cmd_paste(cfg, args):
 
 
 def cmd_kill(cfg, args):
-    # remote kill = `_t_dev -r kill <repo> [slot]`; local = `_t_dev kill <repo> <slot|all>`
-    parts = ["_t_dev", "-r", "kill"] if args.remote else ["_t_dev", "kill"]
-    if args.repo:
-        parts.append(shlex.quote(args.repo))
-    if args.slot:
-        parts.append(shlex.quote(args.slot))
-    if args.yes:
-        parts.append("-y")
+    repo = args.repo
+    if not repo and not getattr(args, 'all', False):
+        scope, _ = _ls_scope(cfg, None, False, os.getcwd())
+        repo = next((name for name, path in cfg.repos.items() if path == scope), None)
+    # Browsing uses the shared source scope; explicit close retains confirmation.
+    if not args.slot and (not repo or repo in cfg.repos):
+        parts = ["_dev_kill_pick", shlex.quote(repo or ""), "1" if args.yes else "''",
+                 "1" if args.remote else "''"]
+    else:
+        source = os.environ.get('T_SESSION_SOURCE', '')
+        if source == 'local':
+            parts = ["REMOTE_HOSTS=(); _t_dev", "kill"]
+        elif source and source != 'all':
+            selected = runpy.run_path(str(Path(_t_source_root()) / 'libexec/t_session_scope.py'))['targets'](cfg.hosts, source)
+            assignments = ' '.join(shlex.quote(name) + ' ' + shlex.quote(target) for name, target in selected.items())
+            parts = ["REMOTE_HOSTS=(" + assignments + "); _dev_remote_kill"]
+        else:
+            parts = ["_t_dev", "-r", "kill"] if args.remote else ["_t_dev", "kill"]
+        if repo:
+            parts.append(shlex.quote(repo))
+        if args.slot:
+            parts.append(shlex.quote(args.slot))
+        if args.yes:
+            parts.append("1" if "_dev_remote_kill" in parts[0] else "-y")
     if getattr(args, 'wait', False):
-        parts.insert(0, 'T_DISCOVERY_EXPLICIT_WAIT=1')
+        parts.insert(0, 'export T_DISCOVERY_EXPLICIT_WAIT=1;')
     _delegate(" ".join(parts))
 
 
@@ -8759,7 +8794,7 @@ def _command_readonly(argv, *, terminal=None):
     if verb == 'agent' and tail[:1] == ['background']:
         return len(tail) == 1 or tail[1] == 'status'
     if verb in ('system', 'session') and tail[:1] == ['recovery']:
-        return len(tail) == 1 or tail[1] == 'status'
+        return len(tail) == 1 or tail[1] == 'status' or (verb == 'system' and tail[1] == 'agent')
     if verb in ("idea", "ideate"):
         if verb == "idea" and (not tail or tail[0] in ("list", "show")):
             return True
@@ -13822,6 +13857,16 @@ class _CommandParser(argparse.ArgumentParser):
         return "usage: t <noun> <verb> [arguments] [flags]\n" if self.prog == "t" else super().format_usage()
 
 
+def _session_discovery_flags(parser):
+    parser.add_argument("--repo", dest="scope_repo", metavar="REPO",
+                        help="optional repository (default is the current repo, or all outside a checkout)")
+    parser.add_argument("-a", "--all", action="store_true", help="include every repository")
+    parser.add_argument("--source", metavar="SOURCE",
+                        help="optional source (local, remote, all, HOST, or host:NAME), defaults to all")
+    parser.add_argument("-w", "--wait", action="store_true",
+                        help="wait for the selected refresh to finish (Ctrl-C cancels)")
+
+
 def build_parser():
     p = _CommandParser(prog="t", description="Manage work sessions, repositories, and agent tools.")
     p.add_argument("--version", action=_VersionAction, nargs=0,
@@ -14046,7 +14091,7 @@ TARGETS
   Legacy repository-only targets that could be mistaken for hosts require --host.
   Selection requires a terminal and fzf; scripts must provide explicit targets.
   Cancellation returns 130.""")
-        leaf.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery")
+        leaf.add_argument("-w", "--wait", action="store_true", help="wait for the requested refresh to finish")
         if action != "move":
             leaf.add_argument("target_host", metavar="host", nargs="?", help="SSH host alias or target (default: host picker)")
         leaf.add_argument("repo", nargs="?", help="repository alias, basename or origin name (default: current checkout or all)")
@@ -14089,7 +14134,7 @@ EXAMPLES
     remote_kill.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session")
     remote_kill.add_argument("slot", nargs="?", help="slot number or all; a lone slot uses the current repository")
     remote_kill.add_argument("kill_slot", nargs="?", help=argparse.SUPPRESS)
-    remote_kill.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery")
+    remote_kill.add_argument("-w", "--wait", action="store_true", help="wait for the requested refresh to finish")
     remote_kill.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     remote_kill.set_defaults(remote=True)
 
@@ -14136,7 +14181,7 @@ EXAMPLES
             "Closing the last terminal stops verified empty or completed sessions. Explicit tmux detach keeps them running.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
-  %(prog)s                     Browse sessions across repos
+  %(prog)s                     Browse sessions in the current scope
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
@@ -14145,6 +14190,9 @@ SELECTION
 
 """,
         help_details="""SESSION TARGETS
+  Browsing requires no arguments. --repo, --all, --source and --wait are optional.
+  Force reset requires an explicit slot.
+
   A lone slot number targets the current repo: t open 3.
   After a session exits, use `t session resume <repo> <slot>` to select its
   saved conversation.
@@ -14152,8 +14200,8 @@ SELECTION
   <repo>:<id>, <repo>:p<pid>, or a session ID. A session in tmux attaches
   in place; a foreground Claude session moves into this terminal.
   Use `t open <repo> fg` to select that repo's foreground sessions.
-  Bare t open browses all repos on local and registered remote hosts,
-  even from a worktree. --local limits browsing to this machine.
+  Bare t open browses the current repo, or every repo outside a checkout,
+  on local and registered remote hosts. --local limits browsing to this machine.
   t open <repo> filters. Attached CLI rows are hidden;
   Ctrl-F toggles filters in place; Ctrl-X resets them; Ctrl-T cycles state.
   Ctrl-G/D/O/R matches the highlighted row's agent/interface/host/repo; repeat to clear.
@@ -14161,7 +14209,7 @@ SELECTION
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
   LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
   Retained sessions appear immediately; cold discovery offers wait, retry and cancel.
-  Pending discovery waits up to 30 seconds. Failed hosts pause retries for
+  An empty scope waits up to 30 seconds automatically. Ctrl-U refreshes an open picker. Failed hosts pause retries for
   an hour; use `t hosts reset HOST` to retry earlier.
   Inventory is retained with a 24-hour reconciliation interval; activity refreshes separately.
   Turning filters or sorting off preserves their choices. Search stays in place.
@@ -14245,7 +14293,7 @@ REMOTE SESSIONS
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
-    sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or session (default: browse all repos)")
+    sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or session (default: current repo, or all outside a checkout)")
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
@@ -14260,24 +14308,25 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", "--here", dest="local", action="store_true", help="use this machine only")
     location.add_argument("-r", "--remote", action="store_true", help="attach remotely; --new starts a session")
     location.add_argument("--host", help="open or attach on this host")
-
-    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    _session_discovery_flags(sp)
 
     sp = sub.add_parser("ls", help="list dev sessions (attached + active context)",
-        description='List cached live sessions across repositories and registered hosts without prompting. '
-            'Name a repository to scope; --local limits hosts. Discovery uses a persisted RAM cache with hourly expiry. '
+        description='List live sessions with verified local details. '
+            'Use the current repository or all repositories outside a checkout. '
             'Available scoped results return immediately; empty pending discovery waits up to 30 seconds. '
             'LAST TURN shows turn initiation time.',
         help_details="""DETAILS
+  Browsing requires no arguments. --repo, --all, --source and --wait are optional.
+  The list prints directly.
+
 
   List dev sessions: whether each is attached, and whether it has an active
   conversation loaded (vs. parked on the startup splash).
   MODELS lists the Lead and any recorded Plan, Build or Review stage models.
   On compact terminals, +N counts stage models that did not fit.
 
-  Bare `t session list` shows every repository, including when run inside a
-  checkout or worktree, like bare `t session open`. Name a repo to scope the list:
-  `t session list <repo>`. `-a` explicitly selects every repo (the default).
+  Bare `t session list` uses the current repository or all repositories outside
+  a registered checkout. Name a repo or use --all to change the scope.
   Registered hosts are included by default with a HOST column; --local limits
   the view to this machine. -r retains the default.
 
@@ -14299,26 +14348,29 @@ REMOTE SESSIONS
   Pipe to cat for complete values.
 
   Always prints a read-only table; use t open to select a session.""")
-    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name to scope from any directory (default: all repositories)")
+    sp.add_argument("repo", nargs="?", help="optional repository alias, basename or origin name")
     location = sp.add_mutually_exclusive_group()
     location.add_argument("-r", "--remote", dest="remote", action="store_true", default=True,
                           help="include registered remote hosts (default)")
     location.add_argument("-l", "--local", dest="remote", action="store_false",
                           help="list this machine only")
-    sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
-    sp.add_argument("-w", "--wait", action="store_true", help="refresh live local slots and wait up to 30 seconds")
+
+    _session_discovery_flags(sp)
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
-            'local repositories; Tab marks rows and Enter confirms the selection. An explicit live '
+            'the current scope. Tab marks rows and Enter confirms the selection. An explicit live '
             'target requires confirmation unless --yes. Pending '
             'work and attached sessions are initially hidden; use picker filters to show them.',
         help_details="""DETAILS
+  Browsing requires no arguments. --repo, --all, --source and --wait are optional.
+  Closing a live target requires confirmation or --yes.
+
 
   Tear down a dev session.
 
-  Bare `t kill` picks across all local sessions; `t kill <repo>` filters to that
-  repo.
+  Bare `t kill` uses the current repository and registered hosts. Outside a
+  checkout it shows all repositories. Use --source local for this machine.
 
   Tab marks multiple rows and Enter confirms the selection. Managed close waits
   for the client to exit before removing the tmux session. If a local client
@@ -14349,12 +14401,11 @@ REMOTE SESSIONS
 
   Explicit targets confirm while an agent is live unless `-y`; `-r` kills it on its
   remote host instead.""")
-    sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or foreground session; default: pick across local repos")
+    sp.add_argument("repo", nargs="?", help="optional repository alias, basename, origin name or foreground session")
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-y", "--yes", action="store_true", help="skip the live-agent confirmation for explicit targets")
     sp.add_argument("-r", "--remote", action="store_true", help="kill it on its host instead")
-
-    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    _session_discovery_flags(sp)
 
     sp = sub.add_parser("restart", help="restart a stuck CLI in the same slot and conversation",
         description='Restart a stuck local CLI in the same conversation, pane, and worktree. Infer the current '
@@ -14456,7 +14507,7 @@ REMOTE SESSIONS
     sp.add_argument("--refresh", action="store_true", help="refresh registered hosts' metadata and PR states")
     sp.add_argument("--json", action="store_true", help="print paginated metadata without launching")
 
-    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    sp.add_argument("-w", "--wait", action="store_true", help="wait for the requested refresh to finish (Ctrl-C cancels)")
 
     sp = sub.add_parser("resume", help="select and resume saved conversations",
         description='Browse cached saved conversations; a plain slot target opens its history. '
@@ -14470,6 +14521,9 @@ REMOTE SESSIONS
   %(prog)s --last -w        Resume the most recently closed conversation
   In the repository resume picker, Ctrl-D hides/shows merged PR sessions.""",
         help_details=f"""DETAILS
+  Browsing requires no arguments. --repo, --all, --source and --wait are optional.
+  A lone slot requires a current repository.
+
 
   Choose saved work associated with a repository or slot. A live selection
   attaches to its existing owner; an inactive selection resumes saved history.
@@ -14479,8 +14533,8 @@ REMOTE SESSIONS
   Missing, tied or incomplete close evidence refuses without launching.
   --last cannot be combined with --live or an explicit --days.
 
-  -w / --wait observes discovery for up to 30 seconds, then uses the retained snapshot;
-  --last refuses if it is still incomplete. Ctrl-C returns 130 and leaves refresh
+  -w / --wait observes one requested refresh through completion or failure.
+  --last requires complete discovery. Ctrl-C returns 130 and leaves refresh
   running. Redirected waits show no spinner and never prompt.
 
   Available scoped saved results return immediately. Empty pending discovery
@@ -14516,10 +14570,9 @@ REMOTE SESSIONS
   remain at the top of the picker. Available conversations still resume. Run
   gh auth login --hostname github.com on that host, then retry.
 
-  A plain slot target browses saved conversations: select exact
-  conversations with Tab, then Enter, even with only one result. Ctrl-F/B pages, Ctrl-R refreshes,
-  and Ctrl-/ shows details. Ctrl-S toggles sorting; Ctrl-Y cycles last closed, last turn,
-  repository, agent, host, and session. Unknown timestamps sort last.
+  A plain slot target shows conversations associated with that slot at any age.
+  Select a conversation and press Enter, even for a single result. Ctrl-U refreshes.
+  Use t session history for paginated history.
   Without a terminal, history lists without launching.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
@@ -14610,7 +14663,6 @@ REQUIREMENTS AND DISCOVERY
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-f", "--fg", action="store_true", help="resume inline in this terminal (no tmux slot)")
     sp.add_argument("--cli", action="store_true", help="resume in the terminal (the default)")
-    sp.add_argument("-a", "--all", action="store_true", help="discover local and remote-only repositories (default outside a repo dir)")
     sp.add_argument("-l", "--live", action="store_true",
         help="start with all sessions shown; Ctrl-F restores the inactive-only view (live rows attach on pick)")
     sp.add_argument("-r", "--remote", action="store_true",
@@ -14619,10 +14671,9 @@ REQUIREMENTS AND DISCOVERY
         help="recency window for conversations (default 30; 'all' for everything)")
     sp.add_argument("--host", metavar="H",
         help="send selected local history and worktree edits to host H, resume there, and attach")
-
-    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
-
     sp.add_argument("--last", action="store_true", help="resume the unique most recently closed saved conversation without a picker")
+
+    _session_discovery_flags(sp)
 
     sp = sub.add_parser("cd", help="cd this shell into a dev slot's worktree",
         description='Enter an existing worktree without creating one or changing tmux. A lone slot uses the current '
@@ -14648,19 +14699,21 @@ REQUIREMENTS AND DISCOVERY
 
     sp = sub.add_parser("beam", aliases=["move"], help="move a session between machines (send, or --from to receive)",
         description='Move current Claude or Codex CLI conversations. Exact targets search local and remote hosts. '
-            'Select sessions, then a destination, including local; -r includes remote sources when browsing. '
+            'Select sessions from local or registered hosts, then choose a destination. '
             'Scripts require an explicit target and --detach. --from receives here; add --host to move '
             'between remote hosts. Claude and Codex use guarded t transfers.',
         help_details="""DETAILS
+  Browsing requires no arguments. --repo, --all, --source and --wait are optional.
+  Scripted moves require an exact target, a destination and --detach.
+
 
   Claude and Codex use guarded t transfers. Legacy native-handoff settings
   are ignored.
 
   Use t to move a session between machines (a cross-host push/pop).
 
-  Without a slot or --session ID, select one or more current local CLI conversations,
-  then choose the destination host (or name --host HOST). Use -r/--remote to include
-  registered remote sources. `t move` aliases `t session move`. Selection is
+  Without a slot or --session ID, select current local and remote CLI conversations
+  on the selected source hosts, then choose a destination (or name --host HOST). `t move` aliases `t session move`. Selection is
   scoped to the named or current repository (all repositories outside a checkout;
   --all widens the scope).
 
@@ -14716,12 +14769,10 @@ EXAMPLES
     sp.add_argument("--from", dest="from_host", metavar="HOST", help="source host; alone receives here, with --host sends directly to that destination")
     sp.add_argument("--here", action="store_true", help="RECEIVE (auto-host): pull it back here, auto-detecting which host it is on")
     sp.add_argument("--fg", action="store_true", help="resume in the foreground, no tmux slot")
-    sp.add_argument("-d", "--detach", action="store_true", help="leave it running there; print attach hint")
+    sp.add_argument("-d", "--detach", action="store_true", help="leave the destination detached (required without a terminal)")
     sp.add_argument("-p", "--pick", action="store_true", help="pick a current local session, including when inside an agent")
-    sp.add_argument("-a", "--all", action="store_true", help="picker across every project")
     sp.add_argument("-s", "--session", help="target a session by id or unique prefix")
-
-    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for discovery; Ctrl-C cancels")
+    _session_discovery_flags(sp)
 
     sp = sub.add_parser("read", help="read a dev slot's scrollable tmux log",
         description='Read a slot’s captured tmux output with less. Infer the current repository; read remote slots on '
@@ -15848,7 +15899,8 @@ def _main(argv):
                 cache['require_open_network'](cfg, local=options['local'], host=selected_host)
             view, notice = cache['bounded_snapshot'](cfg, **options,
                 explicit='--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1',
-                fresh_local='--open' in argv, usable=lambda snapshot: bool(cache['rows'](snapshot, **projection)))
+                fresh_local='--open' in argv, roots=projection.get('local_roots', ()),
+                slot=projection.get('slot'), usable=lambda snapshot: bool(cache['rows'](snapshot, **projection)))
         except (OSError, ValueError) as error:
             print(f't: {error}', file=sys.stderr)
             return 1
@@ -15899,6 +15951,7 @@ def _main(argv):
                 cutoff=int(os.environ.get('T_RESUME_CUTOFF', '0')),
                 last=os.environ.get('T_RESUME_LAST') == '1')
         view, notice = cache['bounded_snapshot'](Config(), usable=usable,
+            fields=['rows', 'resume', 'catalog'] if slot else ['rows', 'resume'],
             explicit=os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1')
         status_file = os.environ.get('T_RESUME_STATUS_FILE')
         if status_file:
@@ -15908,7 +15961,7 @@ def _main(argv):
         if os.environ.get('T_RESUME_ROWS_FILE'):
             Path(os.environ['T_RESUME_ROWS_FILE']).write_text(''.join('\t'.join(row.split('\t')[:8]) + '\n' for row in cache['rows'](view).splitlines()))
         if os.environ.get('T_RESUME_NOTICE_FILE'):
-            Path(os.environ['T_RESUME_NOTICE_FILE']).write_text('Older or incomplete results · new sessions may be missing' if cache['_partial'](view) else '')
+            Path(os.environ['T_RESUME_NOTICE_FILE']).write_text(notice)
         if os.environ.get('T_RESUME_LAST') == '1':
             try:
                 print(cache['last_closed_candidate'](view, aliases, slot))
@@ -16024,14 +16077,23 @@ def _main(argv):
         finally:
             history.store.close()
     if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--compact", "--header", "--last-turn"}:
-        rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
+        source = sys.stdin.read()
+        rows = _parse_rows(source, host_prefixed=True)
+        raw_rows = iter(line for line in source.splitlines() if line.count('\t') >= 6)
         owners = os.environ.get('T_OPEN_OWNERS')
         terminals = (json.loads(Path(owners).read_text()) or {}) if owners and Path(owners).is_file() else None
+        include_owner = terminals is not None or os.environ.get('T_PICKER_OWNER_IDS') == '1'
         for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv,
                                         compact="--compact" in argv, header="--header" in argv, last_turn="--last-turn" in argv):
             fields = line.split('\t', 3)
-            if terminals is not None and len(fields) == 4 and fields[0] == 'local' and fields[2] in ('attached', 'detached') and re.fullmatch(r'.+-[0-9]+', fields[1]):
-                line += '\t' + terminals.get(fields[1], 'unverified')
+            if include_owner and len(fields) == 4:
+                import base64
+                raw = next(raw_rows)
+                terminal = ''
+                if (terminals is not None and fields[0] == 'local' and fields[2] in ('attached', 'detached')
+                        and re.fullmatch(r'.+-[0-9]+', fields[1])):
+                    terminal = terminals.get(fields[1], 'unverified')
+                line += '\t' + '\t'.join([terminal, raw.split('\t')[1], base64.b64encode(raw.encode()).decode()])
             print(line)
         return 0
     if argv == ["__update-check"]:
@@ -16129,6 +16191,10 @@ def _main(argv):
         return 2
     argv = _canonical_argv(argv)
     if _plain_slot_resume(argv):
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            plugin = Path(_t_source_root()) / 't.plugin.zsh'
+            return _delegate('source ' + shlex.quote(str(plugin)) +
+                             ' && _T_RESUME_REQUIRE_PICKER=1 _t_resume ' + shlex.join(argv[1:] + ['--days', 'all']))
         argv = ["history", *argv[1:]]
     # Operational `cursor` arguments still belong to cursor-beam. In particular,
     # `t cursor --ls` must reach it without argparse rejecting the leading flag.
@@ -16203,6 +16269,16 @@ def _command_title(argv):
 
 
 def main(argv):
+    previous_source = os.environ.get('T_SESSION_SOURCE')
+    scope = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'libexec/t_session_scope.py'))
+    try:
+        argv, source = scope['normalize'](argv)
+        if source is not None:
+            scope['targets'](Config().hosts, source)
+            os.environ['T_SESSION_SOURCE'] = source
+    except ValueError as error:
+        print('t: ' + str(error), file=sys.stderr)
+        return 2
     global _TITLE_OWNED, _TITLE_QUIET
     previous = _TITLE_OWNED, _TITLE_QUIET
     title = _command_title(argv)
@@ -16217,6 +16293,10 @@ def main(argv):
         if active:
             _set_term_title("")
         _TITLE_OWNED, _TITLE_QUIET = previous
+        if previous_source is None:
+            os.environ.pop('T_SESSION_SOURCE', None)
+        else:
+            os.environ['T_SESSION_SOURCE'] = previous_source
 
 
 if __name__ == "__main__":

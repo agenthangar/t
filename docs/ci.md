@@ -120,3 +120,12 @@ audit. The full `CI` gate requires both matrix jobs to succeed for the selected 
 Artifacts named `design-<version>` include JUnit, exact collected/outcome records,
 and failure output with rendered frames and coordinate comparisons. Tests use
 private tmux sockets and sandbox homes; no native desktop windows are opened.
+
+### Session discovery and transfer regressions
+
+The installed-command smoke case holds the history collector open and checks the
+first list and picker against known live conversation details. The full suite
+also exercises 61 numbered slots. Run `python3 tests/ssh/move.py` with Docker
+to test a transfer between two disposable Linux hosts with real SSH, independent
+worktrees and a shared Git origin. Full Linux CI runs this transfer. The CI
+workflow's `run_macos` input enables hosted macOS verification.

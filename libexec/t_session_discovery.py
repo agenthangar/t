@@ -3,6 +3,7 @@ import errno
 import json
 import math
 import os
+import re
 from pathlib import Path
 import runpy
 import shlex
@@ -27,7 +28,12 @@ def request(operation, payload=None, *, deadline=None):
 def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, refresh=False, observe=False, live_wait=False):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
+    if os.environ.get('T_SESSION_SOURCE') and os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        scope = runpy.run_path(str(ROOT / 'libexec/t_session_scope.py'))
+        targets = scope['targets'](cfg.hosts)
     if host is not None:
+        if os.environ.get('T_SESSION_SOURCE') and host not in targets:
+            raise ValueError('selected host is outside --source scope')
         targets = {host: 'local' if host == 'local' else cfg.hosts.get(host, host)}
     options = {'deadline': deadline} if deadline is not None else {}
     payload = {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
@@ -41,22 +47,101 @@ def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline
     return request('discover', payload, **options)
 
 
+def hydrate_local(cfg, view, roots=None, slot=None):
+    """Read current local display details without waiting for the history worker.
+
+    Call once on the final foreground snapshot. The private scanner validates
+    current pane identity before reading its transcript. It never starts agents.
+    """
+    local = next((host for host in view.get('hosts', []) if host.get('target') == 'local'
+                  or host.get('host') == 'local'), None)
+    if local is None:
+        return view
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith('COV_CORE_')}
+    environment.update(T_HOME=str(ROOT), T_NO_AUTORELOAD='1', T_NO_UPDATE_CHECK='1',
+                       T_DISCOVERY_COLLECTOR='1', T_REMOTE_QUERY_LOCAL='1',
+                       T_DISCOVERY_SCOPE_ROOTS='\n'.join(str(root) for root in roots or () if root),
+                       T_DISCOVERY_SCOPE_SLOT=str(slot or ''))
+    command = 'setopt pipefail; source ' + shlex.quote(str(ROOT / 't.plugin.zsh'))
+    command += '; _dev_session_rows --lightweight'
+    def in_scope(label, cwd):
+        return (not slot or label.endswith('-' + str(slot))) and (
+            not roots or any(cwd == str(root) or cwd.startswith(str(root).rstrip('/') + '/') for root in roots))
+
+    inventory = runpy.run_path(str(ROOT / 'libexec/t_live_inventory.py'))
+    try:
+        _, before = inventory['scan']()
+        after, output = before, ''
+        if any(in_scope(label, owner['cwd']) for label, owner in before.items()):
+            with _spinner('Reading session details'):
+                result = subprocess.run(['zsh', '-lic', command], capture_output=True,
+                                        text=True, stdin=subprocess.DEVNULL, env=environment,
+                                        start_new_session=True, timeout=90)
+            if result.returncode:
+                raise ValueError(result.stderr.strip().splitlines()[-1] if result.stderr.strip()
+                                 else 'local session details failed')
+            _, after = inventory['scan']()
+            output = result.stdout
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        local['details_error'] = str(error)
+        return view
+    previous = (local.get('value') or {}).get('rows', '').splitlines()
+    old = {}
+    rows = []
+    for line in previous:
+        fields = line.split('\t')
+        if (len(fields) >= 7 and fields[3] in ('attached', 'detached')
+                and re.fullmatch(r'.+-[0-9]+', fields[2]) and in_scope(fields[2], fields[1])):
+            old[fields[2]] = fields
+        else:
+            rows.append(line)
+    details = {fields[2]: fields for line in output.splitlines() if len(fields := line.split('\t')) >= 9}
+    for label, current in after.items():
+        if not in_scope(label, current['cwd']):
+            continue
+        fields = details.get(label)
+        prior = before.get(label)
+        if (not fields or not prior or prior['terminal'] != current['terminal']
+                or prior['cwd'] != current['cwd'] or current['cwd'] != fields[1]
+                or prior.get('stamp') != current.get('stamp')):
+            fields = ['-', current['cwd'], label, current['state'], 'unknown', '-', current['agent']]
+        else:
+            fields[3] = current['state']
+            cached = old.get(label)
+            if cached and fields[0] != '-' and (fields[0], fields[1], fields[6]) == (
+                    cached[0], cached[1], cached[6]):
+                for index in (5, 7, 8):  # summary, model, last turn
+                    if fields[index] in ('', '-') and len(cached) > index:
+                        fields[index] = cached[index]
+                # Watchers come from the foreground read. Only usage statistics
+                # are exclusive to the background collector.
+                fields.extend(extra for extra in cached[9:] if extra.startswith('{'))
+        rows.append('\t'.join(fields))
+    local['value'] = {**(local.get('value') or {}), 'rows': ''.join(line + '\n' for line in rows)}
+    local['terminals'] = {label: item['terminal'] for label, item in after.items()}
+    local['details_checked'] = time.time()
+    local.pop('details_error', None)
+    return view
+
+
 def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=None, usable=None):
     """Observe the shared refresh without changing expiry, ownership or workers."""
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + timeout if timeout is not None else None
     with _spinner('Refreshing sessions'):
         while not view.get('unavailable') and (view.get('loading') or any(
                 h.get('refreshing') for h in view.get('hosts', []))):
-            remaining = deadline - time.monotonic()
+            remaining = deadline - time.monotonic() if deadline is not None else .25
             if remaining <= 0:
                 return dict(view, wait_timed_out=True)
             time.sleep(min(.25, remaining))
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 return dict(view, wait_timed_out=True)
             options = {'host': host} if host is not None else {}
-            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=deadline, observe=True, **options)
-            if latest.get('unavailable'):
-                return dict(view, wait_timed_out=True) if time.monotonic() >= deadline else dict(
+            request_deadline = deadline if deadline is not None else time.monotonic() + 4
+            latest = discover(cfg, local=local, fields=fields or ['rows'], deadline=request_deadline, observe=True, **options)
+            if latest.get('unavailable') or latest.get('instance') != view.get('instance'):
+                return dict(view, wait_timed_out=True) if deadline is not None and time.monotonic() >= deadline else dict(
                     view, wait_unavailable=True)
             view = latest
             if usable is not None and usable(view):
@@ -64,23 +149,52 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
     return view
 
 
-def bounded_snapshot(cfg, *, initial=None, explicit=True, usable=None, fresh_local=False, **options):
-    """Observe one refresh when requested or when its scoped results are empty."""
+def requested_refresh(view, *, live=False):
+    """Pin each target to the attempt the command joined, including failures."""
+    tickets = {}
+    for host in view.get('hosts', []):
+        prefix = 'live' if live and 'live_requested' in host else 'refresh'
+        tickets[host['host']] = (prefix + '_revision', host.get(prefix + '_requested'))
+
+    def complete(latest):
+        if latest.get('loading'):
+            return False
+        for host in latest.get('hosts', []):
+            revision, ticket = tickets.get(host['host'], ('refresh_revision', None))
+            if ticket is None:
+                if host.get('refreshing'):
+                    return False
+            elif host.get(revision, 0) < ticket and (host.get('refreshing') or not host.get('error')):
+                return False
+        return True
+
+    return complete
+
+
+def bounded_snapshot(cfg, *, initial=None, explicit=True, usable=None, fresh_local=False,
+                     roots=None, slot=None, **options):
+    """Read verified local details and observe the requested remote or history work."""
     options.setdefault('fields', ['rows', 'resume'])
-    live_wait = explicit and fresh_local
-    view = initial if initial is not None else discover(cfg, **options, **({'live_wait': True} if live_wait else {}))
-    if live_wait:
-        requested = {host['host']: host['live_requested'] for host in view.get('hosts', [])
-                     if 'live_requested' in host}
-        def usable(latest):
-            return not latest.get('loading') and all(
-                host.get('live_revision', 0) >= requested[host['host']] if host['host'] in requested
-                else not host.get('refreshing') for host in latest.get('hosts', []))
-    usable = usable or (lambda value: _usable(value, options['fields']))
-    pending = view.get('loading') or any(host.get('refreshing') for host in view.get('hosts', []))
-    if (explicit and not (live_wait and usable(view))) or (pending and not view.get('unavailable') and not usable(view)):
-        view = wait_for_refresh(cfg, view, usable=None if explicit and not live_wait else usable, **options)
-    return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
+    live = 'rows' in options['fields'] and 'resume' not in options['fields'] and 'mcp' not in options['fields']
+    with _spinner('Reading session details'):
+        demand = dict(refresh=True) if explicit else {}
+        if explicit and live:
+            demand['live_wait'] = True
+        view = initial if initial is not None else discover(cfg, **options, **demand)
+        is_usable = usable or (lambda value: _usable(value, options['fields']))
+        if explicit:
+            complete = requested_refresh(view, live=live)
+            if not complete(view):
+                view = wait_for_refresh(cfg, view, timeout=None, usable=complete, **options)
+        if 'rows' in options['fields'] and any('live_revision' in h for h in view.get('hosts', [])):
+            view = hydrate_local(cfg, view, roots, slot)
+        pending = view.get('loading') or any(host.get('refreshing') for host in view.get('hosts', []))
+        if not explicit and pending and not view.get('unavailable') and not is_usable(view):
+            latest = wait_for_refresh(cfg, view, usable=is_usable, **options)
+            if latest is not view and live and any('live_revision' in h for h in latest.get('hosts', [])):
+                latest = hydrate_local(cfg, latest, roots, slot)
+            view = latest
+    return view, 'Older or incomplete results, new sessions may be missing' if _partial(view) else ''
 
 
 def last_closed_candidate(view, aliases, slot=None):
@@ -160,7 +274,7 @@ def require_open_network(cfg, *, local=False, host=None):
 def _partial(view):
     return bool(view.get('unavailable') or view.get('wait_unavailable') or view.get('loading') or
                 view.get('wait_skipped') or view.get('wait_timed_out') or
-                any(h.get('refreshing') or h.get('stale') or h.get('error') or h.get('value') is None
+                any(h.get('refreshing') or h.get('stale') or h.get('error') or h.get('details_error') or h.get('value') is None
                     for h in view.get('hosts', [])))
 
 
@@ -237,6 +351,13 @@ def announce(view):
         print('t: Session discovery is refreshing; run again shortly.', file=sys.stderr)
     else:
         for host in view['hosts']:
+            if host.get('details_error'):
+                print(f"t: Local session details refresh failed ({host['details_error']}).", file=sys.stderr)
+                continue
+            if host.get('details_checked') and not host.get('live_error'):
+                age = max(0, int(time.time() - host['details_checked']))
+                print(f't: Verified local session details {age}s ago.', file=sys.stderr)
+                continue
             if host.get('live_checked') and not host.get('live_error'):
                 age = max(0, int(time.time() - host['live_checked']))
                 status = f'Live local slots checked {age}s ago'
@@ -289,7 +410,8 @@ def rows(view, *, prefixed=True, repo=None, cli_only=False, remote_only=False,
         if repo and not roots:
             catalog = value.get('catalog', {})
             host_identities = identities if resolved_local else identities | {r['repo'] for r in catalog.get('repositories', []) if repo in (r['alias'], r['repo'])}
-            roots = [r['path'] for r in catalog.get('repositories', []) if r['repo'] in host_identities and r.get('path')]
+            roots = [root for identity in host_identities for root in value.get('scopes', {}).get(identity, [])]
+            roots += [r['path'] for r in catalog.get('repositories', []) if r['repo'] in host_identities and r.get('path')]
             roots += [a['workspace'] for r in catalog.get('conversations', []) if r['repo'] in host_identities for a in r.get('associations', [])]
         if repo and not roots and host['host'] == 'local':
             roots = [root for root in local_roots if root]
@@ -322,16 +444,26 @@ def candidates(view, aliases, slot=None):
                 if report['at'] >= reports.get(key, {}).get('at', 0):
                     reports[key] = report
     for host in hosts:
-        for raw in (host.get('value') or {}).get('resume', []):
+        value = host.get('value') or {}
+        associations = {(row['repo'], row['agent'], row['sid']): matches
+                        for row in value.get('catalog', {}).get('conversations', [])
+                        if slot is not None and (matches := [assoc for assoc in row.get('associations', [])
+                                                             if str(assoc.get('slot')) == str(slot)])}
+        for raw in value.get('resume', []):
             fields = raw.split('\t')
             if len(fields) not in (12, 13, 14, 15, 16, 17) or (not all_repos and fields[1] not in aliases and fields[10] not in aliases):
                 continue
+            key = (fields[10], fields[8], fields[3])
             if slot is not None and fields[2] != slot:
-                continue
+                if key not in associations:
+                    continue
+                association = max(associations[key], key=lambda a: a.get('observed', 0))
+                fields[2], fields[4] = str(slot), association['workspace']
+                if len(fields) >= 17:
+                    fields[16] = association.get('host') or '-'
             fields[7] = host['host']
             if len(fields) >= 17 and fields[16] == 'local':
                 fields[16] = host['host']
-            key = (fields[10], fields[8], fields[3])
             if key not in seen:
                 seen.add(key)
                 if len(fields) >= 15 and key in reports:
@@ -533,10 +665,17 @@ def collect(spec, api):
             if not isinstance(wire, dict) or wire.get('protocol') != 2:
                 raise _CACHE['DiscoveryError']('invalid remote inventory', 'protocol')
             health = wire.get('health') or {}
-            if wire.get('pending') or health.get('refreshing'):
+            ticket = spec.get('peer_ticket')
+            if ticket and ticket[0] != health.get('instance'):
+                raise _CACHE['DiscoveryError']('Remote discovery restarted during refresh', 'collector')
+            if ticket is None and isinstance(health.get('refresh_requested'), int):
+                ticket = [health.get('instance'), health['refresh_requested']]
+            pending = (health.get('refresh_revision', 0) < ticket[1] if ticket
+                       else health.get('refreshing'))
+            if wire.get('pending') or pending:
                 if health.get('error') and not health.get('refreshing'):
                     raise _CACHE['DiscoveryError'](health['error'], health.get('error_kind') or 'collector')
-                return {'_pending': True}
+                return {'_pending': True, **({'_peer_ticket': ticket} if ticket else {})}
             value, changed = apply_remote(wire, previous)
             value['_remote_generation'] = wire['generation']
             value['_remote_health'] = wire.get('health', {})

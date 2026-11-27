@@ -443,3 +443,16 @@ def test_selected_local_close_disables_remote_fallback(zsh):
     ''')
     assert 'CLOSE api 3 1' in result.stdout
     assert 'RC=0 HOSTS=1' in result.stdout
+
+
+def test_selected_close_refuses_same_terminal_new_conversation(zsh):
+    result = zsh(r'''
+      tmux() { [[ $1 == has-session ]] && return 0; print '14/$2'; }
+      _dev_session_sid() { print replacement-id; }
+      _dev_kill_local_selected() { print UNEXPECTED_CLOSE; }
+      _dev_kill_selected $'local\tapi-3\tdetached\tTask\tTask\t14/$2\toriginal-id'
+      print "RC=$?"
+    ''')
+    assert 'RC=1' in result.stdout
+    assert 'changed' in result.stdout + result.stderr
+    assert 'UNEXPECTED_CLOSE' not in result.stdout

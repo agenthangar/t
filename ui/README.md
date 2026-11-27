@@ -72,16 +72,27 @@ explicit `--days` cannot be combined with `--last`. Existing `--cli`, `--fg`
 and `--host` destinations retain exact source and live ownership checks.
 
 `-w` (`--wait`) is available on session open, close, resume, move, list and slot history,
-including compatibility and remote routes. When the requested discovery scope has
-no eligible results and refresh is pending, the same wait turns on automatically,
-including static lists, redirected output and history JSON. Available scoped results
-and settled empty/failure results return immediately. Explicit `-w` also observes
-a pending refresh when results exist. Every wait is bounded to 30 seconds. Timeout retains the
-final available snapshot for manual selection, with its incomplete notice; direct
-`--last` refuses it. Live rows and saved candidates use the same post-wait
-snapshot. Ctrl-C returns 130 and leaves the background refresh running. Redirected
-waits have no spinner or prompt. Timeout never enters another waiting rail.
-Lists remain static and explicit targets never become selection requests.
+including compatibility and remote routes. An explicit wait starts or joins one
+refresh for the selected hosts and observes it through completion or failure.
+Each collector and transport operation has its own timeout. A healthy explicit
+refresh can take longer than 30 seconds. An ordinary command with an empty
+scope waits up to 30 seconds for initial results. Ctrl-C cancels observation
+with status 130. A delayed spinner identifies foreground discovery in a
+terminal. Redirected lists print once.
+
+Session list, open, close, move and resume accept an optional positional repository
+or `--repo REPO`. The default is the current registered repository, or all
+repositories outside a checkout. `--all` widens repository scope. `--source`
+selects `local`, `remote`, `all` (default), or a registered host. Use
+`host:NAME` for a host named like a scope. A destination such as `--host` on
+move or resume selects where the work will run. An explicit force reset needs
+a slot. Scripted moves require an exact target, a destination and `--detach`.
+Live close retains confirmation. Each action verifies the selected owner again.
+
+Local numbered sessions show available verified title, model and last turn
+on first display. Ctrl-U refreshes the active picker in place. Continuing
+owners retain their selections when details change. A replacement owner
+requires a new selection.
 
 ## Session-open recovery
 
@@ -1139,9 +1150,9 @@ open. In the picker, an in-flight refresh updates results as hosts finish.
 Ctrl-U starts a refresh in the picker header and adopts results as hosts finish.
 The picker keeps watching a running collector through its deadline. Search,
 navigation and selection stay available while it runs. The picker
-keeps the query, filters and sort. With mark tracking, it keeps marks for rows
-that remain available. Ctrl-R filters by repository in the resume picker and
-refreshes plain slot history.
+keeps the query, filters and sort. With mark tracking, it keeps marks for surviving owners. Ctrl-R filters by repository. A plain slot
+uses the resume picker across all ages and associated workspaces. The separate
+`t session history` command retains pagination.
 
 When a saved selection needs transfer, local and cross-host resumes reconcile the latest durable
 source workspace association under conversation and workspace claims. It verifies repository,
@@ -1355,7 +1366,7 @@ An empty current-session inventory returns 0. Remote workers suppress nested
 automatic update prompts.
 
 `session move` and its `move` alias use the shared multi-selection picker of current
-local CLI owners; `-r`/`--remote` adds registered remote sources. `remote move` is
+local and registered remote CLI owners. `--source` selects the source hosts. `remote move` is
 a compatibility route with remote sources included. Selection always opens without
 an exact target, including inside an agent. Tab marks sessions; Enter accepts
 marks or the focused row. Include attached and detached owners and exclude
@@ -1402,9 +1413,9 @@ before attaching or reporting readiness. This covers Codex registering a resumed
 conversation in a new worktree. A changed or exited owner still fails immediately;
 an identity timeout keeps the launched session and prints `t open api 2` with its
 actual destination for inspection.
-The filtered resume batch also stops at the first failed or cancelled selection.
-Its final summary names the conversation, reason, retry command, ready-session
-attach commands, and number not attempted. No automatic attachment hides errors.
+The filtered resume picker launches independent selections in parallel. If a
+worker fails or cancels, the command reports the failed selection and verified
+ready owners before returning. Successful sessions can be attached individually.
 Retained local transcripts use the same guarded destination allocator as remote
 history. Historical slot numbers are provenance, not reserved destinations:
 multiple conversations from one slot get independent safe destinations, and

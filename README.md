@@ -192,7 +192,7 @@ t agent install            # choose and install agent CLIs; review their vendor 
 t repo add ~/config/my-project  # register a checkout you already have
 t config setup             # select checkouts under ~/config and optional SSH hosts
 t session open my-project  # start an isolated worktree + tmux slot
-t session list             # running sessions across every repository
+t session list             # running sessions in the current scope
 ```
 
 Sessions open directly into the agent without displaying internal shell commands.
@@ -224,8 +224,8 @@ source is stopped. Attach on the source host, align the configuration for future
 work, or use history's verified resume into a fresh local workspace. Existing
 worktrees and agent history should not be manually renamed to bridge hosts.
 
-`t open` browses sessions across all local repositories, including from inside a
-worktree; `t open my-project` filters to that repo. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
+`t open` browses the current registered repository, or all repositories outside a
+checkout. `t open my-project` selects a repository and `--all` widens the scope. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
 inactive CLI sessions remain visible. An explicit slot still opens directly.
 
 `t resume 5` browses every saved conversation associated with slot 5 in the
@@ -317,7 +317,7 @@ closed conversation, or run `t session resume --last --wait` directly.
 Use `t session resume api 3 --last` to scope the search to one slot, or
 `--all` to search every repository. Exact selection requires a unique verified
 close and complete discovery. Session open, close, resume, move and list accept
-`-w` (`--wait`) to observe discovery for at most 30 seconds. Ctrl-C leaves the
+`-w` (`--wait`) to wait for the selected refresh to complete or fail. Ctrl-C leaves the
 refresh running. Redirected waits stay silent and prompt-free.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
@@ -530,10 +530,10 @@ if needed). To rename a registered host, choose Hosts → host → Short name,
 then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
-`t session move` (also `t move`) opens a multi-selection picker of current local
-Claude and Codex CLI conversations, then a destination host picker. Tab
-marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
-to include registered remote sources, `--all` to browse every repository, or name
+`t session move` (also `t move`) shows current local and remote Claude and
+Codex CLI conversations, then a destination host picker. Tab marks sessions.
+Enter moves the marks or the focused session. Use `--source` to select hosts,
+`--all` to browse every repository, or name
 `api` to scope selection. The current checkout scopes the default view; outside
 a checkout all repositories appear. Attached and detached sessions are included;
 saved history and desktop reservations are excluded. Selection also opens inside
@@ -1979,8 +1979,10 @@ Session discovery is served from a shared in-memory cache with hourly expiry
 and asynchronous disk persistence. Session open, close, resume, move, list and
 slot history wait up to 30 seconds when the requested scope is empty and refresh
 is pending; available scoped results and settled empty scans return immediately.
-Explicit `-w` (`--wait`) also observes refresh when results exist. Redirected and JSON
-results follow the same bound without prompting. Failed
+Explicit `-w` (`--wait`) waits for one requested refresh through completion or
+failure. Local slots show verified title, model and turn on first display.
+Use `--source local|remote|all|HOST` to choose hosts. Ctrl-U refreshes a picker
+in place. Redirected lists print once. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
 
@@ -2018,5 +2020,5 @@ Resume the most recently verified closed conversation with
 `t session resume --last -w`, or scope it with `t session resume api 3 --last`.
 `--all` searches every repository; `--last` considers all saved history and refuses
 missing, tied or incomplete close evidence. Session open, close, resume, move and
-list accept `-w` or `--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves
+list accept `-w` or `--wait` to wait for the selected refresh to complete or fail. Ctrl-C leaves
 refresh running; redirected waits stay silent and never prompt.

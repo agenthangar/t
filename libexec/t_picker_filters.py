@@ -1,5 +1,6 @@
 """Render and filter a private picker snapshot without session actions."""
 from datetime import datetime
+import time
 import json
 import os
 from pathlib import Path
@@ -57,7 +58,7 @@ def metadata(source, profile):
             repo = slot.partition(':')[0] if ':' in slot else slot.rpartition('-')[0] or slot
             result[(host, slot, state)] = dict(agent=fields[7] if len(fields) > 7 else 'claude',
                 interface='desktop' if state == 'app' else 'cli', host=host, repo=repo, session=slot)
-            if profile in ('list', 'open'):
+            if profile in ('list', 'open', 'move'):
                 result[(host, slot, state)].update(session=slot, turn=fields[9] if len(fields) > 9 else '-')
             if profile == 'open':
                 result[(host, slot, state)].update(
@@ -130,6 +131,8 @@ def pack(parts, width, separator=' · '):
 
 
 def state_label(profile, mask):
+    if profile == 'move':
+        return 'all current CLI sessions' if mask else 'unattached CLI sessions'
     if profile == 'open':
         return {0: 'unattached', 1: 'all attachment states', 2: 'attached'}[mask]
     if profile == 'resume':
@@ -370,9 +373,9 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     mask = int(mask_file.read_text().strip() or 0) if mask_file.exists() else 0
     default_sort = 'closed' if profile == 'resume' and any(r.get('closed', '-') != '-' for r in records.values()) else 'turn'
     sort_file = directory / 'sort'
-    sort = sort_file.read_text().strip() if sort_file.exists() else (default_sort if profile in ('resume', 'list', 'open') else 'session')
+    sort = sort_file.read_text().strip() if sort_file.exists() else (default_sort if profile in ('resume', 'list', 'open', 'move') else 'session')
     sort_enabled_file = directory / 'sort-enabled'
-    sort_enabled = sort_enabled_file.read_text() == '1' if sort_enabled_file.exists() else profile in ('resume', 'list', 'open')
+    sort_enabled = sort_enabled_file.read_text() == '1' if sort_enabled_file.exists() else profile in ('resume', 'list', 'open', 'move')
     enabled_file = directory / 'filters-enabled'
     enabled = enabled_file.read_text() == '1' if enabled_file.exists() else True
     merged_file = directory / 'hide-merged'
@@ -387,7 +390,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     elif action == 'toggle-sort':
         sort_enabled = not sort_enabled
     elif action == 'next-sort':
-        modes = [name for name in (SAVED_SORTS if profile == 'resume' else RESUME_SORTS) if profile in ('resume', 'list', 'open') or name != 'turn']
+        modes = [name for name in (SAVED_SORTS if profile == 'resume' else RESUME_SORTS) if profile in ('resume', 'list', 'open', 'move') or name != 'turn']
         sort = modes[(modes.index(sort) + 1) % len(modes)]
         sort_enabled = True
     elif action == 'state':
@@ -484,10 +487,10 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
     color = os.environ.get('T_PICKER_COLOR') == '1'
     health = directory / 'discovery-status'
     freshness = json.loads(health.read_text()) if health.exists() and health.stat().st_size else None
-    refresh = bool(os.environ.get('T_PICKER_REFRESH_CALLBACK'))
-    if profile == 'resume' and (freshness is not None or refresh):
+    refresh = bool(os.environ.get('T_PICKER_REFRESH_CALLBACK') or os.environ.get('T_OPEN_OBSERVE'))
+    if profile in ('resume', 'open', 'kill', 'move') and (freshness is not None or refresh or os.environ.get('T_OPEN_OBSERVE')):
         status = resume_health(freshness or {}, width, color, refresh)
-    elif notice.exists() and notice.read_text().strip():
+    if notice.exists() and notice.read_text().strip():
         status.append(clip_columns(notice.read_text().strip(), width))
     if profile == 'resume':
         if freshness is not None:
@@ -626,7 +629,8 @@ def resume_health(health, width, color, refresh=False):
         warnings.append('Update failed')
     style = lambda text, role: paint(text, role) if color else text
     active = bool(pending or health.get('refreshing'))
-    title = ('Refreshing ' + (', '.join(pending) or 'sessions')) if active else timing
+    frame = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[int(time.monotonic() / .12) % 10]
+    title = (frame + ' Refreshing ' + (', '.join(pending) or 'sessions')) if active else timing
     if width <= 28 and not active:
         title = title.removeprefix('Last refresh ')
     title_role = 'progress' if active else 'action'
