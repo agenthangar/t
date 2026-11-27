@@ -85,6 +85,8 @@ Lists remain static and explicit targets never become selection requests.
 
 ## Session-open recovery
 
+If the session picker fails to start, report a picker failure and stop the open.
+
 Remote-inclusive browsing fails before discovery when the OS denies outbound
 networking or neither IP family has a usable route. Report the error on stderr
 and point to `t open --local`; do not show a refresh spinner, open a recovery

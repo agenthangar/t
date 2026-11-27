@@ -640,6 +640,11 @@ _t_open_picker_impl() {
   } always {
     rm -rf -- "$action_dir"
   }
+  # The caller reserves 2 for no candidates. Shell and fzf errors also use 2.
+  if (( picker_rc == 2 )); then
+    print -u2 -- 't open: session picker failed.'
+    return 1
+  fi
   (( picker_rc == 0 )) || return $picker_rc
   [[ -n $selected ]] || return 130
   _t_open_selected "$selected" "$app" "$cli"

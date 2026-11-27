@@ -790,6 +790,8 @@
             "tests/test_picker_filters.py::test_open_header_keeps_every_column_shortcut_visible",
             "tests/test_session_wait.py::test_open_waits_for_new_attached_row_before_snapshot",
             "tests/test_open_picker.py::test_open_requests_waited_snapshot_and_keeps_notice_after_toggle",
+            "tests/test_picker_ui.py::test_public_open_wait_selects_from_partial_discovery",
+            "tests/test_open_picker.py::test_open_wait_reports_picker_failure_without_starting_a_session",
             "tests/test_open_picker.py::test_open_incomplete_empty_scope_never_starts_fresh",
             "tests/test_offline_discovery.py::test_open_known_offline_bails_before_discovery_or_picker",
             "tests/test_offline_discovery.py::test_open_offline_protocol_returns_error_without_empty_inventory",
