@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 _CACHE = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
@@ -23,7 +24,7 @@ def request(operation, payload=None, *, deadline=None):
     return _CACHE['request'](operation, payload)
 
 
-def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, refresh=False, observe=False):
+def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline=None, refresh=False, observe=False, live_wait=False):
     context = {key: getattr(cfg, key, None) for key in ('repos', 'worktree', 'worktree_root', 'worktree_default')}
     targets = {'local': 'local', **({} if local else cfg.hosts)}
     if host is not None:
@@ -31,6 +32,8 @@ def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline
     options = {'deadline': deadline} if deadline is not None else {}
     payload = {'fields': list(fields), 'hosts': [dict(host=host, target=target, context=context)
                                          for host, target in targets.items()]}
+    if 'rows' in fields and 'resume' not in fields and 'mcp' not in fields:
+        payload['live'] = 'wait' if live_wait else 'browse'
     if refresh:
         payload['refresh'] = True
     if observe:
@@ -61,14 +64,22 @@ def wait_for_refresh(cfg, view, *, local=False, timeout=30, host=None, fields=No
     return view
 
 
-def bounded_snapshot(cfg, *, initial=None, explicit=True, usable=None, **options):
+def bounded_snapshot(cfg, *, initial=None, explicit=True, usable=None, fresh_local=False, **options):
     """Observe one refresh when requested or when its scoped results are empty."""
     options.setdefault('fields', ['rows', 'resume'])
-    view = initial if initial is not None else discover(cfg, **options)
+    live_wait = explicit and fresh_local
+    view = initial if initial is not None else discover(cfg, **options, **({'live_wait': True} if live_wait else {}))
+    if live_wait:
+        requested = {host['host']: host['live_requested'] for host in view.get('hosts', [])
+                     if 'live_requested' in host}
+        def usable(latest):
+            return not latest.get('loading') and all(
+                host.get('live_revision', 0) >= requested[host['host']] if host['host'] in requested
+                else not host.get('refreshing') for host in latest.get('hosts', []))
     usable = usable or (lambda value: _usable(value, options['fields']))
     pending = view.get('loading') or any(host.get('refreshing') for host in view.get('hosts', []))
-    if explicit or (pending and not view.get('unavailable') and not usable(view)):
-        view = wait_for_refresh(cfg, view, usable=None if explicit else usable, **options)
+    if (explicit and not (live_wait and usable(view))) or (pending and not view.get('unavailable') and not usable(view)):
+        view = wait_for_refresh(cfg, view, usable=None if explicit and not live_wait else usable, **options)
     return view, 'Older or incomplete results · new sessions may be missing' if _partial(view) else ''
 
 
@@ -226,6 +237,15 @@ def announce(view):
         print('t: Session discovery is refreshing; run again shortly.', file=sys.stderr)
     else:
         for host in view['hosts']:
+            if host.get('live_checked') and not host.get('live_error'):
+                age = max(0, int(time.time() - host['live_checked']))
+                status = f'Live local slots checked {age}s ago'
+                if host.get('error'):
+                    status += ', session details refresh failed'
+                elif host.get('refreshing'):
+                    status += ', session details refreshing'
+                print('t: ' + status, file=sys.stderr)
+                continue
             age = max(0, int((time.time() - host['checked']) / 60)) if host['checked'] else None
             status = ('checked ' + str(age) + 'm ago') if age is not None else 'not yet checked'
             if host.get('refreshing'):
@@ -369,12 +389,13 @@ def collect(spec, api):
     cfg = api['Config']()
     history_module = runpy.run_path(str(ROOT / 'libexec/t_history.py'))
     history = history_module['HistoryCommand'](cfg, api)
+    phase = 'session details'
     try:
         if spec['target'] == 'local':
             history.cache_discovery = True
             shell = api['ZSH_PRELUDE'] + 'setopt pipefail; source ' + shlex.quote(str(ROOT / 't.plugin.zsh')) + '; _dev_session_rows --details'
             result = subprocess.run(['zsh', '-lic', shell], capture_output=True, text=True,
-                                    stdin=subprocess.DEVNULL, timeout=30,
+                                    stdin=subprocess.DEVNULL, timeout=90,
                                     env={**os.environ, 'T_HOME': str(ROOT), 'T_NO_AUTORELOAD': '1',
                                          'T_DISCOVERY_COLLECTOR': '1', 'T_REMOTE_QUERY_LOCAL': '1'})
             if result.returncode:
@@ -386,6 +407,7 @@ def collect(spec, api):
             if spec.get('live_only'):
                 return dict(rows=row_text, resume=[], _timings=timings)
             stage = time.monotonic()
+            phase = 'saved history'
             catalog = history.local_catalog()
             auth = request('artifact', {'key': 'resume-pr-auth'}).get('value') or []
             if spec.get('reconcile') and any(row.get('prs') for row in catalog.get('conversations', [])):
@@ -396,6 +418,7 @@ def collect(spec, api):
             catalog['diagnostics'] = auth
             timings['history_seconds'] = round(time.monotonic() - stage, 4)
             stage = time.monotonic()
+            phase = 'display metadata'
             cache_key = 'display-v6:' + _CACHE['_digest'](spec.get('context', {}))
             previous = request('artifact', {'key': cache_key}).get('value') or {}
             state = {}
@@ -431,6 +454,7 @@ def collect(spec, api):
                 rec['_cached_row'] = row
             timings['metadata_seconds'] = round(time.monotonic() - stage, 4)
             stage = time.monotonic()
+            phase = 'resume projection'
             scopes = {}
             for repository in catalog.get('repositories', []):
                 path = repository.get('path')
@@ -540,6 +564,13 @@ def collect(spec, api):
             value['_legacy_remote'] = True
         return value
 
+    except Exception as exc:
+        if spec['target'] != 'local':
+            raise
+        cause = f'timed out after {exc.timeout}s' if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
+        error = _CACHE['DiscoveryError'](f'{phase}: {cause}', getattr(exc, 'kind', 'collector'))
+        error.detail = getattr(exc, 'detail', '') or traceback.format_exc()
+        raise error from exc
     finally:
         history.store.close()
 

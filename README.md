@@ -168,6 +168,10 @@ labeled. It does not allocate test terminals, restart tmux, execute shell startu
 fetch Git refs, or enable GitHub CLI telemetry. A normal snapshot cannot rule out
 an earlier transient failure. `--repair` fixes shell wiring, not kernel resources.
 
+If local slots are missing, run `t ls --local -w` on that machine, then `t doctor`.
+**Session discovery** reports tmux and cached slot counts, the collector socket,
+and any recorded failure.
+
 Doctor also shows the latest five **Recent session attempts**, including recorded
 failures before an agent or pane log existed. Use `t doctor --recent 20` (or
 `t system diagnose --recent 20`) for more. Each receipt shows the operation,

@@ -18,7 +18,8 @@ HEADER = 'transform-header(cat "$T_PICKER_CURRENT_HEADER")'
 
 
 def identity(row):
-    return tuple(row.split('\t')[:3])
+    fields = row.split('\t')
+    return tuple(fields[:3]) + tuple(fields[5:6])
 
 
 def prune(directory, row):
@@ -32,7 +33,7 @@ def prune(directory, row):
     source = directory / 'source'
     if source.exists():
         source.write_text(''.join(line + '\n' for line in source.read_text().splitlines()
-                                 if tuple(line.split('\t')[i] for i in (0, 3, 4)) != target))
+                                 if tuple(line.split('\t')[i] for i in (0, 3, 4)) != target[:3]))
         render(directory, 'open', 'current', int(os.environ['T_PICKER_HEADER_WIDTH']),
                os.environ.get('T_PICKER_COLUMNS', ''))
 
@@ -107,7 +108,11 @@ def update(directory, changed):
             actions.append('transform-query(cat "$T_PICKER_VIEWS/action-query")')
             picker.request('+'.join(actions))
             state = picker.wait(query, total)
-            position = min(before['position'] + 1, max(1, state['matchCount']))
+            matches = before.get('matches', [])
+            focused = matches[before['position']] if 0 <= before['position'] < len(matches) else {}
+            positions = {identity(item['text']): n for n, item in enumerate(state['matches'], 1)}
+            position = positions.get(identity(focused.get('text', '')),
+                                     min(before['position'] + 1, max(1, state['matchCount'])))
             picker.request(f'pos({position})')
         picker.request(HEADER + '+unbind(change)+' + '+'.join(f'rebind({key})' for key in KEYS))
     except (OSError, ValueError, KeyError, TimeoutError):
@@ -149,6 +154,10 @@ def close(directory, row, query=''):
             message = next((line for line in reversed(output.splitlines()) if line.strip()),
                            'failed; row kept')
         status(directory, message)
+    start_update(directory, changed)
+
+
+def start_update(directory, changed):
     # No inherited terminal descriptors or coverage bootstrap in this short-lived
     # updater. Cleanup is owned by the picker, including cancellation mid-update.
     env = {key: value for key, value in os.environ.items() if not key.startswith('COV_CORE_')}
@@ -158,9 +167,88 @@ def close(directory, row, query=''):
     (directory / 'update.pid').write_text(str(worker.pid))
 
 
+def observe_open(cfg, cache, parse, format_rows):
+    directory = Path(os.environ['T_PICKER_VIEWS'])
+    repo = os.environ.get('T_OPEN_REPO') or None
+    roots = ()
+    if repo in cfg.repos:
+        root = cfg.repos[repo]
+        roots = (root, str(Path(cfg.worktree_root) / Path(root).name))
+    picker = Picker(1)
+    while directory.exists():
+        time.sleep(.35)
+        if (directory / 'update.pid').exists():
+            continue
+        view = cache['request']('live-view')
+        if 'terminals' not in view:
+            continue
+        terminals = view['terminals']
+        existing = {}
+        for line in (directory / 'all').read_text().splitlines():
+            fields = line.split('\t')
+            if len(fields) >= 6 and fields[0] == 'local' and fields[2] in ('attached', 'detached'):
+                existing[fields[1]] = (fields[5], fields[2])
+        scoped = cache['rows']({'hosts': [dict(view, host='local')]}, repo=repo, local_roots=roots)
+        additions = []
+        current = {}
+        for line in scoped.splitlines():
+            fields = line.split('\t')
+            label = fields[3]
+            if label in terminals:
+                current[label] = (terminals[label], fields[4])
+                if existing.get(label) != current[label]:
+                    additions.append(line)
+        removed = [label for label in existing if existing[label] != current.get(label)]
+        if not additions and not removed:
+            continue
+        rows = format_rows(parse('\n'.join(additions), host_prefixed=True),
+                           remote=bool(os.environ.get('T_OPEN_REMOTE')), scoped=bool(repo),
+                           compact=True, header=True, last_turn=True)
+        heading, *display = rows or ['']
+        display = [line + '\t' + terminals[line.split('\t')[1]] for line in display]
+        staged = directory / 'incoming.json'
+        staged.write_text(json.dumps(dict(source=additions, display=display, heading=heading, removed=removed)))
+        picker.deadline = time.monotonic() + 5
+        # Serialize adoption with ordinary filter, sort and close actions in fzf.
+        actions = '+'.join(f'unbind({key})' for key in KEYS)
+        picker.request(actions + '+rebind(change)+execute-silent(python3 "$T_HOME/libexec/t_picker_close.py" append {q})')
+        while staged.exists() and directory.exists() and time.monotonic() < picker.deadline:
+            time.sleep(.02)
+        if staged.exists():
+            break
+
+
+def append(directory, query):
+    lock_query(directory, query)
+    staged = directory / 'incoming.json'
+    data = json.loads(staged.read_text())
+    for name, lines in [('source', data['source']), ('all', data['display']),
+                        ('rows-1', data['display']),
+                        ('rows-0', [row for row in data['display'] if row.split('\t')[2] == 'detached'])]:
+        path = directory / name
+        if data['removed']:
+            index = 3 if name == 'source' else 1
+            state = index + 1
+            retained = []
+            for row in path.read_text().splitlines():
+                fields = row.split('\t')
+                if fields[0] != 'local' or fields[index] not in data['removed'] or fields[state] not in ('attached', 'detached'):
+                    retained.append(row)
+            path.write_text(''.join(row + '\n' for row in retained))
+        with path.open('a') as output:
+            for line in lines:
+                print(line, file=output)
+    render(directory, 'open', 'current', int(os.environ['T_PICKER_HEADER_WIDTH']),
+           os.environ.get('T_PICKER_COLUMNS') or data['heading'])
+    start_update(directory, True)
+    staged.unlink()
+
+
 if __name__ == '__main__':
     root = Path(os.environ['T_PICKER_VIEWS'])
     if sys.argv[1] == 'close':
         close(root, sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == 'append':
+        append(root, sys.argv[2])
     else:
         update(root, sys.argv[2] == '1')

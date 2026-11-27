@@ -1050,8 +1050,9 @@ List commands print normally; picker headers and marks appear only for selection
 The open picker browses local and registered remote hosts by default; `--local`
 limits discovery to this machine. `-r`/`--remote` retains inclusive browsing.
 Fresh sessions and explicit targets retain their existing location routing.
-The open picker shows retained scoped sessions immediately and freezes that
-snapshot. Background refresh never reorders an active selection. When no eligible
+The open picker shows retained scoped sessions immediately. Newly observed local
+slots join the active view with the current query, filters, marks, and focus.
+Numbered rows with a verified terminal ID attach to that specific tmux session. When no eligible
 results exist in the requested repository/host/slot/session scope, pending discovery
 automatically observes one bounded refresh for up to 30 seconds. Settled empty or
 failed discovery returns immediately. Timeout keeps the available snapshot and its
@@ -1077,8 +1078,8 @@ automatically observe refresh for up to 30 seconds. `t session list -w`
 the same table and freshness notices. It uses the shared delayed spinner only in
 capable terminals; redirected waits are silent and never prompt. Completion,
 failure or timeout ends observation; Ctrl-C returns 130 without cancelling the
-shared refresh. Fresh caches return immediately, and cold caches never claim a
-verified empty result. No picker, Return/Escape bindings or update prompt is added.
+shared refresh. An explicit list or open wait requests a new local tmux observation even during
+collector cooldown. Failed observations keep retained slots marked incomplete. No picker, Return/Escape bindings or update prompt is added.
 
 Session-picker filtering and sorting are hotkey interactions. Improvements to
 these controls extend the existing picker and preserve its filter and sort
@@ -1711,6 +1712,9 @@ prints an executable source command; other findings keep their explicit remedies
 Missing shell setup is a preselected row in `t agent install`, including when no
 agent changes are needed. It appears in the review and `-y` plan; deselection,
 status, dry-run, cancellation, and noninteractive plans do not modify it.
+
+The Session discovery section reports the tmux and collector socket and slot counts,
+observation age, duration, and saved errors. Doctor reads private summaries.
 
 The same read-only detail mode includes launch resources: PTY counts/limits,
 aggregate user process count, limits of the diagnostic process (not assumed to

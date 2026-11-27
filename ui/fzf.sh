@@ -20,7 +20,7 @@ _t_fzf_worker() {
     _t_fzf_inputs=()
     for _t_fzf_name in COLUMNS LINES TMPDIR NO_COLOR T_HOME PATH \
       T_PICKER_COLUMNS T_PICKER_SOURCE_ROWS T_PICKER_SESSION_FILTERS T_PICKER_KILL_CALLBACK T_PICKER_NOTICE \
-      T_PICKER_NEW_SESSION T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS \
+      T_OPEN_OBSERVE T_OPEN_REPO T_OPEN_REMOTE T_PICKER_NEW_SESSION T_PICKER_WITH_ATTACHED T_PICKER_WITH_PENDING T_PICKER_ALL_LABEL T_PICKER_AUTH_HOSTS \
       T_PICKER_DISCOVERY_STATUS T_PICKER_REFRESH_CALLBACK; do
       [[ -v $_t_fzf_name ]] && _t_fzf_inputs+=("$_t_fzf_name")
     done
@@ -582,12 +582,18 @@ SH
     done
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ -n "${T_PICKER_KILL_CALLBACK:-}" ]; then
+    _t_picker_start='unbind(change)'
+    if [ "${T_OPEN_OBSERVE:-}" = local ]; then
+      # The observer reads the daemon's lightweight tmux inventory only.
+      # shellcheck disable=SC2016
+      _t_picker_start='unbind(change)+execute-silent(python3 "$T_HOME/bin/t" __open-picker-observe </dev/null >/dev/null 2>&1 & echo $! > "$T_PICKER_VIEWS/observe.pid")'
+    fi
     # The action removes a cached row, then restores marks on both fzf versions.
     # HTTP updates run only after execute returns, outside fzf's blocked loop.
     export FZF_API_KEY
     FZF_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
     # shellcheck disable=SC2016
-    set -- --listen=127.0.0.1:0 --bind='start:unbind(change),change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(ctrl-n)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
+    set -- --listen=127.0.0.1:0 --bind='change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(ctrl-n)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" = open ] && [ "${T_PICKER_NEW_SESSION:-}" = 1 ]; then
     # No row placeholder is needed: this binding also works in an empty list

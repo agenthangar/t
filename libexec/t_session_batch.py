@@ -12,11 +12,13 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_jobs(commands):
+def run_jobs(commands, *, ready_socket=None):
     results = [None] * len(commands)
     running = {}
     env = {**os.environ, 'T_RESUME_BATCH': '1', 'T_DEV_CONTEXT': str(ROOT),
            'T_DEV_CONTEXT_OWNER': str(os.getpid())}
+    if ready_socket:
+        env['T_RESUME_READY_SOCKET'] = str(ready_socket)
     with tempfile.TemporaryDirectory(prefix='t-batch-output-') as name:
         directory = Path(name)
         streams = []
@@ -70,6 +72,17 @@ def run_jobs(commands):
     return results
 
 
+def resume_jobs(commands):
+    if not commands or os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
+        return run_jobs(commands)
+    cache = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
+    address = cache['_runtime']() / 'ready.sock'
+    try:
+        return run_jobs(commands, ready_socket=address)
+    finally:
+        cache['_LIVE']['notify_ready'](address)
+
+
 def prepare(requests, kind):
     with tempfile.TemporaryDirectory(prefix='t-session-batch-') as name:
         directory = Path(name)
@@ -79,7 +92,7 @@ def prepare(requests, kind):
             path.write_text(json.dumps(request))
             path.chmod(0o600)
             commands.append([sys.executable, str(Path(__file__)), kind, str(path)])
-        return run_jobs(commands)
+        return resume_jobs(commands)
 
 
 def worker(kind, path):
@@ -102,7 +115,7 @@ if __name__ == '__main__':
         directory = Path(name)
         if kind == 'scripts':
             scripts = sorted((p for p in directory.glob('*.zsh') if p.stem.isdigit()), key=lambda p: int(p.stem))
-            results = run_jobs([['zsh', str(path)] for path in scripts])
+            results = resume_jobs([['zsh', str(path)] for path in scripts])
             for path, result in zip(scripts, results):
                 path.with_suffix('.out').write_text(result['output'])
                 path.with_suffix('.err').write_text(result['error'])

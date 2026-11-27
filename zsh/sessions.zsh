@@ -1401,6 +1401,15 @@ _dev_session_rows_cli() {
   _dev_ps_snapshot
   # tmux replaces literal tabs in -F with `_` on macOS 3.7c. Keep the
   # variable-length path last so read retains any `|` in a worktree name.
+  local inventory
+  if ! inventory=$(tmux list-sessions -F '#{session_name}|#{?session_attached,attached,detached}|#{session_path}' 2>&1); then
+    if [[ -z $TMUX && ( $inventory == *'no server running on '* || $inventory == *'(No such file or directory)'* ) ]]; then
+      inventory=''
+    else
+      print -u2 -r -- "${inventory:-tmux list-sessions failed}"
+      return 1
+    fi
+  fi
   while IFS='|' read -r s state dir; do
     [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
     short="${s#dev-}"
@@ -1438,7 +1447,7 @@ _dev_session_rows_cli() {
     rows+=("$sid"$'\t'"$dir"$'\t'"$short"$'\t'"$state"$'\t'"$context"$'\t'"$agent")
     if [[ -n ${tx[1]:-} ]]; then rowtx+=("${tx[1]}"); tpaths+=("${tx[1]}")
     else rowtx+=('-'); fi
-  done < <(tmux list-sessions -F '#{session_name}|#{?session_attached,attached,detached}|#{session_path}' 2>/dev/null | sort)
+  done <<< "$(print -r -- "$inventory" | sort)"
 
   (( $#tpaths )) && mrows=("${(@f)$(_transcript_meta_batch "${(@)tpaths}")}")
   for mr in "${(@)mrows}"; do
@@ -2039,8 +2048,10 @@ _dev_kill_selected() {
   # Enter in the kill picker authorizes the complete selection. Keep all
   # ownership checks, but do not ask again for each local or remote target.
   local force=1 host label state line target rcmd
-  local rc=0 prepo slot action_rc
+  local rc=0 prepo slot action_rc observed
+  local -a fields
   for line in "${(@f)picked}"; do
+    fields=("${(@ps:\t:)line}")
     host=${line%%$'\t'*}
     line=${line#*$'\t'}
     label=${line%%$'\t'*}
@@ -2056,6 +2067,14 @@ _dev_kill_selected() {
         # fallback can find an identically named slot on a remote host.
         if ! tmux has-session -t "=dev-${label}:" 2>/dev/null; then
           print -u2 -- "t kill: $label is no longer here"; rc=1; continue
+        fi
+        if [[ ${fields[6]:-} == unverified || ${fields[6]:-} == <->/\$<-> ]]; then
+          observed=$(tmux display-message -p -t "=dev-${label}:" '#{pid}/#{session_id}')
+          if [[ $observed != "${fields[6]}" ]]; then
+            print -u2 -- "t kill: $label changed. Refresh and select it again."
+            rc=1
+            continue
+          fi
         fi
         _dev_kill_local_selected "$prepo" "$slot" "$force" || action_rc=$?
       fi

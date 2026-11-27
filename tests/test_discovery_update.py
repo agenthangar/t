@@ -201,7 +201,7 @@ def test_old_client_links_only_upgrade_retires_previous_release(cache, tmp_path,
     (home / 'bin/t').symlink_to(old / 'bin/t')
     for key, value in dict(HOME=home, XDG_CONFIG_HOME=home / '.config',
                            CODEX_HOME=home / '.codex', CLAUDE_CONFIG_DIR=home / '.claude',
-                           XDG_RUNTIME_DIR='/tmp', TMUX_TMPDIR=home / 'tmux').items():
+                           XDG_RUNTIME_DIR='/tmp', TMUX='', TMUX_TMPDIR=home / 'tmux').items():
         monkeypatch.setenv(key, str(value))
     monkeypatch.delenv('T_LOCAL_RC', raising=False)
     monkeypatch.setattr(cache, 'SOURCE', old)
@@ -379,7 +379,7 @@ def test_old_brew_client_installer_recovers_path_after_opt_moved(cache, tmp_path
     (home / 'bin/t').symlink_to(opt / 'libexec/bin/t')
     for key, value in dict(HOME=home, XDG_CONFIG_HOME=home / '.config',
                            CODEX_HOME=home / '.codex', CLAUDE_CONFIG_DIR=home / '.claude',
-                           XDG_RUNTIME_DIR='/tmp', TMUX_TMPDIR=home / 'tmux').items():
+                           XDG_RUNTIME_DIR='/tmp', TMUX='', TMUX_TMPDIR=home / 'tmux').items():
         monkeypatch.setenv(key, str(value))
     monkeypatch.delenv('T_LOCAL_RC', raising=False)
     monkeypatch.setattr(cache, 'SOURCE', new)
@@ -436,6 +436,15 @@ def test_first_brew_discovery_request_migrates_legacy_daemon(cache, tmp_path, mo
     monkeypatch.setattr(cache, 'SOURCE', old)
     legacy = cache._identity(); legacy[0] = str(old)
     old_root = cache._identity_runtime(legacy)
+    # Model just this install's process table, including its pruned keg. The
+    # developer machine may legitimately exceed the bounded ps snapshot.
+    import shlex
+    process_tools = tmp_path / 'process-tools'
+    process_tools.mkdir()
+    ps = process_tools / 'ps'
+    ps.write_text("#!/bin/sh\nprintf '%s\n' " + shlex.quote(f'{sys.executable} {script} serve') + '\n')
+    ps.chmod(0o755)
+    monkeypatch.setenv('PATH', str(process_tools) + os.pathsep + os.environ['PATH'])
     old_process = subprocess.Popen([sys.executable, str(script), 'serve'], env=cache._service_env())
     children = []
     original_popen = subprocess.Popen

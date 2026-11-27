@@ -12,7 +12,7 @@ def manifest():
 
 
 def test_smoke_selection_is_bounded_and_fail_closed():
-    assert 15 <= len(smoke.NODES) <= 30
+    assert 15 <= len(smoke.NODES) <= 31
     assert len(set(smoke.NODES)) == len(smoke.NODES)
     smoke.check_manifest(manifest())
     for change in ('missing', 'new', 'skipped', 'failed', 'exit', 'collection'):
