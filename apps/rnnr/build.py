@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Build a worktree-scoped rnnr menu-bar app for macOS."""
+"""Build the standalone universal rnnr application."""
 
 from pathlib import Path
 import plistlib
+import os
+import re
+from backend_bundle import add_backend
 import shutil
 import subprocess
 import sys
@@ -23,9 +26,14 @@ def build():
     if sys.platform != "darwin":
         raise SystemExit("rnnr requires macOS 13 or later and the Swift toolchain.")
 
-    run("swift", "build", "-c", "release", "--product", "RnnrApp")
+    arches = ["--arch", "arm64", "--arch", "x86_64"]
+    version = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"], cwd=ROOT, text=True).strip().removeprefix("v")
+    version = os.environ.get("RNNR_VERSION", version)
+    if not re.fullmatch(r"0\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Expected a pre-1.0 patch version")
+    run("swift", "build", *arches, "-c", "release", "--product", "RnnrApp")
     binary_dir = Path(subprocess.check_output(
-        ["swift", "build", "-c", "release", "--show-bin-path"], cwd=APP, text=True,
+        ["swift", "build", *arches, "-c", "release", "--show-bin-path"], cwd=APP, text=True,
     ).strip())
 
     with tempfile.TemporaryDirectory(dir=BUILD) as folder:
@@ -37,6 +45,8 @@ def build():
         shutil.copy2(APP / "Resources" / "fox-31.png", contents / "Resources" / "fox-31.png")
         shutil.copy2(APP / "terminal.zsh", contents / "Resources" / "terminal.zsh")
 
+        add_backend(contents / "Resources", ROOT, version)
+        shutil.copy2(APP / "integration.py", contents / "Resources/backend/bin/integration.py")
         with (contents / "Info.plist").open("wb") as info:
             plistlib.dump({
                 "CFBundleDevelopmentRegion": "en",
@@ -46,14 +56,24 @@ def build():
                 "CFBundleInfoDictionaryVersion": "6.0",
                 "CFBundleName": "rnnr",
                 "CFBundlePackageType": "APPL",
-                "CFBundleShortVersionString": "0.1",
+                "CFBundleShortVersionString": version,
                 "CFBundleVersion": "1",
                 "LSMinimumSystemVersion": "13.0",
                 "LSUIElement": True,
                 "NSAppleEventsUsageDescription": "rnnr opens a new Terminal window for session actions.",
-                "RnnrSourceRoot": str(ROOT),
+
             }, info)
-        run("codesign", "--force", "--sign", "-", str(bundle))
+        identity = os.environ.get("RNNR_SIGN_IDENTITY", "-")
+        options = ["--options", "runtime", "--timestamp"] if identity != "-" else []
+        if options:
+            for file in (contents / "Resources/backend").rglob("*"):
+                if file.is_symlink() or not file.is_file():
+                    continue
+                with file.open("rb") as source:
+                    if source.read(4).hex() in {"cffaedfe", "feedfacf", "cafebabe", "bebafeca"}:
+                        run("codesign", "--force", *options, "--sign", identity, str(file))
+        run("codesign", "--force", *options, "--entitlements", str(APP / "apple-events.plist"), "--sign", identity, str(bundle))
+        run("codesign", "--verify", "--strict", "--deep", str(bundle))
 
         target = BUILD / bundle.name
         if target.is_symlink():

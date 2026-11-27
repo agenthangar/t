@@ -133,6 +133,7 @@ def test_update_reports_app_failure_and_skips_dev(t_mod, monkeypatch):
 
 @pytest.fixture
 def guided_wizard(t_mod, monkeypatch):
+    monkeypatch.setattr(t_mod, "_rnnr_module", lambda: {"published_cask": lambda: False})
     monkeypatch.setattr(t_mod, "_install_probe", lambda: {
         agent: {"version": "1.0", "logged_in": True} for agent in t_mod.INSTALL_AGENTS})
     monkeypatch.setattr(t_mod, "_install_relink", lambda: 0)

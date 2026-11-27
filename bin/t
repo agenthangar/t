@@ -8371,7 +8371,7 @@ def _install_result(items):
         elif it["kind"] == "shell":
             sel["shell"] = True
         elif it["kind"] == "app":
-            sel["nightr"] = it["action"]
+            sel[it["alias"].lower()] = it["action"]
     return sel
 
 
@@ -8454,6 +8454,8 @@ def _install_plan(sel, probed, os_name, has_brew, headless, hosts):
             else:
                 rec(f"login:{a}", "error",
                     f"{a} login: not installed and not selected for install")
+    if sel.get("rnnr") and os_name == "darwin":
+        rec("app:rnnr", "run", "brew install --cask agenthangar/tap/rnnr")
     nightr = sel.get("nightr")
     if nightr and os_name == "darwin":
         action, _ = nightr
@@ -8813,7 +8815,7 @@ def _command_readonly(argv, *, terminal=None):
         return not terminal
     if words[:2] == ["system", "apps"]:
         return len(words) > 2 and (words[2] == "status" or "--dry-run" in words[3:])
-    if words[:2] == ["install", "nightr"]:
+    if words[:2] in (["install", "nightr"], ["install", "rnnr"]):
         return "--dry-run" in words[2:]
     if words[:2] == ["system", "usage"]:
         return True
@@ -9163,7 +9165,13 @@ def _nightr_module():
     return _NIGHTR
 
 
+def _rnnr_module():
+    return runpy.run_path(str(Path(__file__).resolve().parent.parent / "libexec/t_rnnr.py"))
+
+
 def cmd_apps(cfg, args):
+    if args.app == "rnnr":
+        return _rnnr_module()["command"](args, _RailUI)
     return _nightr_module()["command"](args, _RailUI)
 
 
@@ -9370,7 +9378,10 @@ def _install_walk(steps, close=False):
                 print(f"✓ {s['label']}")
             continue
         if kind == "app":
-            rc = _nightr_module()["guided_install"](*s["nightr"])
+            if agent == "rnnr":
+                rc = cmd_apps(None, argparse.Namespace(app="rnnr", action="install", dry_run=False, yes=True))
+            else:
+                rc = _nightr_module()["guided_install"](*s["nightr"])
             if rc:
                 failed += 1
                 print(f"{st.b}✗ {s['label']}{st.r} (rc {rc})")
@@ -9598,6 +9609,9 @@ def cmd_install(cfg, args):
                   {"t": "header", "sec": "apps", "label": "DESKTOP APPS"},
                   {"t": "toggle", "sec": "apps", "kind": "app", "alias": "Nightr",
                    "value": value, "action": action, "checked": False}]
+        if _rnnr_module()["published_cask"]():
+            items.append({"t": "toggle", "sec": "apps", "kind": "app", "alias": "rnnr",
+                          "value": "Install via Homebrew", "action": "install", "checked": False})
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 
@@ -13192,8 +13206,8 @@ def _command_path(argv):
 def _canonical_argv(argv):
     """Translate a complete public command; preserve its payload arguments."""
     argv = _hosts_argv(_runners_argv(argv))
-    if argv[:2] == ["install", "nightr"]:
-        return ["system", "apps", "install", "nightr", *argv[2:]]
+    if argv[:2] in (["install", "nightr"], ["install", "rnnr"]):
+        return ["system", "apps", "install", *argv[1:]]
     if argv == ["workflow", "sync", "--receive"]:
         return ["config", *argv]  # Private transport used by existing registered hosts.
     if argv and argv[0] == "move":
@@ -13625,6 +13639,7 @@ SCOPE
   t system update includes opted-in apps; it never installs absent apps.
   Run nightr setup for explicit helper authorization and login preferences.
   t install nightr is a compatibility convenience.
+  t install rnnr uses the rnnr Homebrew cask. Inspect it with t system apps status rnnr.
   Run t help system apps <verb> for details.
 """)
     if group == "issue":
