@@ -112,14 +112,22 @@ Use sandbox HOME/XDG directories and isolated tmux sockets in tests; never let a
 installer test mutate the developer's agent configuration or tmux server. Strip
 COV_CORE_* when launching copies of measured binaries.
 
-Native macOS UI tests open windows and steal focus. Keep them disabled in routine
-local runs; use `--run-macos-ui` only on disposable CI or when the user explicitly
-requests native desktop verification. Mark any new interactive desktop tests
-`macos_ui` so they share this opt-in gate.
-Default CI runs Linux only. Run macOS CI only when the user explicitly requests
-it, using the CI workflow’s `run_macos` manual input. Keep the macOS test code
-and native UI opt-in gate available; do not re-enable macOS in default PR checks.
-The Linux and other required CI jobs must still run.
+Routine PR/push, nightly and release CI run Linux. Manual CI defaults to
+`run_full=false`. Set `run_full=true` for full Linux validation.
+`verify_shards=true` also requires full Linux validation.
+
+For platform-sensitive changes, run focused headless local checks. Hosted macOS
+checks require an explicit request with `run_macos=true` and
+`macos_scope=discovery|terminal|native` (default `discovery`). Each scope runs
+its exact selection through `python3 scripts/smoke.py --macos SCOPE` on one
+hosted Mac with fzf 0.74.5. Choose discovery for session metadata and process
+ownership, terminal for PTY and picker behavior, or native for Mac integrations.
+
+Only the `native` selection enables `--run-macos-ui`. Native tests may open
+windows or affect desktop state. Run them on a disposable Mac or with explicit
+authorization, and mark new interactive desktop tests `macos_ui`. Keep this
+opt-in gate available. Ship when the required PR checks pass. Report optional
+platform checks separately.
 
 Keep the one-live-owner guarantee, remote `zsh -lic` contract, and worktree safety
 checks. No plain local declarations of zsh tied parameters such as path/fpath.

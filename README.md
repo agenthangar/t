@@ -1865,21 +1865,20 @@ These integrations are planned and are not available in the current release:
 
 ```sh
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest --cov --cov-fail-under=97
+python3 scripts/local_smoke.py
 zsh -n t.plugin.zsh
 ```
 
-Local test runs skip native macOS UI tests because their disposable app opens
-windows and takes desktop focus.
-For intentional native terminal verification on a disposable macOS runner:
+Routine CI runs on Linux. To verify a Mac-specific change on a hosted Mac, select
+`discovery` for live session metadata and process ownership, `terminal` for PTY
+and picker behavior, or `native` for macOS integration.
 
 ```sh
-python3 -m pytest --run-macos-ui
+gh workflow run ci.yml --ref BRANCH -f run_macos=true -f macos_scope=discovery
 ```
 
-Default CI runs Linux only. To explicitly run macOS and native desktop checks
-on disposable runners, manually launch CI with `run_macos=true`. Selecting the
-test file or `-m macos_ui` alone does not enable desktop interaction.
+Only the native scope enables desktop interaction. See [CI validation](docs/ci.md)
+for local commands, test selections, and the full Linux coverage gate.
 
 The installer has no pip runtime dependencies. Older Python versions use the
 [bundled TOML parser](libexec/vendor/README.md).

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Bounded essential flows shared by local snapshots and routine CI.
+"""Bounded essential flows for routine CI and focused, opt-in macOS checks.
 
 Every entry is an exact node ID, including parameter IDs. Adding a regression or
 parameter never silently enlarges this selection. Missing, skipped, or extra
 cases fail closed. Full validation still collects the entire suite nightly.
 """
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -47,31 +48,59 @@ NODES = (
     'tests/test_local_smoke.py::test_emitted_instructions_require_fresh_local_smoke',
 )
 
+MACOS_NODES = {
+    'discovery': (
+        'tests/test_installed_session_details.py::test_installed_first_list_and_picker_have_metadata',
+        'tests/test_installed_session_details.py::test_installed_61_slots_have_metadata_while_history_is_blocked',
+        'tests/test_agent_seam.py::test_sweep_preserves_detached_agent_cwd_until_exit[daemon-False]',
+        'tests/test_nightr_packaging.py::test_darwin_process_identity_uses_kernel_birth_and_boot_session',
+    ),
+    'terminal': (
+        'tests/test_terminal_close.py::test_real_terminal_loss_differs_from_detach',
+        'tests/test_terminal_close.py::test_public_terminal_closure[detach-close]',
+        'tests/test_picker_ui.py::test_resume_pan_suspension_and_bracketed_paste_restore_terminal',
+    ),
+    'native': (
+        'tests/test_nosleep_runtime.py::test_zsh_nosleep_reads_live_macos_power_assertions',
+    ),
+}
 
-def check_manifest(data):
-    if (len(NODES) != len(set(NODES)) or data['exitstatus'] != 0
-            or sorted(data['full']) != sorted(NODES)
-            or sorted(data['selected']) != sorted(NODES)
-            or data['outcomes'] != dict.fromkeys(NODES, 'passed')):
-        raise ValueError('essential smoke requires every exact selected case to pass (no skips)')
+
+def check_manifest(data, nodes=NODES):
+    if (len(nodes) != len(set(nodes)) or data['exitstatus'] != 0
+            or sorted(data['full']) != sorted(nodes)
+            or sorted(data['selected']) != sorted(nodes)
+            or data['outcomes'] != dict.fromkeys(nodes, 'passed')):
+        raise ValueError('every exact selected case must pass (no skips)')
 
 
-def main():
-    destination = ROOT / 'artifacts/smoke'
+def main(macos_scope=None):
+    if macos_scope is not None and macos_scope not in MACOS_NODES:
+        raise ValueError(f'unknown macOS scope {macos_scope!r}')
+    nodes = NODES if macos_scope is None else MACOS_NODES[macos_scope]
+    flags = ['--run-macos-ui'] if macos_scope == 'native' else []
+    name = 'smoke' if macos_scope is None else f'macos-{macos_scope}'
+    destination = ROOT / 'artifacts' / name
     destination.mkdir(parents=True, exist_ok=True)
     manifest = destination / 'manifest.json'
     manifest.unlink(missing_ok=True)
     result = subprocess.run([
         sys.executable, '-m', 'pytest', '-q', '-p', 'scripts.ci_shards',
         '--ci-manifest=' + str(manifest), '--junitxml=' + str(destination / 'junit.xml'),
-        '--durations=10', *NODES,
+        '--durations=10', *flags, *nodes,
     ], cwd=ROOT)
     if result.returncode:
         return result.returncode
-    check_manifest(json.loads(manifest.read_text()))
-    print(f'Essential smoke: {len(NODES)} exact cases passed')
+    check_manifest(json.loads(manifest.read_text()), nodes)
+    label = 'Essential smoke' if macos_scope is None else f'macOS {macos_scope}'
+    print(f'{label}: {len(nodes)} exact cases passed')
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--macos', choices=MACOS_NODES, help='run the selected macOS checks')
+    args = parser.parse_args()
+    if args.macos and sys.platform != 'darwin':
+        parser.error('--macos requires a Mac')
+    sys.exit(main(args.macos))
