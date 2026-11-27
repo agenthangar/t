@@ -768,7 +768,7 @@ def cmd_ls(cfg, args):
             text = cache['rows'](snapshot, prefixed=args.remote)
             return bool(_scope_filter(_parse_rows(text, host_prefixed=args.remote), scope, wt_scope))
         view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False),
-                                           usable=usable, local=not args.remote, fields=['rows'])
+                                           usable=usable, fresh_local=True, local=not args.remote, fields=['rows'])
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
@@ -11411,7 +11411,9 @@ def cmd_doctor(cfg, args):
                  None: "~/.claude/settings.json missing or unreadable"}[facts["mcp_allow"]])
 
     section("Tmux")
-    tmux_running = run(["tmux", "list-sessions", "-F", "#{session_name}"]) is not None
+    session_names = run(["tmux", "list-sessions", "-F", "#{session_name}"])
+    tmux_running = session_names is not None
+    server = None
     facts["tmux_running"] = tmux_running
     conf = os.path.join(HOME, ".tmux.conf")
     facts["conf_exists"] = os.path.lexists(conf)
@@ -11459,6 +11461,12 @@ def cmd_doctor(cfg, args):
                                      ("alt-screen" if p["alt"] else None)) if x]
                 print("    %-*s  %-12s %-25s hist %d"
                       % (w, p["session"], p["cmd"], " ".join(flags) or "-", p["hist"]))
+
+    section("Session discovery")
+    numbered = sum(bool(re.fullmatch(r'dev-.+-[0-9]+', name)) for name in session_names.splitlines()) if tmux_running else None
+    observed_socket = server.rpartition('socket ')[2] if server else None
+    for line in _session_discovery()['_CACHE']['doctor_inventory'](numbered, observed_socket):
+        print("  " + line)
 
     section("Recent session attempts")
     diagnostic = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'libexec/t_lifecycle.py'))
@@ -14274,8 +14282,8 @@ REMOTE SESSIONS
   the view to this machine. -r retains the default.
 
   Available scoped results return immediately. Empty pending discovery waits up
-  to 30 seconds automatically, then prints the available snapshot. -w / --wait also
-  observes refresh when results exist. Settled empty results return immediately.
+  to 30 seconds automatically, then prints the available snapshot. -w / --wait
+  requests a fresh local tmux inventory, including during a collector cooldown.
   Ctrl-C returns 130 and leaves refresh running. Redirected waits never prompt.
 
   Unavailable hosts warn on stderr in amber on capable terminals (plain with
@@ -14298,7 +14306,7 @@ REMOTE SESSIONS
     location.add_argument("-l", "--local", dest="remote", action="store_false",
                           help="list this machine only")
     sp.add_argument("-a", "--all", action="store_true", help="every repository (the default)")
-    sp.add_argument("-w", "--wait", action="store_true", help="wait up to 30 seconds for session refresh (no prompt)")
+    sp.add_argument("-w", "--wait", action="store_true", help="refresh live local slots and wait up to 30 seconds")
 
     sp = sub.add_parser("kill", help="tear down a session",
         description='Close sessions while preserving saved conversations and worktrees. With no target, select across '
@@ -15373,7 +15381,7 @@ PERIODIC CHECKS
     sp.add_argument("-q", "--quiet", action="store_true", help="print only what changed")
 
     sp = sub.add_parser("doctor", help="diagnose this machine's t, tmux, and agent setup",
-        description='Diagnose local t links, tmux, launch resources, tool versions, and recent session attempts. Print '
+        description='Diagnose local t links, tmux, session discovery, launch resources, and recent session attempts. Print '
             'findings and suggested fixes without changing settings by default. --repair restores zsh startup '
             'and its command link while preserving settings, trust, and permissions. Use t hosts run HOST t '
             'system diagnose for another machine.',
@@ -15392,6 +15400,9 @@ PERIODIC CHECKS
   Unavailable evidence is labeled; no PTY is allocated and no session is restarted.
   A healthy snapshot cannot rule out an earlier transient fork/open failure.
   Run immediately after the failure and keep its exact error alongside the report.
+
+  Session discovery shows live slot counts, collector socket, scan age, and retained failures.
+  Compare these after running t ls --local -w on the affected host.
 
   Recent session attempts shows the latest five lifecycle receipts or log-only
   sessions; --recent N selects 1–20. It includes stages, recorded operation exit
@@ -15812,6 +15823,11 @@ def _main(argv):
         else:
             _session_discovery()['invalidate'](targets)
         return 0
+    if argv == ['__open-picker-observe']:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'libexec'))
+        from t_picker_close import observe_open
+        observe_open(Config(), _session_discovery(), _parse_rows, _session_picker_rows)
+        return 0
     if argv and argv[0] == '__cache-rows':
         cache = _session_discovery()
         selected_host = argv[argv.index('--host') + 1] if '--host' in argv else None
@@ -15832,12 +15848,16 @@ def _main(argv):
                 cache['require_open_network'](cfg, local=options['local'], host=selected_host)
             view, notice = cache['bounded_snapshot'](cfg, **options,
                 explicit='--wait' in argv or os.environ.get('T_DISCOVERY_EXPLICIT_WAIT') == '1',
-                usable=lambda snapshot: bool(cache['rows'](snapshot, **projection)))
+                fresh_local='--open' in argv, usable=lambda snapshot: bool(cache['rows'](snapshot, **projection)))
         except (OSError, ValueError) as error:
             print(f't: {error}', file=sys.stderr)
             return 1
         if '--notice-file' in argv:
-            Path(argv[argv.index('--notice-file') + 1]).write_text(notice)
+            notice_path = Path(argv[argv.index('--notice-file') + 1])
+            notice_path.write_text(notice)
+            if '--open' in argv:
+                terminals = next((h.get('terminals') for h in view.get('hosts', []) if h['host'] == 'local'), None)
+                Path(str(notice_path) + '.owners').write_text(json.dumps(terminals))
         cache['announce'](view)
         text = cache['rows'](view, **projection)
         if '--basic' in argv:
@@ -16005,8 +16025,13 @@ def _main(argv):
             history.store.close()
     if argv and argv[0] == "__session-picker-rows" and set(argv[1:]) <= {"--remote", "--repo", "--compact", "--header", "--last-turn"}:
         rows = _parse_rows(sys.stdin.read(), host_prefixed=True)
+        owners = os.environ.get('T_OPEN_OWNERS')
+        terminals = (json.loads(Path(owners).read_text()) or {}) if owners and Path(owners).is_file() else None
         for line in _session_picker_rows(rows, remote="--remote" in argv, scoped="--repo" in argv,
                                         compact="--compact" in argv, header="--header" in argv, last_turn="--last-turn" in argv):
+            fields = line.split('\t', 3)
+            if terminals is not None and len(fields) == 4 and fields[0] == 'local' and fields[2] in ('attached', 'detached') and re.fullmatch(r'.+-[0-9]+', fields[1]):
+                line += '\t' + terminals.get(fields[1], 'unverified')
             print(line)
         return 0
     if argv == ["__update-check"]:

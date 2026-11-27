@@ -246,7 +246,8 @@ def test_cancel_parallel_preparation_terminates_workers(tmp_path, monkeypatch):
         while not pid_file.exists() and time.monotonic() < deadline:
             original_sleep(.01)
         raise KeyboardInterrupt
-    monkeypatch.setattr(batch.time, 'sleep', cancel)
+    from types import SimpleNamespace
+    monkeypatch.setattr(batch, 'time', SimpleNamespace(sleep=cancel))
     script = 'import os,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)'
     results = batch.run_jobs([[sys.executable, '-c', script, str(pid_file)]])
     assert results[0]['code'] == 130

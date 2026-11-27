@@ -23,6 +23,7 @@ NODES = (
     'tests/test_dev_isolation.py::test_interrupted_reload_does_not_dispatch_stale_source[t open example --new]',
     'tests/test_dev_isolation.py::test_selector_does_not_probe_unrelated_repositories',
     'tests/test_update_prompt_shell.py::test_shell_command_reloads_after_update_then_runs_once',
+    'tests/test_live_inventory.py::test_public_wait_isolates_servers_and_retries_failed_scan',
     'tests/test_session_discovery.py::test_mcp_warm_context_never_scans_and_uses_memory_generation',
     'tests/test_session_discovery.py::test_local_snapshot_includes_unindexed_live_sessions_and_repo_scopes',
     'tests/test_session_lifecycle.py::test_public_cli_open_and_reattach_keep_one_owner[codex-repo-1]',

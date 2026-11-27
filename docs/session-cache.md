@@ -47,9 +47,8 @@ measure native Codex conversation loading. Native desktop windows are never open
 ## Immediate browsing and recovery
 
 Open and resume show retained results immediately, including while activity is
-refreshing or another peer has failed. The picker freezes its snapshot: filtering,
-sorting and paging never reorder the selected conversation in response to a
-background refresh. Incomplete views retain their warning and require selection.
+refreshing or another peer has failed. The open picker incorporates newly observed local slots while preserving search,
+filters, marks, and focus. Each verified local selection carries its server and session ID. Incomplete views retain their warning and require selection.
 
 When the requested repository/host/slot/session scope has no eligible results
 and refresh is pending, session open, close, resume, move, list and slot history
@@ -58,7 +57,8 @@ wait ends as soon as an observation contains eligible scoped results, even
 while another host or the local history catalog is still refreshing. This also applies
 to redirected output and history JSON. Available scoped results and settled
 empty/failure results return immediately. Explicit `--wait` observes refresh even
-when results exist. Presentation-only picker filters/search never start discovery.
+when results exist. For open and list, it also starts or joins a fresh local tmux
+inventory despite an enrichment cooldown. Presentation-only filters use the displayed rows.
 
 Timeout or service loss retains the final available snapshot and incomplete notice;
 it never enters another waiting or retry rail. Incomplete emptiness never launches
@@ -101,6 +101,12 @@ Attach events schedule a live-status observation without invalidating saved
 history. Lifecycle events retain inventory, mark affected hosts dirty and prevent
 superseded workers from publishing. Verified close/handoff rows still overlay
 live rows immediately; deferred launch publication never resurrects a closed slot.
+
+Local caches are isolated by the effective tmux socket. Resume workers notify the
+cache asynchronously after completion. Reading the tmux slot inventory requires
+one tmux command regardless of slot count. The cache coalesces concurrent reads,
+merges rich details only for matching owners, and records failures for doctor.
+Saved-history publications mark metadata dirty separately from live observations.
 
 Local cold starts publish live rows before collecting history. Subsequent history
 collection walks each source tree once, keeps an inode/size/mtime manifest and

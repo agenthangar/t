@@ -536,7 +536,7 @@ _t_open_picker() {
     fi
     return $picker_result
   } always {
-    rm -f -- "$_T_OPEN_NOTICE_FILE"
+    rm -f -- "$_T_OPEN_NOTICE_FILE" "$_T_OPEN_NOTICE_FILE.owners"
   }
 }
 
@@ -580,13 +580,15 @@ _t_open_picker_impl() {
   done
   if (( $#candidates == 0 )); then
     [[ -z $6 ]] || return 2
-    if [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+    # A verified local inventory may be empty while enrichment is still busy.
+    # Keep its picker open to receive the first ready slot.
+    if [[ -s $_T_OPEN_NOTICE_FILE && ( ! -s $_T_OPEN_NOTICE_FILE.owners || $(<"$_T_OPEN_NOTICE_FILE.owners") == null ) ]]; then
       print -u2 't open: discovery is incomplete; no session was started'
       return 1
     fi
   fi
   [[ -n $repo ]] && format_args+=(--repo)
-  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
+  rows=$(print -rl -- "${candidates[@]}" | T_OPEN_OWNERS="$_T_OPEN_NOTICE_FILE.owners" COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
   [[ -n $rows || $#candidates == 0 ]] || return 1
   local columns=${rows%%$'\n'*}
   rows=${rows#*$'\n'}
@@ -625,11 +627,12 @@ _t_open_picker_impl() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    local new_session=1
+    local new_session=1 observe_open=''
+    [[ -z $6 && -f $_T_OPEN_NOTICE_FILE.owners ]] && observe_open=local
     # Explicit remote callers have their own fresh-session routing. A remote
     # browse must never turn Ctrl-N into a local launch on the calling machine.
     [[ -z $6 && -z $7 ]] || new_session=
-    selected=$(T_PICKER_NEW_SESSION="$new_session" T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
+    selected=$(T_OPEN_OBSERVE="$observe_open" T_OPEN_REPO="$repo" T_OPEN_REMOTE="$remote" T_PICKER_NEW_SESSION="$new_session" T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
@@ -687,6 +690,21 @@ _t_list_snapshot() {
   _t_open_selected "$selected" "" ""
 }
 
+# A numbered picker row identifies its server process and immutable session.
+_t_open_existing() {
+  local label=$1 token=$2 socket=$3 actual
+  actual=$(tmux -S "$socket" display-message -p -t "=dev-$label:" '#{pid}/#{session_id} #{DEV_AGENT}') || return 1
+  if [[ ${actual%% *} != "$token" ]]; then
+    print -u2 't open: selected session changed. Refresh and select it again.'
+    return 1
+  fi
+  local target="${token#*/}:"
+  _dev_workflow_attach "${actual#* }"
+  _t_terminal_close_install "dev-$label"
+  if [[ -n $TMUX ]]; then tmux -S "$socket" switch-client -t "$target"
+  else tmux -S "$socket" attach-session -t "$target"; fi
+}
+
 # Multi-selections each get a new window; a single selection uses this terminal.
 # Preserve the selected host/interface so a configured default never converts an
 # existing owner as a side effect.
@@ -697,6 +715,22 @@ _t_open_selected() {
   for row in "${rows[@]}"; do
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
+    if [[ $host == local && ${fields[6]:-} == unverified ]]; then
+      print -u2 't open: session identity unavailable. Refresh and select it again.'
+      rc=1
+      continue
+    fi
+    if [[ $host == local && ${fields[6]:-} == <->/\$<-> ]]; then
+      local socket=${TMUX%%,*}
+      [[ -n $socket ]] || socket="${TMUX_TMPDIR:-/tmp}/tmux-$UID/default"
+      if (( $#rows > 1 )); then
+        cmd="source ${(q)T_HOME}/t.plugin.zsh && _t_open_existing ${(q)label} ${(q)fields[6]} ${(q)socket}"
+        _dev_open_window "$cmd" || rc=1
+      else
+        _t_open_existing "$label" "$fields[6]" "$socket" || rc=1
+      fi
+      continue
+    fi
     if [[ $state == app ]]; then
       print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session resume"
       rc=1
