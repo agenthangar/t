@@ -1402,14 +1402,12 @@ is downloaded and verified. A different live conversation in the historical
 slot does not hide saved work: interactive resume offers a new workspace when its original cannot be reused. Exact live IDs attach
 to their existing owner. Local paths and remote aliases need not match.
 A plain explicit slot (`t session resume api 2`, including `t resume api 2`
-and the inferred-repository `t resume 2`) opens the internal saved-conversation picker.
-It uses the shared paginated multi-picker over retained conversation identities,
-including all recorded slot associations. Even one result requires selection;
-cancellation returns 130 without launching. Empty history never creates a session.
-Without a terminal it lists history without launching. Tab marks conversations on the current page; Enter accepts marks or focus.
-Search, page changes, and refresh clear marks. Extra selections open in tabs before
-the first attaches. A resume failure exits nonzero without reopening the picker;
-batches stop and report any conversations already resumed.
+and the inferred-repository `t resume 2`) opens the shared filtered resume picker
+with every recorded association for that slot. Even a single row requires
+selection. Tab marks rows, Enter accepts them, and Ctrl-U refreshes in place.
+Escape returns 130. With redirected input or output, a plain slot lists history.
+The numbered retry command printed by an interrupted move continues the recorded
+transfer before entering discovery.
 Saved launches bind attachment to the verified tmux session and pane. They wait up to 15 seconds for the exact conversation identity
 before attaching or reporting readiness. This covers Codex registering a resumed
 conversation in a new worktree. A changed or exited owner still fails immediately;

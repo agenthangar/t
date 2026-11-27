@@ -14584,6 +14584,7 @@ REMOTE SESSIONS
   Select a conversation and press Enter, even for a single result. Ctrl-U refreshes.
   Use t session history for paginated history.
   Without a terminal, history lists without launching.
+  The retry command printed by an interrupted move continues that transfer.
   Explicit options use the resume picker below and retain their mode semantics.
   Without a slot, one inactive candidate is taken if no live rows are excluded.
   With explicit options, a slot without a terminal takes its newest saved chat.
@@ -16279,15 +16280,17 @@ def _command_title(argv):
 
 def main(argv):
     previous_source = os.environ.get('T_SESSION_SOURCE')
-    scope = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'libexec/t_session_scope.py'))
-    try:
-        argv, source = scope['normalize'](argv)
-        if source is not None:
-            scope['targets'](Config().hosts, source)
-            os.environ['T_SESSION_SOURCE'] = source
-    except ValueError as error:
-        print('t: ' + str(error), file=sys.stderr)
-        return 2
+    command = argv[1] if argv[:1] == ['session'] and len(argv) > 1 else next(iter(argv), '')
+    if command in {'ls', 'list', 'open', 'kill', 'close', 'move', 'beam', 'resume'}:
+        scope = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'libexec/t_session_scope.py'))
+        try:
+            argv, source = scope['normalize'](argv)
+            if source is not None:
+                scope['targets'](Config().hosts, source)
+                os.environ['T_SESSION_SOURCE'] = source
+        except ValueError as error:
+            print('t: ' + str(error), file=sys.stderr)
+            return 2
     global _TITLE_OWNED, _TITLE_QUIET
     previous = _TITLE_OWNED, _TITLE_QUIET
     title = _command_title(argv)

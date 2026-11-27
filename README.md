@@ -310,7 +310,8 @@ to that owner. `--fg` and `--host` retain their selected destinations.
 with slot 2, including live and saved work and conversations later moved to
 another slot. Even one conversation waits for selection. Ctrl-F shows inactive
 work; Ctrl-A shows all, and Escape cancels without attaching or resuming.
-Without a terminal, an explicit slot retains newest-saved selection.
+Without a terminal, a plain slot resume lists its history. If a move was
+interrupted, running its printed retry command continues that transfer.
 
 Press Ctrl-B in the filtered resume picker to resume the most recently verified
 closed conversation, or run `t session resume --last --wait` directly.

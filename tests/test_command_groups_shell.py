@@ -462,8 +462,9 @@ def test_list_alias_completion_and_shell_forwarding(tmp_path, command):
     assert result.returncode == 0, result.stderr
     lines = result.stdout.splitlines()
     assert lines[0] == lines[1]
-    assert lines[-2] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'list', '--repo', 'ls'])
-    assert lines[-1] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'ls', '--repo', 'ls'])
+    scope = ['ls'] if command in ('session', '') else ['--repo', 'ls']
+    assert lines[-2] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'list', *scope])
+    assert lines[-1] == 'bin:' + ''.join(f'<{word}>' for word in [*command.split(), 'ls', *scope])
 
 
 def test_remote_host_first_completion_and_legacy_host_flag(tmp_path):
@@ -546,3 +547,20 @@ def test_canonical_workflow_completion_and_dispatch(tmp_path):
         "values:--github-repo,--create,-h,--help",
         "bin:<workflow><list><--repo><api><--json>",
     ]
+
+
+@pytest.mark.parametrize('command', ['session list', 'session ls', 'list', 'ls'])
+def test_list_scope_completion_offers_sources_and_repositories(tmp_path, command):
+    result = shell(tmp_path, f'''
+        REMOTE_HOSTS=(lab user@lab)
+        _values() {{ print -r -- "values:$1:${{(j:,:)argv[2,-1]}}"; }}
+        local -a words
+        words=(t {command} --source '') CURRENT=$#words; _t
+        words=(t {command} --repo '') CURRENT=$#words; _t
+        words=(t {command} --) CURRENT=$#words; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == 'values:source:local,remote,all,lab'
+    assert lines[1].startswith('values:repo:')
+    assert '--repo,--source' in lines[2]

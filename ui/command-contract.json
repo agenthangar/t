@@ -1444,7 +1444,7 @@
             "tests/test_resume_history.py::test_resume_options_keep_existing_route",
             "tests/test_history_data.py::test_resume_candidates_match_any_recorded_slot_association"
           ],
-          "notes": "A plain interactive slot selects an exact conversation from every recorded association without an age cutoff. Even a single result requires selection. Redirected output lists history. Ctrl-U refreshes in place.",
+          "notes": "A plain interactive slot selects an exact conversation from every recorded association without an age cutoff. Even a single result requires selection. Redirected output lists history. Ctrl-U refreshes in place. The retry command for an interrupted move continues its recorded transfer before discovery.",
           "layout": "inherit"
         },
         "cli": {

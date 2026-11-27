@@ -27,6 +27,9 @@ def installed(lifecycle, tmp_path):
     shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns('.git', '__pycache__', '.pytest_cache', 'artifacts', '.coverage'))
     (source / '.t-release-version').write_text('v0.6.1\n')
     home.mkdir()
+    # Ubuntu's global zshrc runs compinit before the installed user startup.
+    # Keep this standalone fixture independent of host completion permissions.
+    (home / '.zshenv').write_text('skip_global_compinit=1\n')
     binary.mkdir()
     shutil.copy2(base / 'bin/codex', binary / 'codex')
     (binary / 'python3').symlink_to(sys.executable)
@@ -130,6 +133,9 @@ def test_installed_first_list_and_picker_have_metadata(installed):
         assert all(text in listed.stdout for text in (title, 'gpt-6.2-sol', '2026-11-27')), listed.stdout + listed.stderr
         assert '\x1b[2K' not in listed.stderr
         assert not installed['release'].exists()
+        deadline = time.monotonic() + 5
+        while not (installed['root'] / 'collecting').exists() and time.monotonic() < deadline:
+            time.sleep(.03)
         assert (installed['root'] / 'collecting').exists()
         assert pending.read_text() == 'preserve these edits\n'
         assert installed['run']('tmux', 'has-session', '-t', '=dev-api-1:').returncode == 0

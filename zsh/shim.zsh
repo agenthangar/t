@@ -66,7 +66,7 @@ t() {
 _t_dispatch() {
   emulate -L zsh
   local -x T_SESSION_SOURCE=${T_SESSION_SOURCE:-}
-  if [[ $1 == (ls|open|kill|resume|move|beam) || $1 == session && $2 == (list|open|close|move|resume) ]] &&
+  if [[ $1 == (ls|list|open|kill|resume|move|beam) || $1 == session && $2 == (list|ls|open|close|move|resume) ]] &&
      [[ -n ${(M)@:#(--source|--source=*|--repo|--repo=*|--all|-a)} ]]; then
     local scope_script
     scope_script=$(python3 "$T_HOME/libexec/t_session_scope.py" "$@") || return $?
@@ -159,6 +159,21 @@ _t_dispatch() {
   if [[ $shell_verb == resume ]] &&
      { [[ ${#shell_args} == 1 && ${shell_args[1]} == <-> ]] ||
        [[ ${#shell_args} == 2 && ${shell_args[1]} != -* && ${shell_args[2]} == <-> ]]; }; then
+    # The retry printed by an interrupted move is a plain numbered resume.
+    # Recover its original transaction before looking up live or saved owners.
+    if [[ -z $T_SESSION_SOURCE || $T_SESSION_SOURCE == all ]]; then
+      local recovery_repo recovery_slot=${shell_args[-1]} recovery recovery_rc=0
+      if (( $#shell_args == 2 )); then
+        recovery_repo=$(_dev_resolve_repo "$shell_args[1]") || recovery_repo=$shell_args[1]
+      else
+        recovery_repo=$(_t_infer_repo)
+      fi
+      if [[ -n $recovery_repo ]]; then
+        recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$recovery_repo" "$recovery_slot") || recovery_rc=$?
+        if (( recovery_rc == 0 )); then eval "$recovery"; return $?
+        elif (( recovery_rc != 3 )); then return $recovery_rc; fi
+      fi
+    fi
     if [[ -t 0 && -t 1 ]]; then
       _T_RESUME_REQUIRE_PICKER=1 _t_resume "${shell_args[@]}" --days all
       return $?
@@ -1221,8 +1236,11 @@ _t() {
     hosts/list)
       _values 'flag' --json -h --help ;;
     session/list)
-      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -l --local -a --all -w --wait -h --help; fi ;;
+      if [[ ${words[CURRENT-1]} == --source ]]; then
+        _values 'source' local remote all ${(k)REMOTE_HOSTS}
+      elif [[ ${words[CURRENT-1]} == --repo ]] || { (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; }; then
+        _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+      else _values 'flag' --repo --source -r --remote -l --local -a --all -w --wait -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)
