@@ -9563,9 +9563,10 @@ def cmd_install(cfg, args):
         items += [{"t": "spacer", "sec": "apps"},
                   {"t": "header", "sec": "apps", "label": "DESKTOP APPS"},
                   {"t": "toggle", "sec": "apps", "kind": "app", "alias": "Nightr",
-                   "value": value, "action": action, "checked": False},
-                  {"t": "toggle", "sec": "apps", "kind": "app", "alias": "rnnr",
-                   "value": "Install via Homebrew", "action": "install", "checked": False}]
+                   "value": value, "action": action, "checked": False}]
+        if _rnnr_module()["published_cask"]():
+            items.append({"t": "toggle", "sec": "apps", "kind": "app", "alias": "rnnr",
+                          "value": "Install via Homebrew", "action": "install", "checked": False})
     os_name = "darwin" if sys.platform == "darwin" else "linux"
     has_brew, headless = bool(shutil.which("brew")), _install_headless(os.environ, args.headless)
 

@@ -2,12 +2,34 @@
 import json
 from pathlib import Path
 import plistlib
+import runpy
 import shutil
 import subprocess
 import sys
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+_spinner = runpy.run_path(str(Path(__file__).with_name("t_progress.py")))["spinner"]
 
 APP = Path("/Applications/rnnr.app")
 CASK = "agenthangar/tap/rnnr"
+
+
+@_spinner("Checking the rnnr download")
+def published_cask():
+    """Show the optional download only after the tap publishes its release cask."""
+    brew = shutil.which("brew")
+    if not brew:
+        return False
+    tap = Path(brew).resolve().parent.parent / "Library/Taps/agenthangar/homebrew-tap/Casks/rnnr.rb"
+    if tap.is_file():
+        return True
+    request = Request("https://raw.githubusercontent.com/agenthangar/homebrew-tap/main/Casks/rnnr.rb", method="HEAD")
+    try:
+        with urlopen(request, timeout=2) as response:
+            return response.status == 200
+    except (URLError, OSError):
+        return False
 
 
 def status():
@@ -29,6 +51,8 @@ def install():
     brew = shutil.which("brew")
     if not brew:
         raise ValueError("Install Homebrew or download the signed rnnr app.")
+    if not published_cask():
+        raise ValueError("The published rnnr cask is unavailable. Check the AgentHangar tap and try again.")
     args = [brew, "install", "--cask", CASK]
     result = subprocess.run(args, check=False)
     if result.returncode:
