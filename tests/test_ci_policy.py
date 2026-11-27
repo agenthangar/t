@@ -46,7 +46,7 @@ def results(full=True, macos=False, reference=False):
 
 
 def test_required_gate_rejects_failures_and_skips():
-    for full, macos, reference in ((False, False, False), (True, False, False), (True, True, True)):
+    for full, macos, reference in ((False, False, False), (True, False, False), (True, True, True), (False, True, False)):
         data = results(full, macos, reference)
         policy.check_results(data, full=full, macos=macos, reference=reference)
         for job in data:
@@ -106,3 +106,29 @@ def test_only_successful_full_gate_writes_same_attempt_evidence(tmp_path, monkey
     monkeypatch.setenv('NEEDS_JSON', json.dumps(results(True)))
     policy.main()
     assert json.loads(path.read_text()) == dict(sha='a'*40, full=True, run_id='123', run_attempt='2')
+
+
+def test_macos_dispatch_is_scoped_and_independent_of_full_linux():
+    workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+    inputs = workflow.split('  workflow_dispatch:\n', 1)[1].split('  push:\n', 1)[0]
+    def input_body(name):
+        return re.split(r'\n      [a-z_]+:\n', inputs.split(f'      {name}:\n', 1)[1])[0]
+    assert 'type: boolean' in input_body('run_macos')
+    assert 'default: false' in input_body('run_macos')
+    assert 'type: boolean' in input_body('run_full')
+    assert 'default: false' in input_body('run_full')
+    scope = input_body('macos_scope')
+    assert 'type: choice' in scope and 'default: discovery' in scope
+    assert re.findall(r'^\s+- (\w+)\s*$', scope, re.M) == ['discovery', 'terminal', 'native']
+    force = next(line for line in workflow.splitlines() if 'FORCE_FULL:' in line)
+    assert 'inputs.run_full' in force and 'inputs.verify_shards' in force
+    assert "inputs.ref != ''" in force
+    assert 'inputs.run_macos' not in force and 'inputs.macos_scope' not in force
+    macos = re.split(r'\n  [a-z-]+:\n', workflow.split('  macos:\n', 1)[1])[0]
+    assert 'runs-on: macos-latest' in macos
+    assert "if: github.event_name == 'workflow_dispatch' && inputs.run_macos" in macos
+    assert "fzf: '0.74.5'" in macos
+    assert 'matrix' not in macos
+    assert 'MACOS_SCOPE: ${{ inputs.macos_scope }}' in macos
+    assert 'python3 scripts/smoke.py --macos "$MACOS_SCOPE"' in macos
+    assert 'pytest' not in macos and '--cov' not in macos and '--run-macos-ui' not in macos

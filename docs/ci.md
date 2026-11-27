@@ -9,10 +9,11 @@ session discovery, open/reattach/resume, concurrent ownership, preservation of
 uncommitted work, and the remote `zsh -lic` contract.
 
 CLI, history, installer and CI changes all select smoke in routine PR/push CI.
-There is no changed-path escalation. Dispatch **CI** with `run_full=true` for
-explicit complete Linux validation. Nightly/release runs always select full
-validation for the exact pinned commit, even without a pending release; a smoke
-result cannot authorize publication. Full validation enforces 97% coverage.
+There is no changed-path escalation. Manual **CI** defaults to
+`run_full=false`. Set `run_full=true` for complete Linux validation.
+`verify_shards=true` also selects it. Nightly and release runs select full Linux
+validation for the exact pinned commit, even without a pending release. Full
+Linux validation enforces 97% coverage and supplies release evidence.
 Gitleaks, pip-audit, CodeQL, shell/CLI contracts and install smoke
 remain required. Scorecard and scheduled failure/recovery alerts are unchanged.
 
@@ -95,10 +96,6 @@ completion below six minutes, at least 40% faster than the approximately
 736-second original CI baseline; compare GitHub job/run timestamps, including
 setup and aggregation, rather than only pytest execution time.
 
-macOS remains default-off. Dispatch with `run_macos=true` to run the full suite
-against both fzf versions with native desktop tests enabled. The shared local smoke gate is required before publishing; full regression and
-coverage stay in nightly or explicitly requested validation.
-
 ### Required design adherence
 
 Before opening a PR that changes visible behavior, shared rendering, design guidance
@@ -128,4 +125,31 @@ first list and picker against known live conversation details. The full suite
 also exercises 61 numbered slots. Run `python3 tests/ssh/move.py` with Docker
 to test a transfer between two disposable Linux hosts with real SSH, independent
 worktrees and a shared Git origin. Full Linux CI runs this transfer. The CI
-workflow's `run_macos` input enables hosted macOS verification.
+workflow's `run_macos=true` and `macos_scope=discovery` inputs select the
+hosted macOS discovery checks.
+
+## Targeted macOS validation
+
+Routine PR/push, nightly and release CI run Linux. Hosted macOS checks are
+explicitly selected with `run_macos=true` and `macos_scope`. The default scope
+is `discovery`. Each run uses one `macos-latest` machine, fzf 0.74.5, and the
+exact tests selected by `python3 scripts/smoke.py --macos SCOPE`.
+
+| Scope | Checks |
+| --- | --- |
+| `discovery` | First-list metadata, 61 live slots, process identity and working-directory matching |
+| `terminal` | PTY loss versus detach, tmux client detach, picker suspension and paste restoration |
+| `native` | Real IOKit and pmset system/display sleep assertions |
+
+Missing, skipped or unexpected cases fail the selection check. Only `native`
+enables `--run-macos-ui`. Run it on a disposable Mac or with explicit authorization.
+
+For example, request hosted terminal checks on a branch with
+
+```sh
+gh workflow run ci.yml --ref BRANCH -f run_macos=true -f macos_scope=terminal
+```
+
+Run the same headless checks locally with `python3 scripts/smoke.py --macos discovery`
+or `python3 scripts/smoke.py --macos terminal`. A macOS selection uses routine
+Linux checks unless full Linux validation is also requested.
