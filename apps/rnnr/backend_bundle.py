@@ -88,7 +88,7 @@ def add_backend(resources, root, version):
             subprocess.run(["/usr/bin/lipo", "-create", *slices, "-output", binaries / tool], check=True)
             (binaries / tool).chmod(0o755)
     python = binaries / "python3"
-    python.write_text('#!/bin/sh\nset -eu\nexport PYTHONDONTWRITEBYTECODE=1\nroot=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)\nexec "$root/$(/usr/bin/uname -m)/bin/python3" "$@"\n')
+    python.write_text('#!/bin/sh\nset -eu\nexport PYTHONDONTWRITEBYTECODE=1\nroot=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)\nexec "$root/$(/usr/bin/uname -m)/bin/python3" -B "$@"\n')
     python.chmod(0o755)
     # An absolute MCP registration can be launched with an empty PATH.
     entry = binaries / "t"
