@@ -1,6 +1,7 @@
 """Remote orchestration uses isolated scanners and SSH, never real hosts."""
 import json
 import shlex
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +30,7 @@ def fake_picker(tmp_path, session='alpha/api-2', host='beta'):
     stub.write_text('''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+if '--help' in sys.argv: sys.exit(0)
 rows = sys.stdin.read().splitlines()
 with Path(os.environ['PICK_LOG']).open('a') as log:
     log.write(json.dumps(dict(rows=rows,args=sys.argv[1:]))+'\\n')
@@ -36,11 +38,11 @@ is_host = any('host> ' in arg for arg in sys.argv)
 choice = os.environ['PICK_HOST'] if is_host else os.environ['PICK_SESSION']
 if choice == 'cancel': sys.exit(130)
 if os.environ.get('CHANGE_ROWS'): Path(os.environ['CHANGE_ROWS']).touch()
-for row in rows:
-    fields = row.split('\\t')
-    key = fields[0] if is_host else '/'.join(fields[:2])
-    for wanted in choice.split(','):
-        if key == wanted or (not is_host and wanted == '#' + fields[-1]):
+for wanted in choice.split(','):
+    for position, row in enumerate(rows, 1):
+        fields = row.split('\\t')
+        key = fields[0] if is_host else '/'.join(fields[:2])
+        if key == wanted or (not is_host and wanted == '#' + str(position)):
             print(row)
 ''')
     stub.chmod(0o755)
@@ -101,8 +103,8 @@ t remote move; print rc=$?
     assert 'EXPECTED remote-id\t/home/source/code/api\tapi-2\tattached' in text
     logs = [json.loads(line) for line in (tmp_path / 'picker.jsonl').read_text().splitlines()]
     assert len(logs) == 2
-    assert [row.split('\t')[:2] for row in logs[0]['rows']] == [
-        ['local', 'api-1'], ['alpha', 'api-2'], ['beta', 'api-2']]
+    assert sorted(row.split('\t')[:2] for row in logs[0]['rows']) == [
+        ['alpha', 'api-2'], ['beta', 'api-2'], ['local', 'api-1']]
     assert all('desktop' not in row for row in logs[0]['rows'])
     assert all(not row.startswith('alpha\t') for row in logs[1]['rows'])
     assert '--multi' in logs[0]['args'] and '--no-multi' in logs[1]['args']
@@ -622,7 +624,7 @@ def test_canonical_move_selects_inside_agent_before_destination(zsh, tmp_path, c
 _dev_self_sid() { print codex-id; }
 _dev_rows_all() { print -u2 WRONG_REMOTE_SCAN; return 99; }
 _t_beam() { print -r -- "MOVE ${(j:|:)@}"; }
-''' + command + '; print rc=$?', _tty=True, **env)
+''' + command + ' --source local; print rc=$?', _tty=True, **env)
     text = output(result)
     assert 'rc=0' in text and 'MOVE --session|codex-id|--host|alpha' in text, text
     assert 'WRONG_REMOTE_SCAN' not in text
@@ -801,11 +803,14 @@ def test_remote_kill_parser_and_executable_delegate(t_mod, monkeypatch, targets,
     assert (args.repo, args.slot, args.yes) == expected
     assert args.remote is True
     seen = []
-    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}, worktree_root='/unused', hosts={}))
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
     monkeypatch.setattr(t_mod, '_delegate', seen.append)
     t_mod.main(['remote', 'kill', *targets])
     repo, slot, yes = expected
+    if not targets:
+        assert shlex.split(seen[0]) == ['_dev_kill_pick', '', '', '1']
+        return
     assert shlex.split(seen[0]) == ['_t_dev', '-r', 'kill',
                                    *([repo] if repo else []), *([slot] if slot else []),
                                    *(['-y'] if yes else [])]

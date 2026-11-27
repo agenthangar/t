@@ -258,3 +258,26 @@ def test_format_last_turn_converts_to_viewer_timezone(details, monkeypatch):
         assert m['format_last_turn']('2026-01-23T16:41:07Z') == '2026-01-23 08:41:07 PST'
         assert m['format_last_turn']('bad') == '-'
     time.tzset()
+
+
+def test_lightweight_details_use_verified_record_without_usage_scan(details, monkeypatch):
+    module, home, codex = details
+    monkeypatch.setenv('XDG_STATE_HOME', str(home / 'state'))
+    def forbidden(*args, **kwargs):
+        raise AssertionError('lightweight details scanned stage history')
+    module['enrich'].__globals__['_stage_candidates'] = forbidden
+    row = 'saved\t/wt/3\tweb-3\tdetached\tactive\t-\tcodex'
+    fields = module['enrich']([row], home, codex, lightweight=True)[0].split('\t')
+    assert fields[:5] == row.split('\t')[:5]
+    assert fields[5:9] == ['Investigate cache invalidation', 'codex', 'model-test', '-']
+
+
+def test_lightweight_details_read_older_thread_schema(tmp_path):
+    helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'libexec/t_session_details.py'))
+    with sqlite3.connect(tmp_path / 'state_5.sqlite') as database:
+        database.execute('create table threads(id, cwd, rollout_path, title, model)')
+        database.execute('insert into threads values(?,?,?,?,?)',
+                         ('active', '/workspace', '/missing', 'Retained conversation', 'recorded model'))
+    raw = 'active\t/workspace\trepo-2\tattached\tactive\t-\tcodex'
+    row, = helper['enrich']([raw], tmp_path, tmp_path, lightweight=True)
+    assert row.split('\t')[5:8] == ['Retained conversation', 'codex', 'recorded model']

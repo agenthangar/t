@@ -304,7 +304,7 @@ _t_resume() {
         : > "$T_RESUME_NOTICE_FILE"
       fi
       # The shared wait owns stderr and terminal input.
-      history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
+      history_rows=$(T_RESUME_DIAGNOSTICS_FILE="$auth_file" _t_with_progress "Reading session details" _t_resume_history_candidates "${(@)history_scope}") || history_rc=$?
       if [[ -n $T_RESUME_STATUS_FILE ]]; then
         discovery_notice=$(<"$T_RESUME_NOTICE_FILE")
         discovery_status=$(<"$T_RESUME_STATUS_FILE")
@@ -1034,7 +1034,7 @@ _t_resume() {
     local mp_first_repo= mp_first_slot= mp_first_session= mp_cwd mp_session mp_loc mp_pair mp_agent mp_rc
     local mp_live_first= mp_live_cmd= mp_live_alias= mp_live_repo= mp_live_slot= mp_live_loc=
     local -a mp_rest mp_live mp_live_fields mp_ready
-    local mp_index=0 mp_remaining mp_identity mp_retry
+    local mp_index=0 mp_remaining mp_identity mp_retry mp_failure_identity= mp_failure_retry= mp_failure_reason=
     for pick in "${(@)picks}"; do
       f=("${(@ps:\t:)pick}")
       repo=$f[1]; slot=$f[2]; sid=$f[3]; wt=$f[4]; mp_loc="${f[7]:-}"; mp_agent="${f[10]:-claude}"
@@ -1063,15 +1063,26 @@ _t_resume() {
       fi
       batch_rc=$(<"$batch_dir/$mp_index.status")
       if (( batch_rc )); then
-        mp_failed=1
-        print -u2 -r -- "$repo $slot  $(tail -n 1 "$batch_dir/$mp_index.err")"
+        if [[ -z $mp_failure_identity ]] || (( batch_rc == 130 && mp_failed != 130 )); then
+          mp_failure_identity=$mp_identity
+          mp_failure_retry=$mp_retry
+          mp_failure_reason=$(tail -n 1 "$batch_dir/$mp_index.err")
+          [[ -n $mp_failure_reason ]] || mp_failure_reason="resume worker exited with status $batch_rc"
+          mp_failed=$batch_rc
+        fi
+        (( batch_rc == 130 )) && mp_failed=130
+        print -u2 -r -- "$repo $slot  $(<"$batch_dir/$mp_index.err")"
         continue
       fi
+      [[ ! -s "$batch_dir/$mp_index.err" ]] || cat "$batch_dir/$mp_index.err" >&2
       mp_session=$(<"$batch_dir/$mp_index.out")
       if [[ $f[8] == history && -z $on_host ]]; then
         mp_owner=("${(@ps:\t:)mp_session}")
         if (( $#mp_owner != 3 )); then
-          mp_failed=1
+          if [[ -z $mp_failure_identity ]]; then
+            mp_failure_identity=$mp_identity; mp_failure_retry=$mp_retry
+            mp_failure_reason='Incomplete terminal receipt'; mp_failed=1
+          fi
           print -u2 -- "$repo $slot  Incomplete terminal receipt"
           continue
         fi
@@ -1080,7 +1091,13 @@ _t_resume() {
         mp_exact[$repo/$slot]="${mp_session#dev-}"$'\t'"$sid"$'\t'"$mp_owner[2]"$'\t'"$mp_agent"$'\t'"$mp_owner[3]"
         mp_attach[$repo/$slot]="source ${(q)T_HOME}/t.plugin.zsh; _t_history_attach ${(q)${mp_session#dev-}} ${(q)sid} ${(q)mp_owner[2]} ${(q)mp_agent} ${(q)mp_owner[3]}"
         mp_ready+=("t session open ${(q)repo} ${(q)slot} --cli --local")
-        _t_resume_history_registered "$repo" || { mp_failed=1; continue; }
+        if ! _t_resume_history_registered "$repo"; then
+          if [[ -z $mp_failure_identity ]]; then
+            mp_failure_identity=$mp_identity; mp_failure_retry=$mp_retry
+            mp_failure_reason='repository registration unavailable after launch'; mp_failed=1
+          fi
+          continue
+        fi
         if [[ -z $mp_first_repo ]]; then
           mp_first_repo=$repo; mp_first_slot=$slot
         else
@@ -1112,7 +1129,10 @@ _t_resume() {
       fi
     done
     rm -rf -- "$batch_dir"
-    (( ! mp_failed )) || print -u2 -- 'Some sessions could not resume. Ready sessions will open.'
+    if (( mp_failed )); then
+      _t_resume_batch_stop "$mp_failed" "$mp_failure_identity" "$mp_failure_retry" "$mp_failure_reason" 0 "${mp_ready[@]}"
+      return "$mp_failed"
+    fi
     # A live mark gets the same attachment path as a single pick. When no dead
     # mark revived, attach the first live row here; otherwise give each live
     # owner a tab alongside the extra revived rows.

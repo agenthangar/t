@@ -23,10 +23,14 @@ def test_plain_slot_resume_routes_to_history(zsh, tmp_path, verb, target, expect
     stub.write_text(f'#!{sys.executable}\nimport json,sys\n'
                     f'print(json.dumps(sys.argv[1:]))\nsys.exit({status})\n')
     stub.chmod(0o755)
-    result = zsh('_t_resume() { print UNEXPECTED_RESUME; }; '
+    result = zsh(f'_t_resume() {{ [[ $_T_RESUME_REQUIRE_PICKER == 1 ]] || return 8; '
+                 'print -rl -- "$@"; return ' + str(status) + '; }; '
                  f'{verb} {target}', _tty=tty)
     assert result.returncode == status
-    assert json.loads(result.stdout.strip()) == ['session', 'history', *expected]
+    if tty:
+        assert result.stdout.strip().splitlines() == [*expected, '--days', 'all']
+    else:
+        assert json.loads(result.stdout.strip()) == ['session', 'history', *expected]
     assert not zsh.log.exists()
 
 
@@ -47,7 +51,7 @@ def history_row(sid='saved', slot='3', workspace='/former/home/trees/old/old-3',
 
 def shell_candidates(rows):
     # Model the private launch receipt. Public-command lifecycle tests use real tmux IDs.
-    return (r"""sample_receipt() { printf 'dev-api-%s\t/sample/api-%s\t$%s:%%%s\n' "$1" "$1" "$1" "$1"; };
+    return (r"""_t_sample_receipt() { printf 'dev-api-%s\t/sample/api-%s\t$%s:%%%s\n' "$1" "$1" "$1" "$1"; };
 _t_history_owner() { [[ $6 == '$'${1##*-}':%'${1##*-} ]] && print -r -- "$6"; };
 """ + '_t_resume_history_candidates() { print -r -- ' + shlex.quote('\n'.join(rows)) + '; }; ')
 
@@ -57,7 +61,7 @@ def test_mcp_resume_window_uses_resolved_history_slot(zsh, new_window, window_co
     setup = shell_candidates([history_row()]) + f'''
       T_MCP_DETACHED=1
       T_MCP_NEW_WINDOW={int(new_window)}
-      _t_resume_history_launch() {{ print -u2 LAUNCH; sample_receipt 99; }}
+      _t_resume_history_launch() {{ print -u2 LAUNCH; _t_sample_receipt 99; }}
       _t_resume_history_registered() {{ return 0; }}
       _dev_open_window() {{ print -r -- "WINDOW $*"; return {window_code}; }}
     '''
@@ -102,7 +106,7 @@ def test_local_transcripts_use_history_allocation_once_per_conversation(zsh, age
         + ('print -rl -- ' + ' '.join(map(shlex.quote, paths)) if agent == 'codex' else ':') + '; }; '
         '_t_fzf_filtered() { print -r -- "$1"; }; '
         '_t_resume_history_launch() { print -u2 -- "HISTORY $2 $3 $4"; '
-        '[[ $2 == *0001 ]] && sample_receipt 98 || sample_receipt 99; }; '
+        '[[ $2 == *0001 ]] && _t_sample_receipt 98 || _t_sample_receipt 99; }; '
         '_dev_resume_session() { print -u2 UNEXPECTED_LEGACY_LAUNCH; return 1; }; '
         '_dev_open_tab() { print -r -- "TAB $*"; }; '
     )
@@ -125,7 +129,7 @@ def test_resume_history_selects_inactive_conversation_from_busy_slot(zsh):
     setup = shell_candidates([history_row()]) + (
         f"_dev_session_rows() {{ print -r -- 'owner\t{wt}\tapi-3\tdetached\tactive\tCurrent work\tcodex'; }}; "
         '_t_fzf_filtered() { print -r -- "$1"; }; '
-        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; sample_receipt 99; }; '
+        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; _t_sample_receipt 99; }; '
     )
     result = zsh(setup + '_t_resume api', _tty=True,
                  FAKE_SESSIONS='dev-api-3', FAKE_SESSION_PATH=str(wt))
@@ -138,7 +142,7 @@ def test_resume_history_selects_inactive_conversation_from_busy_slot(zsh):
 def test_resume_history_multiple_conversations_allocate_independent_slots(zsh):
     setup = shell_candidates([history_row('one'), history_row('two')]) + (
         '_t_fzf_filtered() { print -r -- "$1"; }; '
-        '_t_resume_history_launch() { [[ $2 == one ]] && sample_receipt 98 || sample_receipt 99; }; '
+        '_t_resume_history_launch() { [[ $2 == one ]] && _t_sample_receipt 98 || _t_sample_receipt 99; }; '
         '_dev_open_tab() { print -r -- "TAB $*"; }; '
     )
     result = zsh(setup + '_t_resume api', _tty=True)
@@ -148,13 +152,13 @@ def test_resume_history_multiple_conversations_allocate_independent_slots(zsh):
 
 
 @pytest.mark.parametrize('failure_at,code', [('a', 1), ('b', 1), ('b', 130)])
-def test_batch_failure_stops_later_launches_and_keeps_ready_hints(zsh, failure_at, code):
+def test_parallel_batch_failure_reports_attempts_and_keeps_ready_hints(zsh, failure_at, code):
     setup = shell_candidates([history_row(sid) for sid in ('a', 'b', 'c')]) + f'''
       _t_fzf_filtered() {{ print -r -- "$1"; }}
       _t_resume_history_launch() {{
         print -u2 -- "ATTEMPT $2"
         [[ $2 == {failure_at} ]] && {{ print -u2 'exact writer diagnostic'; return {code}; }}
-        sample_receipt 98
+        case $2 in a) _t_sample_receipt 98 ;; b) _t_sample_receipt 99 ;; c) _t_sample_receipt 100 ;; esac
       }}
       _t_resume_history_registered() {{ return 0; }}
       _dev_open_tab() {{ print UNEXPECTED_TAB; }}
@@ -165,15 +169,18 @@ def test_batch_failure_stops_later_launches_and_keeps_ready_hints(zsh, failure_a
     assert f'Selection: api slot 3 · codex {failure_at}' in result.stdout
     assert 'exact writer diagnostic' in result.stdout
     assert 'Retry selection: t session resume api 3' in result.stdout
-    assert 'ATTEMPT c' not in result.stdout and 'UNEXPECTED_TAB' not in result.stdout
-    assert ('Ready — attach with: t session open api 98 --cli --local' in result.stdout) == (failure_at == 'b')
+    assert all(f'ATTEMPT {sid}' in result.stdout for sid in ('a', 'b', 'c'))
+    assert 'UNEXPECTED_TAB' not in result.stdout
+    for sid, slot in [('a', 98), ('b', 99), ('c', 100)]:
+        assert (f'Ready — attach with: t session open api {slot} --cli --local' in result.stdout) == (sid != failure_at)
+    assert 'Not attempted: 0 selection(s)' in result.stdout
     assert 'attach-session' not in zsh.log.read_text()
 
 
 def test_batch_registration_failure_reports_already_launched_owner(zsh):
     setup = shell_candidates([history_row('a'), history_row('b')]) + '''
       _t_fzf_filtered() { print -r -- "$1"; }
-      _t_resume_history_launch() { sample_receipt 98; }
+      _t_resume_history_launch() { _t_sample_receipt 98; }
       _t_resume_history_registered() { return 1; }
       _dev_open_tab() { print UNEXPECTED_TAB; }
     '''
@@ -181,14 +188,14 @@ def test_batch_registration_failure_reports_already_launched_owner(zsh):
     assert result.returncode == 1
     assert 'repository registration unavailable after launch' in result.stdout
     assert 'Ready — attach with: t session open api 98 --cli --local' in result.stdout
-    assert 'Not attempted: 1 selection(s)' in result.stdout
+    assert 'Not attempted: 0 selection(s)' in result.stdout
     assert 'UNEXPECTED_TAB' not in result.stdout
 
 
 def test_batch_tab_failure_never_hides_summary_behind_first_attachment(zsh):
     setup = shell_candidates([history_row('a'), history_row('b'), history_row('c')]) + '''
       _t_fzf_filtered() { print -r -- "$1"; }
-      _t_resume_history_launch() { [[ $2 == a ]] && sample_receipt 98 || sample_receipt 99; }
+      _t_resume_history_launch() { [[ $2 == a ]] && _t_sample_receipt 98 || _t_sample_receipt 99; }
       _t_resume_history_registered() { return 0; }
       _dev_open_tab() { print -u2 TAB_ATTEMPT; return 1; }
     '''
@@ -308,7 +315,7 @@ def test_explicit_slot_saved_selection_preserves_busy_owner(zsh):
     setup = shell_candidates([history_row()]) + (
         f"_dev_session_rows() {{ print -r -- 'owner\t{wt}\tapi-3\tdetached\tactive\tCurrent work\tcodex'; }}; "
         '_t_fzf_filtered() { print -r -- "$1"; }; '
-        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; sample_receipt 99; }; '
+        '_t_resume_history_launch() { print -u2 -- "HISTORY $*"; _t_sample_receipt 99; }; '
         '_t_dev() { print UNEXPECTED_ATTACH; }; '
     )
     result = zsh(setup + 't resume api 3 --days all', _tty=True,

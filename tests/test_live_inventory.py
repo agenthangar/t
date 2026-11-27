@@ -57,11 +57,15 @@ def servers(tmp_path, monkeypatch):
             for path in (alternate, default):
                 command(tmux, '-S', str(path), 'kill-server')
             cache = runpy.run_path(str(ROOT/'libexec/t_session_cache.py'))
-            for root in directory.glob('t-sessions-*'):
-                try:
-                    cache['_existing_status'](root, [], time.monotonic()+1)
-                except OSError:
-                    pass
+            deadline = time.monotonic() + 5
+            while endpoints := list(directory.glob('t-sessions-*/service.sock')):
+                assert time.monotonic() < deadline, f'fixture discovery still running: {endpoints}'
+                for endpoint in endpoints:
+                    try:
+                        cache['_existing_status'](endpoint.parent, [], deadline)
+                    except (OSError, ValueError):
+                        pass
+                time.sleep(.05)
 
 
 def test_public_wait_isolates_servers_and_retries_failed_scan(servers):
@@ -118,6 +122,8 @@ def test_open_picker_adds_live_slot_with_query_focus_and_mark(servers):
     shell = f'source {shlex.quote(str(ROOT/"t.plugin.zsh"))}; t open --local -w'
     command('tmux', '-S', str(default), 'new-session', '-d', '-x', '110', '-y', '32',
             '-s', 'picker', 'zsh -f -c ' + shlex.quote(shell))
+    stream_path = Path(os.environ['XDG_CACHE_HOME']).parent / 'picker-stream'
+    command('tmux', '-S', str(default), 'pipe-pane', '-t', 'picker:', 'cat > ' + shlex.quote(str(stream_path)))
     def frame():
         return command('tmux', '-S', str(default), 'capture-pane', '-p', '-t', 'picker:').stdout
     def wait_for(predicate):
@@ -127,7 +133,9 @@ def test_open_picker_adds_live_slot_with_query_focus_and_mark(servers):
             if predicate(screen):
                 return screen
             time.sleep(.05)
-        pytest.fail(frame())
+        history = command('tmux', '-S', str(default), 'capture-pane', '-p', '-S', '-100', '-t', 'picker:').stdout
+        trace = stream_path.read_text(errors='replace') if stream_path.exists() else ''
+        pytest.fail(frame() + '\nTerminal history\n' + history + '\nTerminal trace\n' + trace[-6000:])
     def row(screen, n):
         return next((line for line in screen.splitlines() if re.search(r'api-' + str(n) + r'\s', line)), '')
     wait_for(lambda screen: row(screen, 1) and row(screen, 2))
@@ -139,6 +147,10 @@ def test_open_picker_adds_live_slot_with_query_focus_and_mark(servers):
     # Use the same asynchronous notification as a completed resume worker.
     runpy.run_path(str(ROOT/'libexec/t_live_inventory.py'))['notify_ready']()
     wait_for(lambda screen: row(screen, 3) and '✓' in row(screen, marked)
+             and '▸' in row(screen, focused) and '> api' in screen)
+    create(default, 4)
+    command('tmux', '-S', str(default), 'send-keys', '-t', 'picker:', 'C-u')
+    wait_for(lambda screen: row(screen, 4) and '✓' in row(screen, marked)
              and '▸' in row(screen, focused) and '> api' in screen)
     command('tmux', '-S', str(default), 'send-keys', '-t', 'picker:', 'Escape')
 
@@ -243,3 +255,11 @@ def test_empty_open_picker_receives_the_first_slot(servers):
     runpy.run_path(str(ROOT/'libexec/t_live_inventory.py'))['notify_ready']()
     wait_for('api-1')
     command('tmux', '-S', str(default), 'send-keys', '-t', 'empty-picker:', 'Escape')
+
+
+def test_reused_stamp_does_not_restore_replaced_terminal_details():
+    inventory = runpy.run_path(str(ROOT / 'libexec/t_live_inventory.py'))['Inventory'](lambda _: None)
+    inventory.slots = {'api-7': dict(cwd='/repo', terminal='3/$2', stamp='old', state='detached', agent='codex')}
+    host = {'value': {'rows': 'old\t/repo\tapi-7\tdetached\tactive\tPrevious work\tcodex'}}
+    inventory.project(host, {'api-7': '3/$1'})
+    assert host['value']['rows'].split('\t')[:6] == ['-', '/repo', 'api-7', 'detached', 'unknown', '-']

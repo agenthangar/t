@@ -245,7 +245,7 @@ else:
 import sys
 rows = sys.stdin.read().splitlines()
 assert len(rows) == 1, rows
-print('\\nenter\\n' + rows[0])
+print(rows[0])
 ''')
     fzf.chmod(0o755)
     recorded = _shell(base, first, f'_dev_history_record {SID} {agent} {shlex.quote(str(workspace))} resume')

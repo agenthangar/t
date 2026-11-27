@@ -24,9 +24,11 @@ def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, termina
     monkeypatch.setattr(t_mod.sys, 'stdout', stdout)
     monkeypatch.setattr(t_mod, '_t_update_interactive', lambda: True)
     monkeypatch.setattr(t_mod, '_t_update_installation', lambda: pytest.fail('read-only command checked updates'))
-    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(cleanup_interval=900))
     seen = []
     handler = lambda cfg, args: seen.append(args) or 0
+    monkeypatch.setattr(t_mod, '_background_agents', lambda: {
+        'command': lambda action, target, reinstall, interval: seen.append(action) or 0})
     for name in t_mod.IMPLEMENTED:
         monkeypatch.setitem(t_mod.IMPLEMENTED, name, handler)
     monkeypatch.setattr(t_mod, 'cmd_cursor', handler)
@@ -85,8 +87,13 @@ def test_plain_slot_resume_executable_uses_history(t_mod, monkeypatch, argv, tar
     monkeypatch.setattr(t_mod, 'Config', lambda: object())
     seen = []
     monkeypatch.setitem(t_mod.IMPLEMENTED, 'history', lambda cfg, args: seen.append(args.target) or 130)
+    if terminal:
+        monkeypatch.setattr(t_mod, '_delegate', lambda command: seen.append(command) or 130)
     assert t_mod.main(argv) == 130
-    assert seen == [target]
+    if terminal:
+        assert '_T_RESUME_REQUIRE_PICKER=1 _t_resume ' + ' '.join(target) + ' --days all' in seen[0]
+    else:
+        assert seen == [target]
     assert t_mod._command_readonly(argv, terminal=terminal) is not terminal
 
 
@@ -450,7 +457,7 @@ def test_history_display_contract_preserves_unknowns_preview_and_json(history, t
 ])
 @pytest.mark.parametrize('remote', [False, True])
 @pytest.mark.parametrize('location', ['checkout', 'worktree', 'outside'])
-def test_session_list_default_includes_other_repositories(
+def test_session_list_default_scopes_current_repository(
         t_mod, monkeypatch, capsys, tmp_path, command, remote, location):
     checkout = tmp_path / 'code' / 'api'
     worktrees = tmp_path / 'worktrees'
@@ -480,9 +487,10 @@ def test_session_list_default_includes_other_repositories(
     for scope in ([], ['--all']):
         assert t_mod.main([*command, *scope, *flags]) == 0
         output = capsys.readouterr().out
+        scoped = not scope and location != 'outside'
         for _, slot, *_ in rows:
-            assert slot in output
-        assert '(repo:' not in output
+            assert (slot in output) == (not scoped or slot.startswith('api-'))
+        assert ('(repo:' in output) == scoped
     assert t_mod.main([*command, 'api', *flags]) == 0
     output = capsys.readouterr().out
     assert 'api-1' in output and 'other-' not in output

@@ -372,3 +372,20 @@ def test_open_recovery_uses_shared_rail_and_restores_terminal(t_mod, monkeypatch
     assert t_mod._open_discovery_choice('Still refreshing', available) == 'cancel'
     assert calls[0] == 'raw' and calls[-1] == 'restore'
     assert ('cached', 'Browse retained results') in calls[1] if available else ('cached', 'Browse retained results') not in calls[1]
+
+
+def test_explicit_wait_observes_its_ticket_past_thirty_seconds(adapter, monkeypatch, clock):
+    initial = pending()
+    initial['hosts'][0].update(refresh_revision=8, refresh_requested=9)
+    def observe(cfg, **options):
+        assert options['observe']
+        latest = copy.deepcopy(initial)
+        if clock[0] >= 38:
+            # Another caller has already started a second refresh.
+            latest['hosts'][0].update(refresh_requested=10, refresh_revision=9)
+        return latest
+    monkeypatch.setattr(adapter, 'discover', observe)
+    result, _ = adapter.bounded_snapshot(None, initial=initial, explicit=True)
+    assert clock[0] == 38
+    assert result['hosts'][0]['refresh_revision'] == 9
+    assert 'wait_timed_out' not in result

@@ -120,7 +120,8 @@ if __name__ == '__main__':
                 path.with_suffix('.out').write_text(result['output'])
                 path.with_suffix('.err').write_text(result['error'])
                 path.with_suffix('.status').write_text(str(result['code']))
-            sys.exit(130 if any(r['code'] == 130 for r in results) else 0)
+            # Every result is published for the controller's failure summary.
+            sys.exit(0)
         worker(kind, directory)
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)

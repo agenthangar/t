@@ -294,6 +294,9 @@ jobs:
           ref: ${{ needs.scope.outputs.sha }}
       - name: Fresh install and terminal session flow
         run: python3 scripts/playground.py smoke
+      - name: Session move between independent SSH hosts
+        if: needs.scope.outputs.full == 'true'
+        run: python3 tests/ssh/move.py
   gitleaks:
     needs: scope
     runs-on: ubuntu-latest
