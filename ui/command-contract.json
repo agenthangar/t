@@ -11679,7 +11679,7 @@
           "layout": "inherit"
         }
       },
-      "notes": "t install nightr is the compatibility convenience. Installation never authorizes the privileged helper or starts protection.",
+      "notes": "t install nightr and t install rnnr select the corresponding app. rnnr uses the Homebrew cask. Installation never authorizes the privileged helper or starts protection.",
       "layout": "rail"
     },
     "system apps status": {

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Set Up rnnr</title>
+<style>
+:root{color-scheme:light dark;--bg:light-dark(#f6f6f8,#242428);--ink:light-dark(#202126,#f6f6f8);--dim:light-dark(#555860,#bcbec7);--line:light-dark(#d5d5da,#424249);--blue:light-dark(#0064cf,#368cef);font:16px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:var(--ink)}
+*{box-sizing:border-box}body{min-height:100svh;margin:0;display:grid;align-content:center;justify-items:center;gap:18px;padding:20px;background:light-dark(#dfe3e9,#18191c)}main{width:min(720px,100%);background:var(--bg);border-radius:14px;overflow:hidden;box-shadow:0 16px 54px #0002;border:1px solid var(--line)}header{position:relative;text-align:center;padding:10px;border-bottom:1px solid var(--line);font-weight:650;font-size:14px}header:before{content:'';position:absolute;top:14px;left:14px;width:11px;height:11px;border-radius:50%;background:#ff6058;box-shadow:19px 0 #ffbd2e,38px 0 #28c840}aside{margin:18px 7% 0;color:var(--dim);font-size:13px}#bars{display:flex;gap:5px;margin-bottom:9px}i{height:4px;background:var(--line);border-radius:4px;flex:1}i.on{background:var(--blue)}article{min-height:365px;padding:27px 7%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:13px}h1,p{margin:0}h1{font-size:clamp(23px,4vw,29px);letter-spacing:-.04em}p{color:var(--dim);max-width:470px;line-height:1.45}#icon{width:68px;height:68px;display:grid;place-items:center;border-radius:50%;background:light-dark(#e1edfc,#293a50);color:var(--blue);font-size:36px;font-weight:550}img{width:46px;height:46px;object-fit:contain}footer{border-top:1px solid var(--line);display:flex;gap:8px;padding:17px 22px;align-items:center}button,select{font:inherit}button{border:1px solid var(--line);background:var(--bg);color:inherit;border-radius:8px;padding:8px 14px;cursor:pointer}button:disabled{opacity:.45;cursor:default}#next{margin-left:auto;background:#006ad9;color:white;border:0;font-weight:600}#skip{color:var(--blue);border:0}#choices{display:grid;text-align:left;gap:12px}label.option{display:flex;gap:9px}label small{display:block;color:var(--dim);margin-top:3px}#result{font-size:14px;font-weight:600;color:light-dark(#24613c,#8cdeac)}[hidden],#result:empty,#choices:empty,#body:empty,#action:empty{display:none!important}#tools{font-size:13px;color:var(--dim);display:flex;align-items:center;gap:8px;flex-wrap:wrap}select{max-width:100%;padding:4px}input{accent-color:var(--blue)}@media(max-width:480px){body{padding:10px}article{min-height:325px}footer{padding:12px}button{padding:8px}}
+</style>
+<main><header>Set Up rnnr</header><aside><div id="bars"></div><span id="progress"></span></aside><article><div id="icon"></div><h1 tabindex="-1"></h1><p id="body"></p><div id="choices"></div><p id="result" role="status"></p><button id="action"></button></article><footer><button id="back">Back</button><button id="skip">Skip for Now</button><button id="next">Continue</button></footer></main>
+<div id="tools"><label>Preview scenario <select id="scenario"></select></label><button id="reset">Restart</button></div>
+<script>
+const steps={"welcome": {"title": "Set up rnnr", "body": "Find your coding sessions in the menu bar and open them in Terminal.", "action": "", "ready": "", "settings": "", "symbol": "", "choice": "", "hint": ""}, "features": {"title": "Choose how you’ll use rnnr", "body": "", "action": "", "ready": "", "settings": "", "symbol": "", "choice": "", "hint": ""}, "terminal": {"title": "Allow Terminal access", "body": "rnnr uses Terminal to open the session you choose. When macOS asks if rnnr can control Terminal, choose Allow.", "action": "Allow Terminal Access", "ready": "Allowed", "settings": "Open Automation Settings", "symbol": "›_", "choice": "Open sessions in Terminal", "hint": "Open or resume a session from the menu bar."}, "codex": {"title": "Connect Codex", "body": "Add the rnnr integration so you can find and inspect sessions from Codex.", "action": "Connect Codex", "ready": "Connected", "settings": "", "symbol": "⌘", "choice": "Connect Codex", "hint": "Find and inspect rnnr sessions from Codex."}, "claude": {"title": "Connect Claude Code", "body": "Add the rnnr integration so you can find and inspect sessions from Claude Code.", "action": "Connect Claude Code", "ready": "Connected", "settings": "", "symbol": "⌘", "choice": "Connect Claude Code", "hint": "Find and inspect rnnr sessions from Claude Code."}, "finish": {"title": "rnnr is ready", "body": "Click the fox in the menu bar to see your sessions.", "action": "", "ready": "", "settings": "", "symbol": "", "choice": "", "hint": ""}}, app='rnnr', night=app==='Nightr';
+const $=id=>document.getElementById(id);
+const features=Object.keys(steps).filter(k=>steps[k].choice);
+const scenarios=['Fresh install','Already configured','Permission denied',...(night?['Helper unavailable','Helper missing']:['Runtime missing','Agent missing','Sign-in needed','Legacy integration'])];
+for(const name of scenarios) $('scenario').add(new Option(name,name));
+let page,selected,verified,phase,skipped;
+function reset(){
+ document.querySelector('aside').hidden=false;document.querySelector('footer').hidden=false;document.querySelector('header').textContent='Set Up rnnr';
+ page='welcome'; selected=new Set(night?['login']:[]); verified=new Set();phase={};skipped=new Set();
+ if($('scenario').value==='Already configured'){selected=new Set(features);verified=new Set(Object.keys(steps))}
+ render();
+}
+function route(){return ['welcome',...(night?['helper']:[]),'features',...features.filter(k=>k!=='login'&&selected.has(k)),'finish']}
+function move(offset){const path=route();page=path[path.indexOf(page)+offset];render();document.querySelector('h1').focus()}
+function render(){
+ const path=route(), idx=path.indexOf(page), s=steps[page], mode=$('scenario').value, done=verified.has(page), state=phase[page];
+ let message='',action='',blocked=false,body=s.body;
+ if(s.action){
+   blocked=!done;
+   if(done) message=s.ready;
+   else if(state==='settings'){message='Return to setup after granting access.';action='Return to Setup'}
+   else if(page==='helper'&&mode==='Helper missing'){message='The power helper is missing from this copy of Nightr. Reinstall Nightr to continue.'}
+   else if(page==='helper'&&mode==='Helper unavailable'){message='The power helper didn’t respond.';action='Check Again'}
+   else if(state==='pending'||(mode==='Permission denied'&&s.settings)){
+     message=page==='helper'?'Open Login Items and allow Nightr to run in the background.':page==='terminal'?'Turn on Terminal under rnnr in Automation settings.':'Allow access in System Settings, then return here.';action=s.settings
+   }else if(['codex','claude'].includes(page)&&mode==='Agent missing'&&!state){action='Install '+s.title.slice(8)}
+   else if(['codex','claude'].includes(page)&&mode==='Sign-in needed'&&!state){message='Sign in to '+s.title.slice(8)+', then return here.';action='Check Again'}
+   else if(['codex','claude'].includes(page)&&mode==='Legacy integration'){message='Update your existing integration to use rnnr?';action='Update Integration'}
+   else action=s.action;
+ }
+ if(!night&&page==='welcome'){blocked=mode==='Runtime missing';message=blocked?'This copy of rnnr is missing a required component. Reinstall rnnr to continue.':'Ready'}
+ if(page==='finish'){
+   if(night&&mode==='Already configured')body='Open Nightr in the menu bar to see your protection status.';
+   if(!night&&selected.has('terminal')&&verified.has('terminal'))body+=' Choose New to start your first session.';
+   message=[...skipped].filter(k=>selected.has(k)).map(k=>steps[k].choice+' skipped').join(', ');
+ }
+ $('bars').innerHTML=path.map((_,i)=>'<i class="'+(i<=idx?'on':'')+'"></i>').join('');
+ $('progress').textContent='Step '+(idx+1)+' of '+path.length;
+ $('icon').innerHTML=s.symbol||'<img alt="" src="../apps/rnnr/Resources/fox-31.png">';
+ document.querySelector('h1').textContent=s.title;$('body').textContent=body;
+ $('choices').replaceChildren();
+ if(page==='features')for(const key of features){
+   const f=steps[key], label=document.createElement('label');label.className='option';
+   label.innerHTML='<input type="checkbox"><span>'+f.choice+'<small>'+f.hint+'</small></span>';
+   const box=label.firstChild;box.checked=selected.has(key);box.onchange=()=>{if(box.checked)selected.add(key);else selected.delete(key);render();$('choices').children[features.indexOf(key)].firstChild.focus()};$('choices').append(label)
+ }
+ if(page==='features'&&selected.has('login')&&mode==='Permission denied'&&!verified.has('login')){action='Review in Login Items';message='Open at login is waiting for approval.'}
+ $('result').textContent=message;$('action').textContent=action;
+ $('action').onclick=()=>{
+   if(page==='features')verified.add('login');
+   else if(action===s.settings)phase[page]='settings';
+   else if(action==='Set Up Helper')phase[page]='pending';
+   else if(action.startsWith('Install ')||mode==='Sign-in needed'&&!state)phase[page]='installed';
+   else if(mode!=='Helper unavailable'||page!=='helper')verified.add(page);
+   skipped.delete(page);render()
+ };
+ $('back').disabled=idx===0;$('skip').hidden=!s.choice||done;
+ $('next').disabled=blocked;$('next').textContent=page==='finish'?'Open '+app:'Continue';
+}
+$('back').onclick=()=>move(-1);$('skip').onclick=()=>{skipped.add(page);move(1)};
+$('next').onclick=()=>{if(page==='finish'){
+ document.querySelector('aside').hidden=true;document.querySelector('footer').hidden=true;
+ document.querySelector('header').textContent='rnnr';document.querySelector('h1').textContent='Running sessions';
+ $('body').textContent='No detached sessions right now.';$('result').textContent='';
+ }else move(1)};
+$('scenario').onchange=reset;$('reset').onclick=reset;reset();
+</script></html>
