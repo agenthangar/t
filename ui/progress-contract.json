@@ -349,7 +349,15 @@
       "kind": "protocol",
       "reason": "Bounded asynchronous fzf update polling runs while the existing picker owns terminal rendering; an extra spinner would corrupt it."
     },
-    "libexec/t_picker_close.py:close:subprocess.Popen": {
+    "libexec/t_live_inventory.py:scan:subprocess.run": {
+      "kind": "background",
+      "reason": "The cache service runs the bounded tmux inventory in a worker. The waiting CLI owns progress output."
+    },
+    "libexec/t_picker_close.py:observe_open:time.sleep": {
+      "kind": "background",
+      "reason": "The picker observer waits for live rows and fzf updates while fzf owns terminal rendering."
+    },
+    "libexec/t_picker_close.py:start_update:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts a short-lived cached-view updater; it cannot contact fzf until the foreground action returns, and the picker owns its cleanup and rendering."
     },
