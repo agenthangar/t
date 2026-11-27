@@ -208,7 +208,7 @@ case "$*" in *mini.example*'_dev_kill_completed_labels'*) printf 'api-3\n' ;; es
 
 
 PICKER_MOCK = """
-  _dev_session_sid() { print -r -- "$FAKE_DETAILS" | awk -F'\\t' -v slot="${1#dev-}" '$3 == slot {print $1; exit}'; }
+  _dev_session_sid() { print -r -- "$FAKE_DETAILS" | awk -F'\\t' -v slot="${1#dev-}" '$3 == slot {if ($1 != "-") print $1; exit}'; }
   _dev_agent_of_session() { print -r -- "$FAKE_DETAILS" | awk -F'\\t' -v slot="${1#dev-}" '$3 == slot {print $7; exit}'; }
   _t_fzf_filtered() {
     print -r -- "$1" > "$FZF_LOG.visible"
@@ -382,12 +382,17 @@ def test_picker_enter_stops_live_agents_without_reading_confirmation(zsh):
       _dev_session_has_claude() { return 0; }
       _dev_agent_at_welcome() { return 1; }
       _dev_agent_of_session() { print -r -- codex; }
-      _dev_session_sid() { print sid-1; }
+      _dev_session_sid() { :; }
       _dev_history_record() { :; }
       _dev_stop_rooted() { :; }
+      _t_lifecycle_run() {
+        [[ $1 == close && $2 == dev-api-1 ]] || return 97
+        tmux kill-session -t '$123:'
+      }
       _dev_kill_pick api ''
     '''
-    rows = _rows(zsh).splitlines()[0]
+    # Active clients can legitimately have no registered conversation yet.
+    rows = _rows(zsh).splitlines()[0].replace('sid-1\t', '-\t', 1)
     result = zsh(code, _tty=True, FAKE_DETAILS=rows, FAKE_HAS_SESSION='1', FAKE_SESSION_PATH=str(zsh.home / 'code/api'),
                  FAKE_SESSIONS='dev-api-1', FZF_LOG=str(log), FZF_SELECT_ALL='1')
     assert result.returncode == 0, result.stdout
@@ -458,3 +463,42 @@ def test_selected_close_refuses_same_terminal_new_conversation(zsh):
     assert 'RC=1' in result.stdout
     assert 'changed' in result.stdout + result.stderr
     assert 'UNEXPECTED_CLOSE' not in result.stdout
+
+
+@pytest.mark.parametrize('current_terminal,current_sid', [('14/$3', ''), ('14/$2', 'new-id')])
+def test_selected_unregistered_close_refuses_replaced_owner(zsh, current_terminal, current_sid):
+    import shlex
+    result = zsh('''
+      tmux() { [[ $1 == has-session ]] && return 0; print -r -- ''' + shlex.quote(current_terminal) + '''; }
+      _dev_session_sid() { print -r -- ''' + shlex.quote(current_sid) + '''; }
+      _dev_kill_local_selected() { print UNEXPECTED_CLOSE; }
+      _dev_kill_selected $'local\\tapi-3\\tdetached\\tTask\\tTask\\t14/$2\\t-'
+      print "RC=$?"
+    ''')
+    assert 'RC=1' in result.stdout
+    assert 'changed' in result.stderr
+    assert 'UNEXPECTED_CLOSE' not in result.stdout
+
+
+def test_initial_close_snapshot_carries_terminal_proof(zsh):
+    result = zsh(r'''
+      _t_discovery_rows() {
+        local previous arg notice
+        for arg in "$@"; do
+          [[ $previous != --notice-file ]] || notice=$arg
+          previous=$arg
+        done
+        [[ -n $notice ]] || return 98
+        print -n '' > "$notice"
+        print -r -- '{"api-1":"14/$2"}' > "$notice.owners"
+        printf 'local\t-\t%s\tapi-1\tdetached\tidle\tIdle\tcodex\t-\n' "$HOME/code/api"
+      }
+      _dev_kill_completed_labels() { print api-1; }
+      _t_fzf_filtered() {
+        print -r -- "$2" | awk -F'\t' '{print "PROOF=" $6 " SID=" $7}' >&2
+        return 130
+      }
+      _dev_kill_pick api
+    ''', _tty=True, T_DISCOVERY_COLLECTOR='0')
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert 'PROOF=14/$2 SID=-' in result.stdout + result.stderr

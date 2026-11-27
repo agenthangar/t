@@ -48,6 +48,15 @@ def test_empty_list_prints_empty_state(t_mod, monkeypatch, capsys):
     assert 'No dev sessions running' in capsys.readouterr().out
 
 
+def test_remote_only_list_without_registered_hosts(t_mod, monkeypatch, capsys):
+    cfg, args, calls = setup_list(t_mod, monkeypatch, remote=True)
+    cfg.hosts = {}
+    monkeypatch.setenv('T_SESSION_SOURCE', 'remote')
+    assert t_mod.cmd_ls(cfg, args) == 0
+    assert capsys.readouterr().out.strip() == 'No remote hosts registered.'
+    assert not calls
+
+
 @pytest.mark.parametrize('argv', [['ls'], ['list'], ['session', 'list'], ['session', 'ls']])
 def test_list_alias_terminal_mode_bypasses_update(t_mod, monkeypatch, argv):
     assert t_mod._command_readonly(argv, terminal=True)

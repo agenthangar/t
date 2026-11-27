@@ -772,25 +772,32 @@ def cmd_ls(cfg, args):
         return 1
     st = Style()
     view = None
-    _progress("Checking local sessions and remote hosts" if args.remote else "Checking local sessions")
-    command = "_dev_rows_all --details" if args.remote else "_dev_session_rows --details"
+    source = os.environ.get('T_SESSION_SOURCE') or ('all' if args.remote else 'local')
+    include_remote = source != 'local'
+    if source == 'remote' and not cfg.hosts:
+        print('No remote hosts registered.')
+        return 0
+    messages = {'all': 'Checking local sessions and remote hosts', 'local': 'Checking local sessions',
+                'remote': 'Checking remote sessions'}
+    _progress(messages.get(source, 'Checking sessions on ' + source.removeprefix('host:')))
+    command = "_dev_rows_all --details" if include_remote else "_dev_session_rows --details"
     if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
         text = zsh_capture(command)
     else:
         cache = _session_discovery()
         repo = next((name for name, path in cfg.repos.items() if path == scope), None)
-        projection = dict(prefixed=args.remote, repo=repo,
-                          local_roots=[root for root in (scope, wt_scope) if root])
+        roots = [root for root in (scope, wt_scope) if root]
+        projection = dict(prefixed=include_remote, repo=repo, local_roots=roots)
         def usable(snapshot):
             return bool(cache['rows'](snapshot, **projection))
-        view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False),
-                                           usable=usable, fresh_local=True, local=not args.remote, fields=['rows', 'scopes', 'catalog'] if scope else ['rows'],
-                                           roots=[root for root in (scope, wt_scope) if root])
+        view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False), usable=usable,
+                                           fresh_local=True, local=not include_remote, roots=roots,
+                                           fields=['rows', 'scopes', 'catalog'] if scope else ['rows'])
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
         text = cache['rows'](view, **projection)
-    rows = _parse_rows(text, host_prefixed=args.remote)
+    rows = _parse_rows(text, host_prefixed=include_remote)
     if view is None:
         rows = _scope_filter(rows, scope, wt_scope)
     if not rows:
@@ -798,16 +805,19 @@ def cmd_ls(cfg, args):
                         for h in view.get('hosts', [])):
             print('No sessions in the available snapshot; discovery is incomplete.')
             return 0
-        if args.remote:
+        if source == 'all':
             where = f" in {os.path.basename(scope)} (t ls -r --all for every repo)," if scope else ""
             print(f"No dev sessions running{where} on this machine or any reachable host.")
+        elif include_remote:
+            where = 'registered remote hosts' if source == 'remote' else source.removeprefix('host:')
+            print(f"No dev sessions running on {where}{' in ' + os.path.basename(scope) if scope else ''}.")
         else:
             where = f" in {os.path.basename(scope)}" if scope else ""
             hints = (["t ls --all for every repo"] if scope else []) + (["t ls -r for other machines"] if cfg.hosts else [])
             tail = f"  ({' · '.join(hints)})" if hints else ""
             print(f"No dev sessions running{where}.{tail}")
         return 0
-    if args.remote:
+    if include_remote:
         _render_remote(rows, scope, st)
     else:
         _render_local(rows, scope, st, bool(cfg.hosts))
@@ -15907,9 +15917,8 @@ def _main(argv):
         if '--notice-file' in argv:
             notice_path = Path(argv[argv.index('--notice-file') + 1])
             notice_path.write_text(notice)
-            if '--open' in argv:
-                terminals = next((h.get('terminals') for h in view.get('hosts', []) if h['host'] == 'local'), None)
-                Path(str(notice_path) + '.owners').write_text(json.dumps(terminals))
+            terminals = next((h.get('terminals') for h in view.get('hosts', []) if h['host'] == 'local'), None)
+            Path(str(notice_path) + '.owners').write_text(json.dumps(terminals))
         cache['announce'](view)
         text = cache['rows'](view, **projection)
         if '--basic' in argv:

@@ -2004,6 +2004,18 @@ _dev_kill_safe_labels() {
 # its state, model, UI, and title columns; only the first three hidden fields are
 # used to route the selected row to the existing kill implementation.
 _dev_kill_pick() {
+  local _T_KILL_NOTICE_FILE=
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    _T_KILL_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-close-discovery.XXXXXX") || return 1
+  fi
+  {
+    _dev_kill_pick_impl "$@"
+  } always {
+    [[ -z $_T_KILL_NOTICE_FILE ]] || rm -f -- "$_T_KILL_NOTICE_FILE" "$_T_KILL_NOTICE_FILE.owners"
+  }
+}
+
+_dev_kill_pick_impl() {
   local _T_PROGRESS=0
   [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options pipe_fail
@@ -2015,6 +2027,7 @@ _dev_kill_pick() {
   local rows
   local -a cache_scope
   [[ -n $repo ]] && cache_scope+=(--repo "$repo")
+  [[ -z $_T_KILL_NOTICE_FILE ]] || cache_scope+=(--notice-file "$_T_KILL_NOTICE_FILE")
 
   if [[ -n $remote_only ]]; then
     rows=$(_t_discovery_rows --remote-only "${cache_scope[@]}" --details) || return $?
@@ -2041,7 +2054,7 @@ _dev_kill_pick() {
   local -a formatter=( python3 "$T_HOME/bin/t" __session-picker-rows --header )
   formatter+=( --remote )
   [[ -n $repo ]] && formatter+=( --repo )
-  local display; display=$(print -r -- "$rows" | T_PICKER_OWNER_IDS=1 "${formatter[@]}") || return 1
+  local display; display=$(print -r -- "$rows" | T_OPEN_OWNERS="${_T_KILL_NOTICE_FILE:+$_T_KILL_NOTICE_FILE.owners}" T_PICKER_OWNER_IDS=1 "${formatter[@]}") || return 1
   [[ -n $display ]] || return 1
   local columns=${display%%$'\n'*}
   display=${display#*$'\n'}
@@ -2101,11 +2114,12 @@ _dev_kill_selected() {
   # Enter in the kill picker authorizes the complete selection. Keep all
   # ownership checks, but do not ask again for each local or remote target.
   local force=1 host label state line target rcmd
-  local rc=0 prepo slot action_rc observed expected_cwd expected_agent raw_identity
+  local rc=0 prepo slot action_rc observed expected_cwd expected_agent expected_sid raw_identity
   local -a fields
   for line in "${(@f)picked}"; do
     fields=("${(@ps:\t:)line}")
-    expected_cwd= expected_agent=
+    expected_cwd= expected_agent= expected_sid=${fields[7]:-}
+    [[ $expected_sid != - ]] || expected_sid=
     if [[ -n ${fields[8]:-} ]]; then
       raw_identity=$(print -rn -- "$fields[8]" | python3 -c 'import base64,sys; f=base64.b64decode(sys.stdin.buffer.read()).decode().split("\t"); print(f[2]+"\t"+f[7])') || return 1
       expected_cwd=${raw_identity%%$'\t'*}; expected_agent=${raw_identity#*$'\t'}
@@ -2134,9 +2148,9 @@ _dev_kill_selected() {
             continue
           fi
         fi
-        if [[ -n ${fields[7]:-} && ${fields[7]} != - ]]; then
+        if [[ -n ${fields[7]:-} ]]; then
           observed=$(_dev_session_sid "dev-$label")
-          if [[ $observed != "$fields[7]" ]]; then
+          if [[ $observed != "$expected_sid" ]]; then
             print -u2 -- "t kill: $label changed. Refresh and select it again."
             rc=1
             continue
@@ -2159,8 +2173,8 @@ _dev_kill_selected() {
       else
         prepo=${label%-*}; slot=${label##*-}
         rcmd="REMOTE_HOSTS=(); "
-        if [[ -n ${fields[7]:-} && ${fields[7]} != - ]]; then
-          rcmd+="[[ \$(_dev_session_sid ${(q):-dev-$label}) == ${(q)fields[7]} ]] || { print -u2 't kill: selected session changed'; exit 1; }; "
+        if [[ -n ${fields[7]:-} ]]; then
+          rcmd+="[[ \$(_dev_session_sid ${(q):-dev-$label}) == ${(q)expected_sid} ]] || { print -u2 't kill: selected session changed'; exit 1; }; "
         fi
         if [[ -n $expected_cwd ]]; then
           rcmd+="[[ \$(tmux display-message -p -t ${(q):-=dev-${label}:} '#{session_path}') == ${(q)expected_cwd} && \$(_dev_agent_of_session ${(q):-dev-$label}) == ${(q)expected_agent} ]] || { print -u2 't kill: selected session changed'; exit 1; }; "
