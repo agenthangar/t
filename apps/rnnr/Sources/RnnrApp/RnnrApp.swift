@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         popover.animates = false
         popover.delegate = self
         model.dismiss = { [weak self] in self?.closePane() }
+        let launchEvent = NSAppleEventManager.shared().currentAppleEvent ?? (notification.userInfo?["NSAppleEvent"] as? NSAppleEventDescriptor)
+        if launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem { return }
         // Wait for the status item to acquire its menu-bar window before anchoring.
         DispatchQueue.main.async { [weak self] in self?.showPane() }
     }

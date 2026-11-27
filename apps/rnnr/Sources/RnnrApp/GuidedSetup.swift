@@ -66,6 +66,11 @@ import SwiftUI
                         }
                     } else if step == .terminal || ([.codex, .claude].contains(step) && ["available", "legacy", "signIn"].contains(integrationState)) {
                         Button(step == .terminal ? "Allow Terminal Access" : (integrationState == "legacy" ? "Update Integration" : step.rawValue)) { Task { await check(request: true) } }
+                    } else if [.codex, .claude].contains(step) && integrationState == "missing" {
+                        let codex = step == .codex
+                        Link(codex ? "Install Codex" : "Install Claude Code",
+                             destination: URL(string: codex ? "https://developers.openai.com/codex/cli/" : "https://code.claude.com/docs/en/setup")!)
+                        Button("Check Again") { refreshID = UUID() }
                     } else if step != .choose && step != .finish {
                         Button("Check Again") { refreshID = UUID() }
                     }

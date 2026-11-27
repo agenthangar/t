@@ -148,7 +148,7 @@ public enum RnnrBackend {
         let bin = source.appendingPathComponent("bin")
         let data = try run(executable: bin.appendingPathComponent("python3"), arguments: [
             bin.appendingPathComponent("integration.py").path, client, action
-        ])
+        ], timeout: 90)
         return try JSONDecoder().decode(String.self, from: data)
     }
 
@@ -186,7 +186,7 @@ public enum RnnrBackend {
     // One nonblocking reader bounds both time and memory, even when a child
     // leaves descendants holding stdout. Never retain a background drain task.
     // stderr is discarded: diagnostics may contain private paths or prompts.
-    private static func run(executable: URL, arguments: [String]) throws -> Data {
+    private static func run(executable: URL, arguments: [String], timeout: TimeInterval = 15) throws -> Data {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -220,7 +220,7 @@ public enum RnnrBackend {
         var data = Data()
         var bytes = [UInt8](repeating: 0, count: 64 * 1024)
         var eof = false
-        var deadline = ProcessInfo.processInfo.systemUptime + 15
+        var deadline = ProcessInfo.processInfo.systemUptime + timeout
         var exited = false
         while true {
             // Bound each drain pass so a noisy writer cannot starve the deadline.
