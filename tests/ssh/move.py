@@ -84,7 +84,8 @@ def main():
         shell('first', "python3 /opt/t/tests/ssh/seed_thread.py " + shlex.join([WORKSPACE, SID]))
         shell('first', f'_dev_history_record {SID} codex {WORKSPACE} resume')
         assert SID == shell('first', '_dev_session_sid dev-repo-1')
-        assert 'repo-1' in shell('second', 't session list repo --source first -w')
+        remote_list = shell('second', 't session list repo --source first -w')
+        assert all(value in remote_list for value in ('repo-1', 'SSH test', 'test-model', '2026-11-07')), remote_list
         shell('first', 't session move repo 1 --source local --host second --detach')
         assert shell('first', 'tmux list-sessions -F "#{session_name}" 2>/dev/null || true').splitlines().count('dev-repo-1') == 0
         sessions = shell('second', 'tmux list-sessions -F "#{session_name}|#{session_path}"').splitlines()

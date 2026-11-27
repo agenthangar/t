@@ -261,13 +261,24 @@ finally:
                                   text=True, capture_output=True, timeout=10, check=True).stdout
         def screen():
             return tmux('capture-pane', '-p', '-t', 'picker', '-S', '-50')
-        def wait_for(predicate, what):
-            deadline = time.monotonic() + 10
+        def wait_for(predicate, what, query_progress=None):
+            started = time.monotonic()
+            deadline = started + 10
+            progress = 0
             latest = ''
             while time.monotonic() < deadline:
                 latest = screen()
                 if predicate(latest):
                     return latest
+                # Each typed character queues a synchronous global search.
+                # Give advancing input time to drain while detecting a stalled
+                # query within ten seconds and bounding the whole observation.
+                if query_progress:
+                    prompt = re.search(r'history repo> ([^│\n]*)', latest)
+                    query = prompt[1].rstrip() if prompt else ''
+                    if len(query) > progress and query_progress.startswith(query):
+                        progress = len(query)
+                        deadline = min(started + 60, time.monotonic() + 10)
                 time.sleep(.05)
             pytest.fail(f'{what} did not appear in isolated picker:\n{latest}')
         command = shlex.join([sys.executable, str(harness), str(ROOT), str(snapshot), str(result)])
@@ -288,7 +299,7 @@ finally:
             wait_for(lambda text: 'Sort: last turn ↓' in text, 'sort restored')
             # This exact SID occurs on page 3, beyond fzf's initial 50 rows.
             tmux('send-keys', '-t', 'picker', '-l', 'session-119')
-            wait_for(lambda text: 'Conversation 119' in text and 'Page 1 · 1 conversations · 50 per page' in text, 'global off-page search result')
+            wait_for(lambda text: 'Conversation 119' in text and 'Page 1 · 1 conversations · 50 per page' in text, 'global off-page search result', query_progress='session-119')
             tmux('send-keys', '-t', 'picker', 'C-r')
             deadline = time.monotonic() + 10
             while not result.exists() and time.monotonic() < deadline:
@@ -312,7 +323,7 @@ finally:
             tmux('set-option', '-t', 'picker', 'remain-on-exit', 'on')
             wait_for(lambda text: 'Conversation 0' in text, 'third picker')
             tmux('send-keys', '-t', 'picker', '-l', 'session-119')
-            wait_for(lambda text: re.search(r'│ ▸ [^\n]*Conversation 119', text) is not None and 'Page 1 · 1 conversations · 50 per page' in text, 'exact selected result')
+            wait_for(lambda text: re.search(r'│ ▸ [^\n]*Conversation 119', text) is not None and 'Page 1 · 1 conversations · 50 per page' in text, 'exact selected result', query_progress='session-119')
             assert not result.exists(), 'single search result must wait for explicit acceptance'
             tmux('send-keys', '-t', 'picker', 'Enter')
             deadline = time.monotonic() + 10

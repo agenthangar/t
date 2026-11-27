@@ -1,6 +1,7 @@
 """Remote orchestration uses isolated scanners and SSH, never real hosts."""
 import json
 import shlex
+from types import SimpleNamespace
 
 import pytest
 
@@ -802,11 +803,14 @@ def test_remote_kill_parser_and_executable_delegate(t_mod, monkeypatch, targets,
     assert (args.repo, args.slot, args.yes) == expected
     assert args.remote is True
     seen = []
-    monkeypatch.setattr(t_mod, 'Config', lambda: object())
+    monkeypatch.setattr(t_mod, 'Config', lambda: SimpleNamespace(repos={}, worktree_root='/unused', hosts={}))
     monkeypatch.setattr(t_mod, '_t_auto_update', lambda argv: None)
     monkeypatch.setattr(t_mod, '_delegate', seen.append)
     t_mod.main(['remote', 'kill', *targets])
     repo, slot, yes = expected
+    if not targets:
+        assert shlex.split(seen[0]) == ['_dev_kill_pick', '', '', '1']
+        return
     assert shlex.split(seen[0]) == ['_t_dev', '-r', 'kill',
                                    *([repo] if repo else []), *([slot] if slot else []),
                                    *(['-y'] if yes else [])]

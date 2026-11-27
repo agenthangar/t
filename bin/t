@@ -14177,16 +14177,14 @@ EXAMPLES
 
     sp = sub.add_parser("open", help="open or reattach a session",
         usage="%(prog)s [repo] [slot] [flags]",
-        description="Browse sessions with attached sessions hidden by default. Ownership is checked live. "
-            "Closing the last terminal stops verified empty or completed sessions. Explicit tmux detach keeps them running.",
+        description="Browse sessions or attach to a verified owner. Browsing requires no arguments.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   %(prog)s                     Browse sessions in the current scope
   %(prog)s --codex --new        Start Codex directly
 
 SELECTION
-  Tab check; Enter open; Ctrl-K kill. Ctrl-F toggles filters.
-  Ctrl-G/O/R matches row agent/host/repo; repeat to clear. Ctrl-S toggles sorting; Ctrl-Y cycles sort choices.
+  Tab marks. Enter opens. Ctrl-F toggles filters. Ctrl-U refreshes.
 
 """,
         help_details="""SESSION TARGETS
@@ -14208,7 +14206,9 @@ SELECTION
   Ctrl-P/B/V/E/W matches progress/model/session/context/task. No filter pop-ups.
   Ctrl-S toggles sorting; Ctrl-Y cycles sort choices. Choices are last turn, repository, agent, host and session.
   LAST TURN shows user turn time. Sort: last turn ↓ means newest first; unknown times sort last.
-  Retained sessions appear immediately; cold discovery offers wait, retry and cancel.
+  Local slots show verified details on first display. Ctrl-C cancels a wait.
+  Closing the last terminal stops verified empty or completed sessions.
+  Explicit tmux detach keeps them running.
   An empty scope waits up to 30 seconds automatically. Ctrl-U refreshes an open picker. Failed hosts pause retries for
   an hour; use `t hosts reset HOST` to retry earlier.
   Inventory is retained with a 24-hour reconciliation interval; activity refreshes separately.
@@ -14293,11 +14293,11 @@ REMOTE SESSIONS
   default host (the alphabetically first REMOTE_HOSTS key).
   --host HOST chooses a host explicitly, for either opening or attaching.""")
     sp._positionals.title = "arguments"
-    sp.add_argument("repo", nargs="?", help="repository alias, basename, origin name or session (default: current repo, or all outside a checkout)")
+    sp.add_argument("repo", nargs="?", help="repository alias, name or session")
     sp.add_argument("slot", nargs="?", help="slot number, session ID, or 'fg'")
     sp.add_argument("--new", action="store_true", help="start a fresh session")
     sp.add_argument("--attached", action="store_true", help="include attached/loaded sessions in the picker")
-    sp.add_argument("--force", action="store_true", help="reset this slot's t state and reopen its worktree, resuming context when available")
+    sp.add_argument("--force", action="store_true", help="reset and reopen an explicit slot")
     sp.add_argument("-y", "--yes", action="store_true", help="confirm --force for one explicit slot")
     sp.add_argument("--fg", action="store_true", help="run in this terminal, without tmux")
     sp.add_argument("--cli", action="store_true", help="open in the CLI")

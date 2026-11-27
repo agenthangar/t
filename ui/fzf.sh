@@ -610,6 +610,8 @@ SH
     if [ -n "${T_OPEN_OBSERVE:-}" ]; then
       set -- --bind='ctrl-u:execute-silent(touch "$T_PICKER_VIEWS/refresh-request")' "$@"
     fi
+    # The fzf action shell expands these variables when the key is pressed.
+    # shellcheck disable=SC2016
     set -- --listen=127.0.0.1:0 --bind='change:transform-query(cat "$T_PICKER_VIEWS/action-query-locked"),ctrl-k:rebind(change)+unbind(ctrl-n)+unbind(enter)+unbind(ctrl-k)+unbind(space)+unbind(tab)+unbind(ctrl-a)+unbind(ctrl-f)+unbind(ctrl-l)+unbind(ctrl-x)+unbind(ctrl-t)+unbind(ctrl-g)+unbind(ctrl-d)+unbind(ctrl-o)+unbind(ctrl-r)+unbind(ctrl-p)+unbind(ctrl-b)+unbind(ctrl-v)+unbind(ctrl-e)+unbind(ctrl-w)+unbind(ctrl-s)+unbind(ctrl-y)+unbind(alt-s)+unbind(alt-t)+unbind(alt-r)+unbind(alt-g)+unbind(alt-o)+unbind(alt-v)+execute(python3 "$T_HOME/libexec/t_picker_close.py" close {} {q})' "$@"
   fi
   if [ "${T_PICKER_SESSION_FILTERS:-}" != open ] && [ -n "${T_OPEN_OBSERVE:-}" ]; then
