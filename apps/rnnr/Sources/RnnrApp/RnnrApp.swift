@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     private var item: NSStatusItem?
     private let popover = NSPopover()
     private let model = SessionModel()
+    private var setupWindow: NSWindow?
     private var fallbackPanel: NSPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         if NSApp.currentEvent?.type == .rightMouseUp {
             closePane()
             let menu = NSMenu()
+            menu.addItem(withTitle: "Set Up rnnr…", action: #selector(openSetup), keyEquivalent: "").target = self
             let quit = menu.addItem(withTitle: "Quit rnnr", action: #selector(quit), keyEquivalent: "q")
             quit.target = self
             item?.menu = menu
@@ -70,7 +72,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         fallbackPanel?.close()
     }
 
+    @objc private func openSetup() {
+        closePane()
+        NSApp.activate(ignoringOtherApps: true)
+        if let setupWindow { setupWindow.makeKeyAndOrderFront(nil); return }
+        let view = GuidedSetup(source: model.source) { [weak self] in
+            UserDefaults.standard.set(true, forKey: "guidedSetupCompleted")
+            self?.setupWindow?.close()
+            self?.setupWindow = nil
+            self?.showPane()
+        }
+        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        window.title = "Set Up rnnr"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        setupWindow = window
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+
     private func showPane() {
+        if !UserDefaults.standard.bool(forKey: "guidedSetupCompleted") { openSetup(); return }
         NSApp.activate(ignoringOtherApps: true)
         if let fallbackPanel, fallbackPanel.isVisible {
             fallbackPanel.makeKeyAndOrderFront(nil)

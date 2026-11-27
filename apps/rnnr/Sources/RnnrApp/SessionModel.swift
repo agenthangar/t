@@ -13,8 +13,7 @@ final class SessionModel: ObservableObject {
     var dismiss: (() -> Void)?
 
     init() {
-        source = (Bundle.main.object(forInfoDictionaryKey: "RnnrSourceRoot") as? String)
-            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        source = Bundle.main.resourceURL?.appendingPathComponent("backend", isDirectory: true)
     }
 
     func opened() {
@@ -35,7 +34,7 @@ final class SessionModel: ObservableObject {
 
     private func refresh() async {
         guard let source else {
-            notice = "Session discovery unavailable: source checkout is not configured."
+            notice = "Session discovery unavailable: the bundled runtime is missing. Reinstall rnnr."
             return
         }
         let executable = source.appendingPathComponent("bin/t")
@@ -57,7 +56,7 @@ final class SessionModel: ObservableObject {
         do {
             guard let source,
                   let helper = Bundle.main.url(forResource: "terminal", withExtension: "zsh") else {
-                throw AppFailure.message("The app’s Terminal helper or source checkout is missing. Rebuild the app from its checkout.")
+                throw AppFailure.message("The Terminal helper or bundled runtime is missing. Reinstall rnnr.")
             }
             let command = try RnnrBackend.terminalCommand(helper: helper, source: source, action: action)
             dismiss?()
