@@ -241,13 +241,14 @@ exec /bin/zsh "$@"
                                '  fi\n'
                                '}\n')
                     picker_cmd = 't session resume repo --days all'
-            if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill', 'public-kill'):
+            if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill',
+                           'public-open-wait', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
                            T_LOCAL_RC=str(root / 'local.zsh'))
                 raw = ROWS.replace(r'\tapp\tnone', r'\tapp\tactive') if empty else ROWS
-                if profile in ('public-open-cli', 'public-open-kill'):
+                if profile in ('public-open-cli', 'public-open-kill', 'public-open-wait'):
                     raw = raw.replace(r'\tapp\tnone', r'\tdetached\tnone')
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'unset TMUX\n'
@@ -263,6 +264,15 @@ exec /bin/zsh "$@"
                                '  print -n "Older results" > "$3"\n'
                                '  _dev_session_rows --details | awk \'NF {print "local\\t" $0}\'\n'
                                '}\n')
+                if profile == 'public-open-wait':
+                    env['PATH'] = str(ROOT / 'bin') + os.pathsep + env['PATH']
+                    prefix += ('_t_discovery_rows() {\n'
+                               '  [[ $T_DISCOVERY_EXPLICIT_WAIT == 1 && $1 == --open && $2 == --notice-file ]] || return 99\n'
+                               '  print -n "Cached sessions; peer refresh failed" > "$3"\n'
+                               '  _dev_session_rows --details | awk \'NF {print "local\\t" $0}\'\n'
+                               '}\n'
+                               '_dev_open_window() { print -r -- "WINDOW $1" >> "$HOME/selected"; }\n')
+                    picker_cmd = 't open -w'
                 if profile == 'public-open-kill':
                     prefix += ('functions[_rows_before_kill]=$functions[_dev_session_rows]\n'
                                '_dev_session_rows() {\n'
@@ -1022,6 +1032,27 @@ def test_open_enter_accepts_multiple_exact_marked_rows(picker):
     keys('Tab', 'Tab')
     wait('2/2 (2)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2', 'web-4']
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('selection', ['focused', 'marked', 'batch'])
+def test_public_open_wait_selects_from_partial_discovery(picker, selection):
+    start, wait, keys, finish = picker
+    start(profile='public-open-wait', width=100)
+    wait('peer refresh failed', focused='local/api-4')
+    if selection == 'focused':
+        keys('Down')
+        wait('2/2 (0)', focused='local/web-6')
+        assert finish() == ['web 6 --local']
+    elif selection == 'marked':
+        keys('Tab')
+        wait('2/2 (1)', focused='local/web-6')
+        assert finish() == ['api 4 --local']
+    else:
+        keys('Tab', 'Tab')
+        wait('2/2 (2)')
+        assert sorted(finish()) == ['WINDOW t open api 4 --cli --local',
+                                    'WINDOW t open web 6 --cli --local']
 
 
 @pytest.mark.fzf_compat

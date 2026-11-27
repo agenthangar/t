@@ -508,6 +508,24 @@ def test_open_incomplete_empty_scope_never_starts_fresh(zsh):
     assert 'discovery is incomplete' in result.stdout + result.stderr
 
 
+def test_open_wait_reports_picker_failure_without_starting_a_session(zsh):
+    result = zsh(ROWS + r'''
+      _t_discovery_rows() {
+        [[ $T_DISCOVERY_EXPLICIT_WAIT == 1 ]] || return 99
+        print -n 'Older results' > "$3"
+        _dev_session_rows --details | awk 'NF {print "local\t" $0}'
+      }
+      _t_fzf_filtered() { return 2; }
+      _t_dev() { print UNEXPECTED_LAUNCH; }
+      t open -w
+    ''', _tty=True)
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert 't open: session picker failed.' in output
+    assert 'discovery is incomplete' not in output
+    assert 'UNEXPECTED_LAUNCH' not in output
+
+
 @pytest.mark.parametrize('command', ['_t_open', 't open', 't session open'])
 @pytest.mark.parametrize('args', ['api --local --new', '--new --local api', '--local --new'])
 def test_public_local_new_keeps_local_allocator(zsh, command, args):
