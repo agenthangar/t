@@ -261,6 +261,109 @@ def list_jobs(state_dir=None):
                   key=lambda item: item["created_at"], reverse=True)
 
 
+def _test_command(argv):
+    """Return a recognized test argv, including tests run by a Docker client."""
+    if not argv:
+        return None
+    name = Path(argv[0]).name.lower()
+    args = argv[1:]
+    if name == 'docker' and args[:1] == ['run']:
+        for index, arg in enumerate(args[1:], 2):
+            if Path(arg).name.lower() in ('pytest', 'python', 'python3', 'bash'):
+                command = _test_command(argv[index:])
+                if command:
+                    return ['docker', 'run', *command]
+        return None
+    if re.fullmatch(r'python(?:\d+(?:\.\d+)*)?', name):
+        if args[:2] == ['-m', 'pytest'] or (args and Path(args[0]).name in
+                ('pytest', 'smoke.py', 'design_check.py')):
+            return [name, *args]
+    if name == 'pytest' or name == 'bash' and args and Path(args[0]).name == 'check_design.sh':
+        return [name, *args]
+    return None
+
+
+def _test_processes():
+    """One process table, followed by exact argv/cwd reads for likely tests."""
+    import runpy
+    detail = runpy.run_path(str(Path(__file__).with_name('t_terminal_close.py')))['process_detail']
+    listing = _run(['ps', '-ww', '-U', str(os.getuid()), '-o', 'pid=,ppid=,args='], timeout=5)
+    parents, direct, helpers = {}, {}, {}
+    for line in listing.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
+            continue
+        pid, parent = map(int, parts[:2])
+        parents[pid] = parent
+        if not any(word in parts[2] for word in ('pytest', 'smoke.py', 'design_check.py', 'check_design.sh', 't_runner_job.py')):
+            continue
+        try:
+            proc = detail(pid, timeout=2)
+        except (ValueError, OSError, subprocess.SubprocessError):
+            continue
+        argv = proc['argv']
+        if len(argv) > 4 and Path(argv[1]).name == 't_runner_job.py' and argv[2:4] == ['run', '--job-dir']:
+            helpers[pid] = Path(argv[4]).resolve()
+        else:
+            command = _test_command(argv)
+            if command:
+                direct[pid] = (proc['cwd'], command)
+    return parents, direct, helpers
+
+
+def active_jobs(repositories, state_dir=None):
+    now = time.time()
+    parents, direct, helpers = _test_processes()
+    helper_paths = set(helpers.values())
+    jobs = []
+    root = state_path(state_dir) / 'jobs'
+    for receipt_file in root.glob('*/receipt.json'):
+        receipt = _read(receipt_file)
+        if not receipt or receipt['status'] in TERMINAL:
+            continue
+        receipt = status(receipt['id'], state_dir)
+        for name, target in receipt['targets'].items():
+            state = target['status']
+            if state in TERMINAL:
+                continue
+            observed = receipt.get('updated_at', receipt['created_at'])
+            provider = target['type']
+            if provider == 'local':
+                if (receipt_file.parent / name).resolve() in helper_paths:
+                    state, observed = 'running', now
+                elif state != 'queued' or now - observed > receipt.get('queue_timeout', 300):
+                    state = 'unknown'
+            elif now - observed > receipt.get('timeout', 900) + receipt.get('queue_timeout', 300) + 120:
+                state = 'unknown'
+            jobs.append(dict(id=receipt['id'], pid=None, worktree=receipt['root'], target=name,
+                             provider=provider, command=receipt['command'], status=state, observed_at=observed,
+                             elapsed_seconds=max(0, int(now - receipt['created_at']))))
+    scopes = {os.path.realpath(repo) for repo in repositories.values()}
+    for pid, (cwd, command) in direct.items():
+        seen, ancestor = set(), parents.get(pid)
+        while ancestor and ancestor not in seen:
+            if ancestor in direct or ancestor in helpers:
+                break
+            seen.add(ancestor)
+            ancestor = parents.get(ancestor)
+        else:
+            try:
+                values = _run(['git', '-C', cwd, 'rev-parse', '--show-toplevel', '--git-common-dir'], timeout=3).splitlines()
+                if len(values) != 2 or str((Path(cwd) / values[1]).resolve().parent) not in scopes:
+                    continue
+                elapsed = _run(['ps', '-p', str(pid), '-o', 'etime='], timeout=2).strip()
+                days, _, clock = elapsed.rpartition('-')
+                age = 0
+                for part in clock.split(':'):
+                    age = age * 60 + int(part)
+            except (RunnerError, ValueError, OSError):
+                continue
+            jobs.append(dict(id=None, pid=pid, worktree=values[0], target='local', provider='process',
+                             command=command, status='running', observed_at=now,
+                             elapsed_seconds=age + int(days or 0) * 86400))
+    return sorted(jobs, key=lambda job: job['elapsed_seconds'])
+
+
 def logs(job_id, target=None, state_dir=None):
     receipt = status(job_id, state_dir)
     names = [target] if target else receipt["targets"]
@@ -317,6 +420,16 @@ def _ssh(host, command, timeout=60):
     return _run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ForwardAgent=no",
                  "-o", "ClearAllForwardings=yes", "-o", "PermitLocalCommand=no", "--", host,
                  "zsh -lic " + shlex.quote(command)], timeout=timeout)
+
+
+def probe_ssh_target(alias, host):
+    lines = _ssh(host, 'uname -s; uname -m', timeout=8).splitlines()
+    operating_systems = {'Darwin': 'macos', 'Linux': 'linux'}
+    architectures = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x64', 'amd64': 'x64'}
+    if len(lines) != 2 or lines[0] not in operating_systems or lines[1] not in architectures:
+        raise RunnerError("Unsupported runner OS or architecture")
+    return dict(provider='ssh', host=alias, os=operating_systems[lines[0]],
+                arch=architectures[lines[1]], capabilities=['tests'])
 
 
 def _helper():
@@ -391,7 +504,7 @@ def _ssh_target(receipt, name, target, directory, timeout):
         target.update(status="cancelled", exit_code=130)
         return
     spec = _read(directory / f"{name}.json")
-    args = ["python3", f"{remote}/t_runner_job.py", "run", "--job-dir", remote,
+    args = ["python3", f"{remote}/t_runner_job.py", "run", "--ssh-environment", "--job-dir", remote,
             "--archive", f"{remote}/snapshot.tar", "--manifest", f"{remote}/manifest.json",
             "--token", target["token"], "--timeout", str(timeout), "--os", target["os"],
             "--arch", target["arch"]]

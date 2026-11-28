@@ -8,6 +8,12 @@ from scripts import local_smoke as local
 from test_workflow import workflow  # noqa: F401 -- isolated account configuration
 
 
+@pytest.fixture(autouse=True)
+def local_target(monkeypatch):
+    monkeypatch.setattr(local, 'runner_config', lambda: {
+        'default_targets': ['local'], 'targets': {'local': {'type': 'local'}}})
+
+
 def evidence():
     snapshot = {'id': 'snapshot-1', 'source_head': 'a' * 40,
                 'files': [{'path': 'bin/t', 'sha256': 'old', 'mode': 493, 'size': 1}]}
@@ -37,7 +43,7 @@ def test_changed_code_merge_and_failed_smoke_invalidate_evidence():
             candidate['command'] = ['python', '-m', 'pytest']
         else:
             candidate['targets']['local']['snapshot_id'] = 'other'
-        with pytest.raises(ValueError, match='stale local smoke'):
+        with pytest.raises(ValueError, match='stale smoke'):
             local.check_evidence(candidate, current)
 
 
@@ -87,10 +93,22 @@ def test_emitted_instructions_require_fresh_local_smoke(workflow):
     for timing in ('before_pr', 'pr_ci'):
         policy = workflow.update_behavior(copy.deepcopy(workflow.DEFAULT), 'test_timing', timing)
         text = workflow._stage_text(policy)
-        for phrase in ('shared essential-flow smoke selection', 'isolated local snapshot runner',
-                       'resolving merge conflicts', 'A failing local smoke blocks the push',
+        for phrase in ('shared essential-flow smoke selection', 'configured snapshot runner',
+                       'resolving merge conflicts', 'A failing smoke run blocks the push',
                        'tested snapshot and source commit', 'never reuse pre-conflict evidence',
                        'Do not substitute a broad local regression suite'):
             assert phrase in text
     hook = (local.ROOT / '.githooks/pre-push').read_text()
     assert 'scripts/local_smoke.py" check-push' in hook
+
+def test_ssh_evidence_checks_target_and_destination():
+    receipt, current = evidence()
+    receipt['command'][0] = 'python3'
+    target = receipt['targets'].pop('local')
+    target.update(type='ssh', host='mini.test')
+    receipt['targets']['mini'] = target
+    expected = {'mini': {'type': 'ssh', 'host': 'mini.test'}}
+    local.check_evidence(receipt, current, expected)
+    target['host'] = 'other.test'
+    with pytest.raises(ValueError, match='stale smoke'):
+        local.check_evidence(receipt, current, expected)

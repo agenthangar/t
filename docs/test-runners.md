@@ -16,11 +16,13 @@ file-mode and SSH shell protocol is POSIX. Native desktop tests remain separatel
 opt-in; choosing macOS does not authorize or prove an interactive GUI session.
 
 For this repository, use `python3 scripts/local_smoke.py` before publishing. It
-selects local execution explicitly and records the shared essential-flow smoke
+resolves the configured default targets and records the shared essential-flow smoke
 receipt checked by the pre-push hook. Rerun after integrating main or resolving
 conflicts. See [CI validation](ci.md); broad local regression runs are not required.
 
 ## Configure
+
+Use **t config → Test runners → Use a registered host for all workflows** to verify an SSH host and stage it as the default across enabled tool catalogues and repository overrides. Review and save the changes. Advanced settings stay available per workflow.
 
 Use **t config → Test runners** and choose the current global default, a named
 workflow, or a registered repository. **Workflows → Edit default workflow →
@@ -105,6 +107,7 @@ Run from the source checkout or any of its linked worktrees:
 t runners runs start -- python3 -m pytest
 t runners runs start --target linux --include tests/new_test.py -- python3 -m pytest
 t runners runs start --os macos --capability tests --timeout 1200 -- python3 -m pytest
+t runners runs list --active
 t runners runs list --json
 t runners runs status RUN_UUID --json
 t runners runs logs RUN_UUID --target linux
@@ -142,7 +145,11 @@ missing or invalid artifact is reported separately from the test command's
 actual result. Keep result paths specific so they do not select dependency
 caches or test-created credentials.
 
-List, status, inspect and logs read local receipts only: they never contact providers,
+The active list reads receipts and the current user’s local process table. It groups test workers under their parent and shows direct pytest, smoke and design commands in registered checkouts and worktrees. Recognizable foreground Docker test clients appear under their worktree. Remote state is the last local observation. Unknown means execution could not be confirmed. Add `--json` for structured rows.
+
+On an SSH host, a virtual environment at `~/.local/share/t/runners/venv` supplies executables to isolated jobs. Install the project’s test dependencies there for commands such as `python3 -m pytest`.
+
+History, status, inspect and logs read local receipts only: they never contact providers,
 clean resources, prompt or trigger automatic updates. Receipts are private under
 `${XDG_STATE_HOME:-~/.local/state}/t/runners`. Start returns the command's failure
 status; provisioning/transport failures are separate from a test failure. A

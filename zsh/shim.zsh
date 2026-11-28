@@ -1053,6 +1053,8 @@ _t() {
       _values 'repo' "${(@f)$(_dev_repo_selectors)}"
     elif [[ $action == runs ]] && (( CURRENT == first )); then
       _values 'run verb' start list ls status watch inspect logs artifacts cancel cleanup
+    elif [[ $action == runs && ${words[first]} == (list|ls) ]]; then
+      _values 'flag' --active --json -h --help
     elif [[ $action == runs ]]; then
       _values 'flag' --tool --repo --target --os --capability --include --artifact --timeout --queue-timeout --next-step --json --output -h --help
     elif [[ $action == setup ]]; then

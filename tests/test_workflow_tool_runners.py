@@ -52,3 +52,26 @@ def test_runner_start_tool_flag_and_repository_default(t_mod):
     args.workflow_tool = None
     assert t_mod._runner_tool(cfg, args, '/api') == 'claude'
     assert t_mod._runner_tool(cfg, args) == 'codex'
+
+
+def test_register_host_stages_enabled_scopes_and_preserves_collisions(workflow, t_mod, monkeypatch):
+    document = workflow.defaults()
+    policy = document['workflows']['standard']
+    policy['runners'] = copy.deepcopy(workflow.RUNNER_DEFAULT)
+    mini = dict(provider='ssh', host='mini', os='macos', arch='arm64', capabilities=['tests'])
+    policy['runners']['targets']['mini'] = dict(mini, host='older')
+    document['repositories']['/example'] = {'inline': copy.deepcopy(policy)}
+    document['repositories']['/excluded'] = {'inline': copy.deepcopy(policy), 'excluded': True}
+    before = copy.deepcopy(document)
+    cfg = SimpleNamespace(repos={}, hosts={'mini': 'mini.example'}, _workflow_document=document)
+    monkeypatch.setattr(t_mod, '_workflow', lambda: vars(workflow))
+    monkeypatch.setattr(t_mod, '_runners', lambda: {'probe_ssh_target': lambda alias, host: mini})
+    assert t_mod._config_all_runner_hosts(Menu(['mini', 'use', 'save']), cfg) == 'save'
+    assert document == before
+    assert cfg._workflow_document['repositories']['/excluded'] == before['repositories']['/excluded']
+    for tool in workflow.TOOLS:
+        scoped = workflow.tool_document(cfg._workflow_document, tool)
+        section = scoped['workflows']['standard']['runners']
+        assert section['targets'][section['default_targets'][0]] == mini
+    assert cfg._workflow_document['workflows']['standard']['runners']['targets']['mini']['host'] == 'older'
+    assert cfg._workflow_document['repositories']['/example']['inline']['runners']['default_targets'] == ['ssh-1']
