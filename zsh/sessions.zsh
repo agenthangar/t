@@ -222,7 +222,10 @@ _t_paste() {
 typeset -gA _DEV_PS_COMM _DEV_PS_PPID _DEV_PS_KIDS _DEV_PANE_PIDS _DEV_SESS_PID _DEV_PS_APP
 typeset -g _DEV_PS_AT=0
 _dev_ps_snapshot() {
-  (( ${#_DEV_PS_COMM} )) && (( EPOCHREALTIME - _DEV_PS_AT < 3 )) && return 0
+  if (( ${#_DEV_PS_COMM} )); then
+    [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]] && return 0
+    (( EPOCHREALTIME - _DEV_PS_AT < 3 )) && return 0
+  fi
   _DEV_PS_COMM=(); _DEV_PS_PPID=(); _DEV_PS_KIDS=(); _DEV_PANE_PIDS=(); _DEV_SESS_PID=(); _DEV_PS_APP=()
   local pid ppid comm sname
   # comm can contain spaces (an .app bundle path), so it takes the rest of the line
@@ -1292,7 +1295,7 @@ _dev_session_rows_scoped() {
 # Browsing boundary only. Ownership scanners below always remain live.
 _t_discovery_rows() {
   if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
-    python3 "$T_HOME/bin/t" __cache-rows "$@"
+    _t_with_progress "Reading session details" python3 "$T_HOME/bin/t" __cache-rows "$@"
   elif [[ ${(M)@:#--local} != '' ]]; then
     local rows; rows=$(_dev_session_rows --details) || return $?
     if [[ ${(M)@:#--unprefixed} != '' ]]; then print -r -- "$rows"
@@ -1336,6 +1339,17 @@ _dev_ownership_rows_impl() {
   _dev_ps_snapshot
   while IFS='|' read -r s state dir; do
     [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
+    if [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]]; then
+      local root matched=1
+      [[ -z ${T_DISCOVERY_SCOPE_SLOT:-} || $s == *-${T_DISCOVERY_SCOPE_SLOT} ]] || continue
+      if [[ -n ${T_DISCOVERY_SCOPE_ROOTS:-} ]]; then
+        matched=0
+        for root in "${(@f)T_DISCOVERY_SCOPE_ROOTS}"; do
+          [[ $dir == "$root" || $dir == "$root"/* ]] && matched=1
+        done
+      fi
+      (( matched )) || continue
+    fi
     pid=$(_dev_session_claude_pid "$s")
     _DEV_SESS_PID[$s]=${pid:--}
     agent=$(_dev_agent_of_session "$s")
@@ -1361,13 +1375,18 @@ _dev_ownership_rows_impl() {
     fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${sid:--}" "$dir" "${s#dev-}" "$state" unknown - "$agent"
   done
-  _dev_fg_rows --ownership-handles
+  [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]] || _dev_fg_rows --ownership-handles
 }
 
 _dev_session_rows_impl() {
   if [[ ${1:-} == --ownership ]]; then _dev_ownership_rows_impl; return $?; fi
   # Rich display rows opt into a trailing model field. Ownership consumers keep
   # the established seven-field contract and its authoritative targeting ids.
+  if [[ ${1:-} == --lightweight ]]; then
+    local T_DISCOVERY_LIGHTWEIGHT=1
+    _dev_session_rows_cli --transcripts | python3 "$T_HOME/libexec/t_session_details.py" --lightweight
+    return
+  fi
   if [[ ${1:-} == --details ]]; then
     _dev_session_rows --transcripts | python3 "$T_HOME/libexec/t_session_details.py"
     return
@@ -1398,18 +1417,57 @@ _dev_session_rows_cli() {
     done
   fi
   local s short sid psid dir state context summary agent i mr mrest REPLY
+  local -A lightweight_sids lightweight_agents
+  if [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]]; then
+    local owner
+    local -a identity
+    for owner in "${(@f)$(_dev_ownership_rows_impl)}"; do
+      identity=("${(@ps:\t:)owner}")
+      (( $#identity >= 7 )) || continue
+      lightweight_sids[dev-$identity[3]]=$identity[1]
+      lightweight_agents[dev-$identity[3]]=$identity[7]
+    done
+  fi
   _dev_ps_snapshot
   # tmux replaces literal tabs in -F with `_` on macOS 3.7c. Keep the
   # variable-length path last so read retains any `|` in a worktree name.
+  local inventory
+  if ! inventory=$(tmux list-sessions -F '#{session_name}|#{?session_attached,attached,detached}|#{session_path}' 2>&1); then
+    if [[ -z $TMUX && ( $inventory == *'no server running on '* || $inventory == *'(No such file or directory)'* ) ]]; then
+      inventory=''
+    else
+      print -u2 -r -- "${inventory:-tmux list-sessions failed}"
+      return 1
+    fi
+  fi
   while IFS='|' read -r s state dir; do
     [[ $s == dev-* && $state == (attached|detached) && $dir == /* ]] || continue
     short="${s#dev-}"
+    if [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]]; then
+      local root matched=1
+      [[ -z ${T_DISCOVERY_SCOPE_SLOT:-} || $short == *-${T_DISCOVERY_SCOPE_SLOT} ]] || continue
+      if [[ -n ${T_DISCOVERY_SCOPE_ROOTS:-} ]]; then
+        matched=0
+        for root in "${(@f)T_DISCOVERY_SCOPE_ROOTS}"; do
+          [[ $dir == "$root" || $dir == "$root"/* ]] && matched=1
+        done
+      fi
+      (( matched )) || continue
+    fi
     [[ -z ${holding_of[$s]:-} ]] || continue
-    agent=$(_dev_agent_of_session "$s")
+    if [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]]; then
+      agent=${lightweight_agents[$s]:-claude}
+    else
+      agent=$(_dev_agent_of_session "$s")
+    fi
     # Authoritative id (current pane, registry, then cwd-validated stamp) —
     # not the raw CLAUDE_RESUME_ID stamp, which a reused slot can carry stale from a
     # prior (even cross-repo) occupant; this is the targeting id callers act on.
-    sid=$(_dev_session_sid "$s" "$dir")
+    if [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]]; then
+      sid=${lightweight_sids[$s]:--}
+    else
+      sid=$(_dev_session_sid "$s" "$dir")
+    fi
     # `-` sentinel when the slot's conversation id is unknown: keeps every
     # field non-empty so a tab is never a *leading/consecutive* IFS-whitespace
     # delimiter that `read` would collapse, sliding the columns. It also keeps the
@@ -1418,7 +1476,7 @@ _dev_session_rows_cli() {
     tx=()
     if ! _dev_session_has_claude "$s"; then
       context=none
-    elif _dev_agent_at_welcome "$agent" "$s" "$dir"; then
+    elif { [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} != 1 ]] || [[ $sid == - ]]; } && _dev_agent_at_welcome "$agent" "$s" "$dir"; then
       context=idle
     else
       context=active
@@ -1430,7 +1488,7 @@ _dev_session_rows_cli() {
       # transcript locator.)
       if [[ $agent == claude ]]; then
         [[ $sid != - ]] && tx=( "$HOME/.claude/projects/${dir//[^A-Za-z0-9]/-}/$sid".jsonl(N) )
-      else
+      elif [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} != 1 ]]; then
         # A fallback title never upgrades the row's unknown targeting id.
         tx=( "$(_dev_agent_transcript codex "$sid" "$dir" 2>/dev/null || _codex_live_transcript "$dir" "$(_dev_session_claude_pid "$s")")" )
       fi
@@ -1438,7 +1496,7 @@ _dev_session_rows_cli() {
     rows+=("$sid"$'\t'"$dir"$'\t'"$short"$'\t'"$state"$'\t'"$context"$'\t'"$agent")
     if [[ -n ${tx[1]:-} ]]; then rowtx+=("${tx[1]}"); tpaths+=("${tx[1]}")
     else rowtx+=('-'); fi
-  done < <(tmux list-sessions -F '#{session_name}|#{?session_attached,attached,detached}|#{session_path}' 2>/dev/null | sort)
+  done <<< "$(print -r -- "$inventory" | sort)"
 
   (( $#tpaths )) && mrows=("${(@f)$(_transcript_meta_batch "${(@)tpaths}")}")
   for mr in "${(@)mrows}"; do
@@ -1457,6 +1515,8 @@ _dev_session_rows_cli() {
       *)
         if [[ ${rowtx[$i]} != - ]]; then
           summary=${title_of[${rowtx[$i]}]:-}
+        elif [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 && $agent == codex ]]; then
+          summary=-
         else
           psid=$sid; [[ $psid == - ]] && psid=
           summary=$(_dev_session_summary "dev-$short" "$dir" "$psid")
@@ -1488,10 +1548,10 @@ _dev_session_rows_cli() {
     printf '\n'
   done
   # plus any FOREGROUND (non-tmux) claudes on this machine, same row format.
-  _dev_fg_rows
+  [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]] || _dev_fg_rows
   # Dead last, and stdio-detached inside: stdout here IS the row stream (and is an
   # ssh pipe under `t ls -r`), so the refresh must not write a byte or hold it open.
-  _pr_state_flush
+  [[ ${T_DISCOVERY_LIGHTWEIGHT:-0} == 1 ]] || _pr_state_flush
 }
 
 # _dev_rows_all — fan _dev_session_rows out over THIS machine + every $REMOTE_HOSTS
@@ -1944,6 +2004,20 @@ _dev_kill_safe_labels() {
 # its state, model, UI, and title columns; only the first three hidden fields are
 # used to route the selected row to the existing kill implementation.
 _dev_kill_pick() {
+  local _T_KILL_NOTICE_FILE=
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    _T_KILL_NOTICE_FILE=$(mktemp "${TMPDIR:-/tmp}/t-close-discovery.XXXXXX") || return 1
+  fi
+  {
+    _dev_kill_pick_impl "$@"
+  } always {
+    [[ -z $_T_KILL_NOTICE_FILE ]] || rm -f -- "$_T_KILL_NOTICE_FILE" "$_T_KILL_NOTICE_FILE.owners"
+  }
+}
+
+_dev_kill_pick_impl() {
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   setopt local_options pipe_fail
   local repo="$1" force="$2" remote_only="$3"
   local _repo_selector _repo_selector_rc
@@ -1953,11 +2027,12 @@ _dev_kill_pick() {
   local rows
   local -a cache_scope
   [[ -n $repo ]] && cache_scope+=(--repo "$repo")
+  [[ -z $_T_KILL_NOTICE_FILE ]] || cache_scope+=(--notice-file "$_T_KILL_NOTICE_FILE")
 
   if [[ -n $remote_only ]]; then
     rows=$(_t_discovery_rows --remote-only "${cache_scope[@]}" --details) || return $?
   else
-    rows=$(_t_discovery_rows "${cache_scope[@]}" --local --unprefixed --details | awk -F'\t' 'NF >= 7 {print "local\t" $0}') || return $?
+    rows=$(_t_discovery_rows "${cache_scope[@]}" --details) || return $?
   fi
   if [[ -n $remote_only ]]; then
     rows=$(print -r -- "$rows" | awk -F'\t' '$1 != "local"')
@@ -1977,9 +2052,9 @@ _dev_kill_pick() {
   [[ -n $rows ]] || { print -u2 -- "t kill: no sessions${repo:+ for '$repo'} found"; return 1; }
 
   local -a formatter=( python3 "$T_HOME/bin/t" __session-picker-rows --header )
-  [[ -n $remote_only ]] && formatter+=( --remote )
+  formatter+=( --remote )
   [[ -n $repo ]] && formatter+=( --repo )
-  local display; display=$(print -r -- "$rows" | "${formatter[@]}") || return 1
+  local display; display=$(print -r -- "$rows" | T_OPEN_OWNERS="${_T_KILL_NOTICE_FILE:+$_T_KILL_NOTICE_FILE.owners}" T_PICKER_OWNER_IDS=1 "${formatter[@]}") || return 1
   [[ -n $display ]] || return 1
   local columns=${display%%$'\n'*}
   display=${display#*$'\n'}
@@ -1994,7 +2069,7 @@ _dev_kill_pick() {
   done <<< "$rows"
   labels=$(print -r -- "$rows" | awk -F'\t' '$1 == "local" {print substr($0, index($0, "\t")+1)}' | _dev_kill_completed_labels)
   for label in "${(@f)labels}"; do completed[local/$label]=1; done
-  if [[ -n $remote_only ]]; then
+  if [[ -n $rows ]]; then
     for host in ${(k)REMOTE_HOSTS}; do
       [[ $'\n'$rows == *$'\n'$host$'\t'* ]] || continue
       target="${REMOTE_HOSTS[$host]}"
@@ -2025,10 +2100,10 @@ _dev_kill_pick() {
   fi
 
   local picked
-  picked=$(T_PICKER_SOURCE_ROWS="$rows" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
+  picked=$(T_OPEN_OBSERVE=all T_OPEN_REPO="$repo" T_OPEN_REMOTE=1 T_PICKER_SOURCE_ROWS="$rows" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=kill T_PICKER_WITH_ATTACHED="$with_attached" \
     T_PICKER_WITH_PENDING="$with_pending" _t_fzf_filtered "$safe_display" "$display" kill \
     'unattached · no pending work' "$(_dev_agent_legend)" '' \
-    --prompt="kill ${repo:+$repo }> " --preview='printf "%s\n" {4}') || return $?
+    --prompt="kill ${repo:+$repo }> " --with-nth=5,4 --preview='printf "%s\n" {4}') || return $?
   [[ -n $picked ]] || return 130
   _dev_kill_selected "$picked"
 }
@@ -2039,8 +2114,16 @@ _dev_kill_selected() {
   # Enter in the kill picker authorizes the complete selection. Keep all
   # ownership checks, but do not ask again for each local or remote target.
   local force=1 host label state line target rcmd
-  local rc=0 prepo slot action_rc
+  local rc=0 prepo slot action_rc observed expected_cwd expected_agent expected_sid raw_identity
+  local -a fields
   for line in "${(@f)picked}"; do
+    fields=("${(@ps:\t:)line}")
+    expected_cwd= expected_agent= expected_sid=${fields[7]:-}
+    [[ $expected_sid != - ]] || expected_sid=
+    if [[ -n ${fields[8]:-} ]]; then
+      raw_identity=$(print -rn -- "$fields[8]" | python3 -c 'import base64,sys; f=base64.b64decode(sys.stdin.buffer.read()).decode().split("\t"); print(f[2]+"\t"+f[7])') || return 1
+      expected_cwd=${raw_identity%%$'\t'*}; expected_agent=${raw_identity#*$'\t'}
+    fi
     host=${line%%$'\t'*}
     line=${line#*$'\t'}
     label=${line%%$'\t'*}
@@ -2057,6 +2140,27 @@ _dev_kill_selected() {
         if ! tmux has-session -t "=dev-${label}:" 2>/dev/null; then
           print -u2 -- "t kill: $label is no longer here"; rc=1; continue
         fi
+        if [[ ${fields[6]:-} == unverified || ${fields[6]:-} == <->/\$<-> ]]; then
+          observed=$(tmux display-message -p -t "=dev-${label}:" '#{pid}/#{session_id}')
+          if [[ $observed != "${fields[6]}" ]]; then
+            print -u2 -- "t kill: $label changed. Refresh and select it again."
+            rc=1
+            continue
+          fi
+        fi
+        if [[ -n ${fields[7]:-} ]]; then
+          observed=$(_dev_session_sid "dev-$label")
+          if [[ $observed != "$expected_sid" ]]; then
+            print -u2 -- "t kill: $label changed. Refresh and select it again."
+            rc=1
+            continue
+          fi
+        fi
+        if [[ -n $expected_cwd && ( $(tmux display-message -p -t "=dev-${label}:" '#{session_path}') != "$expected_cwd" || $(_dev_agent_of_session "dev-$label") != "$expected_agent" ) ]]; then
+          print -u2 -- "t kill: $label changed. Refresh and select it again."
+          rc=1
+          continue
+        fi
         _dev_kill_local_selected "$prepo" "$slot" "$force" || action_rc=$?
       fi
       (( action_rc == 130 )) && return 130
@@ -2068,7 +2172,14 @@ _dev_kill_selected() {
         rcmd="REMOTE_HOSTS=(); _dev_kill_fg ${(q)label} 1"
       else
         prepo=${label%-*}; slot=${label##*-}
-        rcmd="REMOTE_HOSTS=(); _dev_kill ${(q)prepo} ${(q)slot} 1"
+        rcmd="REMOTE_HOSTS=(); "
+        if [[ -n ${fields[7]:-} ]]; then
+          rcmd+="[[ \$(_dev_session_sid ${(q):-dev-$label}) == ${(q)expected_sid} ]] || { print -u2 't kill: selected session changed'; exit 1; }; "
+        fi
+        if [[ -n $expected_cwd ]]; then
+          rcmd+="[[ \$(tmux display-message -p -t ${(q):-=dev-${label}:} '#{session_path}') == ${(q)expected_cwd} && \$(_dev_agent_of_session ${(q):-dev-$label}) == ${(q)expected_agent} ]] || { print -u2 't kill: selected session changed'; exit 1; }; "
+        fi
+        rcmd+="_dev_kill ${(q)prepo} ${(q)slot} 1"
       fi
       print -r -- "→ Killing $host:$label"
       _term_title "$host: kill $label"

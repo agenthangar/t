@@ -134,3 +134,52 @@ def test_http_client_bound_loopback_and_wait(monkeypatch, close):
     picker.deadline = 0
     with pytest.raises(TimeoutError):
         picker.request()
+
+
+def test_refresh_replaces_metadata_and_remembers_changed_owner(snapshot, monkeypatch, close):
+    import json
+    old = 'local\tapi-2\tdetached\tOld title\tOld title\t17/$1'
+    new = 'local\tapi-2\tdetached\tNew title\tNew title\t17/$1'
+    source = 'local\tnew-id\t/path\tapi-2\tdetached\tactive\tNew title\tcodex'
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        (snapshot / name).write_text(old + '\n')
+    (snapshot / 'incoming.json').write_text(json.dumps(dict(
+        source=[source], display=[new], heading='SESSION TITLE',
+        replaced=[['local', 'api-2']], full=True)))
+    monkeypatch.setattr(close, 'render', lambda *args: None)
+    monkeypatch.setattr(close, 'start_update', lambda *args: None)
+    close.append(snapshot, 'New')
+    assert (snapshot / 'source').read_text() == source + '\n'
+    assert (snapshot / 'all').read_text() == new + '\n'
+    assert (snapshot / 'rows-0').read_text() == new + '\n'
+    assert json.loads((snapshot / 'replaced').read_text()) == [['local', 'api-2']]
+    assert (snapshot / 'action-query-locked').read_text() == 'New'
+
+
+def test_completion_refresh_uses_each_source_host(close, monkeypatch):
+    calls = []
+    def run(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(returncode=0, stdout='api-2\n')
+    monkeypatch.setattr(close.subprocess, 'run', run)
+    source = 'local\tsid\t/local\tapi-2\tdetached\tactive\tTask\tcodex\nmini\tother\t/remote\tapi-2\tdetached\tactive\tTask\tclaude\n'
+    assert close.completed_rows(SimpleNamespace(hosts={'mini': 'user@mini'}), source) == [
+        ['local', 'api-2'], ['mini', 'api-2']]
+    assert calls[0][0][:2] == ['zsh', '-lic']
+    assert calls[1][0][0] == 'ssh' and 'user@mini' in calls[1][0]
+    assert calls[0][1]['input'].startswith('sid\t/local')
+    assert calls[1][1]['input'].startswith('other\t/remote')
+
+
+def test_metadata_probe_animates_existing_header_and_stops(snapshot, close, monkeypatch):
+    import threading
+    painted = threading.Event()
+    commands = []
+    picker = SimpleNamespace(request=lambda command: commands.append(command))
+    monkeypatch.setattr(close, 'render', lambda *args: painted.set())
+    with close.refreshing_header(snapshot, picker, 'open', {'hosts': []}):
+        assert painted.wait(2)
+    assert commands and all(command == close.HEADER for command in commands)
+    count = len(commands)
+    threading.Event().wait(.2)
+    assert len(commands) == count

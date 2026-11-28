@@ -189,8 +189,9 @@ def picker(t_mod):
                     saved_resume_row(1, 'First Task')
                     saved_resume_row(2, 'Second Task')
                 if profile == 'public-resume-refresh':
-                    # Pause only the shared cache's local collector. The picker
-                    # and its read-only zsh renderer still execute real code.
+                    # These saved-history scenarios have no live agent rows.
+                    # Pause that collector seam while the production catalog,
+                    # discovery cache and terminal renderer remain active.
                     stub = root / 'zsh'
                     stub.write_text('''#!/bin/sh
 case "$*" in
@@ -198,6 +199,8 @@ case "$*" in
     if [ -f "$HOME/hold-collector" ]; then
       while [ -f "$HOME/hold-collector" ]; do sleep .05; done
     fi
+    # These history fixtures have no live agent owners.
+    exit 0
     ;;
 esac
 exec /bin/zsh "$@"
@@ -205,10 +208,16 @@ exec /bin/zsh "$@"
                     stub.chmod(0o700)
                     env['PATH'] = directory + os.pathsep + env['PATH']
                 if warm_resume:
+                    # Discovery namespaces include the tmux socket. Warm the
+                    # same server that will display the picker, then reuse its
+                    # pane so a deliberately blocked refresh has retained data.
+                    tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), 'sleep 120')
+                    seed_env = {**env, 'TMUX': socket + ',0,0'}
                     command = [str(ROOT / 'bin/t'), '__resume-candidates', '--all']
-                    deadline = time.monotonic() + 8
+                    deadline = time.monotonic() + 30
                     while True:
-                        seed = subprocess.run(command, env=env, capture_output=True, text=True, timeout=5, cwd=root)
+                        seed = subprocess.run(command, env=seed_env, capture_output=True, text=True,
+                                              timeout=max(.1, deadline - time.monotonic()), cwd=root)
                         if 'Second Task' in seed.stdout:
                             break
                         assert time.monotonic() < deadline, seed.stderr
@@ -218,7 +227,7 @@ exec /bin/zsh "$@"
                     cache = ('import runpy, sys; runpy.run_path(sys.argv[1])'
                              '["request"]("event", {"targets": ["local"]})')
                     subprocess.run([sys.executable, '-c', cache, str(ROOT / 'libexec/t_session_cache.py')],
-                                   env=env, check=True, cwd=root)
+                                   env=seed_env, check=True, cwd=root)
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'cd "$HOME"\n'
                           '_t_resume_history_launch() { print -r -- "LAUNCHED $*" >> "$HOME/selected"; return 99; }\n'
@@ -241,13 +250,14 @@ exec /bin/zsh "$@"
                                '  fi\n'
                                '}\n')
                     picker_cmd = 't session resume repo --days all'
-            if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill', 'public-kill'):
+            if profile in ('public-open', 'public-open-cli', 'public-open-all', 'public-open-kill',
+                           'public-open-wait', 'public-kill'):
                 from test_open_picker import ROWS
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
                            T_LOCAL_RC=str(root / 'local.zsh'))
                 raw = ROWS.replace(r'\tapp\tnone', r'\tapp\tactive') if empty else ROWS
-                if profile in ('public-open-cli', 'public-open-kill'):
+                if profile in ('public-open-cli', 'public-open-kill', 'public-open-wait'):
                     raw = raw.replace(r'\tapp\tnone', r'\tdetached\tnone')
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'unset TMUX\n'
@@ -263,6 +273,15 @@ exec /bin/zsh "$@"
                                '  print -n "Older results" > "$3"\n'
                                '  _dev_session_rows --details | awk \'NF {print "local\\t" $0}\'\n'
                                '}\n')
+                if profile == 'public-open-wait':
+                    env['PATH'] = str(ROOT / 'bin') + os.pathsep + env['PATH']
+                    prefix += ('_t_discovery_rows() {\n'
+                               '  [[ $T_DISCOVERY_EXPLICIT_WAIT == 1 && $1 == --open && $2 == --notice-file ]] || return 99\n'
+                               '  print -n "Cached sessions; peer refresh failed" > "$3"\n'
+                               '  _dev_session_rows --details | awk \'NF {print "local\\t" $0}\'\n'
+                               '}\n'
+                               '_dev_open_window() { print -r -- "WINDOW $1" >> "$HOME/selected"; }\n')
+                    picker_cmd = 't open -w'
                 if profile == 'public-open-kill':
                     prefix += ('functions[_rows_before_kill]=$functions[_dev_session_rows]\n'
                                '_dev_session_rows() {\n'
@@ -282,8 +301,11 @@ exec /bin/zsh "$@"
                       'stty -g > "$HOME/terminal-after"\n'
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
-            tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height),
-                 shell + ' ' + shlex.quote(str(root / 'run.sh')))
+            command = shell + ' ' + shlex.quote(str(root / 'run.sh'))
+            if warm_resume:
+                tmux('respawn-pane', '-k', command)
+            else:
+                tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), command)
 
         def wait(text, absent=(), ordered=(), focused=None, columns=None):
             deadline = time.monotonic() + 5
@@ -352,7 +374,7 @@ def test_public_resume_ctrl_b_resumes_exact_last_closed(picker, query):
 def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', width=105, height=24)
-    screen = wait('Second Task', focused='Second Task')
+    screen = wait('Second Task', absent=['Refreshing local'], focused='Second Task')
     assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
     refresh_line = next(line for line in screen.splitlines() if 'Last refresh' in line)
     assert 'Ctrl-U refresh now' in refresh_line
@@ -369,8 +391,8 @@ def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picke
     keys('-l', 'Task')
     keys('Tab')
     wait('(1)', focused='First Task')
-    keys.saved_resume_row(3, 'New Task')
     keys.hold_collector()
+    keys.saved_resume_row(3, 'New Task')
     keys('C-u')
     screen = wait('Refreshing local', absent=['Skip waiting'], focused='First Task')
     assert '> Task' in screen and '(1)' in screen
@@ -1022,6 +1044,27 @@ def test_open_enter_accepts_multiple_exact_marked_rows(picker):
     keys('Tab', 'Tab')
     wait('2/2 (2)')
     assert [row.split('\t')[1] for row in finish()] == ['api-2', 'web-4']
+
+
+@pytest.mark.fzf_compat
+@pytest.mark.parametrize('selection', ['focused', 'marked', 'batch'])
+def test_public_open_wait_selects_from_partial_discovery(picker, selection):
+    start, wait, keys, finish = picker
+    start(profile='public-open-wait', width=100)
+    wait('peer refresh failed', focused='local/api-4')
+    if selection == 'focused':
+        keys('Down')
+        wait('2/2 (0)', focused='local/web-6')
+        assert finish() == ['web 6 --local']
+    elif selection == 'marked':
+        keys('Tab')
+        wait('2/2 (1)', focused='local/web-6')
+        assert finish() == ['api 4 --local']
+    else:
+        keys('Tab', 'Tab')
+        wait('2/2 (2)')
+        assert sorted(finish()) == ['WINDOW t open api 4 --cli --local',
+                                    'WINDOW t open web 6 --cli --local']
 
 
 @pytest.mark.fzf_compat

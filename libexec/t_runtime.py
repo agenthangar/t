@@ -32,7 +32,7 @@ FILES = {
     'terminalhooks': ('libexec/t_terminal_close.py', 'libexec/t_runtime_dispatch.py'),
     'terminalobserver': ('libexec/t_terminal_close.py', 'libexec/t_runtime.py', 'libexec/t_runtime_dispatch.py'),
     'recoverywatcher': ('libexec/t_recovery.py', 'libexec/t_runtime.py', 'libexec/t_runtime_dispatch.py'),
-    'discoverydaemon': ('libexec/t_session_cache.py', 'libexec/t_session_discovery.py'),
+    'discoverydaemon': ('libexec/t_live_inventory.py', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py'),
 }
 
 

@@ -55,6 +55,7 @@ struct WireRow: Decodable {
 }
 
 public struct SessionSnapshot: Decodable, Sendable {
+    public let discoveryAvailable: Bool
     public var detached: [SessionRow]
     public var status: String?
 
@@ -79,6 +80,7 @@ public struct SessionSnapshot: Decodable, Sendable {
         let remote = try values.decodeIfPresent([WireRow].self, forKey: .remote) ?? []
         let hosts = try values.decodeIfPresent([String].self, forKey: .hosts) ?? []
         let fresh = try values.decodeIfPresent(Freshness.self, forKey: .freshness)
+        discoveryAvailable = values.contains(.sessions) && fresh?.unavailable != true
         var rows = local.map { ($0, "local") }
         rows += remote.compactMap { row in row.host.map { (row, $0) } }
         var seen = Set<String>()
@@ -141,6 +143,15 @@ public enum RnnrBackend {
         catch { throw BackendError.discoveryFailed }
     }
 
+    public static func integration(source: URL, client: String, action: String) throws -> String {
+        guard ["codex", "claude"].contains(client), ["check", "connect", "migrate"].contains(action) else { throw BackendError.invalidTarget }
+        let bin = source.appendingPathComponent("bin")
+        let data = try run(executable: bin.appendingPathComponent("python3"), arguments: [
+            bin.appendingPathComponent("integration.py").path, client, action
+        ], timeout: 90)
+        return try JSONDecoder().decode(String.self, from: data)
+    }
+
     public static func terminalCommand(helper: URL, source: URL, action: TerminalAction) throws -> String {
         guard helper.isFileURL, source.isFileURL, safe(helper.path), safe(source.path) else {
             throw BackendError.invalidTarget
@@ -175,7 +186,7 @@ public enum RnnrBackend {
     // One nonblocking reader bounds both time and memory, even when a child
     // leaves descendants holding stdout. Never retain a background drain task.
     // stderr is discarded: diagnostics may contain private paths or prompts.
-    private static func run(executable: URL, arguments: [String]) throws -> Data {
+    private static func run(executable: URL, arguments: [String], timeout: TimeInterval = 15) throws -> Data {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -209,7 +220,7 @@ public enum RnnrBackend {
         var data = Data()
         var bytes = [UInt8](repeating: 0, count: 64 * 1024)
         var eof = false
-        var deadline = ProcessInfo.processInfo.systemUptime + 15
+        var deadline = ProcessInfo.processInfo.systemUptime + timeout
         var exited = false
         while true {
             // Bound each drain pass so a noisy writer cannot starve the deadline.

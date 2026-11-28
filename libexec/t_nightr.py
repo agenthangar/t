@@ -317,8 +317,8 @@ def add_parser(sub):
                             description="Optional apps on this Mac. Use install nightr to opt into managed updates; status nightr is read-only. No repository scope is used.")
     actions = parser.add_subparsers(dest="action", required=True)
     for action in ("install", "status"):
-        child = actions.add_parser(action, help=f"{action.capitalize()} Nightr on this Mac")
-        child.add_argument("app", choices=["nightr"])
+        child = actions.add_parser(action, help=f"{action.capitalize()} a desktop app on this Mac")
+        child.add_argument("app", choices=["nightr", "rnnr"])
         if action == "status":
             child.add_argument("--json", action="store_true", help="Print read-only JSON")
         else:

@@ -23,6 +23,8 @@ def test_local_collector_reuses_unchanged_projection_and_removes_missing_source(
     class History:
         def __init__(self, cfg, api):
             self.cfg, self.store = cfg, SimpleNamespace(close=lambda: None)
+        def branch_prs(self, records, **kwargs):
+            pass
         def pr_states(self, records):
             return {}
         def annotate_resume_work(self, records, owners):

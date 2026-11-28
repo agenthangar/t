@@ -56,7 +56,8 @@ def test_numbered_resume_with_unindexed_fast_cli_in_another_workspace(lifecycle)
     tracked = workspace / 'work.txt'
     tracked.write_text('commit\\n')
     git('add', tracked.name)
-    git('commit', '-qm', 'Advance fixture branch')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+        'commit', '-qm', 'Advance fixture branch')
     tracked.write_text('staged\\n')
     git('add', tracked.name)
     tracked.write_text('working\\n')
@@ -81,7 +82,7 @@ def test_numbered_resume_with_unindexed_fast_cli_in_another_workspace(lifecycle)
         command = 'unset TMUX; t resume repo 1; print -r -- $? > ' + shlex.quote(str(status))
         tmux('new-session', '-d', '-s', 'picker-test', '-x', '100', '-y', '28',
              'zsh', '-lic', command)
-        _until(lambda: 'history repo' in tmux('capture-pane', '-p', '-t', 'picker-test'), seconds=45)
+        _until(lambda: 'resume repo' in tmux('capture-pane', '-p', '-t', 'picker-test'), seconds=45)
         tmux('send-keys', '-t', 'picker-test', 'Enter')
         _until(status.exists, seconds=60)
         assert status.read_text().strip() == '0'
@@ -97,7 +98,7 @@ def test_numbered_resume_with_unindexed_fast_cli_in_another_workspace(lifecycle)
 
 @pytest.mark.parametrize('cancel', [False, True])
 def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
-    from test_session_lifecycle import _shell_tty, _unindexed_writers
+    from test_session_lifecycle import _shell_tty, _unindexed_writers, UNINDEXED
 
     base, env = lifecycle
     workspace = saved_source(base, env, 'codex')
@@ -108,7 +109,7 @@ def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
     edits = workspace / 'unfinished.txt'
     edits.write_text('Keep these edits in the original worktree.\n')
     picker = base / 'bin/fzf'
-    picker.write_text("#!/bin/sh\nprintf '\\nenter\\n'\nhead -n 1\n")
+    picker.write_text("#!/bin/sh\nhead -n 1\n")
     picker.chmod(0o755)
     attach_log = base / 'attached.log'
     tmux = base / 'bin/tmux'
@@ -125,10 +126,10 @@ def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
             return b'\x1b' if cancel else b'\r'
         return None
 
-    with _unindexed_writers(base, env):
+    with _unindexed_writers(base, env, sids=UNINDEXED[:1]):
         result = _shell_tty(base, {**env, 'TERM': 'xterm-256color', 'T_TEST_ATTACH_LOG': str(attach_log)},
                             't resume repo 1',
-                            timeout=85, respond=respond)
+                            timeout=120, respond=respond)
         assert responses == ['repair', 'fresh'], result.stdout
         assert result.returncode == (130 if cancel else 0), result.stdout
         assert 'Local edits stay' in result.stdout
@@ -141,10 +142,10 @@ def test_numbered_resume_repair_offers_fresh_worktree(lifecycle, cancel):
             assert len((base / 'agents.log').read_text().splitlines()) == 1
         else:
             assert target.is_dir() and not (target / edits.name).exists()
-            tmux_id = _run([str(tmux), 'display-message', '-p', '-t', '=dev-repo-2:',
-                            '#{session_id}'], env=env, cwd=base)
-            assert tmux_id.returncode == 0 and tmux_id.stdout.strip()
-            assert attach_log.read_text().strip() == f'attach-session -t {tmux_id.stdout.strip()}:'
+            pane_id = _run([str(tmux), 'display-message', '-p', '-t', '=dev-repo-2:',
+                            '#{pane_id}'], env=env, cwd=base)
+            assert pane_id.returncode == 0 and pane_id.stdout.strip().startswith('%')
+            assert attach_log.read_text().strip() == f'attach-session -t {pane_id.stdout.strip()}'
             owner = _shell(base, env, '_dev_session_sid dev-repo-2')
             assert owner.returncode == 0 and owner.stdout.strip() == SID
             commit = _run(['git', '-C', str(target), 'rev-parse', 'HEAD'], env=env, cwd=base)

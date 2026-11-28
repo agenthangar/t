@@ -234,8 +234,63 @@ def _observed_stages(parent, candidates, usage_module):
     return [{'stage': stage, 'model': stages[stage]} for stage in MODEL_STAGE_LABELS if stage in stages]
 
 
-def enrich(lines, home, codex_home):
+def _legacy_rollout(path, sid, cwd, *, read_title=True):
+    """Validate an exact legacy rollout and read its bounded opening prompt."""
+    try:
+        with open(path, 'rb') as stream:
+            header = json.loads(stream.readline(64 * 1024))
+            payload = header.get('payload') or {}
+            if (header.get('type') != 'session_meta' or payload.get('id') != sid or
+                    os.path.realpath(payload.get('cwd', '')) != os.path.realpath(cwd) or
+                    payload.get('source') not in ('cli', 'vscode') or
+                    payload.get('thread_source') == 'subagent'):
+                return None
+            if not read_title:
+                return ''
+            for line in stream.read(1024 * 1024).splitlines():
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                body = record.get('payload') or {}
+                text = ''
+                if record.get('type') == 'event_msg' and body.get('type') == 'user_message':
+                    text = body.get('message') or ''
+                elif record.get('type') == 'response_item' and body.get('role') == 'user':
+                    content = body.get('content') or []
+                    if isinstance(content, list):
+                        text = ' '.join(block.get('text', '') for block in content
+                                        if isinstance(block, dict) and block.get('type') in ('input_text', 'text'))
+                if isinstance(text, str) and text.strip() and not text.lstrip().startswith('<'):
+                    return text.strip().splitlines()[0]
+            return ''
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def enrich(lines, home, codex_home, *, lightweight=False):
     db = None
+    legacy_paths = None
+    def legacy_candidates(sid, supplied, indexed):
+        nonlocal legacy_paths
+        cache = Path(os.environ.get('XDG_CACHE_HOME') or Path(home) / '.cache')
+        try:
+            cached = (cache / 'claude-sessions/rollouts' / sid).read_text().strip()
+        except OSError:
+            cached = ''
+        seen = set()
+        for candidate in (supplied, indexed, cached):
+            if candidate and str(candidate) not in seen:
+                seen.add(str(candidate))
+                yield Path(candidate)
+        if legacy_paths is None:
+            legacy_paths = {}
+            for path in (Path(codex_home) / 'sessions').glob('*/*/*/rollout-*.jsonl'):
+                legacy_paths.setdefault(path.stem[-36:], []).append(path)
+        for candidate in legacy_paths.get(sid, []):
+            if str(candidate) not in seen:
+                yield candidate
+
     try:
         try:
             db = sqlite3.connect((Path(codex_home) / 'state_5.sqlite').resolve().as_uri() + '?mode=ro',
@@ -243,7 +298,7 @@ def enrich(lines, home, codex_home):
             columns = {r[1] for r in db.execute('pragma table_info(threads)')}
         except (OSError, sqlite3.Error):
             columns = set()
-        stage_candidates = _stage_candidates(db) if {'id', 'source', 'rollout_path', 'updated_at'} <= columns else {}
+        stage_candidates = _stage_candidates(db) if not lightweight and {'id', 'source', 'rollout_path', 'updated_at'} <= columns else {}
         usage_module = None
         out = []
         for line in lines:
@@ -259,12 +314,16 @@ def enrich(lines, home, codex_home):
             turn_transcript = display_transcript
             if agent == 'codex':
                 record = None
-                if {'id', 'cwd', 'name', 'title', 'source', 'archived', 'updated_at', 'rollout_path'} <= columns:
+                if {'id', 'cwd', 'rollout_path'} <= columns:
                     model_column = 'model' if 'model' in columns else 'NULL'
-                    prompt_column = 'first_user_message' if 'first_user_message' in columns else 'NULL'
-                    query = (f"select coalesce(nullif(name,''),nullif(title,''),{prompt_column},''), {model_column}, rollout_path "
-                             "from threads where cwd in (?,?) and archived=0 "
-                             "and instr(source, '\"subagent\"')=0")
+                    titles = [f"nullif({column}, '')" for column in ('name', 'title', 'first_user_message')
+                              if column in columns]
+                    title_column = "coalesce(" + ", ".join(titles + ["''"]) + ")" if titles else "''"
+                    query = f"select {title_column}, {model_column}, rollout_path from threads where cwd in (?,?)"
+                    if 'archived' in columns:
+                        query += ' and archived=0'
+                    if 'source' in columns:
+                        query += """ and instr(coalesce(source,''), '"subagent"')=0"""
                     args = [cwd, os.path.realpath(cwd)]
                     if sid != '-':
                         query += ' and id=?'
@@ -272,20 +331,37 @@ def enrich(lines, home, codex_home):
                     elif display_transcript:
                         query += ' and rollout_path=?'
                         args.append(display_transcript)
-                    elif state != 'app':
+                    elif state != 'app' or not {'updated_at', 'source', 'archived'} <= columns:
                         query += ' and 0'  # Unknown live CLI ids must not borrow old context.
                     try:
-                        record = db.execute(query + ' order by updated_at desc limit 1', args).fetchone()
+                        order = ' order by updated_at desc' if 'updated_at' in columns else ''
+                        record = db.execute(query + order + ' limit 1', args).fetchone()
                     except sqlite3.Error:
                         pass
                 if record:
                     title, recorded_model, rollout = record
                     turn_transcript = display_transcript or rollout
-                    model = recorded_model if isinstance(recorded_model, str) and recorded_model else transcript_model(rollout)
-                    if summary.startswith('(Codex desktop workspace') or summary == '(no active session)':
+                    model = recorded_model if isinstance(recorded_model, str) and recorded_model else ('-' if lightweight else transcript_model(rollout))
+                    if summary.startswith('(Codex desktop workspace') or summary == '(no active session)' or (lightweight and summary in ('', '-')):
                         summary = title or 'Untitled conversation'
                 elif summary.startswith('(Codex desktop workspace'):
                     summary = 'No conversation recorded'
+                if lightweight:
+                    supplied = display_transcript
+                    display_transcript = turn_transcript = None
+                    if sid != '-':
+                        for candidate in legacy_candidates(sid, supplied, record[2] if record else None):
+                            title = _legacy_rollout(candidate, sid, cwd,
+                                                    read_title=summary in ('', '-', 'Untitled conversation'))
+                            if title is None:
+                                continue
+                            turn_transcript = candidate
+                            recorded = transcript_model(candidate)
+                            if recorded != '-':
+                                model = recorded
+                            if summary in ('', '-', 'Untitled conversation') and title:
+                                summary = title
+                            break
             elif agent == 'claude' and sid != '-':
                 encoded = re.sub(r'[^A-Za-z0-9]', '-', cwd)
                 transcript = Path(home) / '.claude/projects' / encoded / (sid + '.jsonl')
@@ -299,7 +375,7 @@ def enrich(lines, home, codex_home):
             clean = lambda value: ' '.join(re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', str(value)).split())
             row[5] = clean(summary)
             usage = {}
-            if turn_transcript:
+            if turn_transcript and not lightweight:
                 if usage_module is None:
                     usage_module = runpy.run_path(str(Path(__file__).with_name('t_usage.py')))
                 candidates = usage_module['session_rows']([(turn_transcript, agent)])
@@ -322,7 +398,8 @@ def enrich(lines, home, codex_home):
 
 if __name__ == '__main__':
     home = str(Path.home())
-    for line in enrich(sys.stdin, home, os.environ.get('CODEX_HOME') or str(Path(home) / '.codex')):
+    for line in enrich(sys.stdin, home, os.environ.get('CODEX_HOME') or str(Path(home) / '.codex'),
+                       lightweight='--lightweight' in sys.argv[1:]):
         print(line)
 
 

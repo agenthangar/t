@@ -156,7 +156,7 @@ def test_saved_protocol_waits_for_scope_age_and_safe_last(routes, adapter, monke
     assert routes.main(['__resume-candidates', 'api', '--slot', '3']) == 0
     assert capsys.readouterr().out.split('\t')[3] == 'after'
     assert 'after-owner' in owner_file.read_text() and 'before-owner' not in owner_file.read_text()
-    assert len(calls) == 2 and all(call['fields'] == ['rows', 'resume'] for call in calls)
+    assert len(calls) == 2 and all(call['fields'] == ['rows', 'resume', 'catalog'] for call in calls)
 
 
 @pytest.mark.parametrize('json_mode', [False, True])
@@ -186,7 +186,7 @@ def test_history_invalid_scope_reports_error_without_traceback(routes, adapter, 
 
 @pytest.mark.parametrize('snippet,expected', [
     ('_t_open_picker_impl api remote', ['--open', '--repo api']),
-    ('_dev_kill_pick api', ['--repo api', '--local']),
+    ('_dev_kill_pick api', ['--repo api']),
     ('_dev_kill_pick api yes remote', ['--remote-only', '--repo api']),
     ('_t_remote_move_rows mini api browse 3 saved', ['--host mini', '--repo api', '--move-only', '--slot 3', '--session saved']),
     ('_t_move_pick api 3', ['--repo api', '--slot 3', '--move-only']),
@@ -249,3 +249,13 @@ def test_host_only_selector_uses_selected_hosts_registry(adapter):
     data = snapshot(rows=live(cwd='/remote/checkout'), host='mini')
     data['hosts'][0]['value']['scopes'] = {'api': ['/remote/checkout']}
     assert 'after' in adapter.rows(data, repo='api', local_roots=['/different/local/api'])
+
+
+def test_slot_snapshot_matches_older_association_and_workspace(adapter):
+    conversation = record(slot='7')
+    conversation['associations'] += [dict(workspace='/trees/old/api-3', host='local', slot='3', observed=1)]
+    data = snapshot(candidates=[saved(slot='7')], records=[conversation], host='peer')
+    selected, = adapter.candidates(data, ['api'], '3')
+    fields = selected.split('\t')
+    assert (fields[2], fields[3], fields[4], fields[7]) == ('3', 'after', '/trees/old/api-3', 'peer')
+    assert list(adapter.candidates(data, ['api'], '5')) == []

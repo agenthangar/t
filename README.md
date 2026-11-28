@@ -33,6 +33,23 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 [Get started](#install) · [Work from anywhere](#work-from-anywhere) · [Commands](#commands) · [Configuration](#configuration) · [Agent support](#agents) · [Coming soon](#coming-soon) · [AgentHangar](https://agenthangar.ai)
 
+## Install
+
+With Homebrew on macOS or Linux, run:
+
+```sh
+brew install agenthangar/tap/t
+```
+
+To install the latest tagged release directly, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3
+```
+
+Run `t` in a terminal to start guided setup. See [prerequisites and setup](#setup)
+for dependencies and shell setup details.
+
 ## Work from anywhere
 
 - **Start with your agent.** `t session open my-project` gives Claude Code an isolated
@@ -60,7 +77,7 @@ Supported workflows vary by agent; see the [support matrix](#agents).
 
 **Coming soon:** [Teleport for SSH access](https://github.com/agenthangar/t/issues/10).
 
-## Install
+## Setup
 
 You need **zsh, Python 3, Git, and tmux**. Install `fzf` for the interactive pickers,
 `gh` for GitHub integration, and `rsync`/SSH for moving sessions between hosts.
@@ -69,19 +86,12 @@ The test suite runs on macOS and Linux with Python 3.12.
 To try a fresh install and worktree session in a disposable Docker container, see
 the [playground guide](docs/playground.md).
 
-On macOS, the [rnnr menu-bar companion](apps/rnnr/README.md) shows detached
+On macOS, the [standalone rnnr menu-bar app](apps/rnnr/README.md) shows detached
 sessions and opens the existing Terminal flows. Build it from this checkout.
 
-With Homebrew:
-
-```sh
-brew install agenthangar/tap/t
-t
-```
-
-Homebrew installs the formula without changing your home directory. Run `t` in a
-terminal for guided setup: choose agents, review shell and agent integrations,
-select repositories, and start a session. Missing agent tools are optional installs.
+Homebrew installs the formula without changing your home directory. Guided setup
+lets you choose agents, review shell and agent integrations, select repositories,
+and start a session. Missing agent tools are optional installs.
 The review shows the commands and configuration changes before applying them.
 Setup and terminal session launch find native agents in `~/.local/bin` before that
 directory is on your shell's `PATH`. Choose agent sign-ins separately: select
@@ -118,14 +128,9 @@ output never start onboarding. Bare `t` without a terminal prints help.
 If an older installation shadows Homebrew, `type -a t` identifies which copy your
 shell is running. `t system integrate` remains available for explicit maintenance.
 
-Or install a versioned release directly:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/agenthangar/t/main/scripts/install-release.py | python3
-```
-
-This installs the latest tagged release under `~/.local/share/t/releases/` and
-links the command into `~/bin`. No repository checkout or pip packages are needed.
+The direct release installer places the latest tagged release under
+`~/.local/share/t/releases/` and links the command into `~/bin`. No repository
+checkout or pip packages are needed.
 The installer verifies the release archive's SHA-256 checksum before unpacking it.
 Set `XDG_DATA_HOME` or `T_INSTALL_DIR` to choose another installation location.
 You can also download and inspect the installer before running it with Python 3.
@@ -163,6 +168,10 @@ labeled. It does not allocate test terminals, restart tmux, execute shell startu
 fetch Git refs, or enable GitHub CLI telemetry. A normal snapshot cannot rule out
 an earlier transient failure. `--repair` fixes shell wiring, not kernel resources.
 
+If local slots are missing, run `t ls --local -w` on that machine, then `t doctor`.
+**Session discovery** reports tmux and cached slot counts, the collector socket,
+and any recorded failure.
+
 Doctor also shows the latest five **Recent session attempts**, including recorded
 failures before an agent or pane log existed. Use `t doctor --recent 20` (or
 `t system diagnose --recent 20`) for more. Each receipt shows the operation,
@@ -183,7 +192,7 @@ t agent install            # choose and install agent CLIs; review their vendor 
 t repo add ~/config/my-project  # register a checkout you already have
 t config setup             # select checkouts under ~/config and optional SSH hosts
 t session open my-project  # start an isolated worktree + tmux slot
-t session list             # running sessions across every repository
+t session list             # running sessions in the current scope
 ```
 
 Sessions open directly into the agent without displaying internal shell commands.
@@ -215,8 +224,8 @@ source is stopped. Attach on the source host, align the configuration for future
 work, or use history's verified resume into a fresh local workspace. Existing
 worktrees and agent history should not be manually renamed to bridge hosts.
 
-`t open` browses sessions across all local repositories, including from inside a
-worktree; `t open my-project` filters to that repo. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
+`t open` browses the current registered repository, or all repositories outside a
+checkout. `t open my-project` selects a repository and `--all` widens the scope. Attached CLI sessions are hidden by default; `--attached` includes them. Idle sessions and
 inactive CLI sessions remain visible. An explicit slot still opens directly.
 
 `t resume 5` browses every saved conversation associated with slot 5 in the
@@ -301,14 +310,15 @@ to that owner. `--fg` and `--host` retain their selected destinations.
 with slot 2, including live and saved work and conversations later moved to
 another slot. Even one conversation waits for selection. Ctrl-F shows inactive
 work; Ctrl-A shows all, and Escape cancels without attaching or resuming.
-Without a terminal, an explicit slot retains newest-saved selection.
+Without a terminal, a plain slot resume lists its history. If a move was
+interrupted, running its printed retry command continues that transfer.
 
 Press Ctrl-B in the filtered resume picker to resume the most recently verified
 closed conversation, or run `t session resume --last --wait` directly.
 Use `t session resume api 3 --last` to scope the search to one slot, or
 `--all` to search every repository. Exact selection requires a unique verified
 close and complete discovery. Session open, close, resume, move and list accept
-`-w` (`--wait`) to observe discovery for at most 30 seconds. Ctrl-C leaves the
+`-w` (`--wait`) to wait for the selected refresh to complete or fail. Ctrl-C leaves the
 refresh running. Redirected waits stay silent and prompt-free.
 
 Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
@@ -521,10 +531,10 @@ if needed). To rename a registered host, choose Hosts → host → Short name,
 then Save changes. SSH targets and default-host references are preserved.
 First-run onboarding also generates unique short names for selected hosts.
 
-`t session move` (also `t move`) opens a multi-selection picker of current local
-Claude and Codex CLI conversations, then a destination host picker. Tab
-marks sessions; Enter moves the marks or the focused session. Use `-r`/`--remote`
-to include registered remote sources, `--all` to browse every repository, or name
+`t session move` (also `t move`) shows current local and remote Claude and
+Codex CLI conversations, then a destination host picker. Tab marks sessions.
+Enter moves the marks or the focused session. Use `--source` to select hosts,
+`--all` to browse every repository, or name
 `api` to scope selection. The current checkout scopes the default view; outside
 a checkout all repositories appear. Attached and detached sessions are included;
 saved history and desktop reservations are excluded. Selection also opens inside
@@ -1855,21 +1865,20 @@ These integrations are planned and are not available in the current release:
 
 ```sh
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest --cov --cov-fail-under=97
+python3 scripts/local_smoke.py
 zsh -n t.plugin.zsh
 ```
 
-Local test runs skip native macOS UI tests because their disposable app opens
-windows and takes desktop focus.
-For intentional native terminal verification on a disposable macOS runner:
+Routine CI runs on Linux. To verify a Mac-specific change on a hosted Mac, select
+`discovery` for live session metadata and process ownership, `terminal` for PTY
+and picker behavior, or `native` for macOS integration.
 
 ```sh
-python3 -m pytest --run-macos-ui
+gh workflow run ci.yml --ref BRANCH -f run_macos=true -f macos_scope=discovery
 ```
 
-Default CI runs Linux only. To explicitly run macOS and native desktop checks
-on disposable runners, manually launch CI with `run_macos=true`. Selecting the
-test file or `-m macos_ui` alone does not enable desktop interaction.
+Only the native scope enables desktop interaction. See [CI validation](docs/ci.md)
+for local commands, test selections, and the full Linux coverage gate.
 
 The installer has no pip runtime dependencies. Older Python versions use the
 [bundled TOML parser](libexec/vendor/README.md).
@@ -1970,8 +1979,10 @@ Session discovery is served from a shared in-memory cache with hourly expiry
 and asynchronous disk persistence. Session open, close, resume, move, list and
 slot history wait up to 30 seconds when the requested scope is empty and refresh
 is pending; available scoped results and settled empty scans return immediately.
-Explicit `-w` (`--wait`) also observes refresh when results exist. Redirected and JSON
-results follow the same bound without prompting. Failed
+Explicit `-w` (`--wait`) waits for one requested refresh through completion or
+failure. Local slots show verified title, model and turn on first display.
+Use `--source local|remote|all|HOST` to choose hosts. Ctrl-U refreshes a picker
+in place. Redirected lists print once. Failed
 hosts pause discovery retries for one hour. Use `t hosts reset mini` to allow an
 early retry on the next browse. See [session cache behavior and storage](docs/session-cache.md).
 
@@ -2009,5 +2020,5 @@ Resume the most recently verified closed conversation with
 `t session resume --last -w`, or scope it with `t session resume api 3 --last`.
 `--all` searches every repository; `--last` considers all saved history and refuses
 missing, tied or incomplete close evidence. Session open, close, resume, move and
-list accept `-w` or `--wait` to observe discovery for at most 30 seconds. Ctrl-C leaves
+list accept `-w` or `--wait` to wait for the selected refresh to complete or fail. Ctrl-C leaves
 refresh running; redirected waits stay silent and never prompt.

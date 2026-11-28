@@ -2774,7 +2774,9 @@ def publish_association(value):
         except (OSError, ValueError, KeyError, TypeError):
             pass  # Optional native observations cannot prevent history publication.
     if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
-        _CACHE_REQUEST('event', {'targets': ['local']})
+        operation = ('catalog-changed' if any(a.get('evidence') in ('resume', 'launch')
+                     for a in value.get('associations', [])) else 'event')
+        _CACHE_REQUEST(operation, {'targets': ['local']})
 
 
 def record_association(sid, agent, workspace, transcript_path='', event='launch', interface='unknown'):

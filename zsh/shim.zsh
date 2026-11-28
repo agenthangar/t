@@ -65,6 +65,17 @@ t() {
 
 _t_dispatch() {
   emulate -L zsh
+  local -x T_SESSION_SOURCE=${T_SESSION_SOURCE:-}
+  if [[ $1 == (ls|list|open|kill|resume|move|beam) || $1 == session && $2 == (list|ls|open|close|move|resume) ]] &&
+     [[ -n ${(M)@:#(--source|--source=*|--repo|--repo=*|--all|-a)} ]]; then
+    local scope_script
+    scope_script=$(python3 "$T_HOME/libexec/t_session_scope.py" "$@") || return $?
+    eval "$scope_script"
+    if [[ -n $T_SESSION_SOURCE && $T_SESSION_SOURCE != (local|remote|all) ]]; then
+      local source_alias=${T_SESSION_SOURCE#host:}
+      [[ -n ${REMOTE_HOSTS[$source_alias]:-} ]] || { print -u2 "t: unknown source host $source_alias"; return 2; }
+    fi
+  fi
   # Help belongs to the executable, including nested command help. A remote
   # command's own --help is data and must pass through unchanged.
   local a machine_output= help_requested= help_boundary= verb="$1" action="$2"
@@ -134,6 +145,8 @@ _t_dispatch() {
     shell_verb=
   fi
   # Discovery waits are invocation scoped, including aliases and remote workers.
+  local _T_PROGRESS=0
+  [[ -t 1 && -t 2 ]] && _T_PROGRESS=1
   local -x T_DISCOVERY_EXPLICIT_WAIT=${T_DISCOVERY_EXPLICIT_WAIT:-0}
   if [[ $shell_verb == (open|resume|move|beam|remote) && ${(M)shell_args:#(-w|--wait)} != '' ]]; then
     T_DISCOVERY_EXPLICIT_WAIT=1
@@ -146,19 +159,24 @@ _t_dispatch() {
   if [[ $shell_verb == resume ]] &&
      { [[ ${#shell_args} == 1 && ${shell_args[1]} == <-> ]] ||
        [[ ${#shell_args} == 2 && ${shell_args[1]} != -* && ${shell_args[2]} == <-> ]]; }; then
-    # An explicit retry reconciles a recorded move before browsing saved data.
-    local recovery_repo recovery_slot recovery recovery_rc=0
-    if (( $#shell_args == 2 )); then
-      recovery_repo=$(_dev_resolve_repo "$shell_args[1]") || recovery_repo=$shell_args[1]
-      recovery_slot=$shell_args[2]
-    else
-      recovery_repo=$(_t_infer_repo)
-      recovery_slot=$shell_args[1]
+    # The retry printed by an interrupted move is a plain numbered resume.
+    # Recover its original transaction before looking up live or saved owners.
+    if [[ -z $T_SESSION_SOURCE || $T_SESSION_SOURCE == all ]]; then
+      local recovery_repo recovery_slot=${shell_args[-1]} recovery recovery_rc=0
+      if (( $#shell_args == 2 )); then
+        recovery_repo=$(_dev_resolve_repo "$shell_args[1]") || recovery_repo=$shell_args[1]
+      else
+        recovery_repo=$(_t_infer_repo)
+      fi
+      if [[ -n $recovery_repo ]]; then
+        recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$recovery_repo" "$recovery_slot") || recovery_rc=$?
+        if (( recovery_rc == 0 )); then eval "$recovery"; return $?
+        elif (( recovery_rc != 3 )); then return $recovery_rc; fi
+      fi
     fi
-    if [[ -n $recovery_repo ]]; then
-      recovery=$(python3 "$T_HOME/libexec/t_lifecycle.py" pending "$recovery_repo" "$recovery_slot") || recovery_rc=$?
-      if (( recovery_rc == 0 )); then eval "$recovery"; return $?
-      elif (( recovery_rc != 3 )); then return $recovery_rc; fi
+    if [[ -t 0 && -t 1 ]]; then
+      _T_RESUME_REQUIRE_PICKER=1 _t_resume "${shell_args[@]}" --days all
+      return $?
     fi
     local -a history_wait
     [[ $T_DISCOVERY_EXPLICIT_WAIT == 1 ]] && history_wait+=(--wait)
@@ -399,6 +417,48 @@ _t_open_impl() {
       *)                 a+=("$arg"); [[ $arg == -* ]] && cli_intent=1 ;;
     esac
   done
+  if [[ -n $T_SESSION_SOURCE ]]; then
+    local source_host=${T_SESSION_SOURCE#host:}
+    if [[ -n $host && $T_SESSION_SOURCE != all && $host != $source_host &&
+          ! ( $T_SESSION_SOURCE == remote && $host != local ) ]]; then
+      print -u2 't open: host is outside --source scope'; return 2
+    fi
+    if [[ $T_SESSION_SOURCE == local ]]; then
+      local -A REMOTE_HOSTS=()
+      local_only=1
+      (( ${a[(Ie)--local]} )) || a+=(--local)
+    fi
+    local source_handle= source_repo=
+    for arg in "${rest[@]}"; do
+      [[ $arg == -* ]] && continue
+      if [[ $arg == fg ]]; then
+        source_handle=${source_repo:-$(_t_infer_repo fg)}
+        [[ -n $source_handle ]] || source_handle=fg
+      elif _dev_fg_handle "$arg" && [[ -z ${DEV_REPOS[$arg]:-} ]]; then source_handle=$arg
+      elif [[ -z $source_repo ]]; then source_repo=$arg; fi
+    done
+    if [[ -n $source_handle && $T_SESSION_SOURCE == remote && -z $host ]]; then
+      _dev_remote_fg_open "$source_handle"
+      return $?
+    fi
+    if [[ -n $source_handle && $T_SESSION_SOURCE != (local|remote|all) && -z $host ]]; then
+      host=$source_host
+    fi
+    if [[ $T_SESSION_SOURCE == remote ]]; then
+      local source_arg
+      for source_arg in "${rest[@]}"; do
+        if [[ $source_arg == <-> ]]; then remote=1; a+=(-r); break; fi
+      done
+    fi
+    # A direct target on a named source routes to that exact host. Bare browsing
+    # continues through the shared scoped discovery path.
+    if [[ $T_SESSION_SOURCE != (local|remote|all) && -z $host ]]; then
+      local source_arg
+      for source_arg in "${rest[@]}"; do
+        if [[ $source_arg == <-> ]]; then host=$source_host; break; fi
+      done
+    fi
+  fi
   [[ -z $isnew ]] || a+=(new)
   [[ -n $want_host || ( -n $has_host && -z $host ) || $host == -* ]] && { echo "t open: --host requires a value" >&2; return 2; }
   if [[ -n $local_only && ( -n $remote || -n $host ) ]]; then
@@ -410,15 +470,17 @@ _t_open_impl() {
   fi
 
   # A slot-less interactive open browses the same complete rows as `t ls`.
-  # Bare means every repo across local/remote hosts; a named repo filters.
+  # Bare uses the current registered repo, or all repos outside a checkout.
   # Explicit slots, fresh sessions, agent flags and foreground requests retain
   # their direct paths. Resolve the picker before starting a fresh session.
-  local picker_ok=1 picker_repo= picker_rc picker_remote=1 picker_alias
+  local picker_ok=1 picker_repo= picker_rc picker_remote=1 picker_alias picker_all=
+  [[ $T_SESSION_SOURCE != local ]] || picker_remote=
   [[ -n $local_only ]] && picker_remote=
   if [[ -z $host && -z $isnew && -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
     for arg in "${rest[@]}"; do
       case $arg in
         --cli|--attached|-l|--local|--here|-r|--remote) ;;
+        -a|--all) picker_all=1 ;;
         -*) picker_ok= ;;
         *)
           picker_rc=1
@@ -434,6 +496,7 @@ _t_open_impl() {
       esac
     done
     if [[ -n $picker_ok ]]; then
+      [[ -n $picker_repo || -n $picker_all ]] || picker_repo=$(_t_infer_repo)
       if [[ -n $local_only && -n $remote ]]; then
         print -u2 -- 't open: --local/--here and -r/--remote are mutually exclusive'
         return 2
@@ -536,7 +599,7 @@ _t_open_picker() {
     fi
     return $picker_result
   } always {
-    rm -f -- "$_T_OPEN_NOTICE_FILE"
+    rm -f -- "$_T_OPEN_NOTICE_FILE" "$_T_OPEN_NOTICE_FILE.owners"
   }
 }
 
@@ -580,13 +643,15 @@ _t_open_picker_impl() {
   done
   if (( $#candidates == 0 )); then
     [[ -z $6 ]] || return 2
-    if [[ -s $_T_OPEN_NOTICE_FILE ]]; then
+    # A verified local inventory may be empty while enrichment is still busy.
+    # Keep its picker open to receive the first ready slot.
+    if [[ -s $_T_OPEN_NOTICE_FILE && ( ! -s $_T_OPEN_NOTICE_FILE.owners || $(<"$_T_OPEN_NOTICE_FILE.owners") == null ) ]]; then
       print -u2 't open: discovery is incomplete; no session was started'
       return 1
     fi
   fi
   [[ -n $repo ]] && format_args+=(--repo)
-  rows=$(print -rl -- "${candidates[@]}" | COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
+  rows=$(print -rl -- "${candidates[@]}" | T_OPEN_OWNERS="$_T_OPEN_NOTICE_FILE.owners" COLUMNS=${COLUMNS:-80} python3 "$T_HOME/bin/t" __session-picker-rows --compact --header --last-turn "${format_args[@]}") || return 1
   [[ -n $rows || $#candidates == 0 ]] || return 1
   local columns=${rows%%$'\n'*}
   rows=${rows#*$'\n'}
@@ -625,11 +690,12 @@ _t_open_picker_impl() {
       done
       print -r -- '_dev_kill_selected "$1"'
     } > "$action_dir/close.zsh"
-    local new_session=1
+    local new_session=1 observe_open=''
+    [[ -z $6 && -f $_T_OPEN_NOTICE_FILE.owners ]] && observe_open=local
     # Explicit remote callers have their own fresh-session routing. A remote
     # browse must never turn Ctrl-N into a local launch on the calling machine.
     [[ -z $6 && -z $7 ]] || new_session=
-    selected=$(T_PICKER_NEW_SESSION="$new_session" T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
+    selected=$(T_OPEN_OBSERVE="$observe_open" T_OPEN_REPO="$repo" T_OPEN_REMOTE="$remote" T_PICKER_NEW_SESSION="$new_session" T_PICKER_KILL_CALLBACK="$action_dir/close.zsh" T_PICKER_NOTICE="$(<"$_T_OPEN_NOTICE_FILE")" \
       T_PICKER_SOURCE_ROWS="${(F)candidates}" T_PICKER_COLUMNS="$columns" T_PICKER_SESSION_FILTERS=open \
       _t_fzf_filtered "$filtered" "$rows" open unattached \
       "" "$include_attached" --prompt="open ${repo:+$repo }> " --with-nth=5,4)
@@ -637,6 +703,11 @@ _t_open_picker_impl() {
   } always {
     rm -rf -- "$action_dir"
   }
+  # The caller reserves 2 for no candidates. Shell and fzf errors also use 2.
+  if (( picker_rc == 2 )); then
+    print -u2 -- 't open: session picker failed.'
+    return 1
+  fi
   (( picker_rc == 0 )) || return $picker_rc
   [[ -n $selected ]] || return 130
   _t_open_selected "$selected" "$app" "$cli"
@@ -687,6 +758,21 @@ _t_list_snapshot() {
   _t_open_selected "$selected" "" ""
 }
 
+# A numbered picker row identifies its server process and immutable session.
+_t_open_existing() {
+  local label=$1 token=$2 socket=$3 actual
+  actual=$(tmux -S "$socket" display-message -p -t "=dev-$label:" '#{pid}/#{session_id} #{DEV_AGENT}') || return 1
+  if [[ ${actual%% *} != "$token" ]]; then
+    print -u2 't open: selected session changed. Refresh and select it again.'
+    return 1
+  fi
+  local target="${token#*/}:"
+  _dev_workflow_attach "${actual#* }"
+  _t_terminal_close_install "dev-$label"
+  if [[ -n $TMUX ]]; then tmux -S "$socket" switch-client -t "$target"
+  else tmux -S "$socket" attach-session -t "$target"; fi
+}
+
 # Multi-selections each get a new window; a single selection uses this terminal.
 # Preserve the selected host/interface so a configured default never converts an
 # existing owner as a side effect.
@@ -697,6 +783,40 @@ _t_open_selected() {
   for row in "${rows[@]}"; do
     fields=("${(@ps:\t:)row}")
     host=$fields[1]; label=$fields[2]; state=$fields[3]
+    if [[ $host == local && $state == (attached|detached) && -n ${fields[7]:-} && ${fields[7]} != - && $label == *-<-> ]]; then
+      if [[ $(_dev_session_sid "dev-$label") != "$fields[7]" ]]; then
+        print -u2 't open: selected conversation changed. Refresh and select it again.'
+        rc=1
+        continue
+      fi
+    fi
+    if [[ $host != local && $state == (attached|detached) && -n ${fields[7]:-} && ${fields[7]} != - && $label == *-<-> ]]; then
+      local target=${REMOTE_HOSTS[$host]:-} observed_sid probe
+      [[ -n $target ]] || { print -u2 't open: selected host is unavailable'; rc=1; continue; }
+      probe="_dev_session_sid ${(q):-dev-$label}"
+      observed_sid=$(_dev_remote_scan_with_timeout "$target" "$probe" 15) || observed_sid=
+      if [[ $observed_sid != "$fields[7]" ]]; then
+        print -u2 't open: selected conversation changed or could not be verified. Refresh and select it again.'
+        rc=1
+        continue
+      fi
+    fi
+    if [[ $host == local && ${fields[6]:-} == unverified ]]; then
+      print -u2 't open: session identity unavailable. Refresh and select it again.'
+      rc=1
+      continue
+    fi
+    if [[ $host == local && ${fields[6]:-} == <->/\$<-> ]]; then
+      local socket=${TMUX%%,*}
+      [[ -n $socket ]] || socket="${TMUX_TMPDIR:-/tmp}/tmux-$UID/default"
+      if (( $#rows > 1 )); then
+        cmd="source ${(q)T_HOME}/t.plugin.zsh && _t_open_existing ${(q)label} ${(q)fields[6]} ${(q)socket}"
+        _dev_open_window "$cmd" || rc=1
+      else
+        _t_open_existing "$label" "$fields[6]" "$socket" || rc=1
+      fi
+      continue
+    fi
     if [[ $state == app ]]; then
       print -u2 -- "t: $label on $host uses a retired integration; release its owner there, then use t session resume"
       rc=1
@@ -1074,13 +1194,18 @@ _t() {
         (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]] && _message 'chat id or unique prefix' || _values 'flag' --host --from -p --pick -a --attach -h --help
       fi ;;
     session/open|session/close|session/read|session/view-plan|session/paste|session/move|session/resume|session/cd|session/pop)
-      if [[ ${words[CURRENT-1]} == --host || ${words[CURRENT-1]} == --from ]]; then
+      if [[ ${words[CURRENT-1]} == --source ]]; then
+        _values 'source' local remote all ${(k)REMOTE_HOSTS}
+      elif [[ ${words[CURRENT-1]} == --repo ]]; then
+        _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+      elif [[ ${words[CURRENT-1]} == --host || ${words[CURRENT-1]} == --from ]]; then
         if [[ $action == move && ${words[CURRENT-1]} == --host ]]; then _values 'host' local ${(k)REMOTE_HOSTS}
         else _values 'host' ${(k)REMOTE_HOSTS}; fi
       elif [[ ${words[CURRENT-1]} == --url ]]; then _message 'preview URL'
       elif [[ ${words[CURRENT-1]} == --plan ]]; then _files -g '*.md'
       elif [[ ${words[CURRENT]} == -* ]] || (( CURRENT > first + 1 )); then
         local -a flags=(-h --help)
+        [[ $action == (open|close|move|resume) ]] && flags+=(--repo --source -a --all)
         case $action in
           open) flags+=(-w --wait --new --fg --cli -l --local --here -r --remote --host --codex --claude --force -y --yes) ;;
           close) flags+=(-y --yes -r --remote -w --wait) ;;
@@ -1111,8 +1236,11 @@ _t() {
     hosts/list)
       _values 'flag' --json -h --help ;;
     session/list)
-      if (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; then _values 'repo' "${(@f)$(_dev_repo_selectors)}"
-      else _values 'flag' -r --remote -l --local -a --all -w --wait -h --help; fi ;;
+      if [[ ${words[CURRENT-1]} == --source ]]; then
+        _values 'source' local remote all ${(k)REMOTE_HOSTS}
+      elif [[ ${words[CURRENT-1]} == --repo ]] || { (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]]; }; then
+        _values 'repo' "${(@f)$(_dev_repo_selectors)}"
+      else _values 'flag' --repo --source -r --remote -l --local -a --all -w --wait -h --help; fi ;;
     session/push)
       _values 'flag' -p --pick -a --all -h --help ;;
     session/search)

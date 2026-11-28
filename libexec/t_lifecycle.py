@@ -1035,6 +1035,7 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
         operation = Operation(verb, arguments, token=operation.token, directory=directory)
         if operation.value['phase'] == 'complete':
             return operation.value.get('result', '')
+        published = False
         try:
             if verb in ('move', 'restore'):
                 return move(operation, adapter)
@@ -1056,6 +1057,9 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
                     ready_args.append(launch)
                 result = operation.step('ready', lambda: adapter.call('ready', *ready_args), repeat=True)
                 operation.step('writer-ready', lambda: verify_ready(agent, sid), repeat=True)
+                if verb == 'resume':
+                    _resume_changed()
+                    published = True
                 operation.step('record', lambda: adapter.call('record', verb, session, workspace, agent, sid))
             elif verb in ('close', 'auto-close'):
                 session, workspace, sid, agent = arguments[:4]
@@ -1084,7 +1088,16 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
             receipts = operation.value.get('receipts', {})
             pending = operation.value.get('pending')
             if any(k in receipts or pending == k for k in ('launch', 'stop', 'ready', 'record')):
-                _discovery_changed(arguments[:2] if verb in ('move', 'restore') else ['local'])
+                if verb == 'resume':
+                    if not published:
+                        _resume_changed()
+                else:
+                    _discovery_changed(arguments[:2] if verb in ('move', 'restore') else ['local'])
+
+
+def _resume_changed():
+    live = runpy.run_path(str(ROOT / 'libexec/t_live_inventory.py'))
+    live['notify_ready'](os.environ.get('T_RESUME_READY_SOCKET'))
 
 
 def _discovery_changed(targets):

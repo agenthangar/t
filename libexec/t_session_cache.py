@@ -124,13 +124,16 @@ def _snapshot_identities():
         yield from _compatible_identities(canonical)
 
 
+_LIVE = runpy.run_path(str(SOURCE / 'libexec/t_live_inventory.py'))
+
+
 def _identity():
     brew = _homebrew()
     return [brew['opt'] if brew else str(SOURCE), os.path.expanduser('~'),
             os.environ.get('XDG_CACHE_HOME', ''), os.environ.get('XDG_STATE_HOME', ''),
             os.environ.get('XDG_CONFIG_HOME', ''),
             os.environ.get('CODEX_HOME', ''), os.environ.get('CLAUDE_CONFIG_DIR', ''),
-            os.path.realpath(_local_rc()), os.environ.get('TMUX_TMPDIR', '')]
+            os.path.realpath(_local_rc()), os.environ.get('TMUX_TMPDIR', ''), _LIVE['socket_path']()]
 
 
 def _compatible_identities(source=None):
@@ -188,7 +191,9 @@ def linked_source(link):
 
 
 def _retirement_identities(source):
-    yield from _compatible_identities(source)
+    for identity in _compatible_identities(source):
+        yield identity
+        yield identity[:-1]  # Retire pre-socket listeners without adopting their rows.
     identity = _identity()
     # Unlike snapshot adoption, retiring an obsolete listener needs no cache
     # data. An empty old RC key belongs to the implicit configuration; include
@@ -196,6 +201,7 @@ def _retirement_identities(source):
     if identity[7] == os.path.realpath(_local_rc(explicit=False)):
         identity[0], identity[7] = str(source), ''
         yield identity
+        yield identity[:-1]
 
 
 def _same_installation(previous):
@@ -342,7 +348,7 @@ def _canonical_source():
 
 def _revision():
     return [int((SOURCE / name).stat().st_mtime_ns) for name in
-            ('bin/t', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py', 'libexec/t_history.py', 'libexec/t_config_path.py')]
+            ('bin/t', 'libexec/t_session_cache.py', 'libexec/t_session_discovery.py', 'libexec/t_history.py', 'libexec/t_config_path.py', 'libexec/t_live_inventory.py')]
 
 
 class DiscoveryError(ValueError):
@@ -359,6 +365,71 @@ def _diagnostic(spec, detail):
     with os.fdopen(fd, 'w') as stream:
         stream.write(detail[-65536:])
     return str(path)
+
+
+
+def _report_path(stage):
+    return _database().parent / 'diagnostics' / (_digest([_identity(), 'local'])[:24] + '-' + stage + '.json')
+
+
+def _report(stage, status):
+    # Discovery evidence must never cause the collection itself to fail.
+    temporary = None
+    try:
+        path = _report_path(stage)
+        _private(path.parent)
+        if status.get('error'):
+            clean = runpy.run_path(str(SOURCE / 'libexec/t_lifecycle.py'))['diagnostic_error']
+            status['error'] = clean(status['error'], 400)
+            status['last_failure'] = dict(at=status['attempt'], error=status['error'])
+        elif path.is_file() and not path.is_symlink():
+            try:
+                with path.open() as previous:
+                    status['last_failure'] = json.loads(previous.read(16384)).get('last_failure')
+            except (OSError, AttributeError, ValueError):
+                pass
+        with tempfile.NamedTemporaryFile('w', dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(status, stream)
+        temporary.replace(path)
+    except (OSError, ValueError, TypeError):
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def doctor_inventory(count, actual_socket):
+    helper = runpy.run_path(str(SOURCE / 'libexec/t_lifecycle.py'))
+    lines = [f'Tmux now       {count if count is not None else "unknown"} numbered slots on {actual_socket or "unknown socket"}']
+    for stage in ('inventory', 'enrichment'):
+        try:
+            raw, _ = helper['diagnostic_read'](_report_path(stage), 16384)
+            record = json.loads(raw)
+            age = max(0, int(time.time() - record['attempt']))
+            lines.append(f'{stage.capitalize():14} {age}s ago, took {record["duration"]}s')
+            if stage == 'inventory':
+                lines.append(f'Collector      {record["count"] if record["count"] is not None else "unknown"} numbered slots on {record["socket"]}')
+                if actual_socket and os.path.realpath(actual_socket) != os.path.realpath(record['socket']):
+                    lines.append('Observation    collector used a different socket')
+                elif count is not None and record.get('count') is not None and count != record['count']:
+                    lines.append('Observation    numbered-slot count changed since the scan')
+                if record.get('checked'):
+                    lines.append(f'Live snapshot  {max(0, int(time.time() - record["checked"]))}s old')
+            if record.get('error'):
+                lines.append('Failure        ' + helper['diagnostic_error'](record['error'], 400))
+            elif record.get('last_failure'):
+                failure = record['last_failure']
+                age = max(0, int(time.time() - failure['at']))
+                lines.append(f'Last failure   {age}s ago, ' + helper['diagnostic_error'](failure['error'], 400))
+            if record.get('retry_at', 0) > time.time():
+                lines.append(f'Retry          in {math.ceil(record["retry_at"] - time.time())}s')
+        except (OSError, ValueError, TypeError, KeyError, OverflowError):
+            lines.append(f'{stage.capitalize():14} no readable observation')
+    return lines
 
 
 def _service_env():
@@ -506,9 +577,11 @@ class _Memory:
         self.entries, self.generations, self.artifacts = {}, {}, {}
         self.failures, self.reset_epochs = {}, {}
         self.active_targets = set()
+        self.instance = os.urandom(12).hex()
         self.waiting = {}
         self.overlays = {}
         self.export_versions = {}
+        self.inventory = None
         self.collect, self.clock, self.persist = collect, clock, persist
         self.submit = submit or self._thread
         self.lock = threading.RLock()
@@ -553,6 +626,8 @@ class _Memory:
                         or ('value' in entry and not isinstance(entry['value'], dict))):
                     continue
                 entry['refreshing'] = False
+                entry.pop('refresh_revision', None)
+                entry.pop('peer_ticket', None)
                 entry['pending'] = False
                 entry.pop('last_used', None)
                 entry.pop('requested', None)
@@ -578,6 +653,19 @@ class _Memory:
 
     def handle(self, operation, payload):
         with self.lock:
+            if operation == 'live-view':
+                host = dict(value=None)
+                if self.inventory:
+                    self.inventory.request()
+                    self.inventory.project(host)
+                return host
+            if operation == 'catalog-changed':
+                for entry in self.entries.values():
+                    if entry['spec']['target'] == 'local':
+                        entry['dirty'] = True
+                        if entry['refreshing']:
+                            entry['catalog_changed'] = True
+                return {'scheduled': True}
             if operation == 'status':
                 return dict(loading=self.loading, persistence_error=self.persistence_error, protocol=VERSION)
             if operation == 'artifact':
@@ -685,6 +773,11 @@ class _Memory:
                     for entry in self.entries.values():
                         if entry['spec']['target'] == target:
                             self._overlay(entry)
+                if self.inventory and 'local' in targets and len(payload.get('row', '').split('\t')) >= 7:
+                    if payload.get('event') == 'close':
+                        self.inventory.close(payload['row'].split('\t')[2])
+                    else:
+                        self.inventory.request(changed=True)
                 self.persist()
                 return {'invalidated': targets}
             if operation != 'discover':
@@ -711,19 +804,27 @@ class _Memory:
                         entry['last_used'] = now
                     retry = failure.get('retry_at', 0)
                     missing = any(field not in entry.get('value', {}) for field in payload.get('fields', []) if field in ('rows', 'resume', 'catalog', 'mcp', 'scopes'))
-                    force = payload.get('refresh') is True and spec['target'] not in self.active_targets and not entry.get('pending')
+                    # Live commands request their own local inventory and verified details.
+                    # Forcing historical reconciliation here would compete with the foreground read.
+                    force_request = payload.get('refresh') is True and not (
+                        spec['target'] == 'local' and self.inventory and payload.get('live') == 'wait')
+                    force = force_request and spec['target'] not in self.active_targets and not entry.get('pending')
                     stale = bool(entry.get('dirty')) or not entry.get('checked') or now - entry['checked'] >= TTL or now < entry['checked']
                     if not observe:
                         if spec['target'] == 'local':
                             due = stale or missing or entry.get('pending') or 'catalog' not in entry.get('value', {}) or now - entry['checked'] > LOCAL_INTERVAL
                             if due or force:
                                 entry['requested'] = True
+                        if force_request and not entry['refreshing'] and not entry.get('pending'):
+                            entry['force_refresh'] = True
+                            entry['requested'] = True
+                            entry['next_poll'] = 0
                         if force and not self.loading and not entry['refreshing']:
                             entry['force_refresh'] = True
                             self._start(key, entry)
                         elif spec['target'] == 'local':
                             self._schedule(key, entry)
-                        elif ((stale or missing or entry.get('pending')) and not self.loading
+                        elif ((stale or missing or entry.get('pending') or entry.get('requested')) and not self.loading
                               and not entry['refreshing'] and spec['target'] not in self.active_targets
                               and now >= retry and now >= entry.get('next_poll', 0)):
                             self._start(key, entry)
@@ -739,13 +840,25 @@ class _Memory:
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
                                       observed=entry.get('observed', entry['checked']),
                                       resume_pr_auth_failed=auth_failed,
-                                      timings=entry.get('timings', {}),
+                                      timings=entry.get('timings', {}), refresh_revision=entry.get('refresh_revision', 0),
+                                      refresh_requested=entry.get('refresh_revision', 0) + int(
+                                          bool(entry['refreshing'] or entry.get('pending') or
+                                               entry.get('requested') and (force_request or now >= retry))),
+                                      **({'enriched': entry.get('terminals')} if payload.get('live') else {}),
                                       value=copy.deepcopy({k: v for k, v in entry['value'].items()
                                                            if k in payload.get('fields', entry['value'])}) if 'value' in entry else None))
                 else:
                     hosts.append(dict(host=spec.get('host', spec['target']), target=spec['target'],
-                                      checked=0, stale=True, refreshing=False, error='', retry_at=0, value=None))
-            return dict(hosts=hosts, loading=self.loading, persistence_error=self.persistence_error)
+                                      checked=0, stale=True, refreshing=False, error='', retry_at=0, value=None,
+                                      refresh_revision=0, refresh_requested=int(self.loading)))
+            if self.inventory and payload.get('live'):
+                for host in hosts:
+                    if host['target'] == 'local':
+                        if not observe:
+                            host['live_requested'] = self.inventory.request(explicit=payload.get('live') == 'wait')
+                        self.inventory.project(host, host.pop('enriched', None))
+                        host['refreshing'] |= host.get('live_pending', False)
+            return dict(hosts=hosts, loading=self.loading, persistence_error=self.persistence_error, instance=self.instance)
 
     def _start(self, key, entry):
         target = entry['spec']['target']
@@ -785,7 +898,9 @@ class _Memory:
                                         'refresh': payload.get('refresh') is True})
         host = view['hosts'][0]
         value = host.get('value')
-        health = {k: host.get(k) for k in ('checked', 'observed', 'refreshing', 'error', 'error_kind')}
+        health = {k: host.get(k) for k in ('checked', 'observed', 'refreshing', 'error', 'error_kind',
+                                            'refresh_revision', 'refresh_requested')}
+        health['instance'] = self.instance
         if value is None or 'catalog' not in value:
             return dict(protocol=2, pending=True, health=health)
         token = _digest(value)
@@ -824,7 +939,10 @@ class _Memory:
             if entry.pop('force_refresh', False):
                 spec.update(refresh=True, reconcile=True)
             if spec['target'] == 'local':
+                terminals = self.inventory.terminals() if self.inventory else None
                 spec['live_only'] = not entry.get('value')
+            if entry.get('peer_ticket'):
+                spec['peer_ticket'] = entry['peer_ticket']
             if spec['target'] != 'local' and entry.get('value'):
                 spec['previous'] = copy.deepcopy(entry['value'])
         target = spec['target']
@@ -863,40 +981,49 @@ class _Memory:
                 self.failures[target] = dict(retry_at=self.clock() + delay, error=error, kind=kind,
                                              diagnostic=diagnostic, attempts=attempts)
                 self.persist()
-            if generation != self.generations.get(target, 0):
-                return
-            if not error:
-                self.failures.pop(target, None)
-                for sibling in self.entries.values():
-                    if sibling['spec']['target'] == target:
-                        sibling['error'] = ''
-                        sibling['retry'] = 0
-            entry['error'] = error
-            entry['retry'] = self.failures.get(target, {}).get('retry_at', 0)
-            entry['next_poll'] = self.clock() + (LOCAL_INTERVAL if target == 'local' else REMOTE_INTERVAL)
-            entry['timings'] = {**((value or {}).pop('_timings', {})), 'total_seconds': round(time.monotonic() - started, 4)}
-            if value is not None:
-                if value.pop('_pending', False):
-                    entry['next_poll'] = self.clock() + 1
-                    entry['pending'] = True
-                    entry['requested'] = target == 'local'
-                else:
-                    health = value.get('_remote_health') or {}
-                    entry['value'], entry['checked'] = value, health.get('checked') or self.clock()
-                    entry['observed'] = health.get('observed') or entry['checked']
-                    entry['pending'] = False
-                    entry['dirty'] = False
-                    entry['requested'] = False
-                    if spec['reconcile']:
-                        entry['reconciled'] = self.clock()
-                    if spec.get('live_only') and 'catalog' not in value:
-                        entry['next_poll'] = self.clock()
+            status = dict(attempt=self.clock(), duration=round(time.monotonic()-started, 3),
+                          error=error, retry_at=self.failures.get(target, {}).get('retry_at', 0) if error else 0)
+            if generation == self.generations.get(target, 0):
+                if not error:
+                    self.failures.pop(target, None)
+                    for sibling in self.entries.values():
+                        if sibling['spec']['target'] == target:
+                            sibling['error'] = ''
+                            sibling['retry'] = 0
+                entry['error'] = error
+                entry['retry'] = self.failures.get(target, {}).get('retry_at', 0)
+                entry['next_poll'] = self.clock() + (LOCAL_INTERVAL if target == 'local' else REMOTE_INTERVAL)
+                entry['timings'] = {**((value or {}).pop('_timings', {})), 'total_seconds': round(time.monotonic() - started, 4)}
+                if value is not None:
+                    if value.pop('_pending', False):
+                        entry['peer_ticket'] = value.get('_peer_ticket')
+                        entry['next_poll'] = self.clock() + 1
                         entry['pending'] = True
-                        entry['requested'] = True
-                    if value.get('_legacy_remote'):
-                        entry['next_poll'] = self.clock() + FAILURE_TTL
-                    self.overlays.pop(spec['target'], None)
-            self.persist()
+                        entry['requested'] = target == 'local'
+                    else:
+                        health = value.get('_remote_health') or {}
+                        if target == 'local' and terminals is not None:
+                            entry['terminals'] = terminals
+                        entry['value'], entry['checked'] = value, health.get('checked') or self.clock()
+                        entry['observed'] = health.get('observed') or entry['checked']
+                        entry['pending'] = False
+                        entry['dirty'] = entry.pop('catalog_changed', False)
+                        entry['requested'] = entry['dirty']
+                        if spec['reconcile']:
+                            entry['reconciled'] = self.clock()
+                        if spec.get('live_only') and 'catalog' not in value:
+                            entry['next_poll'] = self.clock()
+                            entry['pending'] = True
+                            entry['requested'] = True
+                        if value.get('_legacy_remote'):
+                            entry['next_poll'] = self.clock() + FAILURE_TTL
+                        self.overlays.pop(spec['target'], None)
+                if error or not entry.get('pending'):
+                    entry.pop('peer_ticket', None)
+                    entry['refresh_revision'] = entry.get('refresh_revision', 0) + 1
+                self.persist()
+        if target == 'local' and self.inventory:
+            _report('enrichment', status)
 
 
 def record_key(row):
@@ -1031,6 +1158,15 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         # and release the lock so a requesting client can replace this daemon.
         if _socket_identity(self.server_address) != self.endpoint_identity:
             raise _EndpointLost('session cache socket disappeared or was replaced')
+        if hasattr(self, 'ready'):
+            changed = False
+            for _ in range(128):
+                try:
+                    changed |= self.ready.recv(1) == b'R'
+                except BlockingIOError:
+                    break
+            if changed:
+                self.memory.inventory.request(changed=True)
         if hasattr(self, 'memory'):
             self.memory.tick()
 
@@ -1057,10 +1193,16 @@ def _serve():
         address = root / 'service.sock'
         address.unlink(missing_ok=True)
         memory = _Memory()
+        memory.inventory = _LIVE['Inventory'](lambda status: _report('inventory', status))
         disk = _Persistence(memory)
         memory.persist = disk.wake.set
         writer = threading.Thread(target=disk.run, daemon=True)
-        with _Server(str(address), _Handler) as server:
+        ready = root / 'ready.sock'
+        ready.unlink(missing_ok=True)
+        with _Server(str(address), _Handler) as server, socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as signals:
+            signals.bind(str(ready))
+            signals.setblocking(False)
+            server.ready = signals
             address.chmod(0o600)
             server.memory = memory
             server.revision = _revision()
@@ -1078,6 +1220,7 @@ def _serve():
                 disk.stop.set()
                 disk.wake.set()
                 writer.join(2)
+                ready.unlink(missing_ok=True)
                 # Never remove an endpoint installed after this listener bound.
                 if _socket_identity(address) == server.endpoint_identity:
                     address.unlink(missing_ok=True)

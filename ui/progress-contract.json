@@ -1,6 +1,10 @@
 {
   "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
   "exceptions": {
+    "libexec/t_rnnr.py:install:subprocess.run": {
+      "kind": "passthrough",
+      "reason": "Homebrew inherits the terminal for its cask download, installation progress and authentication prompts."
+    },
     "libexec/t_background.py:run:subprocess.run": {
       "kind": "protocol",
       "reason": "Bounded launchd probes back both the static status command and the settings snapshot. Only the public command owns progress."
@@ -349,7 +353,15 @@
       "kind": "protocol",
       "reason": "Bounded asynchronous fzf update polling runs while the existing picker owns terminal rendering; an extra spinner would corrupt it."
     },
-    "libexec/t_picker_close.py:close:subprocess.Popen": {
+    "libexec/t_live_inventory.py:scan:subprocess.run": {
+      "kind": "background",
+      "reason": "The cache service runs the bounded tmux inventory in a worker. The waiting CLI owns progress output."
+    },
+    "libexec/t_picker_close.py:observe_open:time.sleep": {
+      "kind": "background",
+      "reason": "The picker observer waits for live rows and fzf updates while fzf owns terminal rendering."
+    },
+    "libexec/t_picker_close.py:start_update:subprocess.Popen": {
       "kind": "background",
       "reason": "Starts a short-lived cached-view updater; it cannot contact fzf until the foreground action returns, and the picker owns its cleanup and rendering."
     },
@@ -832,6 +844,10 @@
     "libexec/t_terminal_close.py:attached:time.sleep": {
       "kind": "background",
       "reason": "Private attachment hooks wait at most two seconds for a scoped pending observer migration to publish its live fingerprint. They have no foreground terminal; verification must not paint over the attached agent."
+    },
+    "libexec/t_picker_close.py:completed_rows:subprocess.run": {
+      "kind": "background",
+      "reason": "The active picker owns terminal feedback while its observer checks close eligibility."
     }
   },
   "shell": [

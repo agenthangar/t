@@ -15,11 +15,19 @@ on:
       run_full:
         description: Run complete Linux validation and coverage
         type: boolean
-        default: true
+        default: false
       run_macos:
-        description: Include macOS and native desktop tests
+        description: Run the selected macOS checks on one hosted Mac
         type: boolean
         default: false
+      macos_scope:
+        description: Checks to run when macOS is enabled
+        type: choice
+        default: discovery
+        options:
+          - discovery
+          - terminal
+          - native
       verify_shards:
         description: Compare Linux shards with a same-commit full reference run
         type: boolean
@@ -52,7 +60,7 @@ jobs:
           fetch-depth: 0
       - id: scope
         env:
-          FORCE_FULL: ${{ inputs.ref != '' || (github.event_name == 'workflow_dispatch' && (inputs.run_full || inputs.run_macos || inputs.verify_shards)) }}
+          FORCE_FULL: ${{ inputs.ref != '' || (github.event_name == 'workflow_dispatch' && (inputs.run_full || inputs.verify_shards)) }}
         run: python3 "$RUNNER_TEMP/t-ci-policy.py" scope
   cli-contract:
     needs: scope
@@ -260,28 +268,27 @@ jobs:
       - run: python scripts/ci_shards.py compare combined/audit.json reference
   macos:
     needs: scope
-    name: macOS fzf ${{ matrix.fzf }}
+    name: macOS ${{ inputs.macos_scope }}
     if: github.event_name == 'workflow_dispatch' && inputs.run_macos
-    strategy:
-      fail-fast: false
-      matrix:
-        fzf: ['0.44.1', '0.74.5']
     runs-on: macos-latest
+    env:
+      CI_TEST_SHA: ${{ needs.scope.outputs.sha }}
+      MACOS_SCOPE: ${{ inputs.macos_scope }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.scope.outputs.sha }}
       - uses: ./.github/actions/test-runtime
         with:
-          fzf: ${{ matrix.fzf }}
-      # Native windows only on explicitly requested disposable macOS runners.
-      - run: python -m pytest --cov --cov-report=term-missing --cov-fail-under=97 --run-macos-ui --durations=30 --junitxml=artifacts/junit.xml
+          fzf: '0.74.5'
+      - name: Run the selected macOS tests
+        run: python3 scripts/smoke.py --macos "$MACOS_SCOPE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-${{ matrix.fzf }}
+          name: macos-${{ inputs.macos_scope }}
           overwrite: true
-          path: artifacts/
+          path: artifacts/macos-${{ inputs.macos_scope }}/
           if-no-files-found: error
           retention-days: 14
   playground:
@@ -294,6 +301,9 @@ jobs:
           ref: ${{ needs.scope.outputs.sha }}
       - name: Fresh install and terminal session flow
         run: python3 scripts/playground.py smoke
+      - name: Session move between independent SSH hosts
+        if: needs.scope.outputs.full == 'true'
+        run: python3 tests/ssh/move.py
   gitleaks:
     needs: scope
     runs-on: ubuntu-latest

@@ -37,6 +37,7 @@ def picker_stub(tmp_path, label='api-2'):
     stub.write_text('''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+if '--help' in sys.argv: sys.exit(0)
 rows = sys.stdin.read().splitlines()
 Path(os.environ['PICKER_LOG']).write_text(json.dumps({'rows': rows, 'args': sys.argv[1:]}))
 if os.environ.get('CHANGE_ROWS'):
@@ -77,7 +78,7 @@ def test_move_picker_uses_current_sessions(zsh, tmp_path, args, location, inside
     log = json.loads((tmp_path / 'picker.json').read_text())
     assert [row.split('\t')[1] for row in log['rows']] == expected
     assert '--multi' in log['args']
-    assert any('Current local sessions' in arg for arg in log['args'])
+    assert any('move' in arg for arg in log['args'])
     assert 'UNEXPECTED' not in result.stdout
     sid, agent = ('codex-id', 'codex') if label == 'api-2' else (
         ('claude-id', 'claude') if label == 'api-3' else ('fg-id', 'claude'))
@@ -156,7 +157,7 @@ def test_move_help_explains_current_picker_and_scope(t_mod, capsys):
     assert 't help session move' in quick
     assert t_mod.main(['help', 'session', 'move']) == 0
     help_text = ' '.join(capsys.readouterr().out.split())
-    for text in ('current local CLI conversation', 'named or current repository',
+    for text in ('CLI conversations', 'named or current repository',
                  'all repositories outside a checkout', 'not saved history',
                  '--pick', 'scripts must name a target'):
         assert text in help_text
