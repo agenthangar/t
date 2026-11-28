@@ -827,3 +827,14 @@ def test_refresh_spinner_advances_and_stops(filters, monkeypatch):
     assert 'Refreshing local' in first and 'Refreshing local' in second
     settled = filters.resume_health({'hosts': [{'host': 'local', 'status': 'current'}]}, 80, False, True)[0]
     assert not any(frame in settled for frame in '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+
+
+@pytest.mark.parametrize('pan', [False, True])
+def test_idle_render_does_not_rewrite_snapshot(filters, tmp_path, monkeypatch, pan):
+    root = snapshot(tmp_path)
+    if pan:
+        monkeypatch.setenv('T_PICKER_PAN', '1')
+    filters.render(root, 'open', 'current', 72, 'SESSION  TASK')
+    before = {path.name: path.stat().st_mtime_ns for path in root.iterdir()}
+    filters.render(root, 'open', 'current', 72, 'SESSION  TASK')
+    assert {path.name: path.stat().st_mtime_ns for path in root.iterdir()} == before

@@ -1097,7 +1097,7 @@ def execute(verb, arguments, adapter, *, token=None, directory=None):
 
 def _resume_changed():
     live = runpy.run_path(str(ROOT / 'libexec/t_live_inventory.py'))
-    live['notify_ready'](os.environ.get('T_RESUME_READY_SOCKET'))
+    live['notify_ready']()
 
 
 def _discovery_changed(targets):

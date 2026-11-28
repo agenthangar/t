@@ -86,7 +86,8 @@ def project(directory, rows, columns, width, fixed=0):
     path = directory / 'pan-offset'
     offset = int(path.read_text()) if path.exists() else 0
     offset = min(max(0, offset), max(0, widest - size))
-    path.write_text(str(offset))
+    if not path.exists() or path.read_text() != str(offset):
+        path.write_text(str(offset))
     left, right = ('<' if offset else ' '), ('>' if offset + size < widest else ' ')
     def cell(text):
         prefix, body = fixed_prefix(text, fixed)

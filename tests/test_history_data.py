@@ -1079,13 +1079,12 @@ def test_resume_candidate_pr_state_is_cache_only(app, store, history, monkeypatc
 
 
 @pytest.mark.parametrize('state', ['MERGED', 'OPEN', 'CLOSED', 'garbage'])
-def test_resume_history_reuses_legacy_pr_cache_and_keeps_numbers(app, store, history, monkeypatch, state):
+def test_resume_history_reuses_legacy_pr_cache_and_keeps_numbers(app, store, history, monkeypatch, state, isolate_discovery_artifacts):
     ref = dict(repo='org/repo', number=42, url='https://github.com/org/repo/pull/42')
     store.merge(conversation(prs=[ref], sources=[dict(host='remote', path='/saved.jsonl')],
                              associations=[dict(workspace='/trees/repo-3', slot='3', host='remote')]))
     cache = Path(os.environ['XDG_CACHE_HOME']) / 'claude-sessions/pr/org#repo#42'
-    cache.parent.mkdir(parents=True)
-    cache.write_text(state)
+    isolate_discovery_artifacts['display-file:' + str(cache)] = {'text': state, 'checked': __import__('time').time()}
     monkeypatch.setattr(app, 'discover', lambda *args, **kwargs: None)
     monkeypatch.setattr(app, 'refresh', lambda *args: None)
     monkeypatch.setattr(history, 'run', lambda *args, **kwargs: pytest.fail('cache-only PR status'))

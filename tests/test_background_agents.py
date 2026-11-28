@@ -101,3 +101,37 @@ def test_service_rejects_unowned_registration(launchd, tmp_path):
     assert foreign.read_text() == 'custom'
     assert backend.status('cleanup') == ('Unverified', 'Unverified', 'Unverified')
     assert not jobs
+
+
+def test_cache_login_lifecycle_preserves_stop(launchd, monkeypatch, capsys):
+    backend, jobs, _, _ = launchd
+    monkeypatch.setattr(backend, 'cache_source', lambda: REPO_ROOT)
+    monkeypatch.setattr(backend, 'cache_request', lambda op: {
+        'pid': 418, 'bytes_written_last_minute': 321})
+    assert backend.command('install', 'cache', False, '15') == 0
+    registration = backend.read_service('cache')
+    assert registration['ProgramArguments'][1:] == [str(REPO_ROOT/'libexec/t_session_cache.py'), 'serve-managed']
+    assert registration['RunAtLoad'] and registration['KeepAlive']
+    backend.command('status', 'cache', False, '15')
+    assert 'PID 418, 321 bytes written in the last minute' in capsys.readouterr().out
+    assert backend.command('stop', 'cache', False, '15') == 0
+    assert backend.command('install', 'cache', True, '15') == 0
+    assert backend.status('cache') == ('Installed', 'Stopped', 'Enabled')
+    assert backend.CACHE_LABEL not in jobs
+    assert backend.command('start', 'cache', False, '15') == 0
+    assert backend.command('restart', 'cache', False, '15') == 0
+    assert backend.CACHE_LABEL in jobs
+
+
+def test_discovery_database_has_one_runtime_owner():
+    # All shipped Python, shell and native clients, including the bundled backend,
+    # go through the API. Only the service module may name its SQLite storage.
+    owner = REPO_ROOT / 'libexec/t_session_cache.py'
+    for folder in ('bin', 'zsh', 'libexec', 'apps/rnnr/Sources'):
+        for path in (REPO_ROOT/folder).rglob('*'):
+            if (not path.is_file() or path == owner or path.suffix in ('.pyc', '.db')
+                    or '__pycache__' in path.parts):
+                continue
+            content = path.read_bytes()
+            for private in (b'cache.sqlite3', b'cache_records', b'cache_fragments', b'ready.sock'):
+                assert private not in content, path

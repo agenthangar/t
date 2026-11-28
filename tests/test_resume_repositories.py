@@ -161,10 +161,10 @@ def test_fresh_cache_allows_offline_browse_but_selected_reused_name_is_rechecked
     assert not app.same_repository('old/repo', 'new/repo')
 
 
-def test_expired_cache_offline_and_distinct_ids_refuse_equivalence(app, history, monkeypatch):
+def test_expired_cache_offline_and_distinct_ids_refuse_equivalence(app, history, monkeypatch, isolate_discovery_artifacts):
     path = app.store.directory / 'repository-proofs.json'
-    path.write_text(json.dumps({slug: dict(id='R_same', canonical='new/repo', verified=time.time() - 90000)
-                                for slug in ('old/repo', 'new/repo')}))
+    isolate_discovery_artifacts[str(path)] = {slug: dict(id='R_same', canonical='new/repo', verified=time.time() - 90000)
+                                            for slug in ('old/repo', 'new/repo')}
     monkeypatch.setattr(history, 'run', lambda *a, **kw: '')
     assert not app.same_repository('old/repo', 'new/repo')
     app.repository_proofs.clear()

@@ -760,10 +760,9 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
     pending = {host['host'] for host in status['hosts'] if host['status'] == 'refreshing'}
     cache, cfg = _session_discovery(), Config()
     work_revisions = cache.get('resume_work_revisions')
-    migration = _data_migrations() if work_revisions else None
-    migration_seen = 0
     if work_revisions:
-        migration['prioritize'](aliases, slot)
+        cache['request']('migration-priority', {'aliases': aliases, 'slot': slot},
+                         deadline=time.monotonic() + 1)
     next_work_check = 0
     next_progress_frame = 0
     work_seen = status.get('work_revisions', {})
@@ -802,15 +801,9 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                     pending = {host['host'] for host in status['hosts']}
                     status['hosts'] = [{**host, 'status': 'refreshing'} for host in status['hosts']]
                     _resume_picker_update(directory, picker, status)
-            check_work = migration and time.monotonic() >= next_work_check
+            check_work = work_revisions and time.monotonic() >= next_work_check
             if check_work:
                 next_work_check = time.monotonic() + 1
-                revision = migration['revision']()
-                if revision and revision != migration_seen:
-                    local = next((host for host in status['hosts'] if host['host'] == 'local'), None)
-                    if local and revision / 1e9 > (local.get('checked') or 0):
-                        cache['request']('catalog-changed', {'refresh_active': True}, deadline=time.monotonic() + 1)
-                    migration_seen = revision
             if not pending and not manual:
                 if check_work:
                     health = cache['discover'](cfg, observe=True, fields=[], deadline=time.monotonic() + 1)
@@ -837,7 +830,7 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
             view = cache['discover'](cfg, **options, fields=['rows', 'resume', 'catalog'] if slot else ['rows', 'resume'],
                                      deadline=time.monotonic() + min(remaining, 1))
             if view.get('unavailable'):
-                _resume_picker_update(directory, picker, dict(unavailable=True, hosts=status.get('hosts', [])))
+                _resume_picker_update(directory, picker, dict(unavailable=True, message=view.get('message'), hosts=status.get('hosts', [])))
                 return 1
             if force:
                 completion = cache['requested_refresh'](view)
@@ -4753,23 +4746,50 @@ def _background_agents():
     return runpy.run_path(os.path.join(_t_source_root(), 'libexec', 't_background.py'))
 
 
+def _config_session_cache(ui, background):
+    while True:
+        installed, runtime, login = background['status']('cache')
+        details = background['cache_details']() if runtime == 'Running' else ''
+        choices = ([('install', 'Install and start')] if installed == 'Not installed' else
+                   [('stop', 'Stop'), ('restart', 'Restart')] if runtime == 'Running' else [('start', 'Start')])
+        action = ui.pick('Session cache', [*choices, ('back', 'Back')],
+                         context=tuple(filter(None, (f'{installed}, {runtime.lower()}',
+                                                     'Starts at login: ' + login.lower(), details))))
+        if action in (None, 'back'):
+            return
+        ui.restore()
+        try:
+            rc = background['command'](action, 'cache', False, 0)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            message = str(error)
+        else:
+            message = 'Service action failed' if rc else ''
+        finally:
+            ui.raw()
+        if message:
+            ui.done('Session cache', message)
+
+
 def _config_background(ui, cfg):
     focus = 0
     background = _background_agents()
-    with _spinner('Checking background agents'):
-        statuses = {key: background['status'](key) for key in background['NAMES']}
     while True:
+        with _spinner('Checking background agents'):
+            statuses = {key: background['status'](key) for key in background['NAMES']}
         values = {key: ' · '.join(statuses[key][:2]) for key in statuses}
         values['cleanup'] += f' · Every {cfg.cleanup_interval} min'
         if cfg._recovery_enabled != cfg._recovery_initial:
             values['recovery'] += ' · ' + ('starts' if cfg._recovery_enabled else 'stops') + ' on save'
         choice = ui.pick('Background agents', [
-            ('cleanup', 'Finished session cleanup ›'), ('recovery', 'Automatic recovery ›'), ('back', 'Back')],
+            ('cleanup', 'Finished session cleanup ›'), ('recovery', 'Automatic recovery ›'),
+            ('cache', 'Session cache ›'), ('back', 'Back')],
             values=values, default=focus)
         if choice in (None, 'back'):
             return
-        focus = 0 if choice == 'cleanup' else 1
-        if choice == 'recovery':
+        focus = ('cleanup', 'recovery', 'cache').index(choice)
+        if choice == 'cache':
+            _config_session_cache(ui, background)
+        elif choice == 'recovery':
             recovery = _automatic_recovery()
             cfg._recovery_enabled = recovery['menu'](ui, cfg._recovery_enabled)
             state = recovery['status']()
@@ -12186,7 +12206,7 @@ def _index_dedupe(recs):
 
 # ── enrichment ──
 
-def _pr_info(pr, pr_dir):
+def _pr_info(pr, pr_dir, cached_state=None):
     """{url, repo, number, state} for a stored 'github.com/o/r/pull/N', else None.
     State is the cached one only (~/.cache/claude-sessions/pr/<o>#<r>#<N>, written by
     the zsh _pr_state_refresh) — a tool call must never block on `gh`."""
@@ -12195,13 +12215,12 @@ def _pr_info(pr, pr_dir):
         return None
     owner, repo, num = m.groups()
     state = "?"
-    try:
-        with open(os.path.join(pr_dir, "%s#%s#%s" % (owner, repo, num)), encoding="utf-8") as fh:
-            s = fh.read().strip().upper()
-        if s in ("MERGED", "CLOSED", "OPEN"):
-            state = s.lower()
-    except OSError:
-        pass
+    if cached_state is None:
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_cache_file.py'))
+        cached_state = helper['read'](os.path.join(pr_dir, "%s#%s#%s" % (owner, repo, num)))
+    s = cached_state.strip().upper()
+    if s in ("MERGED", "CLOSED", "OPEN"):
+        state = s.lower()
     return {"url": "https://" + m.group(0), "repo": "%s/%s" % (owner, repo),
             "number": int(num), "state": state}
 
@@ -12210,10 +12229,7 @@ def _opened_stamp(sid, cache_root):
     """mtime of the last-opened stamp t-session-start touches on every start; 0 if
     none. Resuming appends nothing, so by transcript mtime alone a just-reopened
     session looks days old."""
-    try:
-        return os.path.getmtime(os.path.join(cache_root, "opened", sid))
-    except OSError:
-        return 0
+    return _session_discovery()['request']('display-evidence', {'kind': 'opened', 'sid': sid}).get('checked', 0)
 
 
 def _origin_of(path):
@@ -12259,10 +12275,7 @@ def _local_host():
 
 def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
                  local_host=None):
-    """The dict every tool returns per session. Pure given the record: the only I/O is
-    an isdir on the worktree, a stat on the opened stamp, and reads of the two
-    sidecar files (PR-state cache, .origin). `origin` is null for this host — it is a
-    "last ran ELSEWHERE" signal, like t resume's column."""
+    """Session display from shared cached metadata and native origin evidence."""
     if rec.get('_cached_row') is not None:
         row = dict(rec['_cached_row'])
         row['this_session'] = bool(this_sid and rec.get('sid') == this_sid)
@@ -12284,7 +12297,9 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
     if not branch and key:
         branch = "dev/%s-%s" % (os.path.basename(os.path.normpath(cfg.repos[alias])), slot)
     prompts = rec.get("prompts") or []
-    opened = _opened_stamp(sid, cache_root) if (cache_root and sid) else 0
+    opened = rec.get("_opened_checked")
+    if opened is None:
+        opened = _opened_stamp(sid, cache_root) if (cache_root and sid) else 0
     act = _activity(rec, opened)
     pr_dir = os.path.join(cache_root, "pr") if cache_root else ""
     origin = _origin_of(rec["path"]) if rec.get("path") else None
@@ -12302,7 +12317,7 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
         "origin": origin,
         "started": _fmt_ts(rec.get("first_ts")),
         "last_activity": _fmt_ts(act), "ago": _ago(act, now), "activity_epoch": act,
-        "pr": _pr_info(rec.get("pr"), pr_dir), "plan": rec.get("plan"),
+        "pr": _pr_info(rec.get("pr"), pr_dir, rec.get("_pr_state")), "plan": rec.get("plan"),
         "prompts_total": rec.get("n_prompts", 0),
         "first_prompts": [p["text"] for p in prompts[:3]],
         "last_prompts": [p["text"] for p in prompts[-3:]] if len(prompts) > 3 else [],
@@ -12696,6 +12711,18 @@ def _mcp_context(cfg, state):
     if state.get("recs") is None or now - state.get("at", 0) > _INDEX_REFRESH_S:
         state["recs"] = _index_dedupe(_mcp_records())
         state["at"] = now
+    opened = _session_discovery()['request']('display-evidence', {
+        'kind': 'opened', 'sids': [rec.get('sid', '') for rec in state['recs']]}).get('values', {})
+    prefix = 'display-file:' + os.path.join(_cache_root(), 'pr') + os.sep
+    pr_files = _session_discovery()['request']('artifacts', {'prefix': prefix}).get('values', {})
+    for rec in state['recs']:
+        checked = opened.get(rec.get('sid'), {}).get('checked', 0)
+        match = _PR_RE.search(rec.get('pr') or '')
+        pr_state = pr_files.get(prefix + '#'.join(match.groups()), {}).get('text', '') if match else ''
+        if rec.get('_opened_checked') != checked or rec.get('_pr_state') != pr_state:
+            rec.pop('_cached_row', None)
+        rec['_opened_checked'] = checked
+        rec['_pr_state'] = pr_state
     tmux_rows, panes, parents, registry = _live_rows(_cache_root(), _projects_dir())
     live_by_sid, idle = _live_index(tmux_rows, panes, parents, registry, cfg)
     return {"recs": state["recs"], "live": live_by_sid, "idle": idle,
@@ -13088,7 +13115,16 @@ def cmd_mcp(cfg, args):
             print("%-16s %s" % (t["name"], t["description"].split(". ")[0] + "."))
         return 0
     if args.reindex:
-        recs = _mcp_records()
+        cache = _session_discovery()
+        cfg = Config()
+        view = cache['discover'](cfg, local=True, fields=['mcp'], refresh=True)
+        view = cache['wait_for_refresh'](cfg, view, local=True, fields=['mcp'], timeout=None)
+        host = next((host for host in view.get('hosts', []) if host.get('host') == 'local'), {})
+        if (view.get('unavailable') or view.get('wait_unavailable') or host.get('error') or
+                'mcp' not in (host.get('value') or {})):
+            cache['announce'](view)
+            return 1
+        recs = host['value']['mcp'].get('recs', [])
         print("indexed %d transcript(s), %.1f MB" % (len(recs), sum(r.get("size", 0) for r in recs) / 1e6))
         return 0
     if args.call:
@@ -13538,7 +13574,7 @@ def _group_help(group):
   t agent background stop TARGET
   t agent background restart TARGET
 
-TARGET is cleanup, recovery, or all. Stop applies to this login.
+TARGET is cache, cleanup, recovery, or all. Stop applies to this login.
 Status checks installation, live state, and effective login startup on this host.
 Run t help agent background <verb> for details.
 """)
@@ -15705,9 +15741,9 @@ PERIODIC CHECKS
     ):
         leaf = background_actions.add_parser(action, help=description, description=description.capitalize() + '.')
         leaf.add_argument('target',
-                          choices=('cleanup', 'recovery', 'all'), metavar='TARGET',
+                          choices=('cache', 'cleanup', 'recovery', 'all'), metavar='TARGET',
                           **({'nargs': '?'} if action == 'status' else {}),
-                          help='cleanup, recovery, or all' + (' (default: all)' if action == 'status' else ''))
+                          help='cache, cleanup, recovery, or all' + (' (default: all)' if action == 'status' else ''))
         if action == 'install':
             leaf.add_argument('--reinstall', action='store_true', help='repair an existing installation')
     for scope in ('system', 'session'):
@@ -15989,6 +16025,18 @@ def _bare_entry():
 
 
 def _main(argv):
+    if argv == ['__cache-share-targets']:
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_share_sessions.py'))
+        print(json.dumps(helper['targets']()))
+        return 0
+
+    if argv == ['__cache-hydrate']:
+        payload = json.load(sys.stdin)
+        result = _session_discovery()['_hydrate_local'](
+            Config(), payload['view'], payload.get('roots'), payload.get('slot'))
+        print(json.dumps(result))
+        return 0
+
     if len(argv) == 2 and argv[0] == '__runtime-reconcile':
         try:
             request = json.loads(argv[1])
@@ -15999,6 +16047,7 @@ def _main(argv):
             for component, helper, operation in (
                 ('automatic recovery', _automatic_recovery, 'migrate'),
                 ('finished session cleanup', _background_agents, 'upgrade_cleanup'),
+                ('session cache', _background_agents, 'upgrade_cache'),
             ):
                 try:
                     helper()[operation]()

@@ -269,15 +269,16 @@ def _legacy_rollout(path, sid, cwd, *, read_title=True):
 
 
 def enrich(lines, home, codex_home, *, lightweight=False):
+    import runpy
+    lines = list(lines)
+    identifiers = [parts[0] for line in lines if len(parts := line.rstrip('\n').split('\t')) >= 7]
+    helper = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))
+    rollout_evidence = helper['request']('display-evidence', {'kind': 'rollout', 'sids': identifiers}).get('values', {})
     db = None
     legacy_paths = None
     def legacy_candidates(sid, supplied, indexed):
         nonlocal legacy_paths
-        cache = Path(os.environ.get('XDG_CACHE_HOME') or Path(home) / '.cache')
-        try:
-            cached = (cache / 'claude-sessions/rollouts' / sid).read_text().strip()
-        except OSError:
-            cached = ''
+        cached = rollout_evidence.get(sid, {}).get('text', '').strip()
         seen = set()
         for candidate in (supplied, indexed, cached):
             if candidate and str(candidate) not in seen:

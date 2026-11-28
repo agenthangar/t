@@ -240,6 +240,7 @@ def observe_open(cfg, cache, parse, format_rows):
     hydrated = None
     hydrated_terminals = {}
     completion = None
+    previous_health = None
     while directory.exists():
         time.sleep(.35)
         if (directory / 'update.pid').exists():
@@ -248,11 +249,11 @@ def observe_open(cfg, cache, parse, format_rows):
         manual = refresh.exists() and completion is None
         refresh.unlink(missing_ok=True)
         snapshot = cache['discover'](cfg, local=not bool(os.environ.get('T_OPEN_REMOTE')),
-                                     fields=['rows', 'scopes', 'catalog'], refresh=manual, live_wait=manual)
+                                     fields=['rows', 'scopes', 'catalog'] if repo else ['rows'], refresh=manual, live_wait=manual)
         if manual:
             completion = cache['requested_refresh'](snapshot, live=True)
         if snapshot.get('unavailable'):
-            (directory / 'discovery-status').write_text(json.dumps({'unavailable': True}))
+            (directory / 'discovery-status').write_text(json.dumps({'unavailable': True, 'message': snapshot.get('message', 'Session cache unavailable. Open t config > Background agents > Session cache.')}))
             render(directory, profile, 'current', int(os.environ['T_PICKER_HEADER_WIDTH']),
                    os.environ.get('T_PICKER_COLUMNS', ''))
             picker.deadline = time.monotonic() + 5
@@ -273,13 +274,20 @@ def observe_open(cfg, cache, parse, format_rows):
         if completion and completion(snapshot):
             completion = None
         health = cache['resume_health'](snapshot)
-        if health.get('hosts') and all(host.get('status') == 'current' for host in health['hosts']):
-            (directory / 'discovery-notice').write_text('')
-        (directory / 'discovery-status').write_text(json.dumps(health))
-        render(directory, profile, 'current', int(os.environ['T_PICKER_HEADER_WIDTH']),
-               os.environ.get('T_PICKER_COLUMNS', ''))
-        picker.deadline = time.monotonic() + 5
-        picker.request(HEADER)
+        # A settled poll leaves picker files untouched. Active refresh still
+        # paints the existing spinner through the shared renderer.
+        if health != previous_health or manual or any(
+                host.get('status') == 'refreshing' for host in health.get('hosts', [])):
+            if health.get('hosts') and all(host.get('status') == 'current' for host in health['hosts']):
+                notice = directory / 'discovery-notice'
+                if notice.exists() and notice.read_text():
+                    notice.write_text('')
+            (directory / 'discovery-status').write_text(json.dumps(health))
+            render(directory, profile, 'current', int(os.environ['T_PICKER_HEADER_WIDTH']),
+                   os.environ.get('T_PICKER_COLUMNS', ''))
+            picker.deadline = time.monotonic() + 5
+            picker.request(HEADER)
+            previous_health = health
         source = cache['rows'](snapshot, repo=repo, local_roots=roots,
                                move_only=profile == 'move')
         previous = (directory / 'source').read_text()

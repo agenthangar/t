@@ -2,7 +2,6 @@
 import os
 from pathlib import Path
 import re
-import socket
 import subprocess
 import threading
 import time
@@ -16,34 +15,24 @@ def socket_path():
                             f'tmux-{os.getuid()}' / 'default')
 
 
-def notify_ready(address=None):
-    if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
-        return
-    try:
-        if address is None:
-            import runpy
-            cache = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))
-            address = cache['_runtime']() / 'ready.sock'
-        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
-            sender.setblocking(False)
-            sender.sendto(b'R', str(address))
-    except OSError:
-        # A cold cache is observed on first browse, and a full socket already
-        # has a scan queued. Publication never holds a worker waiting for either.
-        pass
+def notify_ready():
+    if os.environ.get('T_DISCOVERY_COLLECTOR') != '1':
+        import runpy
+        cache = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))
+        cache['request']('inventory-changed', deadline=time.monotonic() + .05)
 
 
-def scan():
+def scan(path=None, env=None):
     # Read one tmux snapshot. A stamp change can invalidate metadata during a lookup.
     # Reusing a stamp on a different terminal cannot establish ownership.
-    path = socket_path()
+    path = path or socket_path()
     fmt = '|'.join(('#{socket_path}', '#{pid}', '#{session_id}', '#{session_name}',
                     '#{?session_attached,attached,detached}', '#{DEV_AGENT}',
                     '#{CLAUDE_RESUME_ID}', '#{session_path}'))
     proc = subprocess.run(['tmux', 'list-sessions', '-F', fmt], capture_output=True,
-                          text=True, errors='replace', stdin=subprocess.DEVNULL, timeout=5)
+                          text=True, errors='replace', stdin=subprocess.DEVNULL, timeout=5, env=env)
     if proc.returncode:
-        if not os.environ.get('TMUX') and ('no server running on ' in proc.stderr or
+        if not (os.environ if env is None else env).get('TMUX') and ('no server running on ' in proc.stderr or
                 (not os.path.exists(path) and 'No such file or directory' in proc.stderr)):
             return path, {}
         raise ValueError(f'tmux list-sessions exited {proc.returncode}: {proc.stderr.strip()}')
@@ -62,11 +51,12 @@ def scan():
 
 
 class Inventory:
-    def __init__(self, report):
+    def __init__(self, report, path=None, env=None):
         self.report = report
         self.slots = None
         self.checked = self.attempt = self.duration = 0
-        self.socket = socket_path()
+        self.socket = path or socket_path()
+        self.scan = (lambda: scan(self.socket, env)) if env is not None else scan
         self.error = ''
         self.busy = self.again = False
         self.revision = 0
@@ -94,7 +84,7 @@ class Inventory:
         while True:
             started = time.monotonic()
             try:
-                path, slots = scan()
+                path, slots = self.scan()
                 error = ''
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 error = ('tmux inventory timed out after 5s' if isinstance(exc, subprocess.TimeoutExpired)

@@ -8,8 +8,8 @@
 #      claude back to its session id, and thus its real transcript title. macOS won't
 #      let `dev ls` read another process's env, and file transfers can change
 #      transcript birthtimes, so the reliable pid→session_id link is recorded here at start.
-#   3. (always) touch a last-OPENED stamp, `opened/<session_id>`, in the same cache
-#      dir. Resuming a conversation appends nothing to its transcript, so transcript
+#   3. publish last-OPENED recency through the managed cache service, which owns
+#      `opened/<session_id>` in the same cache dir. Resuming a conversation appends nothing to its transcript, so transcript
 #      mtime alone leaves a just-reopened session looking days old in the resume
 #      pickers; _claude_session_rows / tfind / `t resume` rank by max(transcript
 #      mtime, this stamp) and mark opened-but-unwritten rows ↻. NOT written to the
@@ -68,11 +68,6 @@ except Exception:
 
 reg="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions"
 
-# Last-opened stamp: a subdir keeps sid stamps clear of the pid registry (whose
-# prune loop globs plain files only, so `opened/` is never swept as a dead pid).
-# shellcheck disable=SC2015  # best-effort stamp; never fail the hook
-mkdir -p "$reg/opened" 2>/dev/null && touch "$reg/opened/$sid" 2>/dev/null || true
-
 # Registry: key by the LIVE claude pid (an ancestor of this hook), so `dev ls` can
 # look it up for a running foreground claude. Walk up from $PPID to the nearest
 # process named `claude`; record under it. (`dev ls` prunes dead-pid entries.)
@@ -98,6 +93,10 @@ fi
 history_helper="${T_HOME:+$T_HOME/libexec/t_history.py}"
 if [[ -z $history_helper ]]; then
   history_helper=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parent.parent / "libexec/t_history.py")' "$0" 2>/dev/null) || history_helper=""
+fi
+cache_helper="${history_helper%/*}/t_cache_file.py"
+if [[ -f $cache_helper ]]; then
+  python3 "$cache_helper" opened-write "$sid" >/dev/null 2>&1 || true
 fi
 if [[ -f $history_helper ]]; then
   python3 "$history_helper" record-deferred "$sid" "$agent" "$cwd" "$tx" launch >/dev/null 2>&1 || true

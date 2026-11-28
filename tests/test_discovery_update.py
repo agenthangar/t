@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import socketserver
 import threading
 import time
 
@@ -27,7 +28,22 @@ def installation(cache, tmp_path, monkeypatch):
 
 def listener(cache, identity, revision):
     root = cache._private(cache._identity_runtime(identity))
-    server = cache._Server(str(root / 'service.sock'), cache._Handler)
+    # Released helpers accept the revision handshake. Managed clients use a
+    # different protocol, so don't substitute the current request handler.
+    class LegacyStatus(socketserver.StreamRequestHandler):
+        def handle(self):
+            message = json.loads(self.rfile.readline(4096))
+            assert message['operation'] == 'status' and not message.get('payload')
+            if message['revision'] == self.server.revision:
+                response = {'protocol': cache.VERSION}
+            else:
+                brew = getattr(self.server, 'homebrew', None)
+                if (not brew or Path(brew['opt']).resolve() != brew['source']
+                        or cache._revision() != self.server.revision):
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                response = {'error': 'session cache service version changed; restarting'}
+            self.wfile.write(json.dumps(response).encode() + b'\n')
+    server = socketserver.UnixStreamServer(str(root / 'service.sock'), LegacyStatus)
     (root / 'service.sock').chmod(0o600)
     server.revision = revision
     server.memory = cache._Memory(submit=lambda *a: pytest.fail('started collection'))
@@ -53,7 +69,7 @@ def close_listener(server, thread):
 
 
 @pytest.mark.parametrize('raw', ['', 'symlink'])
-def test_update_retires_obsolete_namespace_and_preserves_current(cache, installation, tmp_path, monkeypatch, raw):
+def test_update_retires_both_legacy_namespace_forms(cache, installation, tmp_path, monkeypatch, raw):
     config = tmp_path / 'config/t/local.zsh'
     config.parent.mkdir(parents=True)
     config.write_text('# same configuration')
@@ -74,7 +90,8 @@ def test_update_retires_obsolete_namespace_and_preserves_current(cache, installa
         cache.retire_obsolete()
         old_thread.join(2)
         assert not old_thread.is_alive()
-        assert current_thread.is_alive()
+        current_thread.join(2)
+        assert not current_thread.is_alive()
         assert current_server.memory.generations == {}
     finally:
         close_listener(old_server, old_thread)
@@ -260,7 +277,7 @@ def test_brew_stable_identity_and_physical_cache_fallback(cache, brew_install, m
     assert cache._identity() != current
 
 
-def test_brew_migration_retires_physical_helpers_preserves_stable(cache, brew_install):
+def test_brew_migration_retires_physical_and_stable_legacy_helpers(cache, brew_install):
     sources, opt = brew_install
     identity = cache._identity()
     legacy = list(identity); legacy[0] = str(sources[0])
@@ -270,7 +287,8 @@ def test_brew_migration_retires_physical_helpers_preserves_stable(cache, brew_in
         cache.retire_obsolete()
         old_thread.join(2)
         assert not old_thread.is_alive()
-        assert current_thread.is_alive()
+        current_thread.join(2)
+        assert not current_thread.is_alive()
     finally:
         close_listener(old_server, old_thread)
         close_listener(current_server, current_thread)
@@ -355,7 +373,7 @@ def test_brew_restores_physical_snapshot_but_prefers_stable(cache, brew_install,
                    (cache._digest(legacy), cache.VERSION, json.dumps({'artifacts': {'test': 'legacy'}})))
         if stable:
             db.execute('insert into snapshots values (?,?,?)',
-                       (disk.namespace, cache.VERSION, json.dumps({'artifacts': {'test': 'stable'}})))
+                       (cache._digest(cache._identity()), cache.VERSION, json.dumps({'artifacts': {'test': 'stable'}})))
     disk.stop.set()
     disk.run()
     assert memory.artifacts == {'test': 'stable' if stable else 'legacy'}
@@ -415,7 +433,7 @@ def test_brew_reinstall_revision_retires_old_daemon(cache, brew_install, monkeyp
 
 
 @pytest.mark.parametrize('pruned', [False, True])
-def test_first_brew_discovery_request_migrates_legacy_daemon(cache, tmp_path, monkeypatch, pruned):
+def test_explicit_brew_service_start_migrates_legacy_daemon(cache, tmp_path, monkeypatch, pruned):
     from _install_helpers import _seed_worktree
     import shutil
     import subprocess
@@ -429,16 +447,14 @@ def test_first_brew_discovery_request_migrates_legacy_daemon(cache, tmp_path, mo
         (source / '.t-release-version').write_text('v' + source.parent.name)
         (source / '.t-homebrew').write_text(json.dumps(dict(
             formula='agenthangar/tap/t', opt_libexec=str(opt / 'libexec'), brew=cache.sys.executable)))
-    # Reproduce the former physical identity without relying on the old updater
-    # to pass a previous source. Launch an exact helper argv for process recovery.
+    # A retained or pruned physical helper from before managed service support.
     script = old / 'libexec/t_session_cache.py'
-    script.write_text(script.read_text().replace("brew['opt'] if brew else str(SOURCE)", 'str(SOURCE)'))
     opt.symlink_to(old.parent)
     monkeypatch.setattr(cache, 'SOURCE', old)
-    legacy = cache._identity(); legacy[0] = str(old)
+    legacy = cache._identity()
+    legacy[0] = str(old)
     old_root = cache._identity_runtime(legacy)
-    # Model just this install's process table, including its pruned keg. The
-    # developer machine may legitimately exceed the bounded ps snapshot.
+    old_server, old_thread = listener(cache, legacy, ['legacy'])
     import shlex
     process_tools = tmp_path / 'process-tools'
     process_tools.mkdir()
@@ -446,36 +462,26 @@ def test_first_brew_discovery_request_migrates_legacy_daemon(cache, tmp_path, mo
     ps.write_text("#!/bin/sh\nprintf '%s\n' " + shlex.quote(f'{sys.executable} {script} serve') + '\n')
     ps.chmod(0o755)
     monkeypatch.setenv('PATH', str(process_tools) + os.pathsep + os.environ['PATH'])
-    old_process = subprocess.Popen([sys.executable, str(script), 'serve'], env=cache._service_env())
-    children = []
-    original_popen = subprocess.Popen
-    def popen(*args, **kwargs):
-        process = original_popen(*args, **kwargs)
-        if args[0][-1] == 'serve':
-            children.append(process)
-        return process
+    monkeypatch.setattr(cache, '_runtime', cache._real_runtime)
+    managed = None
     try:
-        deadline = time.monotonic() + 4
-        while not (old_root / 'service.sock').exists():
-            assert old_process.poll() is None
-            assert time.monotonic() < deadline
-            time.sleep(.02)
-        opt.unlink(); opt.symlink_to(new.parent)
+        opt.unlink()
+        opt.symlink_to(new.parent)
         if pruned:
             shutil.rmtree(old.parent)
-        monkeypatch.setattr(cache, 'SOURCE', new)
-        monkeypatch.setattr(cache, '__file__', str(new / 'libexec/t_session_cache.py'))
-        monkeypatch.setattr(cache, '_runtime', lambda: cache._identity_runtime(cache._identity()))
-        monkeypatch.setattr(cache.subprocess, 'Popen', popen)
-        result = cache.request('status')
-        assert not result.get('unavailable'), result
-        assert len(children) == 1
-        old_process.wait(timeout=4)
-        assert old_process.returncode == 0
+        assert cache.request('status')['unavailable'] and old_thread.is_alive()
+        managed = subprocess.Popen([sys.executable, str(new / 'libexec/t_session_cache.py'), 'serve'],
+                                   env=cache._service_env())
+        deadline = time.monotonic() + 5
+        while cache.request('status').get('unavailable'):
+            assert managed.poll() is None and time.monotonic() < deadline
+            time.sleep(.02)
+        old_thread.join(2)
+        assert not old_thread.is_alive()
     finally:
-        for process in [old_process, *children]:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=5)
-        for root in (old_root, cache._identity_runtime(cache._identity())):
+        close_listener(old_server, old_thread)
+        if managed is not None:
+            managed.terminate()
+            managed.wait(timeout=5)
+        for root in (old_root, cache._runtime()):
             shutil.rmtree(root, ignore_errors=True)

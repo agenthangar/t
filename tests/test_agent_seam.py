@@ -109,13 +109,33 @@ def sandbox(tmp_path):
     return home, env
 
 
+@pytest.fixture
+def managed_cache(sandbox):
+    home, env = sandbox
+    worker = subprocess.Popen([sys.executable, str(REPO_ROOT/'libexec/t_session_cache.py'), 'serve'],
+                              env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    probe = ('import runpy,sys; m=runpy.run_path(sys.argv[1]); '
+             'sys.exit(bool(m["request"]("status").get("unavailable")))')
+    try:
+        deadline = time.monotonic() + 8
+        while subprocess.run([sys.executable, '-c', probe, str(REPO_ROOT/'libexec/t_session_cache.py')],
+                             env=env).returncode:
+            assert worker.poll() is None
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+        yield worker
+    finally:
+        worker.terminate()
+        worker.wait(timeout=10)
+
+
 def run_hook(env, payload, **extra):
     env = {**env, **extra}
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run([str(HOOK)], input=stdin, env=env, capture_output=True, text=True)
 
 
-def test_hook_writes_registry_opened_and_origin_stamps(sandbox):
+def test_hook_writes_registry_opened_and_origin_stamps(managed_cache, sandbox):
     home, env = sandbox
     cwd = home / "code" / "proj"
     proj = home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
@@ -131,7 +151,7 @@ def test_hook_writes_registry_opened_and_origin_stamps(sandbox):
     assert not (pathlib.Path(env["TMUX_LOG"])).exists()
 
 
-def test_hook_returns_and_registers_identity_while_history_is_locked(sandbox):
+def test_hook_returns_and_registers_identity_while_history_is_locked(managed_cache, sandbox):
     home, env = sandbox
     env.update(XDG_STATE_HOME=str(home / 'state'), XDG_CONFIG_HOME=str(home / 'config'),
                CODEX_HOME=str(home / '.codex'), T_HOME=str(REPO_ROOT))
@@ -178,7 +198,8 @@ def test_hook_stamps_tmux_when_inside_a_pane(sandbox):
     assert r.returncode == 0
     assert pathlib.Path(env["TMUX_LOG"]).read_text().splitlines() == [
         "display-message -p -t %7 #{session_id}\t#{session_path}",
-        "set-environment -t $3 CLAUDE_RESUME_ID sid-9", "set-environment -t $3 DEV_AGENT claude"]
+        "set-environment -t $3 CLAUDE_RESUME_ID sid-9", "set-environment -t $3 DEV_AGENT claude",
+        "display-message -p -t %7 #{socket_path}"]
 
 
 def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tmp_path):
@@ -200,13 +221,14 @@ def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tm
     assert not (home / ".claude").exists()                                # no claude project dir touched
     assert pathlib.Path(env["TMUX_LOG"]).read_text().splitlines() == [
         "display-message -p -t %7 #{session_id}\t#{session_path}",
-        "set-environment -t $3 CLAUDE_RESUME_ID thr_1", "set-environment -t $3 DEV_AGENT codex"]
+        "set-environment -t $3 CLAUDE_RESUME_ID thr_1", "set-environment -t $3 DEV_AGENT codex",
+        "display-message -p -t %7 #{socket_path}"]
 
 
 @pytest.mark.parametrize("pane,target,cwd", [
     ("", "$3", None), ("%7", "", None), ("%7", "$3", "/another/worktree"),
 ])
-def test_hook_codex_does_not_stamp_an_unverified_pane(sandbox, pane, target, cwd):
+def test_hook_codex_does_not_stamp_an_unverified_pane(managed_cache, sandbox, pane, target, cwd):
     home, env = sandbox
     r = subprocess.run([str(HOOK), "--agent", "codex"], input=json.dumps(
         {"session_id": "other-thread", "cwd": str(home)}),
@@ -231,7 +253,7 @@ def test_hook_agent_flag_overrides_the_ancestry_guess(sandbox):
     assert "set-environment -t $3 DEV_AGENT codex" in pathlib.Path(env["TMUX_LOG"]).read_text()
 
 
-def test_hook_falls_back_to_the_session_env_var(sandbox):
+def test_hook_falls_back_to_the_session_env_var(managed_cache, sandbox):
     home, env = sandbox
     r = run_hook(env, "not json at all", CLAUDE_CODE_SESSION_ID="env-sid")
     assert r.returncode == 0
@@ -245,7 +267,7 @@ def test_hook_never_fails_without_an_id(sandbox):
     assert not (home / ".cache").exists()
 
 
-def test_hook_skips_the_registry_when_no_agent_ancestor(sandbox, tmp_path):
+def test_hook_skips_the_registry_when_no_agent_ancestor(managed_cache, sandbox, tmp_path):
     home, env = sandbox
     # the process table knows only a shell above us: no registry entry, stamps still land
     (tmp_path / "ps.txt").write_text(f"{os.getpid()} 1 zsh\n1 0 launchd\n")
@@ -386,6 +408,62 @@ def zsh(tmp_path):
     call.log = log
     call.home = home
     return call
+
+
+@pytest.fixture(autouse=True)
+def managed_pr_cache(request):
+    if not request.node.name.startswith('test_zsh_pr_'):
+        yield
+        return
+    zsh = request.getfixturevalue('zsh')
+    env = {'HOME': str(zsh.home), 'XDG_CACHE_HOME': str(zsh.home / '.cache'),
+           'T_LOCAL_RC': str(zsh.home / '.zshrc.local'), 'PATH': os.environ['PATH'],
+           'TMUX_TMPDIR': os.environ.get('TMUX_TMPDIR', '/tmp')}
+    script = REPO_ROOT / 'libexec/t_session_cache.py'
+    process = subprocess.Popen([sys.executable, str(script), 'serve'], env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def api(operation, payload=None):
+        code = ('import runpy,json,sys; m=runpy.run_path(sys.argv[1]); '
+                'print(json.dumps(m["request"](sys.argv[2],json.loads(sys.argv[3]))))')
+        result = subprocess.run([sys.executable, '-c', code, str(script), operation,
+                                 json.dumps(payload or {})], env=env, capture_output=True,
+                                text=True, check=True)
+        return json.loads(result.stdout)
+    deadline = time.monotonic() + 8
+    while api('status').get('unavailable'):
+        assert process.poll() is None
+        assert time.monotonic() < deadline
+        time.sleep(.02)
+    class CachePath:
+        def __init__(self, path):
+            self.path = path
+        def __truediv__(self, value):
+            return CachePath(self.path / value)
+        def __str__(self):
+            return str(self.path)
+        def mkdir(self, **kwargs):
+            pass
+        def record(self):
+            return api('artifact', {'key': 'display-file:' + str(self.path)}).get('value') or {}
+        def write_text(self, text):
+            api('artifact', {'key': 'display-file:' + str(self.path),
+                             'value': {'text': text, 'checked': time.time()}})
+        def read_text(self):
+            return self.record().get('text', '')
+        def exists(self):
+            return bool(self.record())
+        def touch(self):
+            self.write_text('')
+        def age(self, seconds):
+            evidence = self.record()
+            evidence['checked'] = time.time() - seconds
+            api('artifact', {'key': 'display-file:' + str(self.path), 'value': evidence})
+    zsh.pr_cache = CachePath(zsh.home / '.cache/claude-sessions/pr')
+    try:
+        yield
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
 
 
 T_STUB = """#!/bin/sh
@@ -1271,7 +1349,7 @@ def test_zsh_pr_tag_says_when_work_continued_past_a_merge(zsh, tmp_path):
     subprocess.run(["git", "init", "-q", str(wt)], check=True)
     subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "pr head"], check=True)
     head = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     (prdir / "o#r#5").write_text("MERGED")
     url = "github.com/o/r/pull/5"
@@ -1312,7 +1390,7 @@ def test_zsh_pr_work_continued_recognizes_main_and_squashed_work(zsh, tmp_path):
     head = commit("base")
     git("update-ref", "refs/remotes/origin/main", head)
     git("checkout", "-qb", "slot")
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     hf = prdir / "o#r#5.head"
     hf.write_text(head)
@@ -1369,7 +1447,7 @@ def test_zsh_pr_work_continued_recognizes_main_and_squashed_work(zsh, tmp_path):
 
 
 def test_zsh_pr_tag_refreshes_later_merges_without_repeated_requests(zsh):
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     (prdir / "o#r#5").write_text("MERGED")
     (prdir / "o#r#5.head").write_text("old-head")
@@ -1380,7 +1458,7 @@ def test_zsh_pr_tag_refreshes_later_merges_without_repeated_requests(zsh):
     checked = prdir / "o#r.checked"
     checked.touch()
     assert zsh(snippet).stdout.strip() == ""
-    os.utime(checked, (time.time() - 301, time.time() - 301))
+    checked.age(301)
     assert zsh(snippet).stdout.strip() == "o/r#5"
 
 
@@ -1391,7 +1469,7 @@ def test_zsh_pr_refresh_records_the_merged_head(zsh, tmp_path):
     stub = tmp_path / "stubbin" / "gh"
     stub.write_text('#!/bin/sh\necho "5 MERGED abc123"\necho "6 OPEN def456"\n')
     stub.chmod(0o755)
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     (prdir / "o#r#5").write_text("MERGED")                # legacy: no .head
     zsh("_pr_state_refresh 'o/r#5' 'o/r#6'")
@@ -1460,13 +1538,13 @@ print -r -- "queued=${{#_PR_STALE}}" """)
     query, = queries.read_text().splitlines()
     assert all(f"pullRequest(number:{n})" in query for n in records)
     assert "pullRequest(number:11)" not in query
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     assert (prdir / "o#r#5").read_text() == "OPEN"
     assert (prdir / "o#r#5.preview").read_text() == f"{heads[5]} 1"
     assert (prdir / "o#r#10.preview").read_text() == f"{heads[10]} ?"
     assert not (prdir / "o#r#11.preview").exists()
 
-    os.utime(prdir / "o#r#5.preview", (time.time() - 301, time.time() - 301))
+    (prdir / "o#r#5.preview").age(301)
     (prdir / "o#r#6.preview").write_text(f"{heads[5]} 1")
     retained = zsh("""typeset -a _PR_STALE; typeset -A _PR_SPAWNED; typeset _PR_WITH_BADGES=1
 for number in 5 6; do
@@ -2924,3 +3002,23 @@ def test_failed_placeholder_barrier_preserves_changed_session(zsh, mode):
     calls = zsh.log.read_text()
     assert 'new-session' in calls
     assert 'respawn-pane' not in calls and 'kill-session' not in calls
+
+
+def test_stopped_cache_pr_refresh_leaves_network_idle(zsh, tmp_path):
+    log = tmp_path / 'gh-called'
+    stub = tmp_path / 'stubbin/gh'
+    stub.write_text('#!/bin/sh\ntouch ' + shlex.quote(str(log)) + '\n')
+    stub.chmod(0o755)
+    result = zsh("typeset -a _PR_STALE=('org/repo#42'); _pr_state_refresh 'org/repo#42'; _pr_state_flush")
+    assert result.returncode == 0, result.stderr
+    assert not log.exists()
+    assert not (zsh.home / '.cache/t/discovery/cache.sqlite3').exists()
+
+
+def test_hook_with_stopped_cache_preserves_live_evidence_without_opened_write(sandbox):
+    home, env = sandbox
+    result = run_hook(env, {'session_id': 'offline-open', 'cwd': str(home)})
+    assert result.returncode == 0
+    root = home/'.cache/claude-sessions'
+    assert (root/str(os.getpid())).exists()
+    assert not (root/'opened/offline-open').exists()

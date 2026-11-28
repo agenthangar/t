@@ -69,6 +69,8 @@ def picker(t_mod):
                    XDG_STATE_HOME=directory, TMPDIR=directory, TMUX='', SHELL='/bin/sh',
                    TERM='xterm-256color', T_HOME=str(ROOT), FZF_DEFAULT_OPTS='', FZF_DEFAULT_OPTS_FILE='/dev/null')
 
+        cache_processes = []
+
         def tmux(*args, check=True):
             return subprocess.run(['tmux', '-S', socket, *args], env=env, text=True,
                                   capture_output=True, check=check)
@@ -207,6 +209,18 @@ exec /bin/zsh "$@"
 ''')
                     stub.chmod(0o700)
                     env['PATH'] = directory + os.pathsep + env['PATH']
+                worker = subprocess.Popen(
+                    [sys.executable, str(ROOT / 'libexec/t_session_cache.py'), 'serve'],
+                    env=env, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                cache_processes.append(worker)
+                probe = ('import runpy,sys; m=runpy.run_path(sys.argv[1]); '
+                         'sys.exit(bool(m["request"]("status").get("unavailable")))')
+                deadline = time.monotonic() + 10
+                while subprocess.run([sys.executable, '-c', probe, str(ROOT / 'libexec/t_session_cache.py')],
+                                     env=env, cwd=root).returncode:
+                    assert worker.poll() is None
+                    assert time.monotonic() < deadline
+                    time.sleep(.05)
                 if warm_resume or warm_history:
                     # Discovery namespaces include the tmux socket. Warm the
                     # same server that will display the picker, then reuse its
@@ -312,7 +326,9 @@ exec /bin/zsh "$@"
             else:
                 tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), command)
 
-        def wait(text, absent=(), ordered=(), focused=None, columns=None, timeout=12):
+        def wait(text, absent=(), ordered=(), focused=None, columns=None, timeout=None):
+            if timeout is None:
+                timeout = 30 if cache_processes else 12
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
@@ -374,6 +390,9 @@ exec /bin/zsh "$@"
         yield start, wait, keys, finish
         keys.release_collector()
         tmux('kill-server', check=False)
+        for worker in cache_processes:
+            worker.terminate()
+            worker.wait(timeout=10)
 
 
 @pytest.mark.fzf_compat
@@ -395,7 +414,8 @@ def test_public_resume_ctrl_b_resumes_exact_last_closed(picker, query):
 def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', width=105, height=24)
-    screen = wait('Second Task', absent=['Refreshing local'], focused='Second Task')
+    screen = wait('Second Task', absent=['Refreshing local'], focused='Second Task',
+                  ordered=['Last refresh', 'REPO', 'Second Task'])
     assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
     refresh_line = next(line for line in screen.splitlines() if 'Last refresh' in line)
     assert 'Ctrl-U refresh now' in refresh_line

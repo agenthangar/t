@@ -42,8 +42,8 @@ def queue(source, config):
                          stderr=subprocess.DEVNULL, start_new_session=True, pass_fds=(lock.fileno(),))
 
 
-def prioritize(aliases, slot):
-    root = directory()
+def prioritize(aliases, slot, *, root=None):
+    root = Path(root) if root is not None else directory()
     if not (root / 'worker.lock').is_file():
         return
     temporary = None
@@ -57,13 +57,6 @@ def prioritize(aliases, slot):
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-
-
-def revision():
-    try:
-        return (directory() / 'revision').stat().st_mtime_ns
-    except OSError:
-        return 0
 
 
 def _priority():

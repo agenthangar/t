@@ -91,7 +91,7 @@ public struct SessionSnapshot: Decodable, Sendable {
         }
         let health = fresh?.hosts ?? []
         if fresh?.unavailable == true {
-            status = "Session discovery unavailable. Showing the last available sessions."
+            status = "Session cache is unavailable. Open t config > Background agents > Session cache."
         } else if health.contains(where: { !($0.error ?? "").isEmpty || !($0.error_kind ?? "").isEmpty }) {
             status = "Some hosts are unavailable. Showing cached sessions; actions verify ownership."
         } else if fresh?.loading == true || health.contains(where: { $0.refreshing == true }) {

@@ -44,12 +44,13 @@ case "${1:-}" in
   -h|--help) awk 'NR==1{next} !/^#/{exit} {sub(/^# ?/,""); print}' "$0"; exit 0 ;;
 esac
 
-chat_id="" host="" from="" do_ls=0 attach=0 do_resume=0 do_pick=0
+chat_id="" host="" from="" do_ls=0 cache_rows=0 attach=0 do_resume=0 do_pick=0
 [[ "${1:-}" == "resume" || "${1:-}" == "open" ]] && { do_resume=1; shift; }
 while (( $# )); do
   case "$1" in
     --host) host="${2:?--host needs a value}"; shift 2 ;;
     --from) from="${2:?--from needs a value}"; shift 2 ;;
+    --cache-rows) cache_rows=1; shift ;;
     --ls)   do_ls=1; shift ;;
     -a|--attach) attach=1; shift ;;
     -p|--pick) do_pick=1; shift ;;
@@ -157,6 +158,13 @@ translate_path() {  # <cwd> <from-home> <to-home>
 # live; a chat that has not had a conversation yet holds only meta.json —
 # still listed). Also the picker's row source.
 list_chats() {
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    python3 -c 'import runpy,sys; from pathlib import Path
+helper = Path(sys.argv[1]).resolve().parents[1] / "libexec/t_session_cache.py"
+sys.argv = [str(helper), "provider", "cursor"]
+runpy.run_path(str(helper), run_name="__main__")' "$0"
+    return
+  fi
   local dir ws cwd newest title
   [[ -d "$CHATS" ]] || return 0
   # shellcheck disable=SC2012
@@ -240,6 +248,11 @@ resume_hint() {  # <chat-id> [host]
   local id="$1" host="${2:-}"
   echo "Resume it: t cursor resume $id${host:+ --host $host}"
 }
+
+if (( cache_rows )); then
+  list_chats
+  exit
+fi
 
 # ---- --ls ----
 if (( do_ls )); then

@@ -127,7 +127,11 @@ def make_envelope(source, target, summary, attachments):
 
 
 def local_targets():
-    return runpy.run_path(str(Path(__file__).with_name('t_share_sessions.py')))['targets']()
+    cache = runpy.run_path(str(Path(__file__).with_name('t_session_cache.py')))
+    result = cache['request']('provider', {'name': 'share'})
+    if result.get('unavailable'):
+        raise ShareError(result['message'])
+    return result['targets']
 
 
 def local_resolve(value):

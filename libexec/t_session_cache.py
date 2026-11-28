@@ -1,9 +1,11 @@
 """The sole owner of discovery cache storage and policy.
 
 Public boundary: request(operation, payload). Clients never open SQLite. One
-per-user/source service serves decoded RAM snapshots; disk is recovery only.
+managed per-user service serves decoded RAM snapshots; disk is recovery only.
 Collectors run outside the request loop and cannot publish across an invalidation.
 """
+from collections import deque
+from concurrent.futures import Future
 import copy
 import fcntl
 import hashlib
@@ -25,6 +27,7 @@ import sys
 import threading
 import time
 import traceback
+import zlib
 
 VERSION = 2
 TTL = 86400
@@ -165,12 +168,15 @@ def _private(path):
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
         raise OSError('unsafe session cache directory')
-    path.chmod(0o700)
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        path.chmod(0o700)
     return path
 
 
 def _runtime():
-    return _identity_runtime(_identity())
+    # One listener for this user's login. Disposable homes remain isolated.
+    return Path('/tmp') / ('t-discovery-' + str(os.getuid()) + '-' +
+                           _digest(os.path.realpath(Path.home()))[:16])
 
 
 def _identity_runtime(identity):
@@ -268,8 +274,6 @@ def retire_obsolete(previous_sources=(), report=False):
     try:
         if (SOURCE / '.git').is_file():
             return dict(status='deferred', reason='development discovery is pinned', results=[]) if report else None
-        revision = _revision()
-        current = _identity()
         brew = _homebrew()
         sources = ([Path(brew['opt']), *_brew_sources(brew)] if brew else [SOURCE])
         # Callers snapshot only the validated source they are updating. Its
@@ -295,11 +299,9 @@ def retire_obsolete(previous_sources=(), report=False):
                     before = _socket_identity(address)
                     if before is None and report:
                         continue
-                    response = _existing_status(root, revision if identity == current else [], deadline)
+                    response = _existing_status(root, [], deadline)
                     if response is None:
                         evidence.append(dict(status='deferred', reason='foreign or unsupported discovery endpoint'))
-                    elif response.get('protocol') == VERSION and identity == current:
-                        evidence.append(dict(status='current'))
                     elif response.get('error') == 'session cache service version changed; restarting':
                         if report:
                             pending.append((address, before))
@@ -357,10 +359,10 @@ class DiscoveryError(ValueError):
         self.kind, self.diagnostic = kind, diagnostic
 
 
-def _diagnostic(spec, detail):
+def _diagnostic(spec, detail, identity=None):
     """Private bounded evidence, never transcript bodies or command stdout."""
     root = _private(_database().parent / 'diagnostics')
-    path = root / (_digest([_identity(), spec.get('target')])[:24] + '.log')
+    path = root / (_digest([identity or _identity(), spec.get('target')])[:24] + '.log')
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as stream:
         stream.write(detail[-65536:])
@@ -368,15 +370,15 @@ def _diagnostic(spec, detail):
 
 
 
-def _report_path(stage):
-    return _database().parent / 'diagnostics' / (_digest([_identity(), 'local'])[:24] + '-' + stage + '.json')
+def _report_path(stage, identity=None):
+    return _database().parent / 'diagnostics' / (_digest([identity or _identity(), 'local'])[:24] + '-' + stage + '.json')
 
 
-def _report(stage, status):
+def _report(stage, status, identity=None):
     # Discovery evidence must never cause the collection itself to fail.
     temporary = None
     try:
-        path = _report_path(stage)
+        path = _report_path(stage, identity)
         _private(path.parent)
         if status.get('error'):
             clean = runpy.run_path(str(SOURCE / 'libexec/t_lifecycle.py'))['diagnostic_error']
@@ -402,12 +404,12 @@ def _report(stage, status):
                 pass
 
 
-def doctor_inventory(count, actual_socket):
+def _doctor_inventory(count, actual_socket, identity):
     helper = runpy.run_path(str(SOURCE / 'libexec/t_lifecycle.py'))
     lines = [f'Tmux now       {count if count is not None else "unknown"} numbered slots on {actual_socket or "unknown socket"}']
     for stage in ('inventory', 'enrichment'):
         try:
-            raw, _ = helper['diagnostic_read'](_report_path(stage), 16384)
+            raw, _ = helper['diagnostic_read'](_report_path(stage, identity), 16384)
             record = json.loads(raw)
             age = max(0, int(time.time() - record['attempt']))
             lines.append(f'{stage.capitalize():14} {age}s ago, took {record["duration"]}s')
@@ -432,6 +434,11 @@ def doctor_inventory(count, actual_socket):
     return lines
 
 
+def doctor_inventory(count, actual_socket):
+    result = request('doctor', {'count': count, 'socket': actual_socket})
+    return result.get('lines', [result.get('message', 'Session cache unavailable.')])
+
+
 def _service_env():
     env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
     # Detached workers start at /. Pin selection before changing cwd, including
@@ -440,46 +447,58 @@ def _service_env():
     return env
 
 
-def _start_candidate(*, ready=False):
-    # Elect a starter across processes. A slow/unreachable owner must not cause
-    # every waiter to fork a replacement on every poll.
-    fd = os.open(_runtime() / 'start.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, 'r+') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return
-        if ready:
-            lock.seek(0)
-            lock.truncate()
-            return
-        try:
-            last = float(lock.read() or 0)
-        except ValueError:
-            last = 0
-        now = time.monotonic()
-        if last and 0 <= now - last < 4:
-            return
-        env = _service_env()
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'serve'],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True, cwd='/', env=env)
-        lock.seek(0)
-        lock.truncate()
-        lock.write(str(now))
+def _client_context():
+    # Only discovery inputs cross the socket. Credentials and caller-local
+    # shell state never become part of the cache or its persisted records.
+    home = Path.home()
+    paths = (home, os.environ.get('XDG_CACHE_HOME') or home/'.cache',
+             os.environ.get('XDG_STATE_HOME') or home/'.local/state',
+             os.environ.get('XDG_CONFIG_HOME') or home/'.config',
+             os.environ.get('CODEX_HOME') or home/'.codex',
+             os.environ.get('CLAUDE_CONFIG_DIR') or home/'.claude',
+             _local_rc(), os.environ.get('TMUX_TMPDIR') or '/tmp')
+    return ['managed-cache-v1', *map(os.path.realpath, paths), _LIVE['socket_path']()]
+
+
+def _context_env(identity):
+    env = _service_env()
+    keys = ('HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME',
+            'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'T_LOCAL_RC', 'TMUX_TMPDIR')
+    for key, value in zip(keys, identity[1:9]):
+        if value:
+            env[key] = value
+        else:
+            env.pop(key, None)
+    # An inherited pane or worktree must never select another server or CLI.
+    for key in ('TMUX_PANE', 'T_DEV_CONTEXT', 'T_DEV_CONTEXT_OWNER', 'T_SESSION_SOURCE'):
+        env.pop(key, None)
+    default = os.path.realpath(Path(identity[8] or '/tmp') / f'tmux-{os.getuid()}' / 'default')
+    if identity[9] == default:
+        env.pop('TMUX', None)
+    else:
+        env['TMUX'] = identity[9] + ',0,0'
+    env['T_HOME'] = str(SOURCE)
+    return env
 
 
 def _wire(operation, payload, deadline=None):
     with socket.socket(socket.AF_UNIX) as connection:
         def budget():
-            remaining = 2 if deadline is None else min(2, deadline - time.monotonic())
+            limit = 125 if operation in ('hydrate', 'provider') else 2
+            remaining = limit if deadline is None else min(limit, deadline - time.monotonic())
             if remaining <= 0:
                 raise TimeoutError('session cache deadline reached')
             connection.settimeout(remaining)
         budget()
-        connection.connect(str(_runtime() / 'service.sock'))
+        root = _runtime()
+        directory = root.lstat()
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or
+                directory.st_mode & 0o077):
+            raise OSError('unsafe session cache endpoint')
+        connection.connect(str(root / 'service.sock'))
         budget()
-        connection.sendall(json.dumps({'operation': operation, 'payload': payload, 'revision': _revision()}).encode() + b'\n')
+        connection.sendall(json.dumps({'operation': operation, 'payload': payload,
+                                       'broker': 1, 'context': _client_context()}).encode() + b'\n')
         raw = bytearray()
         while len(raw) <= LIMIT:
             budget()
@@ -500,33 +519,17 @@ def _wire(operation, payload, deadline=None):
 
 def request(operation, payload=None, *, deadline=None):
     """Single API for discovery, lifecycle events, and private index artifacts."""
-    payload = payload or {}
-    _private(_runtime())
     try:
-        return _wire(operation, payload) if deadline is None else _wire(operation, payload, deadline)
-    except (OSError, ValueError):
-        pass
-    if operation == 'discover' and payload.get('observe') is True:
-        return {'hosts': [], 'loading': False, 'unavailable': True}
-    if operation == 'artifact':
-        return {'value': None}  # Standalone live collectors must not start a daemon.
-    # The daemon holds its own lifetime lock. Multiple requesting processes may
-    # spawn candidates; exactly one can bind/restore and all use its RAM.
-    if deadline is not None and time.monotonic() >= deadline:
-        return {'hosts': [], 'loading': False, 'unavailable': True}
-    _start_candidate()
-    # An old owner may need two seconds to flush before releasing its lock.
-    # One candidate waits for that handoff; do not fork repeatedly on each poll.
-    deadline = deadline if deadline is not None else time.monotonic() + 4
-    while time.monotonic() < deadline:
-        try:
-            result = _wire(operation, payload, deadline)
-            _start_candidate(ready=True)
-            return result
-        except (OSError, ValueError):
-            time.sleep(.025)
-    return {'hosts': [], 'loading': False, 'unavailable': True,
-            'message': 'Session discovery unavailable; retry shortly.'}
+        return _wire(operation, payload or {}, deadline)
+    except (OSError, ValueError) as error:
+        if operation == 'artifact':
+            return {'value': None}
+        if operation == 'artifacts':
+            return {'values': {}}
+        stopped = isinstance(error, (FileNotFoundError, ConnectionRefusedError))
+        message = ('Session cache is stopped. Open t config > Background agents > Session cache.'
+                   if stopped else 'Session cache unavailable: ' + str(error))
+        return {'hosts': [], 'loading': False, 'unavailable': True, 'message': message}
 
 
 def invalidate(targets=None):
@@ -546,10 +549,70 @@ def invalidate(targets=None):
         pass  # Discovery expiry remains a fallback; never fail an agent launch.
 
 
-def _collect(spec):
-    env = {k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')}
+class _Workers:
+    """Own collector process groups until their output is consumed or the agent stops."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.children = set()
+        self.stopping = False
+
+    def run(self, args, *, input, env, timeout, **_):
+        with self.lock:
+            if self.stopping:
+                raise OSError('session cache is stopping')
+            child = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+            self.children.add(child)
+        try:
+            stdout, stderr = child.communicate(input, timeout=timeout)
+            return subprocess.CompletedProcess(args, child.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            self.kill(child)
+            child.communicate()
+            raise
+        finally:
+            with self.lock:
+                self.children.discard(child)
+
+    @staticmethod
+    def kill(child):
+        if child.poll() is None:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def close(self):
+        with self.lock:
+            self.stopping = True
+            for child in self.children:
+                self.kill(child)
+
+
+def _process_written():
+    """OS-accounted disk writes, independent of SQL payload and socket traffic."""
+    try:
+        if sys.platform == 'darwin':
+            import ctypes
+            info = (ctypes.c_uint64 * 20)()
+            lib = ctypes.CDLL('/usr/lib/libproc.dylib')
+            if lib.proc_pid_rusage(os.getpid(), 2, ctypes.byref(info)) == 0:
+                return info[19]  # rusage_info_v2.ri_diskio_byteswritten
+        elif sys.platform.startswith('linux'):
+            for line in Path('/proc/self/io').read_text().splitlines():
+                if line.startswith('write_bytes:'):
+                    return int(line.split()[1])
+    except (OSError, AttributeError, ValueError):
+        pass
+    return None
+
+
+def _collect(spec, context=None, workers=None):
+    env = _context_env(context) if context else _service_env()
     env['T_DISCOVERY_COLLECTOR'] = '1'
-    result = subprocess.run([sys.executable, str(SOURCE / 'bin/t'), '__cache-collect'],
+    run = workers.run if workers else subprocess.run
+    result = run([sys.executable, str(SOURCE / 'bin/t'), '__cache-collect'],
                             input=json.dumps(spec), capture_output=True, text=True,
                             env=env, timeout=120, start_new_session=True)
     if result.returncode:
@@ -561,7 +624,7 @@ def _collect(spec):
             detail = failure.get('detail', detail)
         except (ValueError, KeyError, TypeError):
             summary = detail.splitlines()[-1] if 'Traceback' in detail else detail
-        path = _diagnostic(spec, detail)
+        path = _diagnostic(spec, detail, context)
         raise DiscoveryError(' '.join(summary.split())[:512], kind, path)
     value = json.loads(result.stdout)
     if isinstance(value, dict) and value.get('_pending'):
@@ -582,6 +645,10 @@ class _Memory:
         self.overlays = {}
         self.export_versions = {}
         self.inventory = None
+        self.identity = None
+        self.migration_root = None
+        self.migration_revision = 0
+        self.persist_artifact = lambda key: self.persist()
         self.collect, self.clock, self.persist = collect, clock, persist
         self.submit = submit or self._thread
         self.lock = threading.RLock()
@@ -653,6 +720,10 @@ class _Memory:
 
     def handle(self, operation, payload):
         with self.lock:
+            if operation == 'inventory-changed':
+                if self.inventory:
+                    self.inventory.request(changed=True)
+                return {'scheduled': True}
             if operation == 'live-view':
                 host = dict(value=None)
                 if self.inventory:
@@ -671,11 +742,17 @@ class _Memory:
                 return {'scheduled': True}
             if operation == 'status':
                 return dict(loading=self.loading, persistence_error=self.persistence_error, protocol=VERSION)
+            if operation == 'artifacts':
+                prefix = payload['prefix']
+                if not isinstance(prefix, str) or not prefix:
+                    raise ValueError('artifact prefix required')
+                return {'values': {key: copy.deepcopy(value) for key, value in self.artifacts.items()
+                                   if key.startswith(prefix)}}
             if operation == 'artifact':
                 key = str(payload['key'])
-                if 'value' in payload:
+                if 'value' in payload and (key not in self.artifacts or self.artifacts[key] != payload['value']):
                     self.artifacts[key] = payload['value']
-                    self.persist()
+                    self.persist_artifact(key)
                 return {'value': copy.deepcopy(self.artifacts.get(key))}
             if operation == 'export':
                 return self.export(payload)
@@ -965,7 +1042,7 @@ class _Memory:
             diagnostic = getattr(exc, 'diagnostic', '')
             if not diagnostic:
                 try:
-                    diagnostic = _diagnostic(spec, traceback.format_exc())
+                    diagnostic = _diagnostic(spec, traceback.format_exc(), self.identity)
                 except OSError:
                     pass
         with self.lock:
@@ -1029,7 +1106,7 @@ class _Memory:
                     entry['refresh_revision'] = entry.get('refresh_revision', 0) + 1
                 self.persist()
         if target == 'local' and self.inventory:
-            _report('enrichment', status)
+            _report('enrichment', status, self.identity)
 
 
 def record_key(row):
@@ -1055,66 +1132,251 @@ def _legacy_artifacts():
                 result[str(path)] = value
         except (OSError, ValueError):
             continue
+    for path in (root / 'pr').glob('*'):
+        try:
+            size = path.lstat().st_size
+            if (not path.is_symlink() and path.is_file() and not path.name.endswith('.tmp')
+                    and size <= min(8192, remaining)):
+                result['display-file:' + str(path)] = dict(text=path.read_text(), checked=path.stat().st_mtime)
+                remaining -= size
+        except (OSError, ValueError):
+            continue
+    for name in ('repository-proofs.json', 'repository-catalog.json'):
+        path = Path(os.environ.get('XDG_STATE_HOME') or Path.home()/'.local/state')/'t/history/v1'/name
+        try:
+            if not path.is_symlink() and path.is_file() and path.stat().st_size <= remaining:
+                data = path.read_bytes()
+                remaining -= len(data)
+                value = json.loads(data)
+                if isinstance(value, dict):
+                    result[str(path)] = value
+        except (OSError, ValueError):
+            continue
     return result
 
 
+def _pack_record(value):
+    """Give independently changing conversations and index entries their own rows."""
+    fragments = {}
+    layout = []
+
+    def separate(node, path):
+        is_list = isinstance(node, list)
+        is_map = isinstance(node, dict)
+        named_collection = path and path[-1] in ('conversations', 'recs', 'projections', 'index', 'files')
+        if (is_list or is_map) and node and (named_collection or len(node) >= 32):
+            members = []
+            for key, item in enumerate(node) if is_list else node.items():
+                raw = json.dumps(item, separators=(',', ':')).encode()
+                digest = hashlib.sha256(raw).hexdigest()
+                fragments[digest] = raw
+                members.append(digest if is_list else (key, digest))
+            layout.append((path, is_list, members))
+            return None
+        if is_map:
+            return {key: separate(item, [*path, key]) for key, item in node.items()}
+        return node
+
+    root = separate(value, [])
+    data = json.dumps([root, layout] if layout else value, separators=(',', ':')).encode()
+    return (b'M' if layout else b'') + zlib.compress(data, 1), fragments
+
+
+def _unpack_record(db, namespace, name, blob):
+    if not blob.startswith(b'M'):
+        return json.loads(zlib.decompress(blob))
+    root, layout = json.loads(zlib.decompress(blob[1:]))
+    fragments = {key: json.loads(zlib.decompress(raw)) for key, raw in db.execute(
+        'select id,payload from cache_fragments where namespace=? and path=?', (namespace, name))}
+    for path, is_list, members in layout:
+        collection = ([fragments[key] for key in members] if is_list else
+                      {key: fragments[digest] for key, digest in members})
+        if not path:
+            root = collection
+        else:
+            parent = root
+            for key in path[:-1]:
+                parent = parent[key]
+            parent[path[-1]] = collection
+    return root
+
+
 class _Persistence:
-    """One background thread loads once, then serializes RAM snapshots to disk."""
+    """One thread and SQLite connection for every context served by this agent."""
+
     def __init__(self, memory, database=None):
-        self.memory = memory
         self.database = Path(database or _database())
         self.wake = threading.Event()
         self.stop = threading.Event()
-        self.namespace = _digest(_identity())
+        self.lock = threading.Lock()
+        self.contexts = {}
+        self.dirty = {}
+        self.pending = []
+        self.namespace = _digest(_client_context())
+        self.register(_client_context(), memory)
+
+    def register(self, identity, memory):
+        namespace = _digest(identity)
+        with self.lock:
+            self.contexts[namespace] = (identity, memory)
+            self.pending.append(namespace)
+            self.wake.set()
+        memory.persist = lambda: self.changed(namespace, None)
+        memory.persist_artifact = lambda key: self.changed(namespace, key)
+
+    def changed(self, namespace, key):
+        with self.lock:
+            self.dirty.setdefault(namespace, set()).add(key)
+            self.wake.set()
 
     def _open(self):
         _private(self.database.parent)
-        if self.database.is_symlink():
-            raise OSError('unsafe session cache database')
         fd = os.open(self.database, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
         os.fchmod(fd, 0o600)
         os.close(fd)
-        db = sqlite3.connect(self.database, timeout=.1)
+        db = sqlite3.connect(self.database, timeout=2)
         db.execute('pragma journal_mode=WAL')
         db.execute('create table if not exists snapshots (namespace text primary key, version integer, payload text)')
+        db.execute('create table if not exists cache_records (namespace text, path text, payload blob, '
+                   'primary key(namespace,path)) without rowid')
+        db.execute('create table if not exists cache_fragments (namespace text, path text, id text, payload blob, '
+                   'primary key(namespace,path,id)) without rowid')
         return db
+
+    def retire_legacy_writers(self, db):
+        # Legacy sockets were named after the namespace primary key in this
+        # very database. A private status handshake lets even a removed
+        # checkout flush and exit without guessing a PID or reading its env.
+        base = _identity_runtime(_identity()).parent
+        deadline = time.monotonic() + 4
+        for namespace, in db.execute('select namespace from snapshots'):
+            if time.monotonic() >= deadline:
+                break
+            if not isinstance(namespace, str) or not re.fullmatch(r'[0-9a-f]{64}', namespace):
+                continue
+            root = base / f't-sessions-{os.getuid()}-{namespace[:16]}'
+            if _socket_identity(root / 'service.sock'):
+                try:
+                    _existing_status(root, [], deadline)
+                except (OSError, ValueError):
+                    pass
+
+    def _load(self, db, namespace, identity):
+        saved = {}
+        for path, blob in db.execute('select path,payload from cache_records where namespace=?', (namespace,)):
+            keys = json.loads(path)
+            parent = saved
+            for key in keys[:-1]:
+                parent = parent.setdefault(key, {})
+            parent[keys[-1]] = _unpack_record(db, namespace, path, blob)
+        if saved:
+            return saved
+        if identity == _client_context():
+            for old in _snapshot_identities():
+                row = db.execute('select payload from snapshots where namespace=? and version in (1,?)',
+                                 (_digest(old), VERSION)).fetchone()
+                if row:
+                    saved = json.loads(row[0])
+                    if isinstance(saved, dict):
+                        saved['artifacts'] = {**_legacy_artifacts(), **saved.get('artifacts', {})}
+                    return saved
+            return {'artifacts': _legacy_artifacts()}
+        return {}
+
+    def _save(self, db, namespace, memory, keys, first):
+        # Artifact-only changes never copy, encode or write unrelated history.
+        with memory.lock:
+            records = {}
+            if None in keys or first:
+                for field in ('generations', 'overlays', 'failures'):
+                    records[(field,)] = copy.deepcopy(getattr(memory, field))
+                for key, entry in memory.entries.items():
+                    # Keep changing health/timestamps separate from the catalog.
+                    for field, value in entry.items():
+                        if field in ('last_used', 'refreshing', 'requested', 'pending', 'force_refresh',
+                                     'peer_ticket', 'refresh_revision', 'catalog_changed'):
+                            continue
+                        if field == 'value':
+                            for part, data in value.items():
+                                records[('entries', key, field, part)] = copy.deepcopy(data)
+                        else:
+                            records[('entries', key, field)] = copy.deepcopy(value)
+            for key in memory.artifacts if first else (k for k in keys if k is not None):
+                records[('artifacts', key)] = memory.artifacts[key]
+        paths = set()
+        with db:
+            for path, value in records.items():
+                name = json.dumps(path, separators=(',', ':'))
+                paths.add(name)
+                data, fragments = _pack_record(value)
+                previous = {row[0] for row in db.execute(
+                    'select id from cache_fragments where namespace=? and path=?', (namespace, name))}
+                db.executemany('insert into cache_fragments values (?,?,?,?)',
+                               ((namespace, name, key, zlib.compress(fragments[key], 1))
+                                for key in fragments.keys() - previous))
+                db.executemany('delete from cache_fragments where namespace=? and path=? and id=?',
+                               ((namespace, name, key) for key in previous - fragments.keys()))
+                db.execute('insert into cache_records values (?,?,?) on conflict(namespace,path) '
+                                    'do update set payload=excluded.payload where payload != excluded.payload',
+                                    (namespace, name, data))
+            if None in keys or first:
+                for (name,) in db.execute('select path from cache_records where namespace=?', (namespace,)).fetchall():
+                    if name not in paths and json.loads(name)[0] != 'artifacts':
+                        db.execute('delete from cache_fragments where namespace=? and path=?', (namespace, name))
+                        db.execute('delete from cache_records where namespace=? and path=?', (namespace, name))
 
     def run(self):
         db = None
-        try:
-            db = self._open()
-            row = None
-            for identity in _snapshot_identities():
-                row = db.execute('select payload from snapshots where namespace=? and version in (1,?)',
-                                 (_digest(identity), VERSION)).fetchone()
-                if row is not None:
-                    break
-            saved = json.loads(row[0]) if row else {'artifacts': _legacy_artifacts()}
-            if not isinstance(saved, dict):
-                raise ValueError('invalid cache snapshot')
-            self.memory.restore(saved)
-        except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError) as error:
-            self.memory.persistence_error = str(error)
-            self.memory.restore({})
+        initialized = set()
+        retire_legacy = True
         while True:
-            self.wake.wait(.5)
-            if self.stop.is_set() and not self.wake.is_set():
-                break
-            if not self.wake.is_set():
-                continue
-            self.wake.clear()
-            self.stop.wait(.1)
-            try:
-                if db is None:
-                    db = self._open()
-                value = json.dumps(self.memory.snapshot())
-                db.execute('insert or replace into snapshots values (?,?,?)', (self.namespace, VERSION, value))
-                db.commit()
-                self.memory.persistence_error = ''
-            except (OSError, sqlite3.Error, ValueError) as error:
-                self.memory.persistence_error = str(error)
+            self.wake.wait()
+            with self.lock:
+                self.wake.clear()
+                pending, self.pending = self.pending, []
+            for namespace in pending:
+                identity, memory = self.contexts[namespace]
+                try:
+                    if db is None:
+                        db = self._open()
+                    if retire_legacy:
+                        self.retire_legacy_writers(db)
+                        retire_legacy = False
+                    memory.restore(self._load(db, namespace, identity))
+                    if db.execute('select 1 from cache_records where namespace=? limit 1', (namespace,)).fetchone():
+                        initialized.add(namespace)
+                except (OSError, sqlite3.Error, ValueError, zlib.error, TypeError, KeyError, AttributeError) as error:
+                    memory.persistence_error = str(error)
+                    memory.restore({})
+            with self.lock:
+                dirty, self.dirty = self.dirty, {}
+            write_failed = False
+            for namespace, keys in dirty.items():
+                identity, memory = self.contexts[namespace]
+                if memory.loading:
+                    with self.lock:
+                        self.dirty.setdefault(namespace, set()).update(keys)
+                    continue
+                try:
+                    if db is None:
+                        db = self._open()
+                    self._save(db, namespace, memory, keys, namespace not in initialized)
+                    initialized.add(namespace)
+                    memory.persistence_error = ''
+                except (OSError, sqlite3.Error, ValueError) as error:
+                    write_failed = True
+                    memory.persistence_error = str(error)
+                    with self.lock:
+                        self.dirty.setdefault(namespace, set()).update(keys)
+                    self.wake.set()
             if self.stop.is_set():
-                break
+                with self.lock:
+                    if write_failed or not (self.pending or self.dirty):
+                        break
+                    self.wake.set()
+            # One bounded batch per second under continuous collection.
+            if dirty:
+                self.stop.wait(1)
         if db is not None:
             db.close()
 
@@ -1127,14 +1389,10 @@ class _Handler(socketserver.StreamRequestHandler):
             if len(raw) > LIMIT:
                 raise ValueError('session cache request too large')
             message = json.loads(raw)
-            if message.get('revision') != (getattr(self.server, 'revision', None) or _revision()):
-                brew = getattr(self.server, 'homebrew', None)
-                if (not brew or Path(brew['opt']).resolve() != brew['source']
-                        or _revision() != self.server.revision):
-                    threading.Thread(target=self.server.shutdown, daemon=True).start()
-                raise ValueError('session cache service version changed; restarting')
-            result = self.server.memory.handle(message['operation'], message.get('payload') or {})
-        except (ValueError, KeyError, TypeError, AttributeError, OSError) as error:
+            if message.get('broker') != 1:
+                raise ValueError('incompatible session cache protocol')
+            result = self.server.dispatch(message['context'], message['operation'], message.get('payload') or {})
+        except (ValueError, KeyError, TypeError, AttributeError, OSError, subprocess.SubprocessError) as error:
             result = {'error': str(error)}
         try:
             self.wfile.write(json.dumps(result).encode() + b'\n')
@@ -1154,8 +1412,67 @@ class _EndpointLost(OSError):
     """The listener no longer owns a reachable filesystem endpoint."""
 
 
+def _migration_root(identity):
+    state = identity[3] or str(Path(identity[1]) / '.local/state')
+    return Path(os.path.realpath(state)) / 't/data-migrations'
+
+
+def _migration_revision(root):
+    try:
+        info = (root / 'revision').lstat()
+        if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid():
+            return info.st_mtime_ns
+    except OSError:
+        pass
+    return 0
+
+
+def _display_evidence(identity, payload):
+    kind = payload.get('kind')
+    folders = {'opened': 'opened', 'rollout': 'rollouts'}
+    if kind not in folders:
+        raise ValueError('unknown display evidence')
+    root = Path(identity[2] or Path(identity[1])/'.cache')/'claude-sessions'/folders[kind]
+    if payload.get('publish') is True:
+        sid = payload.get('sid')
+        if kind != 'opened' or not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,256}', sid):
+            raise ValueError('invalid opened session ID')
+        _private(root)
+        fd = os.open(root/sid, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise ValueError('unsafe opened session marker')
+            # Duplicate hooks in the same second share a recency publication.
+            if time.time() - info.st_mtime >= 1:
+                os.utime(stream.fileno(), None)
+        return {'published': True}
+    def read(sid):
+        if not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,256}', sid):
+            return {}
+        try:
+            fd = os.open(root/sid, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(fd)
+                if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_size <= 8192:
+                    return {'checked': info.st_mtime, 'text': stream.read(8192).decode().strip() if kind == 'rollout' else ''}
+        except (OSError, UnicodeError):
+            pass
+        return {}
+    if payload.get('all') is True and kind == 'opened':
+        try:
+            return {'values': {name: read(name) for name in os.listdir(root)}}
+        except FileNotFoundError:
+            return {'values': {}}
+    if 'sids' in payload:
+        if not isinstance(payload['sids'], list):
+            raise ValueError('session IDs required')
+        return {'values': {sid: read(sid) for sid in payload['sids']}}
+    return read(payload.get('sid'))
+
+
 class _Server(socketserver.ThreadingUnixStreamServer):
-    daemon_threads = True
+    daemon_threads = False
 
     def server_bind(self):
         super().server_bind()
@@ -1166,20 +1483,151 @@ class _Server(socketserver.ThreadingUnixStreamServer):
     def service_actions(self):
         # A live process and lifetime lock do not prove that clients can reach
         # the socket. Exit our own loop (shutdown() here would deadlock), flush,
-        # and release the lock so a requesting client can replace this daemon.
+        # and release the lock so the service manager can restart this daemon.
         if _socket_identity(self.server_address) != self.endpoint_identity:
             raise _EndpointLost('session cache socket disappeared or was replaced')
-        if hasattr(self, 'ready'):
-            changed = False
-            for _ in range(128):
-                try:
-                    changed |= self.ready.recv(1) == b'R'
-                except BlockingIOError:
-                    break
-            if changed:
-                self.memory.inventory.request(changed=True)
-        if hasattr(self, 'memory'):
-            self.memory.tick()
+        now = time.monotonic()
+        if now - self.samples[-1][0] >= 1:
+            self.samples.append((now, _process_written()))
+        with self.context_lock:
+            memories = list(self.memories.values())
+        for memory in memories:
+            self.observe_migrations(memory)
+            memory.tick()
+
+    def configure(self):
+        self.build = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        self.samples = deque([(time.monotonic(), _process_written())], maxlen=61)
+        self.workers = _Workers()
+        self.context_lock = threading.Lock()
+        self.memories = {}
+        self.hydrating = {}
+        self.migration_lock = threading.Lock()
+        self.migration_receipts = {}
+        identity = _client_context()
+        self.default_identity = identity
+        self.memory = self.make_memory(identity)
+        self.memories[tuple(identity)] = self.memory
+        self.disk = _Persistence(self.memory)
+
+    def make_memory(self, identity):
+        memory = _Memory()
+        if memory.collect is _collect:
+            memory.collect = lambda spec: _collect(spec, identity, self.workers)
+        memory.identity = identity
+        memory.migration_root = _migration_root(identity)
+        memory.inventory = _LIVE['Inventory'](lambda status: _report('inventory', status, identity),
+                                              identity[9], _context_env(identity))
+        return memory
+
+    def observe_migrations(self, memory):
+        # The durable receipt belongs to the migration worker. A stopped cache
+        # can miss its notification, so compare it inside the service as well.
+        with memory.lock:
+            if memory.loading or memory.migration_root is None:
+                return
+            root = memory.migration_root
+            with self.migration_lock:
+                now = time.monotonic()
+                checked, revision = self.migration_receipts.get(root, (0, 0))
+                if now - checked >= 1:
+                    revision = _migration_revision(root)
+                    self.migration_receipts[root] = (now, revision)
+            if revision == memory.migration_revision:
+                return
+            memory.migration_revision = revision
+            if any(entry['spec']['target'] == 'local' and
+                   revision / 1e9 > entry.get('checked', 0) for entry in memory.entries.values()):
+                memory.handle('catalog-changed', {'refresh_active': True})
+
+    def dispatch(self, identity, operation, payload):
+        if (not isinstance(identity, list) or len(identity) != 10 or
+                not all(isinstance(v, str) for v in identity) or identity[:2] != self.default_identity[:2]):
+            raise ValueError('invalid cache context')
+        if operation == 'migration-priority':
+            aliases, slot = payload.get('aliases'), payload.get('slot')
+            if (not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases)
+                    or slot is not None and not isinstance(slot, str)):
+                raise ValueError('invalid migration priority')
+            migration = runpy.run_path(str(SOURCE / 'libexec/t_data_migrations.py'))
+            migration['prioritize'](aliases, slot, root=_migration_root(identity))
+            return {'scheduled': True}
+        if operation == 'display-evidence':
+            return _display_evidence(identity, payload)
+        if operation == 'doctor':
+            return dict(lines=_doctor_inventory(payload['count'], payload['socket'], identity))
+        if operation == 'stop-service':
+            threading.Thread(target=self.shutdown, daemon=True).start()
+            return dict(stopping=True)
+        if operation == 'service-status':
+            _, start = self.samples[0]
+            end = _process_written()
+            return dict(pid=os.getpid(), build=self.build, bytes_written_last_minute=(
+                max(0, end-start) if end is not None and start is not None else None))
+        if operation == 'provider':
+            provider, args = payload['name'], payload.get('args', [])
+            if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+                raise ValueError('invalid provider arguments')
+            if provider == 'share' and not args:
+                cmd = [sys.executable, str(SOURCE / 'bin/t'), '__cache-share-targets']
+            elif provider == 'cursor' and not args:
+                cmd = [str(SOURCE / 'bin/cursor-beam'), '--cache-rows']
+            elif (provider == 'keyword' and len(args) == 2) or (provider == 'semantic' and len(args) == 1):
+                function = '_claude_session_rows' if provider == 'keyword' else '_claude_semantic_rows'
+                cmd = ['zsh', '-fc', 'source "$T_HOME/t.plugin.zsh"; ' + function + ' "$@"', 't', *args]
+            else:
+                raise ValueError('unknown discovery provider')
+            proc = self.workers.run(cmd, input='', env=dict(_context_env(identity), T_DISCOVERY_COLLECTOR='1'),
+                                    timeout=120)
+            if proc.returncode:
+                raise ValueError(proc.stderr.strip()[-512:] or 'session provider failed')
+            return {'targets': json.loads(proc.stdout)} if provider == 'share' else {'rows': proc.stdout}
+        if operation == 'hydrate':
+            return self.hydrate(identity, payload)
+        with self.context_lock:
+            key = tuple(identity)
+            memory = self.memories.get(key)
+            if memory is None:
+                memory = self.make_memory(identity)
+                self.memories[key] = memory
+                self.disk.register(identity, memory)
+            if operation == 'catalog-changed':
+                memories = [entry for entry in self.memories.values()
+                            if entry.migration_root == memory.migration_root]
+            else:
+                memories = []
+        if memories:
+            for entry in memories:
+                entry.handle(operation, payload)
+            return {'scheduled': True}
+        if operation == 'discover':
+            self.observe_migrations(memory)
+        return memory.handle(operation, payload)
+
+
+    def hydrate(self, identity, payload):
+        key = _digest([identity, payload])
+        with self.context_lock:
+            future = self.hydrating.get(key)
+            if future is None:
+                self.hydrating[key] = future = Future()
+                owner = True
+            else:
+                owner = False
+        if owner:
+            try:
+                result = self.workers.run([sys.executable, str(SOURCE/'bin/t'), '__cache-hydrate'],
+                                          input=json.dumps(payload), timeout=95,
+                                          env=dict(_context_env(identity), T_DISCOVERY_COLLECTOR='1'))
+                if result.returncode:
+                    raise ValueError('local session detail collection failed')
+                future.set_result(json.loads(result.stdout))
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                future.set_exception(error)
+            finally:
+                with self.context_lock:
+                    del self.hydrating[key]
+        return future.result()
 
 
 def _serve():
@@ -1199,25 +1647,15 @@ def _serve():
         brew = _homebrew()
         if brew and Path(brew['opt']).resolve() != SOURCE:
             return  # A stale candidate must not claim the active opt namespace.
-        # One migration per elected generation, never a scan on every read.
+        # Only explicit management starts a listener or retires old workers.
         retire_obsolete()
         address = root / 'service.sock'
         address.unlink(missing_ok=True)
-        memory = _Memory()
-        memory.inventory = _LIVE['Inventory'](lambda status: _report('inventory', status))
-        disk = _Persistence(memory)
-        memory.persist = disk.wake.set
-        writer = threading.Thread(target=disk.run, daemon=True)
-        ready = root / 'ready.sock'
-        ready.unlink(missing_ok=True)
-        with _Server(str(address), _Handler) as server, socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as signals:
-            signals.bind(str(ready))
-            signals.setblocking(False)
-            server.ready = signals
+        with _Server(str(address), _Handler) as server:
             address.chmod(0o600)
-            server.memory = memory
-            server.revision = _revision()
-            server.homebrew = _homebrew()
+            server.configure()
+            disk = server.disk
+            writer = threading.Thread(target=disk.run, daemon=True)
             def stop(*_args):
                 threading.Thread(target=server.shutdown, daemon=True).start()
             signal.signal(signal.SIGTERM, stop)
@@ -1228,18 +1666,24 @@ def _serve():
             except _EndpointLost:
                 pass
             finally:
+                server.workers.close()
+                server.server_close()  # Drain accepted requests before the last SQLite commit.
                 disk.stop.set()
                 disk.wake.set()
-                writer.join(2)
-                ready.unlink(missing_ok=True)
+                writer.join()
                 # Never remove an endpoint installed after this listener bound.
                 if _socket_identity(address) == server.endpoint_identity:
                     address.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['serve']:
+    if sys.argv[1:] in (['serve'], ['serve-managed']):
         _serve()
+    elif sys.argv[1:2] == ['provider']:
+        result = request('provider', {'name': sys.argv[2], 'args': sys.argv[3:]})
+        if result.get('unavailable'):
+            sys.exit(result['message'])
+        sys.stdout.write(result['rows'])
     elif len(sys.argv) == 3 and sys.argv[1] == 'invalidate':
         request('event', {'targets': json.loads(sys.argv[2])})
     elif len(sys.argv) == 3 and sys.argv[1] == 'linked-source':

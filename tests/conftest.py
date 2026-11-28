@@ -141,9 +141,12 @@ def isolate_discovery_artifacts(monkeypatch):
         result = original(path, *args, **kwargs)
         if str(path).endswith('/t_session_cache.py'):
             actual = result['request']
-            def request(operation, payload=None):
+            def request(operation, payload=None, **options):
+                if operation == 'artifacts':
+                    return {'values': copy.deepcopy({key: value for key, value in artifacts.items()
+                                                     if key.startswith(payload['prefix'])})}
                 if operation != 'artifact':
-                    return actual(operation, payload)
+                    return actual(operation, payload, **options)
                 key = str(payload['key'])
                 if 'value' in payload:
                     artifacts[key] = copy.deepcopy(payload['value'])

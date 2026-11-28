@@ -1,0 +1,72 @@
+"""Display cache compatibility stays behind the managed artifact contract."""
+from conftest import REPO_ROOT, load_script
+
+
+def test_display_cache_reads_writes_and_enumeration(monkeypatch):
+    helper = load_script(REPO_ROOT / 'libexec/t_cache_file.py', 'display_cache_test')
+    values = {}
+    calls = []
+    def request(operation, payload):
+        calls.append(operation)
+        if operation == 'artifacts':
+            return {'values': {key: value for key, value in values.items() if key.startswith(payload['prefix'])}}
+        key = payload['key']
+        if 'value' in payload:
+            values[key] = payload['value']
+        return {'value': values.get(key)}
+    monkeypatch.setattr(helper, 'request', request)
+    helper.write('/private/cache/pr/o#r#1', 'MERGED')
+    helper.write('/private/cache/pr/o#r#1.head', 'abc')
+    assert helper.read('/private/cache/pr/o#r#1') == 'MERGED'
+    assert helper.read('/private/cache/pr/missing') == ''
+    assert set(helper.files('/private/cache/pr/')) == {
+        '/private/cache/pr/o#r#1', '/private/cache/pr/o#r#1.head'}
+    assert set(calls) == {'artifact', 'artifacts'}
+    assert helper.record('/private/cache/pr/o#r#1')['checked'] > 0
+
+
+def test_stopped_cache_prevents_pr_network_refresh(monkeypatch):
+    helper = load_script(REPO_ROOT / 'libexec/t_cache_file.py', 'stopped_display_cache_test')
+    monkeypatch.setattr(helper, 'request', lambda *args: {'unavailable': True})
+    monkeypatch.setattr(helper.subprocess, 'run', lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError('stopped cache started network refresh')))
+    monkeypatch.setattr(helper.sys, 'argv', ['helper', 'refresh', 'https://github.com/o/r/pull/1', '/cache/pr/1'])
+    assert helper.main() == 1
+
+
+def test_opened_publish_uses_bounded_managed_request(monkeypatch):
+    helper = load_script(REPO_ROOT / 'libexec/t_cache_file.py', 'opened_publish_test')
+    calls = []
+    monkeypatch.setattr(helper, 'request', lambda *args, **kwargs: calls.append((args, kwargs)) or {})
+    monkeypatch.setattr(helper.sys, 'argv', ['helper', 'opened-write', 'sample-sid'])
+    before = helper.time.monotonic()
+    assert helper.main() == 0
+    args, kwargs = calls[0]
+    assert args == ('display-evidence', {'kind': 'opened', 'sid': 'sample-sid', 'publish': True})
+    assert before < kwargs['deadline'] <= helper.time.monotonic() + .1
+
+
+def test_opened_publication_is_shared_idempotent_and_reads_legacy(tmp_path, monkeypatch):
+    import os
+    import pytest
+    cache = load_script(REPO_ROOT / 'libexec/t_session_cache.py', 'opened_evidence_test')
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path/'cache'))
+    identity = cache._client_context()
+    other = list(identity)
+    other[9] = '/another/tmux/socket'
+    assert cache._display_evidence(identity, {'kind': 'opened', 'sid': 'new', 'publish': True})['published']
+    first = cache._display_evidence(other, {'kind': 'opened', 'sid': 'new'})
+    cache._display_evidence(identity, {'kind': 'opened', 'sid': 'new', 'publish': True})
+    assert cache._display_evidence(other, {'kind': 'opened', 'sid': 'new'}) == first
+    marker = tmp_path/'cache/claude-sessions/opened/legacy'
+    marker.touch()
+    os.utime(marker, (123, 123))
+    assert cache._display_evidence(other, {'kind': 'opened', 'sid': 'legacy'})['checked'] == 123
+    assert cache._display_evidence(other, {'kind': 'opened', 'all': True})['values']['new'] == first
+    with pytest.raises(ValueError):
+        cache._display_evidence(identity, {'kind': 'opened', 'sid': '../escape', 'publish': True})
+    link = marker.with_name('linked')
+    link.symlink_to(marker)
+    with pytest.raises(OSError):
+        cache._display_evidence(identity, {'kind': 'opened', 'sid': 'linked', 'publish': True})
