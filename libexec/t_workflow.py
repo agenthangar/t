@@ -1363,6 +1363,33 @@ def runners(document, repository=None, name=None):
     return copy.deepcopy(policy.get('runners', RUNNER_DEFAULT))
 
 
+def use_runner_host(document, host, target):
+    """Stage one default across enabled definitions without changing assignments."""
+    after, changes = document, []
+    for tool in TOOLS:
+        scoped = tool_document(after, tool)
+        policies = list(scoped['workflows'].items())
+        policies.extend((Path(repo).name, entry['inline']) for repo, entry in scoped['repositories'].items()
+                        if 'inline' in entry and not entry.get('excluded'))
+        for name, policy in policies:
+            if not policy['enabled']:
+                continue
+            section = policy.setdefault('runners', copy.deepcopy(RUNNER_DEFAULT))
+            targets = section['targets']
+            key = next((k for k, v in targets.items() if v.get('host') == host
+                        and v.get('os') == target['os'] and v.get('arch') == target['arch']), None)
+            if key is None:
+                key = host if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', host) else 'ssh-runner'
+                if key in targets or key == 'local':
+                    key = next('ssh-' + str(i) for i in range(1, len(targets) + 2) if 'ssh-' + str(i) not in targets)
+                targets[key] = dict(target)
+            previous = ', '.join(section['default_targets']) or 'local'
+            section['default_targets'] = [key]
+            changes.append(f"{tool.title()} / {name}: {previous} → {key}")
+        after = with_tool_document(after, tool, scoped)
+    return after, changes
+
+
 def runners_summary(policy):
     value = policy.get('runners', RUNNER_DEFAULT)
     return (f"{len(value['targets'])} targets · defaults: " + ', '.join(value['default_targets'])
@@ -1505,9 +1532,9 @@ def _stage_text(policy, tool='codex', design_source=None):
                      'untracked inputs with `--include PATH`. Select targets with `--target NAME`, '
                      '`--os linux|macos` or `--capability NAME`. Inspect durable results with '
                      '`t runners runs inspect ID`; retrieve complete retained logs with `t runners runs logs ID`. '
-                     'Before pushing or opening a PR, run the repository-defined shared essential-flow smoke selection in the isolated local snapshot runner. '
+                     'Route focused tests through the selected runner. Before pushing or opening a PR, run the repository-defined shared essential-flow smoke selection on the configured snapshot runner. '
                      'After integrating main or resolving merge conflicts, invalidate previous smoke evidence and rerun that same selection on the resolved code before pushing. '
-                     'A failing local smoke blocks the push. Retain the runner receipt with its tested snapshot and source commit; never reuse pre-conflict evidence. '
+                     'A failing smoke run blocks the push. Retain the runner receipt with its tested snapshot and source commit; never reuse pre-conflict evidence. '
                      'Do not substitute a broad local regression suite. Preserve required CI, security and command-contract checks, sandbox HOME/XDG, isolated tmux and worktree safety. '
                      'Native desktop tests remain opt-in.')
     if policy.get('instructions'):

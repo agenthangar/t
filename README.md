@@ -1116,6 +1116,8 @@ up originals first. Unattended updates defer that migration.
 
 Test runners use a local snapshot by default. Configuring a remote runner does
 not select it; choose remote defaults explicitly or pass `--target NAME`.
+Choose **Test runners → Use a registered host for all workflows** in `t config` to select a shared SSH default.
+Use `t runners runs list --active` for current targets and direct local tests.
 Use `t runners runs watch ID --timeout 60 --json` for a bounded wait, or
 `t runners runs watch 'OWNER/REPO#PR@HEAD_SHA' --timeout 60 --json` for checks
 pinned to a PR head. A pending wait does not mean success or cancel the job.
@@ -1253,7 +1255,7 @@ Menu choices stay pending until
 | Tests → Test runners | Configure targets, defaults, and artifacts |
 
 Before publishing, emitted instructions require the repository-defined essential-flow
-smoke selection in an isolated local snapshot. Rerun after integrating main or
+smoke selection on the configured snapshot runner. Rerun after integrating main or
 resolving conflicts; failed or stale smoke evidence blocks the push. Routine PR CI
 keeps smoke, security and contract checks; full regression and coverage run nightly
 or by explicit request. For this repository, see [CI validation](docs/ci.md).

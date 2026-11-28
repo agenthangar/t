@@ -1,4 +1,4 @@
 #!/bin/sh
-# Check the receipt only; tests run explicitly in the isolated local runner.
+# Check the receipt only; tests run explicitly in the configured snapshot runner.
 root=$(git rev-parse --show-toplevel) || exit 1
 exec python3 "$root/scripts/local_smoke.py" check-push

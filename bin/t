@@ -3546,12 +3546,47 @@ def _workflow_runners_menu(ui, cfg, helper, repository=None, name=None):
             ui.raw()
 
 
+def _config_all_runner_hosts(ui, cfg):
+    helper = _workflow()
+    host_rows = [(host, host) for host in sorted(cfg.hosts)]
+    current = 0
+    while True:
+        host = ui.pick("Select a registered host", host_rows + [(None, "Back")],
+                       default=current, values=cfg.hosts,
+                       context=[] if host_rows else ["No registered hosts. Add one in Hosts."])
+        if host is None:
+            return
+        current = next(i for i, row in enumerate(host_rows) if row[0] == host)
+        while True:
+            try:
+                with _spinner("Verifying runner host"):
+                    target = _runners()["probe_ssh_target"](host, cfg.hosts[host])
+                staged, changes = helper["use_runner_host"](cfg._workflow_document, host, target)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                if ui.pick("Host verification failed", [("retry", "Retry"), ("back", "Back")],
+                           context=[str(exc)]) == "retry":
+                    continue
+                break
+            if ui.pick("Use " + host + " for all workflows", [("use", "Use this host"), ("back", "Back")],
+                       context=[f"SSH verified, {target['os']} {target['arch']}", *changes]) == "use":
+                cfg._workflow_document = staged
+                return ui.pick("Test runner selected", [("save", "Review and save"),
+                                                        ("settings", "Return to settings")]) or "settings"
+            break
+
+
 def _config_runners(ui, cfg):
     if hasattr(cfg, "_workflow_tool"):
         return _config_tool_runners(ui, cfg)
     _workflow_session(cfg)
     while True:
-        tool = ui.pick("Test runners · tool", [(tool, tool.title() + " ›") for tool in _workflow()["TOOLS"]] + [("back", "Back")])
+        tool = ui.pick("Test runners", [("all_hosts", "Use a registered host for all workflows ›"),
+                                       *((tool, tool.title() + " ›") for tool in _workflow()["TOOLS"]), ("back", "Back")])
+        if tool == "all_hosts":
+            action = _config_all_runner_hosts(ui, cfg)
+            if action:
+                return "save" if action == "save" else None
+            continue
         if tool in (None, "back"):
             return
         _workflow_tool_scope(ui, cfg, tool, lambda scoped: _config_tool_runners(ui, scoped))
@@ -5004,7 +5039,7 @@ def _config_wizard(cfg, workflows_only=False, workflow_target=None):
                 elif choice == "workflow":
                     next_choice = _workflow_hub(ui, edited, shell_pending=bool(_config_diff(initial, _config_state(edited))))
                 elif choice == "runners":
-                    _config_runners(ui, edited)
+                    next_choice = _config_runners(ui, edited)
                 elif choice == "worktrees":
                     _config_worktrees(ui, edited)
                 elif choice == "beam":
@@ -5569,6 +5604,25 @@ def _cmd_workflow_runners(cfg, args):
         return 130
 
 
+def _runner_policy(cfg, args, canonical, targets=None, os_filter=None, capabilities=None):
+    workflow = _workflow()
+    document, _ = workflow["load"]()
+    document = workflow["tool_document"](document, _runner_tool(cfg, args, canonical))
+    policy = workflow["effective"](document, canonical)
+    if not policy["enabled"]:
+        raise ValueError("the workflow is disabled or excluded for this repository")
+    config = copy.deepcopy(policy.get("runners", workflow["RUNNER_DEFAULT"]))
+    selected = _runners()["select_targets"](config, targets, os_filter, capabilities)
+    config["targets"] = selected
+    config["default_targets"] = list(selected)
+    for target in selected.values():
+        if target.get('provider', target.get('type')) == 'ssh':
+            if target["host"] not in cfg.hosts:
+                raise ValueError(f"SSH runner host {target['host']!r} is not registered; use t hosts add")
+            target["host"] = cfg.hosts[target["host"]]
+    return policy, config
+
+
 def _cmd_workflow_runs(cfg, args):
     try:
         helper = _runners()
@@ -5581,21 +5635,8 @@ def _cmd_workflow_runs(cfg, args):
             explicit = _runner_scope(cfg, args.workflow_repo)
             if explicit and explicit != canonical:
                 raise ValueError("--repo must match the current checkout's registered repository")
-            workflow = _workflow()
-            document, _ = workflow["load"]()
-            document = workflow["tool_document"](document, _runner_tool(cfg, args, canonical))
-            policy = workflow["effective"](document, canonical)
-            if not policy["enabled"]:
-                raise ValueError("the workflow is disabled or excluded for this repository")
-            config = copy.deepcopy(policy.get("runners", workflow["RUNNER_DEFAULT"]))
-            selected = helper["select_targets"](config, args.targets, args.runner_os, args.capabilities)
-            config["targets"] = selected
-            config["default_targets"] = list(selected)
-            for target in selected.values():
-                if target.get('provider', target.get('type')) == 'ssh':
-                    if target["host"] not in cfg.hosts:
-                        raise ValueError(f"SSH runner host {target['host']!r} is not registered; use t hosts add")
-                    target["host"] = cfg.hosts[target["host"]]
+            policy, config = _runner_policy(cfg, args, canonical, args.targets, args.runner_os, args.capabilities)
+            selected = config["targets"]
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
             if not command:
                 raise ValueError("runs start requires -- COMMAND ...")
@@ -5646,6 +5687,20 @@ def _cmd_workflow_runs(cfg, args):
             return 0
         if action == "list":
             with _spinner("Reading test run receipts", machine=getattr(args, "json", False)):
+                if getattr(args, "active", False):
+                    jobs = helper["active_jobs"](cfg.repos)
+                    if args.json:
+                        print(json.dumps(jobs, indent=2))
+                    elif jobs:
+                        print("\n".join(_table_lines(("ID / PID", "TARGET", "WORKTREE", "AGE", "STATUS", "COMMAND"), [
+                            (j["id"] or str(j["pid"]), j["target"], Path(j["worktree"]).name,
+                             str(j["elapsed_seconds"]) + "s", j["status"] + (
+                                 f" (reported {max(0, int(time.time() - j['observed_at']))}s ago)"
+                                 if j["provider"] in ("ssh", "github") else ""), shlex.join(j["command"]))
+                            for j in jobs])))
+                    else:
+                        print("No active test jobs.")
+                    return 0
                 result = helper["list_jobs"]()
         elif action == "status":
             result = helper["status"](args.run_id)
@@ -13669,7 +13724,7 @@ LEARN MORE
     if group in ("runners runs", "workflow runs", "config workflow runs"):
         return _wrap_help("""USAGE
   t runners runs start [--tool TOOL] [--repo ALIAS] [--target NAME ...] -- COMMAND ...
-  t runners runs list [--json]
+  t runners runs list [--active] [--json]
   t runners runs status ID [--json]
   t runners runs watch ID [--timeout SECONDS] [--json]
   t runners runs inspect ID [--target NAME] [--json]
@@ -13680,7 +13735,7 @@ LEARN MORE
 
 COMMANDS
   start      Snapshot current worktree files and wait for concurrent test targets
-  list       Print local durable run receipts
+  list       Print run history or active runner and local test jobs with --active
   status     Inspect a local receipt without contacting providers
   watch      Wait for receipt changes or pinned GitHub checks
   inspect    Show bounded test evidence and retained-log references
@@ -15307,6 +15362,8 @@ EXAMPLES
         leaf = run_sub.add_parser(verb, help={"list": "list local run receipts without network access", "status": "show a local run receipt without network access",
             "inspect": "show bounded test evidence and complete retained-log references", "watch": "wait for a runner receipt with a bounded deadline; stopping does not cancel the run", "logs": "print retained local logs", "artifacts": "extract retained result artifacts", "cancel": "request cancellation and confirm provider state",
             "cleanup": "retry deletion of retained remote run resources"}[verb])
+        if verb == "list":
+            leaf.add_argument("--active", action="store_true", help="show unfinished runner targets and local tests in registered worktrees")
         if verb != "list":
             leaf.add_argument("run_id", metavar="ID", help="local run UUID; watch also accepts OWNER/REPO#PR@HEAD_SHA")
         if verb == "watch":

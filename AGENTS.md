@@ -90,11 +90,11 @@ Before opening a design-related PR, run both pinned design checks described in
 
 Before publishing, commit the intended work, then run `python3 scripts/local_smoke.py`
 with a Python environment containing `requirements-dev.txt`. This uses the isolated
-local snapshot runner and records the run ID, snapshot and commit privately. The
+configured snapshot runner and records the run ID, snapshot and commit privately. The
 repository's `.githooks/pre-push` rejects missing, failed or stale evidence. After
 integrating main or resolving conflicts, commit the resolved code and rerun the
 same smoke selection before pushing; pre-conflict evidence is invalid. A failing
-local smoke blocks the push. Do not bypass the hook or substitute broad local
+smoke run blocks the push. Do not bypass the hook or substitute broad local
 regression runs. See [CI validation](docs/ci.md) for setup and retained evidence.
 
 When ready, commit, validate, push, and open a PR to `main`. Immediately enable squash

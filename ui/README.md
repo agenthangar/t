@@ -558,6 +558,8 @@ Try `t open --codex --new` from a registered repository. The isolated
 `python3 scripts/preview_session_start.py` demonstrates history contention without
 starting an agent, touching personal settings or opening a desktop window.
 
+The Test runners hub offers a registered-host picker across enabled workflows. Host verification precedes staging, and Review and Save publishes the change. The active runs list is a static read-only table with JSON support.
+
 The config hub groups Session defaults, Agents, Workflows, Runners, MCP servers, Repositories &
 worktrees, Remote hosts, Sleep & connectivity, and Finish. Keep agent settings and local worker/model
 setup together, with workflow in its own section; keep repository/worktree choices

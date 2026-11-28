@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Run the shared smoke selection in a local snapshot; check it before pushing.
+"""Run the shared smoke selection on the configured snapshot runner; check it before pushing.
 
 Commit first, then run with a Python that has requirements-dev.txt installed.
 Evidence lives in this worktree's Git directory, never in published source.
 """
+import argparse
 import json
+import re
 from pathlib import Path
 import runpy
 import subprocess
@@ -30,16 +32,36 @@ def snapshot():
                                          Path(directory) / 'manifest.json')
 
 
-def check_evidence(receipt, current):
+def runner_config():
+    cli = runpy.run_path(str(ROOT / 'bin/t'))
+    cfg = cli['Config']()
+    canonical = cli['_t_canonical_root'](str(ROOT))
+    if canonical not in {str(Path(path).resolve()) for path in cfg.repos.values()}:
+        return {'default_targets': ['local'], 'targets': {'local': {'type': 'local'}}}
+    return cli['_runner_policy'](cfg, argparse.Namespace(), canonical)[1]
+
+
+def check_evidence(receipt, current, expected=None):
+    expected = runner_config()['targets'] if expected is None else expected
     tested = receipt.get('snapshot', {})
-    target = receipt.get('targets', {}).get('local', {})
+    targets = receipt.get('targets', {})
+    command = receipt.get('command', [])
+    local = set(expected) == {'local'}
+    valid_command = (len(command) == 2 and command[1] == 'scripts/smoke.py'
+                     and (re.fullmatch(r'python(?:[0-9]+(?:\.[0-9]+)*)?', Path(command[0]).name)
+                          if local else command[0] == 'python3'))
     if (receipt.get('status') != 'succeeded' or receipt.get('exit_code') != 0
-            or target.get('type') != 'local' or target.get('status') != 'succeeded'
-            or target.get('exit_code') != 0 or target.get('snapshot_id') != tested.get('id')
-            or receipt.get('command', [])[1:] != ['scripts/smoke.py']
-            or tested.get('source_head') != current['source_head']
+            or not expected or set(expected) != set(targets) or not valid_command
+            or not tested.get('id') or tested.get('source_head') != current['source_head']
             or tested.get('files') != current['files']):
-        raise ValueError('missing, failed or stale local smoke evidence; commit resolved work and rerun scripts/local_smoke.py')
+        raise ValueError('missing, failed or stale smoke evidence; rerun scripts/local_smoke.py')
+    for name, spec in expected.items():
+        target = targets[name]
+        identity = ('type', 'host', 'repository', 'label')
+        if (any(target.get(k) != spec.get(k) for k in identity)
+                or target.get('snapshot_id') != tested['id']
+                or target.get('status') != 'succeeded' or target.get('exit_code') != 0):
+            raise ValueError('failed or stale smoke target evidence; rerun scripts/local_smoke.py')
 
 
 def check_push(lines):
@@ -54,7 +76,7 @@ def check_push(lines):
     if git('status', '--porcelain', '--untracked-files=no'):
         raise ValueError('commit tracked edits before running local smoke and pushing')
     check_evidence(json.loads(evidence_path().read_text()), snapshot())
-    print('Local smoke evidence matches pushed commit ' + head)
+    print('Smoke evidence matches pushed commit ' + head)
 
 
 def main(argv=None):
@@ -67,16 +89,19 @@ def main(argv=None):
     # Invalidate the previous receipt before any provisioning or test failure.
     evidence_path().unlink(missing_ok=True)
     runner = runpy.run_path(str(ROOT / 'libexec/t_runners.py'))
+    config = runner_config()
+    targets = config['default_targets']
+    python = sys.executable if targets == ['local'] else 'python3'
     receipt = runner['start'](
-        ROOT, {'runners': {}}, [sys.executable, 'scripts/smoke.py'], targets=['local'],
-        artifacts=['artifacts/smoke'], timeout=300,
-        progress=lambda value: print('Local smoke run: ' + value['id'], flush=True))
+        ROOT, config, [python, 'scripts/smoke.py'], targets=targets,
+        artifacts=['artifacts/smoke'], timeout=config.get('timeout_seconds', 300),
+        progress=lambda value: print('Smoke run: ' + value['id'], flush=True))
     evidence_path().write_text(json.dumps(receipt) + '\n')
     print(json.dumps({key: receipt.get(key) for key in ('id', 'status', 'exit_code')}, indent=2))
     if receipt.get('status') != 'succeeded':
         print('Inspect retained evidence with: t runners runs inspect ' + receipt['id'])
         return 1
-    check_evidence(receipt, snapshot())
+    check_evidence(receipt, snapshot(), config['targets'])
     print('Tested commit: ' + receipt['snapshot']['source_head'])
     print('Tested snapshot: ' + receipt['snapshot']['id'])
     return 0
@@ -86,5 +111,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
-        print('Local smoke gate: ' + str(error), file=sys.stderr)
+        print('Smoke gate: ' + str(error), file=sys.stderr)
         sys.exit(1)
