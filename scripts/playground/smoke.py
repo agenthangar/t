@@ -120,6 +120,7 @@ def main():
     print("PASS: interactive t config setup registers the sample repository", flush=True)
 
     run("playground-demo-agent")
+    run("t", "agent", "background", "start", "cache")
     try:
         with Terminal("t session open playground 1") as terminal:
             terminal.expect("Playground Claude stub")
@@ -151,6 +152,7 @@ def main():
         print("PASS: detach, reattach one owner, list, read, and kill preserve work", flush=True)
     finally:
         run("tmux", "kill-server", check=False)
+        run("t", "agent", "background", "stop", "cache")
     print("Playground smoke passed (demo agent; no real AI or authentication).", flush=True)
 
 
