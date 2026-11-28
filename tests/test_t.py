@@ -2179,7 +2179,7 @@ def test_repo_group_help_and_command_usage(t_mod, capsys):
 
 @pytest.mark.parametrize("verb", [
     "open", "ls", "kill", "restart", "push", "pop", "resume", "cd",
-    "beam", "read", "plan", "paste", "find", "on", "repo", "cursor",
+    "beam", "read", "plan", "find", "on", "repo", "cursor",
     "config", "setup", "new", "checkout", "instructions", "install",
     "integrate", "update", "permissions", "trust", "doctor",
 ])

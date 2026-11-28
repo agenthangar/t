@@ -14,6 +14,25 @@ READONLY = [pytest.param(mode['argv'], mode.get('terminal', True), id=f'{name}-{
             for key, mode in entry['modes'].items() if mode['read_only']]
 
 
+@pytest.mark.parametrize('argv', [
+    ['session', 'paste', '--newest'], ['paste'],
+    ['remote', 'session', 'paste', 'mini'], ['remote', '--host', 'mini', 'session', 'paste'],
+])
+def test_retired_icloud_paste_routes_fail_before_dispatch(t_mod, monkeypatch, capsys, argv):
+    monkeypatch.setattr(t_mod, 'Config', lambda: pytest.fail('retired command loaded config'))
+    monkeypatch.setattr(t_mod, '_t_update_installation', lambda: pytest.fail('retired command checked updates'))
+    monkeypatch.setattr(t_mod, '_delegate', lambda *args: pytest.fail('retired command launched a shell'))
+    try:
+        result = t_mod.main(argv)
+    except SystemExit as error:
+        result = error.code
+    assert result == 2
+    captured = capsys.readouterr()
+    assert not captured.out and captured.err
+    assert 'paste' not in t_mod.COMMAND_GROUPS['session']
+    assert 'paste' not in t_mod.COMMAND_GROUPS['remote']['session']
+
+
 @pytest.mark.parametrize('argv,terminal', READONLY)
 def test_readonly_commands_never_offer_updates(t_mod, monkeypatch, argv, terminal):
     # Check the real dispatch preamble with an update available.
