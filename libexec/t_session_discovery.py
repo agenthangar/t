@@ -335,8 +335,15 @@ def resume_health(view):
         else:
             status = 'current'
         hosts.append(dict(host=host['host'], status=status, checked=host.get('checked'), observed=host.get('observed')))
-    return dict(hosts=hosts, auth_hosts=auth_hosts,
-                unavailable=bool(view.get('unavailable') or view.get('wait_unavailable')))
+    health = dict(hosts=hosts, auth_hosts=auth_hosts,
+                  unavailable=bool(view.get('unavailable') or view.get('wait_unavailable')))
+    if any(host.get('work_revision') for host in view.get('hosts', [])):
+        health['work_revisions'] = resume_work_revisions(view)
+    return health
+
+
+def resume_work_revisions(view):
+    return {host['host']: host['work_revision'] for host in view.get('hosts', []) if host.get('work_revision')}
 
 
 def announce(view):

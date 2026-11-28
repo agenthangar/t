@@ -62,7 +62,7 @@ if __name__ == "__main__":
     _dev_source = Path(__file__).resolve().parent.parent
     _dev = runpy.run_path(str(_dev_source / 'libexec/t_dev.py'))
     try:
-        _dev_selected = (_dev_source if sys.argv[1:2] == ['__runtime-reconcile']
+        _dev_selected = (_dev_source if sys.argv[1:2] in (['__runtime-reconcile'], ['__data-migrate'])
                          else _dev['select_root'](_dev_source, explicit=True))
     except KeyboardInterrupt:
         sys.exit(130)
@@ -635,7 +635,7 @@ def _resume_picker_adopt(directory):
     return 0
 
 
-def _resume_picker_update(directory, picker, status, rebuild=None):
+def _resume_picker_update(directory, picker, status, rebuild=None, *, preserve_marks=False):
     """Stage an update, then let fzf adopt it with its current filters and query."""
     snapshot = directory / 'observed'
     snapshot.mkdir()
@@ -660,12 +660,70 @@ def _resume_picker_update(directory, picker, status, rebuild=None):
                 raise TimeoutError('picker update timed out')
             time.sleep(.05)
         action = 'transform-header(cat "$T_PICKER_CURRENT_HEADER")'
+        legacy = reload_rows and preserve_marks and os.environ.get('T_PICKER_CLEAR_MARKS')
+        if legacy:
+            picker.count = len((directory / 'all').read_text().splitlines()) + 1
+            before = picker.request()
         if reload_rows:
             preserve = os.environ.get('T_PICKER_TRACK', '') + os.environ.get('T_PICKER_CLEAR_MARKS', '')
             action += '+' + preserve + 'reload-sync(cat "$T_PICKER_CURRENT")'
+        if legacy:
+            action += '+execute-silent(touch "$T_PICKER_VIEWS/observed/reloaded")'
         picker.request(action)
+        if legacy:
+            reloaded = snapshot / 'reloaded'
+            while not reloaded.exists():
+                if time.monotonic() >= picker.deadline:
+                    raise TimeoutError('picker update timed out')
+                time.sleep(.01)
+            _resume_restore_marks(picker, before)
     finally:
         shutil.rmtree(snapshot, ignore_errors=True)
+
+
+def _resume_restore_marks(picker, before):
+    """Older fzf clears marks on reload; restore surviving resume identities."""
+    def key(item):
+        return tuple(item['text'].split('\t')[:3])
+
+    after = picker.request()
+    if after['query'] != before['query']:
+        return
+    positions = {key(item): index for index, item in enumerate(after['matches'], 1)}
+    marks = [positions[key(item)] for item in before['selected'] if key(item) in positions]
+    actions = [f'pos({position})+select' for position in marks]
+    focus = before['position']
+    if 0 <= focus < len(before['matches']):
+        position = positions.get(key(before['matches'][focus]))
+        if position:
+            actions.append(f'pos({position})')
+    if actions:
+        picker.request('+'.join(actions))
+
+
+def _resume_picker_work_rows(directory, cache, view, aliases, slot):
+    """Update the work field of existing rows, leaving the other columns intact."""
+    reports = {}
+    for line in cache['candidates'](view, aliases, slot):
+        fields = line.split('\t')
+        if len(fields) >= 15 and fields[14] in ('complete', 'unfinished'):
+            reports[fields[1], fields[8], fields[3]] = fields[14]
+    updated = {}
+    for name in ('source', 'all', 'rows-0', 'rows-1'):
+        path = directory / name
+        if not path.is_file():
+            continue
+        rows = []
+        before = path.read_text()
+        for line in before.splitlines():
+            fields = line.split('\t')
+            if len(fields) >= 18:
+                fields[15] = reports.get((fields[0], fields[9], fields[2]), fields[15])
+            rows.append('\t'.join(fields) + '\n')
+        after = ''.join(rows)
+        if before != after:
+            updated[name] = after
+    return updated
 
 
 def _resume_picker_observe(directory, aliases, slot, shell_args):
@@ -682,6 +740,14 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
     status = json.loads(status_file.read_text())
     pending = {host['host'] for host in status['hosts'] if host['status'] == 'refreshing'}
     cache, cfg = _session_discovery(), Config()
+    work_revisions = cache.get('resume_work_revisions')
+    migration = _data_migrations() if work_revisions else None
+    migration_seen = 0
+    if work_revisions:
+        migration['prioritize'](aliases, slot)
+    next_work_check = 0
+    next_progress_frame = 0
+    work_seen = status.get('work_revisions', {})
     picker = Picker(0)
     # Keep observing until the discovery service's 120-second collector can
     # settle. The picker remains interactive throughout the wait.
@@ -690,6 +756,18 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
     deadline = started + (observe_timeout if pending else 30)
     manual = force = False
     completion = None
+
+    def repaint_work(view, current):
+        nonlocal work_seen
+        work_rows = _resume_picker_work_rows(directory, cache, view, aliases, slot)
+        if work_rows:
+            def stage_work(snapshot):
+                for name, rows in work_rows.items():
+                    (snapshot / name).write_text(rows)
+            _resume_picker_update(directory, picker, current, stage_work, preserve_marks=True)
+        work_seen = work_revisions(view)
+        return bool(work_rows)
+
     try:
         while pending or manual or (directory / 'refresh-enabled').is_file():
             if request.is_file():
@@ -705,7 +783,23 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                     pending = {host['host'] for host in status['hosts']}
                     status['hosts'] = [{**host, 'status': 'refreshing'} for host in status['hosts']]
                     _resume_picker_update(directory, picker, status)
+            check_work = migration and time.monotonic() >= next_work_check
+            if check_work:
+                next_work_check = time.monotonic() + 1
+                revision = migration['revision']()
+                if revision and revision != migration_seen:
+                    local = next((host for host in status['hosts'] if host['host'] == 'local'), None)
+                    if local and revision / 1e9 > (local.get('checked') or 0):
+                        cache['request']('catalog-changed', {'refresh_active': True}, deadline=time.monotonic() + 1)
+                    migration_seen = revision
             if not pending and not manual:
+                if check_work:
+                    health = cache['discover'](cfg, observe=True, fields=[], deadline=time.monotonic() + 1)
+                    if not health.get('unavailable') and work_revisions(health) != work_seen:
+                        view = cache['discover'](cfg, observe=True, fields=['resume', 'catalog'],
+                                                 deadline=time.monotonic() + 1)
+                        if not view.get('unavailable'):
+                            repaint_work(view, json.loads(status_file.read_text()))
                 time.sleep(.15)
                 continue
             remaining = deadline - time.monotonic()
@@ -744,10 +838,22 @@ def _resume_picker_observe(directory, aliases, slot, shell_args):
                 deadline = float('inf') if manual else started + observe_timeout
             finished = bool(manual and completion and completion(view))
             if pending - refreshing or finished:
+                options = {}
+                if work_revisions and work_revisions(view) != work_seen and (
+                        _resume_picker_work_rows(directory, cache, view, aliases, slot)):
+                    options['preserve_marks'] = True
                 _resume_picker_update(directory, picker, updated,
-                    lambda snapshot: _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args))
+                    lambda snapshot: _resume_picker_stage(snapshot, cache, view, aliases, slot, shell_args), **options)
+                if work_revisions:
+                    work_seen = work_revisions(view)
             elif refreshing:
-                _resume_picker_update(directory, picker, updated)
+                if work_revisions and work_revisions(view) != work_seen and repaint_work(view, updated):
+                    next_progress_frame = time.monotonic() + 1
+                elif time.monotonic() >= next_progress_frame:
+                    # Header rendering shares fzf's input loop. Leave time for
+                    # query changes, navigation and preview updates between frames.
+                    _resume_picker_update(directory, picker, updated)
+                    next_progress_frame = time.monotonic() + 1
             if manual:
                 pending = refreshing
                 manual = not finished
@@ -9060,6 +9166,10 @@ def _t_runtime_report(value):
                 reported.add(key)
 
 
+def _data_migrations():
+    return runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_data_migrations.py'))
+
+
 def _t_reconcile_runtime(source, previous_sources=(), bootstrap=False):
     """Dispatch through the newly installed binary, never old in-memory helpers."""
     if not os.path.isfile(os.path.join(source, 'libexec', 't_runtime.py')):
@@ -15830,6 +15940,10 @@ def _main(argv):
                 except (OSError, ValueError, subprocess.SubprocessError) as error:
                     failures.append(dict(component=component, status='failed', reason=str(error)))
             value = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_runtime.py'))['reconcile'](**request)
+            try:
+                _data_migrations()['queue'](_t_source_root(), _current_local_rc())
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                failures.append(dict(component='data migration', status='failed', reason=str(error)))
             if failures:
                 value['results'].extend(failures)
                 value['failed'] = True
@@ -15840,6 +15954,11 @@ def _main(argv):
         else:
             print(json.dumps(value))
         return int(value['failed'])
+    if len(argv) == 2 and argv[0] == '__data-migrate' and argv[1].isdigit():
+        try:
+            return _data_migrations()['run'](globals(), int(argv[1]))
+        except (OSError, ValueError, sqlite3.Error):
+            return 1
     if argv == ['__remote-protocol']:
         print(_REMOTE['PROTOCOL'])
         return 0

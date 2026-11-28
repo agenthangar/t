@@ -225,6 +225,10 @@
       "kind": "background",
       "reason": "Spawns the detached recovery watcher without waiting."
     },
+    "libexec/t_data_migrations.py:queue:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Successful setup starts the detached migration worker without waiting for history or cache publication."
+    },
     "libexec/t_recovery.py:_cursor_restart:time.sleep": {
       "kind": "protocol",
       "reason": "Recovery control request; diagnostics belong to the recovery UI."

@@ -663,6 +663,9 @@ class _Memory:
                 for entry in self.entries.values():
                     if entry['spec']['target'] == 'local':
                         entry['dirty'] = True
+                        if payload.get('refresh_active') and self.clock() - entry.get('last_used', 0) < ACTIVE_TTL:
+                            entry['requested'] = True
+                            entry['next_poll'] = 0
                         if entry['refreshing']:
                             entry['catalog_changed'] = True
                 return {'scheduled': True}
@@ -840,6 +843,7 @@ class _Memory:
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
                                       observed=entry.get('observed', entry['checked']),
                                       resume_pr_auth_failed=auth_failed,
+                                      work_revision=entry.get('work_revision', 0),
                                       timings=entry.get('timings', {}), refresh_revision=entry.get('refresh_revision', 0),
                                       refresh_requested=entry.get('refresh_revision', 0) + int(
                                           bool(entry['refreshing'] or entry.get('pending') or
@@ -1004,6 +1008,8 @@ class _Memory:
                         health = value.get('_remote_health') or {}
                         if target == 'local' and terminals is not None:
                             entry['terminals'] = terminals
+                        if work_reports(value) != work_reports(entry.get('value', {})):
+                            entry['work_revision'] = entry.get('work_revision', 0) + 1
                         entry['value'], entry['checked'] = value, health.get('checked') or self.clock()
                         entry['observed'] = health.get('observed') or entry['checked']
                         entry['pending'] = False
@@ -1028,6 +1034,11 @@ class _Memory:
 
 def record_key(row):
     return json.dumps([row['repo'], row['agent'], row['sid']], separators=(',', ':'))
+
+
+def work_reports(value):
+    return {record_key(row): row['work_report'] for row in value.get('catalog', {}).get('conversations', [])
+            if row.get('work_report')}
 
 
 def _legacy_artifacts():

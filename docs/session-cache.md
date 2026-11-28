@@ -120,6 +120,12 @@ Removed source files disappear from the browsing catalog without deleting durabl
 history. MCP metadata and resume projections reuse unchanged conversation records.
 Display collection uses cached repository proofs and never waits for GitHub.
 
+Successful setup queues local data migrations in a detached worker. The worker
+reads the native catalog in batches and commits work reports and checkpoints
+together in the private history database. Each host processes its own saved
+history. An already-current update retries interrupted work. Resume observes
+published work revisions and repaints matching visible rows through the cache.
+
 ## Remote protocol and failures
 
 Updated peers expose a private versioned generation/delta exchange over the existing
