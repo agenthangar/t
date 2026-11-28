@@ -395,7 +395,8 @@ def test_public_resume_ctrl_b_resumes_exact_last_closed(picker, query):
 def test_public_resume_ctrl_u_refreshes_actual_discovery_without_launching(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', width=105, height=24)
-    screen = wait('Second Task', absent=['Refreshing local'], focused='Second Task')
+    screen = wait('Second Task', absent=['Refreshing local'], focused='Second Task',
+                  ordered=['Last refresh', 'REPO', 'Second Task'])
     assert 'Ctrl-U refresh' in screen and 'REPO' in screen and 'Last refresh' in screen
     refresh_line = next(line for line in screen.splitlines() if 'Last refresh' in line)
     assert 'Ctrl-U refresh now' in refresh_line

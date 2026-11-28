@@ -133,5 +133,5 @@ def test_discovery_database_has_one_runtime_owner():
                     or '__pycache__' in path.parts):
                 continue
             content = path.read_bytes()
-            assert b'discovery/cache.sqlite3' not in content and b"'cache.sqlite3'" not in content, path
-            assert b'from cache_records' not in content and b'into cache_records' not in content, path
+            for private in (b'cache.sqlite3', b'cache_records', b'cache_fragments', b'ready.sock'):
+                assert private not in content, path

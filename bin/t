@@ -12942,11 +12942,12 @@ def cmd_mcp(cfg, args):
         cfg = Config()
         view = cache['discover'](cfg, local=True, fields=['mcp'], refresh=True)
         view = cache['wait_for_refresh'](cfg, view, local=True, fields=['mcp'], timeout=None)
-        if view.get('unavailable'):
+        host = next((host for host in view.get('hosts', []) if host.get('host') == 'local'), {})
+        if (view.get('unavailable') or view.get('wait_unavailable') or host.get('error') or
+                'mcp' not in (host.get('value') or {})):
             cache['announce'](view)
             return 1
-        recs = next((host.get('value') or {} for host in view.get('hosts', [])
-                     if host['host'] == 'local'), {}).get('mcp', {}).get('recs', [])
+        recs = host['value']['mcp'].get('recs', [])
         print("indexed %d transcript(s), %.1f MB" % (len(recs), sum(r.get("size", 0) for r in recs) / 1e6))
         return 0
     if args.call:
