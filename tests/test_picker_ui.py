@@ -462,7 +462,7 @@ def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
 def test_resume_backfill_updates_open_picker_with_query_focus_and_marks(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', width=105, height=44, warm_history=True)
-    wait('Second Task', focused='Second Task', timeout=20)
+    wait('Second Task', absent=['Refreshing local'], focused='Second Task', timeout=45)
     keys('-l', 'ask')
     wait('> ask', focused='Second Task', timeout=20)
     keys('Tab')
