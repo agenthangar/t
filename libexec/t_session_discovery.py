@@ -48,11 +48,29 @@ def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline
 
 
 def hydrate_local(cfg, view, roots=None, slot=None):
+    local = next((host for host in view.get('hosts', []) if host.get('host') == 'local'
+                  or host.get('target') == 'local'), None)
+    if local is None:
+        return view
+    # Avoid round-tripping remote rows, catalog records and health timestamps
+    # on every local detail request. Matching callers can share the same scan.
+    rows = (local.get('value') or {}).get('rows', '')
+    scan = {'host': 'local', 'value': {'rows': rows}}
+    for key in ('terminals', 'live_revision'):
+        if key in local:
+            scan[key] = local[key]
     with _spinner('Reading session details'):
-        result = request('hydrate', {'view': view, 'roots': roots, 'slot': slot})
+        result = request('hydrate', {'view': {'hosts': [scan]}, 'roots': roots, 'slot': slot})
     if result.get('unavailable'):
         return dict(view, unavailable=True, message=result.get('message'))
-    return result
+    details = result['hosts'][0]
+    if details.get('details_error'):
+        local['details_error'] = details['details_error']
+    else:
+        local['value'] = {**(local.get('value') or {}), **details['value']}
+        local.update({k: details[k] for k in ('terminals', 'details_checked') if k in details})
+        local.pop('details_error', None)
+    return view
 
 
 def _hydrate_local(cfg, view, roots=None, slot=None):

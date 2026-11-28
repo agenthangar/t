@@ -1731,6 +1731,9 @@ class HistoryCommand:
     def pr_states(self, rows, refresh=False):
         refs = {(p['repo'], p['number']) for row in rows for p in row['prs']}
         pending, cached = {}, {}
+        helper = runpy.run_path(str(Path(__file__).with_name('t_cache_file.py')))
+        pr_directory = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'claude-sessions/pr'
+        pr_files = helper['files'](str(pr_directory) + os.sep)
         for repo, number in refs:
             key = f'{repo}#{number}'
             found = self.store.db.execute('select checked,record from prs where key=?', (key,)).fetchone()
@@ -1739,8 +1742,7 @@ class HistoryCommand:
             # Resume's ordinary transcript rows use this shared legacy cache.
             # Reuse newer cached evidence for swept/remote history as well.
             legacy = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'claude-sessions/pr' / (repo.replace('/', '#') + '#' + str(number))
-            helper = runpy.run_path(str(Path(__file__).with_name('t_cache_file.py')))
-            evidence = helper['record'](legacy)
+            evidence = pr_files.get(str(legacy), {})
             if not found or evidence.get('checked', 0) > found[0]:
                 state = evidence.get('text', '').strip()
                 if state in ('MERGED', 'OPEN', 'CLOSED'):

@@ -28,7 +28,7 @@ def files(prefix):
     return {key.removeprefix('display-file:'): value for key, value in values.items()}
 
 
-def evidence(kind, sid):
+def session_evidence(kind, sid):
     return request('display-evidence', {'kind': kind, 'sid': sid})
 
 
@@ -39,9 +39,9 @@ def main():
         for sid, evidence in values.items():
             print('_OPENED_CACHE+=(' + shlex.quote(sid) + ' ' + str(int(evidence.get('checked', 0))) + ')')
     elif action == 'opened':
-        print(evidence('opened', path).get('checked', 0))
+        print(session_evidence('opened', path).get('checked', 0))
     elif action == 'rollout':
-        print(evidence('rollout', path).get('text', ''), end='')
+        print(session_evidence('rollout', path).get('text', ''), end='')
     elif action == 'dump':
         status = request('status')
         if status.get('unavailable'):

@@ -92,16 +92,15 @@ def main():
             'resume': [], 'catalog': {'version': 1, 'repositories': [], 'conversations': []}},
             submit=lambda *job: jobs.append(job))
         memory.restore({})
-        original = adapter['discover'].__globals__['request']
-        adapter['discover'].__globals__['request'] = memory.handle
-        adapter['discover'](cfg)
-        adapter['discover'].__globals__['request'] = original
         if args.scenario != 'cold':
+            with patch.dict(adapter['discover'].__globals__, {'request': memory.handle}):
+                adapter['discover'](cfg)
             callback, *values = jobs.pop()
             callback(*values)
             for entry in memory.entries.values():
                 if args.scenario in ('expired', 'offline'):
                     entry['checked'] -= cache['TTL'] + 1
+                    entry['observed'] = entry['checked']
                     entry['retry'] = 0
                 if args.scenario == 'offline':
                     entry['error'] = 'Sample host unavailable'
@@ -110,13 +109,17 @@ def main():
                         error=entry['error'], retry_at=entry['retry'], kind='transport')
         # Subsequent refreshes finish asynchronously using only the synthetic
         # collector, so --wait exercises completion without real discovery.
+        if args.scenario == 'offline':
+            def unavailable(spec):
+                raise cache['DiscoveryError']('Sample host unavailable', 'transport')
+            memory.collect = unavailable
+        timers = []
         def refresh_later(callback, *values):
             timer = threading.Timer(.5, callback, args=values)
             timer.daemon = True
+            timers.append(timer)
             timer.start()
         memory.submit = refresh_later
-        for callback, *values in jobs:
-            refresh_later(callback, *values)
         address = cache['_private'](cache['_runtime']()) / 'service.sock'
         try:
             with cache['_Server'](str(address), cache['_Handler']) as server:
@@ -133,6 +136,9 @@ def main():
                 finally:
                     server.shutdown()
                     thread.join()
+                    for timer in timers:
+                        timer.cancel()
+                        timer.join()
         finally:
             address.unlink(missing_ok=True)
             address.parent.rmdir()

@@ -326,7 +326,7 @@ exec /bin/zsh "$@"
                 tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), command)
 
         def wait(text, absent=(), ordered=(), focused=None, columns=None):
-            deadline = time.monotonic() + (30 if service else 12)
+            deadline = time.monotonic() + (30 if cache_processes else 12)
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
                 fits = columns is None or all(t_mod._display_width(line) <= columns for line in screen.splitlines())

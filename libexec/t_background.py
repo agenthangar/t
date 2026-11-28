@@ -32,6 +32,10 @@ def cache_source():
     # A command invoked in a linked development checkout still registers the
     # installed code. A disposable standalone installation can own its own HOME.
     if (ROOT / '.git').is_file():
+        installed = (Path.home()/'bin/t').resolve()
+        if (installed.is_file() and installed.parts[-2:] == ('bin', 't')
+                and not (installed.parents[1]/'.git').is_file()):
+            return installed.parents[1]
         primary = runpy.run_path(str(ROOT / 'libexec/t_dev.py'))['canonical'](ROOT)
         if not primary:
             raise ValueError('cannot locate the installed session cache')
@@ -60,6 +64,7 @@ def cache_program():
     return [sys.executable, str(path), 'serve-managed']
 
 
+@_spinner('Managing session cache')
 def portable_cache(action):
     """Explicit management on hosts without a login service manager."""
     running = cache_request('service-status').get('pid')

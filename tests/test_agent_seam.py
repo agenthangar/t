@@ -2982,3 +2982,14 @@ def test_failed_placeholder_barrier_preserves_changed_session(zsh, mode):
     calls = zsh.log.read_text()
     assert 'new-session' in calls
     assert 'respawn-pane' not in calls and 'kill-session' not in calls
+
+
+def test_stopped_cache_pr_refresh_leaves_network_idle(zsh, tmp_path):
+    log = tmp_path / 'gh-called'
+    stub = tmp_path / 'stubbin/gh'
+    stub.write_text('#!/bin/sh\ntouch ' + shlex.quote(str(log)) + '\n')
+    stub.chmod(0o755)
+    result = zsh("typeset -a _PR_STALE=('org/repo#42'); _pr_state_refresh 'org/repo#42'; _pr_state_flush")
+    assert result.returncode == 0, result.stderr
+    assert not log.exists()
+    assert not (zsh.home / '.cache/t/discovery/cache.sqlite3').exists()

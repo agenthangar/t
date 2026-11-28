@@ -12029,7 +12029,7 @@ def _index_dedupe(recs):
 
 # ── enrichment ──
 
-def _pr_info(pr, pr_dir):
+def _pr_info(pr, pr_dir, cached_state=None):
     """{url, repo, number, state} for a stored 'github.com/o/r/pull/N', else None.
     State is the cached one only (~/.cache/claude-sessions/pr/<o>#<r>#<N>, written by
     the zsh _pr_state_refresh) — a tool call must never block on `gh`."""
@@ -12038,8 +12038,10 @@ def _pr_info(pr, pr_dir):
         return None
     owner, repo, num = m.groups()
     state = "?"
-    helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_cache_file.py'))
-    s = helper['read'](os.path.join(pr_dir, "%s#%s#%s" % (owner, repo, num))).strip().upper()
+    if cached_state is None:
+        helper = runpy.run_path(os.path.join(_t_source_root(), 'libexec/t_cache_file.py'))
+        cached_state = helper['read'](os.path.join(pr_dir, "%s#%s#%s" % (owner, repo, num)))
+    s = cached_state.strip().upper()
     if s in ("MERGED", "CLOSED", "OPEN"):
         state = s.lower()
     return {"url": "https://" + m.group(0), "repo": "%s/%s" % (owner, repo),
@@ -12096,10 +12098,7 @@ def _local_host():
 
 def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
                  local_host=None):
-    """The dict every tool returns per session. Pure given the record: the only I/O is
-    an isdir on the worktree, a stat on the opened stamp, and reads of the two
-    sidecar files (PR-state cache, .origin). `origin` is null for this host — it is a
-    "last ran ELSEWHERE" signal, like t resume's column."""
+    """Session display from shared cached metadata and native origin evidence."""
     if rec.get('_cached_row') is not None:
         row = dict(rec['_cached_row'])
         row['this_session'] = bool(this_sid and rec.get('sid') == this_sid)
@@ -12141,7 +12140,7 @@ def _session_row(cfg, rec, live_by_sid, now, cache_root=None, this_sid=None,
         "origin": origin,
         "started": _fmt_ts(rec.get("first_ts")),
         "last_activity": _fmt_ts(act), "ago": _ago(act, now), "activity_epoch": act,
-        "pr": _pr_info(rec.get("pr"), pr_dir), "plan": rec.get("plan"),
+        "pr": _pr_info(rec.get("pr"), pr_dir, rec.get("_pr_state")), "plan": rec.get("plan"),
         "prompts_total": rec.get("n_prompts", 0),
         "first_prompts": [p["text"] for p in prompts[:3]],
         "last_prompts": [p["text"] for p in prompts[-3:]] if len(prompts) > 3 else [],
@@ -12537,8 +12536,16 @@ def _mcp_context(cfg, state):
         state["at"] = now
     opened = _session_discovery()['request']('display-evidence', {
         'kind': 'opened', 'sids': [rec.get('sid', '') for rec in state['recs']]}).get('values', {})
+    prefix = 'display-file:' + os.path.join(_cache_root(), 'pr') + os.sep
+    pr_files = _session_discovery()['request']('artifacts', {'prefix': prefix}).get('values', {})
     for rec in state['recs']:
-        rec['_opened_checked'] = opened.get(rec.get('sid'), {}).get('checked', 0)
+        checked = opened.get(rec.get('sid'), {}).get('checked', 0)
+        match = _PR_RE.search(rec.get('pr') or '')
+        pr_state = pr_files.get(prefix + '#'.join(match.groups()), {}).get('text', '') if match else ''
+        if rec.get('_opened_checked') != checked or rec.get('_pr_state') != pr_state:
+            rec.pop('_cached_row', None)
+        rec['_opened_checked'] = checked
+        rec['_pr_state'] = pr_state
     tmux_rows, panes, parents, registry = _live_rows(_cache_root(), _projects_dir())
     live_by_sid, idle = _live_index(tmux_rows, panes, parents, registry, cfg)
     return {"recs": state["recs"], "live": live_by_sid, "idle": idle,

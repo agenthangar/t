@@ -1,10 +1,11 @@
 """The sole owner of discovery cache storage and policy.
 
 Public boundary: request(operation, payload). Clients never open SQLite. One
-service per physical cache store serves decoded RAM snapshots; disk is recovery only.
+managed per-user service serves decoded RAM snapshots; disk is recovery only.
 Collectors run outside the request loop and cannot publish across an invalidation.
 """
 from collections import deque
+from concurrent.futures import Future
 import copy
 import fcntl
 import hashlib
@@ -449,10 +450,14 @@ def _service_env():
 def _client_context():
     # Only discovery inputs cross the socket. Credentials and caller-local
     # shell state never become part of the cache or its persisted records.
-    identity = _identity()
-    identity[0] = 'managed-cache-v1'
-    identity[1] = os.path.realpath(identity[1])
-    return identity
+    home = Path.home()
+    paths = (home, os.environ.get('XDG_CACHE_HOME') or home/'.cache',
+             os.environ.get('XDG_STATE_HOME') or home/'.local/state',
+             os.environ.get('XDG_CONFIG_HOME') or home/'.config',
+             os.environ.get('CODEX_HOME') or home/'.codex',
+             os.environ.get('CLAUDE_CONFIG_DIR') or home/'.claude',
+             _local_rc(), os.environ.get('TMUX_TMPDIR') or '/tmp')
+    return ['managed-cache-v1', *map(os.path.realpath, paths), _LIVE['socket_path']()]
 
 
 def _context_env(identity):
@@ -1453,6 +1458,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         self.workers = _Workers()
         self.context_lock = threading.Lock()
         self.memories = {}
+        self.hydrating = {}
         identity = _client_context()
         self.default_identity = identity
         self.memory = self.make_memory(identity)
@@ -1503,12 +1509,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
                 raise ValueError(proc.stderr.strip()[-512:] or 'session provider failed')
             return {'targets': json.loads(proc.stdout)} if provider == 'share' else {'rows': proc.stdout}
         if operation == 'hydrate':
-            result = self.workers.run([sys.executable, str(SOURCE / 'bin/t'), '__cache-hydrate'],
-                                      input=json.dumps(payload), timeout=95,
-                                      env=dict(_context_env(identity), T_DISCOVERY_COLLECTOR='1'))
-            if result.returncode:
-                raise ValueError('local session detail collection failed')
-            return json.loads(result.stdout)
+            return self.hydrate(identity, payload)
         with self.context_lock:
             key = tuple(identity)
             memory = self.memories.get(key)
@@ -1517,6 +1518,31 @@ class _Server(socketserver.ThreadingUnixStreamServer):
                 self.memories[key] = memory
                 self.disk.register(identity, memory)
         return memory.handle(operation, payload)
+
+
+    def hydrate(self, identity, payload):
+        key = _digest([identity, payload])
+        with self.context_lock:
+            future = self.hydrating.get(key)
+            if future is None:
+                self.hydrating[key] = future = Future()
+                owner = True
+            else:
+                owner = False
+        if owner:
+            try:
+                result = self.workers.run([sys.executable, str(SOURCE/'bin/t'), '__cache-hydrate'],
+                                          input=json.dumps(payload), timeout=95,
+                                          env=dict(_context_env(identity), T_DISCOVERY_COLLECTOR='1'))
+                if result.returncode:
+                    raise ValueError('local session detail collection failed')
+                future.set_result(json.loads(result.stdout))
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                future.set_exception(error)
+            finally:
+                with self.context_lock:
+                    del self.hydrating[key]
+        return future.result()
 
 
 def _serve():
