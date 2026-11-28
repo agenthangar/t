@@ -5894,6 +5894,39 @@
             "tests/test_workflow_runners.py::test_runner_cli_contract"
           ],
           "layout": "machine"
+        },
+        "active": {
+          "argv": [
+            "runners",
+            "runs",
+            "list",
+            "--active"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ],
+          "layout": "inherit"
+        },
+        "active_json": {
+          "argv": [
+            "runners",
+            "runs",
+            "list",
+            "--active",
+            "--json"
+          ],
+          "patterns": [
+            "machine"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_workflow_runners.py::test_runner_cli_contract"
+          ],
+          "layout": "machine"
         }
       },
       "layout": "plain"
@@ -9019,6 +9052,23 @@
             "runners",
             "runs",
             "list"
+          ],
+          "patterns": [
+            "list"
+          ],
+          "read_only": true,
+          "tests": [
+            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
+          ],
+          "layout": "inherit"
+        },
+        "active": {
+          "argv": [
+            "remote",
+            "runners",
+            "runs",
+            "list",
+            "--active"
           ],
           "patterns": [
             "list"

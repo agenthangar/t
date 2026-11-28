@@ -28,8 +28,9 @@ python3 -m venv /tmp/t-smoke-venv
 ```
 
 The host needs zsh, tmux, git, a C compiler and fzf. The script calls the same
-local snapshot runner backend as `t runners runs start --target local`, explicitly
-selects local execution, and runs `scripts/smoke.py` with that Python interpreter.
+target resolution as `t runners runs start`. Configured remote defaults use
+`python3 scripts/smoke.py` on the target. Local execution uses the invoking Python.
+Install the development dependencies on each selected target.
 It uses clean HOME/XDG and the tests' isolated tmux sockets; native desktop tests
 remain opt-in. Do not replace this with a full local regression/coverage run.
 Run focused policy or regression checks when needed for the specific change.

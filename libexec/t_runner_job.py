@@ -296,10 +296,10 @@ def _kill_group(process):
         pass
 
 
-def execute(argv, workspace, home, job_dir, token, timeout, max_log=MAX_LOG):
+def execute(argv, workspace, home, job_dir, token, timeout, max_log=MAX_LOG, environment=None):
     if not argv or not math.isfinite(timeout) or timeout <= 0 or timeout > 86400:
         raise ValueError('command and timeout between 0 and 86400 seconds required')
-    process = subprocess.Popen(argv, cwd=str(workspace), env=clean_environment(home), stdin=subprocess.DEVNULL,
+    process = subprocess.Popen(argv, cwd=str(workspace), env=environment or clean_environment(home), stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
@@ -401,7 +401,7 @@ def collect_artifacts(workspace, paths, archive, max_bytes=MAX_ARTIFACT_BYTES, m
     return records
 
 
-def run_job(job_dir, archive, manifest_path, argv, timeout, token, expected_os=None, expected_arch=None, artifacts=()):
+def run_job(job_dir, archive, manifest_path, argv, timeout, token, expected_os=None, expected_arch=None, artifacts=(), ssh_environment=False):
     uuid.UUID(token)
     job_dir = Path(job_dir)
     job_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -421,7 +421,15 @@ def run_job(job_dir, archive, manifest_path, argv, timeout, token, expected_os=N
         extract_snapshot(archive, manifest, workspace)
         result['snapshot_id'] = manifest['id']
         result['source_head'] = manifest['source_head']
-        result.update(execute(argv, workspace, sandbox / 'home', job_dir, token, timeout))
+        home = sandbox / 'home'
+        environment = clean_environment(home)
+        runner_bin = Path.home() / '.local/share/t/runners/venv/bin'
+        if ssh_environment and runner_bin.is_dir():
+            environment['PATH'] = str(runner_bin) + os.pathsep + environment['PATH']
+        # Unix socket addresses on macOS must fit in 104 bytes.
+        with tempfile.TemporaryDirectory(dir='/tmp', prefix='t-job-') as temp:
+            environment['TMPDIR'] = temp
+            result.update(execute(argv, workspace, home, job_dir, token, timeout, environment=environment))
         if artifacts:
             try:
                 result['artifacts'] = collect_artifacts(workspace, artifacts, job_dir / 'artifacts.tar')
@@ -453,6 +461,7 @@ def main(argv=None):
     for name in ('job-dir', 'archive', 'manifest', 'token'):
         run.add_argument('--' + name, required=True)
     run.add_argument('--timeout', type=float, required=True)
+    run.add_argument('--ssh-environment', action='store_true')
     run.add_argument('--os')
     run.add_argument('--arch')
     run.add_argument('--artifact', action='append', default=[])
@@ -465,8 +474,14 @@ def main(argv=None):
         cancel_job(args.job_dir, args.token)
         return 0
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if args.ssh_environment:
+        # A background login shell ignores these signals. Child commands need
+        # normal terminal signal semantics even though the helper is detached.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGQUIT})
     result = run_job(args.job_dir, args.archive, args.manifest, command, args.timeout, args.token,
-                     args.os, args.arch, args.artifact)
+                     args.os, args.arch, args.artifact, args.ssh_environment)
     return 0 if result['status'] == 'succeeded' else 1
 
 

@@ -890,3 +890,30 @@ def test_local_result_survives_observer_exit_without_status_writes(runners, tmp_
     (directory / 'local/result.json').write_text(json.dumps(data))
     with pytest.raises(ValueError, match='token and snapshot'):
         r.status(result['id'])
+
+
+def test_active_jobs_reports_receipts_processes_and_uncertainty(runners, tmp_path, monkeypatch):
+    r = runners
+    source = tmp_path / 'repo'
+    source.mkdir()
+    subprocess.run(['git', 'init', '-q', str(source)], check=True)
+    def receipt(kind, name, state='running'):
+        job_id = str(uuid.uuid4())
+        folder = r.state_path() / 'jobs' / job_id
+        target = dict(type=kind, status=state, token=str(uuid.uuid4()), snapshot_id='one')
+        data = dict(id=job_id, root=str(source), created_at=r.time.time(), status=state,
+                    command=['python3', '-m', 'pytest'], targets={name: target})
+        r._write(folder / 'receipt.json', data)
+        return folder, target
+    owned, _ = receipt('local', 'local')
+    stale, _ = receipt('local', 'local')
+    remote, _ = receipt('ssh', 'mini')
+    finished, target = receipt('local', 'local')
+    r._write(finished / 'local/result.json', dict(id=target['token'], snapshot_id='one',
+                                                  status='succeeded', exit_code=0))
+    direct = {os.getpid(): (str(source), ['pytest']), 42: (str(source), ['pytest'])}
+    monkeypatch.setattr(r, '_test_processes', lambda: ({42: 41}, direct, {41: owned / 'local'}))
+    rows = r.active_jobs({'sample': str(source)})
+    assert {(row['id'], row['status']) for row in rows} == {
+        (None, 'running'), (owned.name, 'running'), (remote.name, 'running'), (stale.name, 'unknown')}
+    assert [row['pid'] for row in rows if row['provider'] == 'process'] == [os.getpid()]
