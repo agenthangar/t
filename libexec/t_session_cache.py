@@ -732,6 +732,9 @@ class _Memory:
                 for entry in self.entries.values():
                     if entry['spec']['target'] == 'local':
                         entry['dirty'] = True
+                        if payload.get('refresh_active') and self.clock() - entry.get('last_used', 0) < ACTIVE_TTL:
+                            entry['requested'] = True
+                            entry['next_poll'] = 0
                         if entry['refreshing']:
                             entry['catalog_changed'] = True
                 return {'scheduled': True}
@@ -915,6 +918,7 @@ class _Memory:
                                       error_kind=failure.get('kind', ''), diagnostic=failure.get('diagnostic', ''),
                                       observed=entry.get('observed', entry['checked']),
                                       resume_pr_auth_failed=auth_failed,
+                                      work_revision=entry.get('work_revision', 0),
                                       timings=entry.get('timings', {}), refresh_revision=entry.get('refresh_revision', 0),
                                       refresh_requested=entry.get('refresh_revision', 0) + int(
                                           bool(entry['refreshing'] or entry.get('pending') or
@@ -1079,6 +1083,8 @@ class _Memory:
                         health = value.get('_remote_health') or {}
                         if target == 'local' and terminals is not None:
                             entry['terminals'] = terminals
+                        if work_reports(value) != work_reports(entry.get('value', {})):
+                            entry['work_revision'] = entry.get('work_revision', 0) + 1
                         entry['value'], entry['checked'] = value, health.get('checked') or self.clock()
                         entry['observed'] = health.get('observed') or entry['checked']
                         entry['pending'] = False
@@ -1103,6 +1109,11 @@ class _Memory:
 
 def record_key(row):
     return json.dumps([row['repo'], row['agent'], row['sid']], separators=(',', ':'))
+
+
+def work_reports(value):
+    return {record_key(row): row['work_report'] for row in value.get('catalog', {}).get('conversations', [])
+            if row.get('work_report')}
 
 
 def _legacy_artifacts():
@@ -1399,12 +1410,41 @@ class _EndpointLost(OSError):
     """The listener no longer owns a reachable filesystem endpoint."""
 
 
+def _migration_root(identity):
+    state = identity[3] or str(Path(identity[1]) / '.local/state')
+    return Path(os.path.realpath(state)) / 't/data-migrations'
+
+
+def _migration_revision(root):
+    try:
+        info = (root / 'revision').lstat()
+        if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid():
+            return info.st_mtime_ns
+    except OSError:
+        pass
+    return 0
+
+
 def _display_evidence(identity, payload):
     kind = payload.get('kind')
     folders = {'opened': 'opened', 'rollout': 'rollouts'}
     if kind not in folders:
         raise ValueError('unknown display evidence')
     root = Path(identity[2] or Path(identity[1])/'.cache')/'claude-sessions'/folders[kind]
+    if payload.get('publish') is True:
+        sid = payload.get('sid')
+        if kind != 'opened' or not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,256}', sid):
+            raise ValueError('invalid opened session ID')
+        _private(root)
+        fd = os.open(root/sid, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise ValueError('unsafe opened session marker')
+            # Duplicate hooks in the same second share a recency publication.
+            if time.time() - info.st_mtime >= 1:
+                os.utime(stream.fileno(), None)
+        return {'published': True}
     def read(sid):
         if not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,256}', sid):
             return {}
@@ -1441,7 +1481,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
     def service_actions(self):
         # A live process and lifetime lock do not prove that clients can reach
         # the socket. Exit our own loop (shutdown() here would deadlock), flush,
-        # and release the lock so a requesting client can replace this daemon.
+        # and release the lock so the service manager can restart this daemon.
         if _socket_identity(self.server_address) != self.endpoint_identity:
             raise _EndpointLost('session cache socket disappeared or was replaced')
         now = time.monotonic()
@@ -1450,6 +1490,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         with self.context_lock:
             memories = list(self.memories.values())
         for memory in memories:
+            self.observe_migrations(memory)
             memory.tick()
 
     def configure(self):
@@ -1459,6 +1500,8 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         self.context_lock = threading.Lock()
         self.memories = {}
         self.hydrating = {}
+        self.migration_lock = threading.Lock()
+        self.migration_receipts = {}
         identity = _client_context()
         self.default_identity = identity
         self.memory = self.make_memory(identity)
@@ -1470,14 +1513,44 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         if memory.collect is _collect:
             memory.collect = lambda spec: _collect(spec, identity, self.workers)
         memory.identity = identity
+        memory.migration_revision = 0
+        memory.migration_root = _migration_root(identity)
         memory.inventory = _LIVE['Inventory'](lambda status: _report('inventory', status, identity),
                                               identity[9], _context_env(identity))
         return memory
+
+    def observe_migrations(self, memory):
+        # The durable receipt belongs to the migration worker. A stopped cache
+        # can miss its notification, so compare it inside the service as well.
+        with memory.lock:
+            if memory.loading:
+                return
+            root = memory.migration_root
+            with self.migration_lock:
+                now = time.monotonic()
+                checked, revision = self.migration_receipts.get(root, (0, 0))
+                if now - checked >= 1:
+                    revision = _migration_revision(root)
+                    self.migration_receipts[root] = (now, revision)
+            if revision == memory.migration_revision:
+                return
+            memory.migration_revision = revision
+            if any(entry['spec']['target'] == 'local' and
+                   revision / 1e9 > entry.get('checked', 0) for entry in memory.entries.values()):
+                memory.handle('catalog-changed', {'refresh_active': True})
 
     def dispatch(self, identity, operation, payload):
         if (not isinstance(identity, list) or len(identity) != 10 or
                 not all(isinstance(v, str) for v in identity) or identity[:2] != self.default_identity[:2]):
             raise ValueError('invalid cache context')
+        if operation == 'migration-priority':
+            aliases, slot = payload.get('aliases'), payload.get('slot')
+            if (not isinstance(aliases, list) or not all(isinstance(alias, str) for alias in aliases)
+                    or slot is not None and not isinstance(slot, str)):
+                raise ValueError('invalid migration priority')
+            migration = runpy.run_path(str(SOURCE / 'libexec/t_data_migrations.py'))
+            migration['prioritize'](aliases, slot, root=_migration_root(identity))
+            return {'scheduled': True}
         if operation == 'display-evidence':
             return _display_evidence(identity, payload)
         if operation == 'doctor':
@@ -1517,6 +1590,17 @@ class _Server(socketserver.ThreadingUnixStreamServer):
                 memory = self.make_memory(identity)
                 self.memories[key] = memory
                 self.disk.register(identity, memory)
+            if operation == 'catalog-changed':
+                memories = [entry for entry in self.memories.values()
+                            if _migration_root(entry.identity) == _migration_root(identity)]
+            else:
+                memories = []
+        if memories:
+            for entry in memories:
+                entry.handle(operation, payload)
+            return {'scheduled': True}
+        if operation == 'discover':
+            self.observe_migrations(memory)
         return memory.handle(operation, payload)
 
 

@@ -429,14 +429,13 @@ _t_resume() {
   local _p _mr _mrest
   local n wt sid busy rhost _rdir _rbase _rhost _rn _ralias _rsum _rag _rst _ok _stale stale_path agent _ag
   local txf title ep org orgf hf skipped=0 hidden_live=0
-  local opf opep REPLY legacy_pr
+  local opep REPLY legacy_pr
   local _rwtr=${DEV_WORKTREE_ROOT:-}
   # The two picker signals shared with _claude_session_rows/tfind (see the
   # t-session-start notes): opened/ = the last-opened stamps (recency =
   # max(transcript, stamp), ↻ on stamp-newer rows); the PR tag is _pr_state_tag,
   # which owns the pr/ cache (cache-only reads — NEVER a blocking gh call) and
   # collects stale refs into _PR_STALE for the one batched _pr_state_flush below.
-  local opdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/opened"
   local -A _OPENED_CACHE
   local opened_dump
   opened_dump=$(python3 "$T_HOME/libexec/t_cache_file.py" opened-dump unused)
@@ -566,8 +565,7 @@ _t_resume() {
           # writes nothing to the .jsonl, so without the stamp a just-reopened
           # conversation sorts — and --days-gates — as days old. Stamp newer →
           # the row is dated by the stamp and marked ↻.
-          opf="$opdir/$(_dev_transcript_sid "$txf")"
-          opep=${_OPENED_CACHE[${opf:t}]:-0}
+          opep=${_OPENED_CACHE[$sid]:-0}
           (( opep > ep )) && ep=$opep
           if (( cutoff && ep < cutoff )); then
             (( skipped++ )); continue        # outside the --days window

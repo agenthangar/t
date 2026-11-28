@@ -120,6 +120,12 @@ Removed source files disappear from the browsing catalog without deleting durabl
 history. MCP metadata and resume projections reuse unchanged conversation records.
 Display collection uses cached repository proofs and never waits for GitHub.
 
+Successful setup queues local data migrations in a detached worker. The worker
+reads the native catalog in batches and commits work reports and checkpoints
+together in the private history database. Each host processes its own saved
+history. An already-current update retries interrupted work. Resume observes
+published work revisions and repaints matching visible rows through the cache.
+
 ## Remote protocol and failures
 
 Updated peers expose a private versioned generation/delta exchange over the existing
@@ -174,13 +180,14 @@ checkpoint. SQLite retains compatible old snapshots for migration.
 
 All session discovery views and lifecycle publications call
 `request(operation, payload)` in `libexec/t_session_cache.py`. This covers
-session list, open, resume and move pickers, slot history, search, Cursor chat
+session list, open, resume, move and close pickers, slot history, search, Cursor chat
 listing, share targets, MCP discovery, doctor and rnnr. Shell and Swift views
-use the installed CLI or a Python adapter for the same contract. PR evidence,
-display metadata and incremental index artifacts use that contract as well.
-The writer owns `cache.sqlite3`. Native transcripts, durable history and live
-PID/launch evidence have independent owners. Action-time checks still verify
-the current owner directly.
+use the installed CLI or a Python adapter for the same contract. Session-start
+hooks publish display recency through the service. PR evidence, saved work-status
+projections and incremental index artifacts use the same API. The service owns
+`cache.sqlite3` and the compatible opened markers. Native transcripts, durable
+history and live PID, rollout and launch evidence have independent owners.
+Action-time checks still verify the current owner directly.
 
 ## Validation
 

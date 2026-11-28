@@ -84,7 +84,7 @@ def picker(t_mod):
                      timestamp=f'2026-11-{number + 10}T10:00:00Z',
                      message=dict(role='user', content=title))) + '\n')
 
-        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False, warm_resume=False, new_session=False):
+        def start(empty=False, width=90, height=26, mode='open', shell='/bin/sh', *, hostile_opts=False, profile='filtered', monochrome=False, auth_warning=False, close_rc=0, slow_update=False, discovery_notice=False, warm_resume=False, warm_history=False, new_session=False):
             env['T_HOME'] = str(ROOT)
             env.pop('T_PICKER_NEW_SESSION', None)
             if new_session:
@@ -221,14 +221,14 @@ exec /bin/zsh "$@"
                     assert worker.poll() is None
                     assert time.monotonic() < deadline
                     time.sleep(.05)
-                if warm_resume:
+                if warm_resume or warm_history:
                     # Discovery namespaces include the tmux socket. Warm the
                     # same server that will display the picker, then reuse its
                     # pane so a deliberately blocked refresh has retained data.
                     tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), 'sleep 120')
                     seed_env = {**env, 'TMUX': socket + ',0,0'}
                     command = [str(ROOT / 'bin/t'), '__resume-candidates', '--all']
-                    deadline = time.monotonic() + 30
+                    deadline = time.monotonic() + (60 if warm_history else 30)
                     while True:
                         seed = subprocess.run(command, env=seed_env, capture_output=True, text=True,
                                               timeout=max(.1, deadline - time.monotonic()), cwd=root)
@@ -236,12 +236,13 @@ exec /bin/zsh "$@"
                             break
                         assert time.monotonic() < deadline, seed.stderr
                         time.sleep(.1)
-                    (root / 'hold-collector').touch()
-                    saved_resume_row(3, 'New Task')
-                    cache = ('import runpy, sys; runpy.run_path(sys.argv[1])'
-                             '["request"]("event", {"targets": ["local"]})')
-                    subprocess.run([sys.executable, '-c', cache, str(ROOT / 'libexec/t_session_cache.py')],
-                                   env=seed_env, check=True, cwd=root)
+                    if warm_resume:
+                        (root / 'hold-collector').touch()
+                        saved_resume_row(3, 'New Task')
+                        cache = ('import runpy, sys; runpy.run_path(sys.argv[1])'
+                                 '["request"]("event", {"targets": ["local"]})')
+                        subprocess.run([sys.executable, '-c', cache, str(ROOT / 'libexec/t_session_cache.py')],
+                                       env=seed_env, check=True, cwd=root)
                 prefix = (f'source {shlex.quote(str(ROOT / "t.plugin.zsh"))}\n'
                           'cd "$HOME"\n'
                           '_t_resume_history_launch() { print -r -- "LAUNCHED $*" >> "$HOME/selected"; return 99; }\n'
@@ -320,13 +321,15 @@ exec /bin/zsh "$@"
                       'printf done > "$HOME/done"\n')
             (root / 'run.sh').write_text(script)
             command = shell + ' ' + shlex.quote(str(root / 'run.sh'))
-            if warm_resume:
+            if warm_resume or warm_history:
                 tmux('respawn-pane', '-k', command)
             else:
                 tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), command)
 
-        def wait(text, absent=(), ordered=(), focused=None, columns=None):
-            deadline = time.monotonic() + (30 if cache_processes else 12)
+        def wait(text, absent=(), ordered=(), focused=None, columns=None, timeout=None):
+            if timeout is None:
+                timeout = 30 if cache_processes else 12
+            deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
                 fits = columns is None or all(t_mod._display_width(line) <= columns for line in screen.splitlines())
@@ -368,6 +371,22 @@ exec /bin/zsh "$@"
         keys.saved_resume_row = saved_resume_row
         keys.hold_collector = lambda: (root / 'hold-collector').touch()
         keys.release_collector = lambda: (root / 'hold-collector').unlink(missing_ok=True)
+        def backfill_saved_work():
+            path, = (root / '.claude/projects').glob('*/sid1.jsonl')
+            evidence = [
+                dict(type='assistant', uuid='plan', message=dict(content=[
+                    dict(type='tool_use', id='todo', name='TodoWrite',
+                         input=dict(todos=[dict(content='First Task', status='completed')]))])),
+                dict(type='user', parentUuid='plan', message=dict(content=[
+                    dict(type='tool_result', tool_use_id='todo', content='Todos have been modified successfully.')])),
+            ]
+            with path.open('a') as stream:
+                for row in evidence:
+                    stream.write(json.dumps(dict(row, sessionId='sid1', timestamp='2026-09-01T12:00:00Z')) + '\n')
+            launch = ('import runpy, sys; runpy.run_path(sys.argv[1])["queue"](sys.argv[2], sys.argv[3])')
+            subprocess.run([sys.executable, '-c', launch, str(ROOT / 'libexec/t_data_migrations.py'), str(ROOT),
+                            env['T_LOCAL_RC']], env={**env, 'TMUX': socket + ',0,0'}, check=True, cwd=root)
+        keys.backfill_saved_work = backfill_saved_work
         yield start, wait, keys, finish
         keys.release_collector()
         tmux('kill-server', check=False)
@@ -460,6 +479,24 @@ def test_resume_adopts_warm_background_discovery_without_a_keypress(picker):
     screen = wait('3/3 (1)' if stable_ids else '3/3 (0)', focused='First Task' if stable_ids else None,
                   absent=['Refreshing local'])
     assert 'New Task' in screen and '✓ local' in screen and '> Task' in screen
+    assert finish('Escape', status=130) == []
+
+
+@pytest.mark.fzf_compat
+def test_resume_backfill_updates_open_picker_with_query_focus_and_marks(picker):
+    start, wait, keys, finish = picker
+    start(profile='public-resume-refresh', mode='resume', width=105, height=44, warm_history=True)
+    wait('Second Task', absent=['Refreshing local'], focused='Second Task', timeout=45)
+    keys('-l', 'k')
+    wait('> k', focused='Second Task', timeout=20)
+    keys('Tab')
+    wait('2/2 (1)', focused='First Task', timeout=15)
+    keys.hold_collector()
+    keys.backfill_saved_work()
+    keys.release_collector()
+    screen = wait('✓   -    repo', ordered=('2/2 (1)', '✓   -    repo'), focused='First Task', timeout=30)
+    assert '> k' in screen and '2/2 (1)' in screen
+    assert any('✓   -    repo' in line and 'First Task' in line for line in screen.splitlines())
     assert finish('Escape', status=130) == []
 
 
@@ -1121,7 +1158,7 @@ def test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks(picker, 
     for _ in range(10): wheel(64)
     wait('[OPEN]', focused='[OPEN]')
     keys('-l', 'end-of-title')
-    screen = wait('1/1 (')
+    wait('1/1 ' if width <= 32 else '1/1 (')
     # The match is in the hidden right-hand part of the canonical row.
     wait('[OPEN]', focused='[OPEN]')
     selected = finish()

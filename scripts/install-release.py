@@ -87,6 +87,10 @@ def validate_tree(root, expected_version=None):
                  "bin/cursor-beam", "scripts/install-release.py"):
         if not os.access(root / name, os.X_OK):
             raise ValueError("release executable is not executable: " + name)
+    if b"'__data-migrate'" in (root / "bin/t").read_bytes():
+        worker = root / "libexec/t_data_migrations.py"
+        if worker.is_symlink() or not worker.is_file():
+            raise ValueError("release is missing a regular data migration worker")
     # A published pre-nosleep release remains installable. New payloads must
     # include the complete companion, never a dangling executable or adapter.
     if any((root / name).exists() or (root / name).is_symlink() for name in NOSLEEP_ASSETS):

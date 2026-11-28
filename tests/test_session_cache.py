@@ -954,3 +954,81 @@ def test_refresh_requested_while_loading_is_retained_separately_from_demand(engi
     assert len(jobs) == 1
     drain(jobs)
     assert requests[0]['refresh'] and requests[0]['reconcile']
+
+
+def test_migration_notifications_reach_all_contexts_sharing_history(cache):
+    with cache._Server(str(cache._runtime() / 'service.sock'), cache._Handler) as server:
+        server.configure()
+        identities = [cache._client_context()]
+        identities.append([*identities[0][:-1], '/tmp/another-tmux.sock'])
+        other = list(identities[0])
+        other[3] += '-different'
+        identities.append(other)
+        for identity in identities:
+            server.dispatch(identity, 'status', {})
+            memory = server.memories[tuple(identity)]
+            memory.restore({})
+            memory.entries['local'] = dict(spec=spec(), checked=1, retry=0, refreshing=False,
+                                           last_used=memory.clock(), value={})
+        server.dispatch(identities[0], 'catalog-changed', {'refresh_active': True})
+        for identity, expected in zip(identities, (True, True, False)):
+            entry = server.memories[tuple(identity)].entries['local']
+            assert bool(entry.get('dirty')) is expected
+            assert bool(entry.get('requested')) is expected
+
+
+def test_migration_revision_recovers_after_loading_and_only_once(cache):
+    with cache._Server(str(cache._runtime() / 'service.sock'), cache._Handler) as server:
+        server.configure()
+        identity = cache._client_context()
+        memory = server.memory
+        root = cache._migration_root(identity)
+        root.mkdir(parents=True)
+        (root / 'revision').touch()
+        server.observe_migrations(memory)
+        assert memory.migration_revision == 0  # Loading cannot consume the receipt.
+        key = cache._digest({k: v for k, v in spec().items() if k != 'host'})
+        memory.restore({'entries': {key: dict(spec=spec(), checked=1, retry=0,
+                                             refreshing=False, value={})}})
+        server.dispatch(identity, 'discover', {'hosts': [spec()], 'fields': [], 'observe': True})
+        entry = memory.entries[key]
+        assert entry['dirty']
+        entry['dirty'] = False
+        server.dispatch(identity, 'discover', {'hosts': [spec()], 'fields': [], 'observe': True})
+        assert not entry['dirty']
+
+
+def test_migration_priority_uses_requested_history_context(cache):
+    with cache._Server(str(cache._runtime() / 'service.sock'), cache._Handler) as server:
+        server.configure()
+        identity = cache._client_context()
+        identity[3] += '-alternate'
+        root = cache._migration_root(identity)
+        root.mkdir(parents=True)
+        (root / 'worker.lock').touch()
+        assert server.dispatch(identity, 'migration-priority', {'aliases': ['api'], 'slot': '7'})['scheduled']
+        priority = json.loads((root / 'priority.json').read_text())
+        assert priority['aliases'] == ['api'] and priority['slot'] == '7'
+        assert not (cache._migration_root(server.default_identity) / 'priority.json').exists()
+        with pytest.raises(ValueError, match='invalid migration priority'):
+            server.dispatch(identity, 'migration-priority', {'aliases': 'api'})
+
+
+def test_migration_receipt_reads_coalesce_across_contexts(cache, monkeypatch):
+    reads = []
+    monkeypatch.setattr(cache, '_migration_revision', lambda root: (reads.append(root), 42)[1])
+    with cache._Server(str(cache._runtime() / 'service.sock'), cache._Handler) as server:
+        server.configure()
+        first = cache._client_context()
+        second = [*first[:-1], '/tmp/second-tmux.sock']
+        for identity in (first, second):
+            server.dispatch(identity, 'status', {})
+            server.memories[tuple(identity)].restore({})
+        for _ in range(5):
+            for memory in server.memories.values():
+                server.observe_migrations(memory)
+        assert reads == [server.memory.migration_root]
+        assert all(memory.migration_revision == 42 for memory in server.memories.values())
+        server.migration_receipts[server.memory.migration_root] = (time.monotonic() - 2, 42)
+        server.observe_migrations(server.memory)
+        assert reads == [server.memory.migration_root] * 2

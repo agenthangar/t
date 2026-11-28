@@ -34,7 +34,10 @@ def session_evidence(kind, sid):
 
 def main():
     action, path, *values = sys.argv[1:]
-    if action == 'opened-dump':
+    if action == 'opened-write':
+        request('display-evidence', {'kind': 'opened', 'sid': path, 'publish': True},
+                deadline=time.monotonic() + .1)
+    elif action == 'opened-dump':
         values = request('display-evidence', {'kind': 'opened', 'all': True}).get('values', {})
         for sid, evidence in values.items():
             print('_OPENED_CACHE+=(' + shlex.quote(sid) + ' ' + str(int(evidence.get('checked', 0))) + ')')

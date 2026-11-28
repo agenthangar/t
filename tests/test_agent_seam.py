@@ -109,13 +109,33 @@ def sandbox(tmp_path):
     return home, env
 
 
+@pytest.fixture
+def managed_cache(sandbox):
+    home, env = sandbox
+    worker = subprocess.Popen([sys.executable, str(REPO_ROOT/'libexec/t_session_cache.py'), 'serve'],
+                              env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    probe = ('import runpy,sys; m=runpy.run_path(sys.argv[1]); '
+             'sys.exit(bool(m["request"]("status").get("unavailable")))')
+    try:
+        deadline = time.monotonic() + 8
+        while subprocess.run([sys.executable, '-c', probe, str(REPO_ROOT/'libexec/t_session_cache.py')],
+                             env=env).returncode:
+            assert worker.poll() is None
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+        yield worker
+    finally:
+        worker.terminate()
+        worker.wait(timeout=10)
+
+
 def run_hook(env, payload, **extra):
     env = {**env, **extra}
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run([str(HOOK)], input=stdin, env=env, capture_output=True, text=True)
 
 
-def test_hook_writes_registry_opened_and_origin_stamps(sandbox):
+def test_hook_writes_registry_opened_and_origin_stamps(managed_cache, sandbox):
     home, env = sandbox
     cwd = home / "code" / "proj"
     proj = home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
@@ -131,7 +151,7 @@ def test_hook_writes_registry_opened_and_origin_stamps(sandbox):
     assert not (pathlib.Path(env["TMUX_LOG"])).exists()
 
 
-def test_hook_returns_and_registers_identity_while_history_is_locked(sandbox):
+def test_hook_returns_and_registers_identity_while_history_is_locked(managed_cache, sandbox):
     home, env = sandbox
     env.update(XDG_STATE_HOME=str(home / 'state'), XDG_CONFIG_HOME=str(home / 'config'),
                CODEX_HOME=str(home / '.codex'), T_HOME=str(REPO_ROOT))
@@ -208,7 +228,7 @@ def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tm
 @pytest.mark.parametrize("pane,target,cwd", [
     ("", "$3", None), ("%7", "", None), ("%7", "$3", "/another/worktree"),
 ])
-def test_hook_codex_does_not_stamp_an_unverified_pane(sandbox, pane, target, cwd):
+def test_hook_codex_does_not_stamp_an_unverified_pane(managed_cache, sandbox, pane, target, cwd):
     home, env = sandbox
     r = subprocess.run([str(HOOK), "--agent", "codex"], input=json.dumps(
         {"session_id": "other-thread", "cwd": str(home)}),
@@ -233,7 +253,7 @@ def test_hook_agent_flag_overrides_the_ancestry_guess(sandbox):
     assert "set-environment -t $3 DEV_AGENT codex" in pathlib.Path(env["TMUX_LOG"]).read_text()
 
 
-def test_hook_falls_back_to_the_session_env_var(sandbox):
+def test_hook_falls_back_to_the_session_env_var(managed_cache, sandbox):
     home, env = sandbox
     r = run_hook(env, "not json at all", CLAUDE_CODE_SESSION_ID="env-sid")
     assert r.returncode == 0
@@ -247,7 +267,7 @@ def test_hook_never_fails_without_an_id(sandbox):
     assert not (home / ".cache").exists()
 
 
-def test_hook_skips_the_registry_when_no_agent_ancestor(sandbox, tmp_path):
+def test_hook_skips_the_registry_when_no_agent_ancestor(managed_cache, sandbox, tmp_path):
     home, env = sandbox
     # the process table knows only a shell above us: no registry entry, stamps still land
     (tmp_path / "ps.txt").write_text(f"{os.getpid()} 1 zsh\n1 0 launchd\n")
@@ -2993,3 +3013,12 @@ def test_stopped_cache_pr_refresh_leaves_network_idle(zsh, tmp_path):
     assert result.returncode == 0, result.stderr
     assert not log.exists()
     assert not (zsh.home / '.cache/t/discovery/cache.sqlite3').exists()
+
+
+def test_hook_with_stopped_cache_preserves_live_evidence_without_opened_write(sandbox):
+    home, env = sandbox
+    result = run_hook(env, {'session_id': 'offline-open', 'cwd': str(home)})
+    assert result.returncode == 0
+    root = home/'.cache/claude-sessions'
+    assert (root/str(os.getpid())).exists()
+    assert not (root/'opened/offline-open').exists()

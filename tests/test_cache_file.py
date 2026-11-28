@@ -32,3 +32,41 @@ def test_stopped_cache_prevents_pr_network_refresh(monkeypatch):
         AssertionError('stopped cache started network refresh')))
     monkeypatch.setattr(helper.sys, 'argv', ['helper', 'refresh', 'https://github.com/o/r/pull/1', '/cache/pr/1'])
     assert helper.main() == 1
+
+
+def test_opened_publish_uses_bounded_managed_request(monkeypatch):
+    helper = load_script(REPO_ROOT / 'libexec/t_cache_file.py', 'opened_publish_test')
+    calls = []
+    monkeypatch.setattr(helper, 'request', lambda *args, **kwargs: calls.append((args, kwargs)) or {})
+    monkeypatch.setattr(helper.sys, 'argv', ['helper', 'opened-write', 'sample-sid'])
+    before = helper.time.monotonic()
+    assert helper.main() == 0
+    args, kwargs = calls[0]
+    assert args == ('display-evidence', {'kind': 'opened', 'sid': 'sample-sid', 'publish': True})
+    assert before < kwargs['deadline'] <= helper.time.monotonic() + .1
+
+
+def test_opened_publication_is_shared_idempotent_and_reads_legacy(tmp_path, monkeypatch):
+    import os
+    import pytest
+    cache = load_script(REPO_ROOT / 'libexec/t_session_cache.py', 'opened_evidence_test')
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path/'cache'))
+    identity = cache._client_context()
+    other = list(identity)
+    other[9] = '/another/tmux/socket'
+    assert cache._display_evidence(identity, {'kind': 'opened', 'sid': 'new', 'publish': True})['published']
+    first = cache._display_evidence(other, {'kind': 'opened', 'sid': 'new'})
+    cache._display_evidence(identity, {'kind': 'opened', 'sid': 'new', 'publish': True})
+    assert cache._display_evidence(other, {'kind': 'opened', 'sid': 'new'}) == first
+    marker = tmp_path/'cache/claude-sessions/opened/legacy'
+    marker.touch()
+    os.utime(marker, (123, 123))
+    assert cache._display_evidence(other, {'kind': 'opened', 'sid': 'legacy'})['checked'] == 123
+    assert cache._display_evidence(other, {'kind': 'opened', 'all': True})['values']['new'] == first
+    with pytest.raises(ValueError):
+        cache._display_evidence(identity, {'kind': 'opened', 'sid': '../escape', 'publish': True})
+    link = marker.with_name('linked')
+    link.symlink_to(marker)
+    with pytest.raises(OSError):
+        cache._display_evidence(identity, {'kind': 'opened', 'sid': 'linked', 'publish': True})
