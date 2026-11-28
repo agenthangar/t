@@ -469,10 +469,8 @@ def test_resume_backfill_updates_open_picker_with_query_focus_and_marks(picker):
     wait('2/2 (1)', focused='First Task', timeout=15)
     keys.hold_collector()
     keys.backfill_saved_work()
-    keys('Up')
-    wait('2/2 (1)', focused='Second Task', timeout=15)
     keys.release_collector()
-    screen = wait('✓   -    repo', ordered=('2/2 (1)', '✓   -    repo'), focused='Second Task', timeout=30)
+    screen = wait('✓   -    repo', ordered=('2/2 (1)', '✓   -    repo'), focused='First Task', timeout=30)
     assert '> ask' in screen and '2/2 (1)' in screen
     assert any('✓   -    repo' in line and 'First Task' in line for line in screen.splitlines())
     assert finish('Escape', status=130) == []

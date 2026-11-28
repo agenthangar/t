@@ -649,6 +649,15 @@ def _resume_picker_update(directory, picker, status, rebuild=None, *, preserve_m
                 for path in snapshot.iterdir():
                     path.unlink()
         reload_rows = (snapshot / 'source').exists()
+        if reload_rows and (directory / 'source').is_file():
+            previous = (directory / 'source').read_text().splitlines()
+            staged = (snapshot / 'source').read_text().splitlines()
+            reload_rows = previous != staged
+            if reload_rows and not preserve_marks:
+                # An observation may update metadata before the migration
+                # completes. Preserve selection while the identities stay put.
+                identities = lambda rows: {tuple(row.split('\t', 3)[:3]) for row in rows}
+                preserve_marks = identities(previous) == identities(staged)
         (snapshot / 'discovery-status').write_text(json.dumps(status))
         (snapshot / 'base').write_text(base)
         picker.deadline = time.monotonic() + 5
@@ -676,19 +685,27 @@ def _resume_picker_update(directory, picker, status, rebuild=None, *, preserve_m
                 if time.monotonic() >= picker.deadline:
                     raise TimeoutError('picker update timed out')
                 time.sleep(.01)
-            _resume_restore_marks(picker, before)
+            _resume_restore_marks(picker, before, (directory / 'current').read_text())
     finally:
         shutil.rmtree(snapshot, ignore_errors=True)
 
 
-def _resume_restore_marks(picker, before):
+def _resume_restore_marks(picker, before, rendered):
     """Older fzf clears marks on reload; restore surviving resume identities."""
+    from t_picker_viewport import plain
+
     def key(item):
         return tuple(item['text'].split('\t')[:3])
 
-    after = picker.request()
-    if after['query'] != before['query']:
-        return
+    expected = [plain(line) for line in rendered.splitlines()]
+    while True:
+        after = picker.request()
+        if after['query'] != before['query']:
+            return
+        if (not after['reading'] and after['totalCount'] == len(expected)
+                and [plain(item['text']) for item in after['matches']] == expected):
+            break
+        time.sleep(.01)
     positions = {key(item): index for index, item in enumerate(after['matches'], 1)}
     marks = [positions[key(item)] for item in before['selected'] if key(item) in positions]
     actions = [f'pos({position})+select' for position in marks]
