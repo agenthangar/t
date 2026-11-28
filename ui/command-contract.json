@@ -2,7 +2,7 @@
   "schema_version": 1,
   "description": "Development-only public command appearance and interaction inventory; ls/list aliases inherit canonical routes in bin/t COMMAND_GROUPS, including workflow and root list/ls; the repos family is removed. Existing-repository selectors accept registered aliases, checkout basenames, or unambiguous local origin repository names; exact aliases retain precedence and remote open/resume resolve on the selected host.",
   "patterns": {
-    "list": "Direct read-only aligned rows, scope, and empty state; never launches a picker.",
+    "list": "Direct read-only aligned rows, scope, and empty state. Quiet collection uses delayed terminal progress before the list. Never launches a picker.",
     "detail": "Read-only labeled values; no work starts or prompt appears.",
     "single": "Air shared picker or inline menu: cyan headings, muted hints, explicit dark cyan focus; Enter selects one target. Native macOS key labels change presentation only.",
     "multi": "Air shared picker or inline checklist: green check in its own gutter beside focus pointer. Tab marks searchable rows; Enter accepts marks or focused row. Width and height preserve controls and focused identity. RailUI checklists use Space to toggle and Enter to accept only checked items, including none. An explicit empty choice is an exclusive reset; choosing real items clears it and clearing the last real item restores it.",
@@ -11,7 +11,7 @@
     "review": "Show selected install actions before running; Enter applies the reviewed plan.",
     "action": "Run an explicit target without unnecessary selection; confirm interruption when needed.",
     "passthrough": "Preserve raw or delegated tool I/O and exit behavior.",
-    "machine": "Stable JSON/raw output, with no prompt or ANSI styling."
+    "machine": "Stable JSON/raw output, with no prompt, ANSI styling, or spinner."
   },
   "commands": {
     "share": {

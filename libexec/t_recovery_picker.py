@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from t_picker_filters import RESUME_AGENTS, pr_color, resume_action_rows
 from t_picker_theme import control_rows, paint, picker_section_rows, picker_summary
 from t_picker_viewport import project, search
+from t_progress import spinner as _spinner
 from t_session_details import display_width, clip_columns
 from t_session_sort import RESUME_SORTS, natural, sort_label
 
@@ -244,8 +245,9 @@ def command(cfg, api):
         raise ValueError('Session selection requires fzf.')
     with tempfile.TemporaryDirectory(prefix='t-recovery-') as name:
         directory = Path(name)
-        refresh(directory)
-        records = json.loads((directory/'recovery.json').read_text())
+        with _spinner('Checking sessions for recovery'):
+            refresh(directory)
+            records = json.loads((directory/'recovery.json').read_text())
         if not records:
             print('No sessions to recover.')
             return 0

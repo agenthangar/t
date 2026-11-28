@@ -3,6 +3,7 @@
 Only the SessionStart hook writes launch snapshots; reporting never creates state.
 Token counts include input and output, with cached input a subset of input.
 """
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -548,14 +549,11 @@ def detail(row, width=100):
 def command(args, spinner=None, live_rows=None):
     ui = helper('t_eval_cli')
     try:
-        if spinner:
-            with spinner('Reading recorded usage'):
-                rows = snapshot()
-        else:
-            rows = snapshot()
-        display_metadata(rows, live_rows() if live_rows else ())
-        width = shutil.get_terminal_size((100, 24)).columns
         machine = getattr(args, 'json', False)
+        with (spinner('Reading recorded usage') if spinner and not machine else nullcontext()):
+            rows = snapshot()
+            display_metadata(rows, live_rows() if live_rows else ())
+        width = shutil.get_terminal_size((100, 24)).columns
         ident = getattr(args, 'usage_id', None)
         if args.usage_action == 'show':
             if not ident:
