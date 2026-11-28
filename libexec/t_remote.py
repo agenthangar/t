@@ -38,7 +38,7 @@ ORCHESTRATED = frozenset({'session open', 'session resume', 'session move', 'ses
 INFER = frozenset({
     'session open', 'session resume', 'session history', 'session move',
     'session close', 'session restart', 'session read', 'session view-plan',
-    'session paste', 'session search', 'repo locate', 'issue list', 'issue status',
+    'session search', 'repo locate', 'issue list', 'issue status',
     'issue start', 'profile show', 'profile edit', 'profile init', 'policy check',
     'policy show', 'policy apply', 'runners runs start', 'workflow context',
 })

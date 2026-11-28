@@ -2,7 +2,7 @@
 # t — Claude session manager: open/list/move tmux'd Claude sessions (gh-style).
 #
 # Single front door for the Claude-session workflow (was the dev/tpush/tpop/tbeam/
-# tread/tplan/tpaste/tfind/on family). gh-style: `t <verb> [args] [--flags]`, -h
+# tread/tplan/tfind/on family). gh-style: `t <verb> [args] [--flags]`, -h
 # everywhere. This BIN owns argument parsing, help, config, the cross-host fan-out,
 # rendering, and the Python-shaped verbs. Verbs that must manipulate the CALLING
 # shell (cd + `claude -r` in the current terminal, the tpush sentinel handoff) are
@@ -1498,19 +1498,6 @@ def cmd_plan(cfg, args):
     parts = ["_t_plan"]
     if args.all:
         parts.append("--all")
-    if args.repo:
-        parts.append(shlex.quote(args.repo))
-    if args.slot:
-        parts.append(shlex.quote(args.slot))
-    _delegate(" ".join(parts))
-
-
-def cmd_paste(cfg, args):
-    parts = ["_t_paste"]
-    if args.pick:
-        parts.append("--pick")
-    if args.newest:
-        parts.append("--newest")
     if args.repo:
         parts.append(shlex.quote(args.repo))
     if args.slot:
@@ -9029,7 +9016,7 @@ def _command_readonly(argv, *, terminal=None):
 def _t_auto_update(argv):
     """Return None to continue, or replace this process with the updated CLI."""
     public = {"open", "ls", "kill", "restart", "push", "pop", "resume", "history", "cd",
-              "beam", "read", "plan", "paste", "find", "cursor", "repo", "config", "runners",
+              "beam", "read", "plan", "find", "cursor", "repo", "config", "runners",
               "setup", "new", "checkout", "instructions", "install", "integrate",
               "permissions", "trust", "doctor"}
     operation = _canonical_argv(argv)
@@ -9824,7 +9811,7 @@ def _install_then_setup(cfg, args, rc, chain=True):
 _AGENT_PARITY = [
     ("surface", "claude", "codex", "cursor"),
     ("t agent install (login · update · reinstall)", "✓", "✓", "✓"),
-    ("dev slots: t session open / list / close / read / paste", "✓", "✓ t session open --codex · DEV_AGENT", "✗ no slot — t cursor list"),
+    ("dev slots: t session open / list / close / read", "✓", "✓ t session open --codex or DEV_AGENT", "✗ no slot. Use t cursor list"),
     ("t session push / pop", "✓", "✓", "✗ no slot"),
     ("t session resume (saved conversations)", "✓", "✓ (rollouts and thread index)", "→ t cursor resume"),
     ("t session move / --from", "✓ (t)", "✓ (t)", "→ t cursor send [id] --host / --from"),
@@ -13169,7 +13156,7 @@ COMMAND_GROUPS = {
         "open": ("open",), "list": ("ls",), "close": ("kill",),
         "restart": ("restart",), "push": ("push",), "pop": ("pop",),
         "resume": ("resume",), "history": ("history",), "cd": ("cd",), "move": ("beam",),
-        "read": ("read",), "view-plan": ("plan",), "paste": ("paste",),
+        "read": ("read",), "view-plan": ("plan",),
         "search": ("find",),
         "goal": ("__session-goal",),
     },
@@ -13855,7 +13842,7 @@ def _command_description(group, action):
                     "push": "Background this session", "pop": "Return a session to this terminal",
                     "resume": "Revive a saved conversation", "history": "Browse all conversations for a slot", "cd": "Enter a slot worktree",
                     "move": "Move a session between machines", "read": "Read slot output",
-                    "view-plan": "Show a Claude session plan", "paste": "Paste a recent file path",
+                    "view-plan": "Show a Claude session plan",
                     "search": "Search and resume a saved conversation",
                     "goal": "Send a new objective to a live agent", "recovery": "Inspect or pause automatic recovery"},
         "repo": {"list": "List registered repositories", "cd": "Enter a checkout",
@@ -14960,16 +14947,6 @@ EXAMPLES
     sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
     sp.add_argument("-a", "--all", action="store_true", help="fzf-pick across every project")
 
-    sp = sub.add_parser("paste", help="paste the latest iCloud screenshot/doc path into a session",
-        description="Paste the path of the latest iCloud screenshot/document into a session's "
-            "input — so a screenshot taken on your phone drops straight into a desktop Claude. "
-            "Takes the newest file by default; `-p` fzf-picks one, `-n` forces newest. Local-"
-            "only: it reads THIS machine's iCloud, so it is not delegated to a remote slot.")
-    sp.add_argument("repo", nargs="?", help="repository alias, basename or origin name; defaults to the repo your cwd is in")
-    sp.add_argument("slot", nargs="?", help="slot number; a lone slot implies the cwd repo")
-    sp.add_argument("-p", "--pick", action="store_true", help="fzf-pick the file instead of taking the newest")
-    sp.add_argument("-n", "--newest", action="store_true", help="skip the picker; take the newest file by mtime")
-
     sp = sub.add_parser("find", help="semantic search across saved sessions, then resume",
         description="Semantic search across your saved Claude transcripts (\"which session was "
             "working on X?\"), then resume the one you pick. A keyword pass builds a candidate "
@@ -15770,7 +15747,7 @@ IMPLEMENTED = {
     "share": cmd_share,
     "agentcore": cmd_agentcore,
     "ls": cmd_ls, "session-rows": cmd_session_rows, "on": cmd_on, "read": cmd_read,
-    "plan": cmd_plan, "paste": cmd_paste, "kill": cmd_kill, "setup": cmd_setup,
+    "plan": cmd_plan, "kill": cmd_kill, "setup": cmd_setup,
     "land": cmd_land, "kill-owner": cmd_kill_owner, "cursor": cmd_cursor,
     "doctor": cmd_doctor, "mcp": cmd_mcp, "new": cmd_new, "new-land": cmd_new_land,
     "checkout": cmd_checkout, "instructions": cmd_instructions,

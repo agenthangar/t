@@ -2127,51 +2127,6 @@
       },
       "layout": "external"
     },
-    "session paste": {
-      "patterns": [
-        "action",
-        "single"
-      ],
-      "renderer": "mixed",
-      "scope": "explicit/inferred repository or all local/remote sessions",
-      "confirmation": "none",
-      "tests": [
-        "tests/test_command_groups_shell.py::test_shell_dispatch_matches_python_command_registry"
-      ],
-      "modes": {
-        "default": {
-          "argv": [
-            "session",
-            "paste"
-          ],
-          "patterns": [
-            "single",
-            "single"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_command_groups_shell.py::test_shell_dispatch_matches_python_command_registry"
-          ],
-          "layout": "inherit"
-        },
-        "newest": {
-          "argv": [
-            "session",
-            "paste",
-            "--newest"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_desktop_removal.py::test_legacy_workspace_cannot_start_fresh"
-          ],
-          "layout": "inherit"
-        }
-      },
-      "layout": "mixed"
-    },
     "session search": {
       "patterns": [
         "single"
@@ -7595,37 +7550,6 @@
             "remote",
             "session",
             "view-plan"
-          ],
-          "patterns": [
-            "action"
-          ],
-          "read_only": false,
-          "tests": [
-            "tests/test_remote_prefix.py::test_registry_policy_and_parser"
-          ],
-          "layout": "inherit"
-        }
-      },
-      "notes": "Host follows the complete action. Child command safeguards and argument meanings are preserved.",
-      "layout": "mixed"
-    },
-    "remote session paste": {
-      "patterns": [
-        "action"
-      ],
-      "renderer": "mixed",
-      "scope": "explicit source SSH host, or registered hosts for aggregate queries",
-      "confirmation": "external",
-      "remote_policy": "single",
-      "tests": [
-        "tests/test_remote_prefix.py::test_registry_policy_and_parser"
-      ],
-      "modes": {
-        "default": {
-          "argv": [
-            "remote",
-            "session",
-            "paste"
           ],
           "patterns": [
             "action"
@@ -14175,7 +14099,6 @@
     "session move": "_t_session_move selection scope and guarded _t_beam explicit targets",
     "session read": "cmd_read",
     "session view-plan": "_t_plan",
-    "session paste": "_t_paste",
     "session goal": "cmd_session_goal",
     "repo cd": "_t_repo_cd",
     "repo locate": "cmd_repo",
