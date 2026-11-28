@@ -474,6 +474,11 @@ def main(argv=None):
         cancel_job(args.job_dir, args.token)
         return 0
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if args.ssh_environment:
+        # A background login shell ignores these signals. Child commands need
+        # normal terminal signal semantics even though the helper is detached.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        signal.signal(signal.SIGQUIT, signal.SIG_DFL)
     result = run_job(args.job_dir, args.archive, args.manifest, command, args.timeout, args.token,
                      args.os, args.arch, args.artifact, args.ssh_environment)
     return 0 if result['status'] == 'succeeded' else 1

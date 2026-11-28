@@ -468,3 +468,16 @@ def test_snapshot_preserves_long_regular_paths(repo, tmp_path):
     assert payloads[relative] == b'long path'
     with pytest.raises(ValueError, match='portable limit'):
         job.safe_path('x' * 4097)
+
+
+def test_detached_ssh_job_restores_interrupts(repo, tmp_path):
+    import shlex
+    folder = tmp_path / 'job'
+    archive, manifest = tmp_path / 'source.tar', tmp_path / 'manifest.json'
+    job.create_snapshot(repo, archive, manifest)
+    command = [sys.executable, job.__file__, 'run', '--ssh-environment', '--job-dir', str(folder),
+               '--archive', str(archive), '--manifest', str(manifest), '--token', str(uuid.uuid4()),
+               '--timeout', '10', '--', sys.executable, '-c',
+               'import signal; assert signal.getsignal(signal.SIGINT) != signal.SIG_IGN']
+    subprocess.run(['sh', '-c', "trap '' INT QUIT; exec " + shlex.join(command)], check=True)
+    assert json.loads((folder / 'result.json').read_text())['status'] == 'succeeded'
