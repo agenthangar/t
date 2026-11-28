@@ -13,6 +13,7 @@ import tempfile
 import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
+_spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 
 
 class EmptySelection(Exception):
@@ -124,9 +125,11 @@ def select_run(name, m, machine=False, eligible=lambda _: True, exclude=()):
         return result
     if machine:
         raise ValueError('specify run ID with --json')
-    available = [r for r in m['list_runs']() if eligible(r) and r['id'] not in exclude]
-    chosen = choose([{'key': r['id'], 'label': run_label(r, m),
-                      'preview': '\n'.join(run_lines(r, m))} for r in available], 'Runs')
+    with _spinner('Reading evaluation runs'):
+        available = [r for r in m['list_runs']() if eligible(r) and r['id'] not in exclude]
+        rows = [{'key': r['id'], 'label': run_label(r, m),
+                 'preview': '\n'.join(run_lines(r, m))} for r in available]
+    chosen = choose(rows, 'Runs')
     return next((r for r in available if r['id'] == chosen), None)
 
 
@@ -274,8 +277,11 @@ def command(cfg, args, api):
         if action == 'list' and not machine and tty():
             action = 'show'
         if action == 'list':
-            runs = m['list_runs']()
-            output([m['summarize'](r) for r in runs], [line for r in runs for line in run_lines(r, m) + ['']] or ['No evaluation runs. Use t eval runs start.'])
+            with _spinner('Reading evaluation runs', machine=machine):
+                runs = m['list_runs']()
+                summary = [m['summarize'](r) for r in runs]
+                lines = [line for r in runs for line in run_lines(r, m) + ['']]
+            output(summary, lines or ['No evaluation runs. Use t eval runs start.'])
             return 0
         if action == 'start':
             filename = getattr(args, 'config_file', None)

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+_spinner = runpy.run_path(str(ROOT / 'libexec/t_progress.py'))['spinner']
 CLEANUP_LABEL = 'com.agenthangar.t.cleanup'
 CACHE_LABEL = 'com.agenthangar.t.session-cache'
 NAMES = {'cache': 'Session cache', 'cleanup': 'Finished session cleanup', 'recovery': 'Automatic recovery'}
@@ -268,11 +269,12 @@ def claim():
 def command(action, target, reinstall, interval):
     agents = NAMES if target in (None, 'all') else (target,)
     if action == 'status':
+        with _spinner('Checking background agents'):
+            statuses = [(agent, status(agent)) for agent in agents]
         compact = sys.stdout.isatty() and shutil.get_terminal_size().columns < 86
         if not compact:
             print(f'{"BACKGROUND AGENT":<27} {"INSTALLATION":<14} {"STATUS":<12} {"STARTS AT LOGIN":<15} CHECK INTERVAL')
-        for agent in agents:
-            installed, live, login = status(agent)
+        for agent, (installed, live, login) in statuses:
             cadence = f'Every {interval} min' if agent == 'cleanup' else 'continuous'
             detail = cache_details() if agent == 'cache' and live == 'Running' else ''
             if compact:
@@ -294,19 +296,20 @@ def command(action, target, reinstall, interval):
     with claim():
         for agent in agents:
             try:
-                previous = read_service(agent)
-                if action == 'install':
-                    outcome = install(agent, previous, reinstall)
-                elif previous is None:
-                    raise ValueError(f'install first with t agent background install {agent}')
-                elif action == 'stop':
-                    stop(agent)
-                    outcome = 'stopped for this login'
-                else:
-                    if action == 'restart':
+                with _spinner('Managing background agents'):
+                    previous = read_service(agent)
+                    if action == 'install':
+                        outcome = install(agent, previous, reinstall)
+                    elif previous is None:
+                        raise ValueError(f'install first with t agent background install {agent}')
+                    elif action == 'stop':
                         stop(agent)
-                    start(agent)
-                    outcome = 'restarted' if action == 'restart' else 'started'
+                        outcome = 'stopped for this login'
+                    else:
+                        if action == 'restart':
+                            stop(agent)
+                        start(agent)
+                        outcome = 'restarted' if action == 'restart' else 'started'
                 print(f'{agent}: {outcome}')
             except (OSError, ValueError, plistlib.InvalidFileException, subprocess.SubprocessError) as error:
                 print(f'{agent}: {error}', file=sys.stderr)

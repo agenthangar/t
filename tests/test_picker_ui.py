@@ -270,6 +270,10 @@ exec /bin/zsh "$@"
                 shell = 'zsh -f'
                 env.update(T_NO_UPDATE_CHECK='1', T_NO_AUTORELOAD='1',
                            T_LOCAL_RC=str(root / 'local.zsh'))
+                if profile != 'public-open-wait':
+                    # Keep the injected shell inventory in-process. A separate
+                    # discovery worker cannot see the synthetic scanner below.
+                    env['T_DISCOVERY_COLLECTOR'] = '1'
                 raw = ROWS.replace(r'\tapp\tnone', r'\tapp\tactive') if empty else ROWS
                 if profile in ('public-open-cli', 'public-open-kill', 'public-open-wait'):
                     raw = raw.replace(r'\tapp\tnone', r'\tdetached\tnone')
@@ -322,7 +326,7 @@ exec /bin/zsh "$@"
                 tmux('-f', '/dev/null', 'new-session', '-d', '-x', str(width), '-y', str(height), command)
 
         def wait(text, absent=(), ordered=(), focused=None, columns=None):
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + (30 if service else 12)
             while time.monotonic() < deadline:
                 screen = tmux('capture-pane', '-p', check=False).stdout
                 fits = columns is None or all(t_mod._display_width(line) <= columns for line in screen.splitlines())

@@ -112,6 +112,7 @@ def load(identifier):
     return record
 
 
+@_spinner('Reading saved ideas')
 def list_ideas():
     root = state_root()
     if not root.exists():

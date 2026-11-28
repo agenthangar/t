@@ -26,11 +26,13 @@ _t_with_progress() {
     unfunction zshexit 2>/dev/null || :
     unfunction TRAPEXIT 2>/dev/null || :
     trap - EXIT
-    trap 'exit 0' TERM INT HUP
+    local painted=0
+    trap '(( painted )) && printf "\r\033[2K" >&2; exit 0' TERM INT HUP
     command sleep 0.25
     local frame=1 width=$(( ${COLUMNS:-80} - 7 ))
     local -a frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
     while true; do
+      painted=1
       printf '\r\033[2K  %s %.*s' "$frames[$frame]" "$width" "$label" >&2
       (( frame = frame % 10 + 1 ))
       command sleep 0.12
@@ -40,7 +42,6 @@ _t_with_progress() {
   { "$@" 2>"$spin_err" } always {
     kill "$spin_pid" 2>/dev/null
     wait "$spin_pid" 2>/dev/null
-    printf '\r\033[2K' >&2
     cat "$spin_err" >&2
     rm -f "$spin_err"
   }
@@ -2909,7 +2910,7 @@ _t_dev() {
     local saved_path saved_receipt saved_rc=0
     saved_path=$(_dev_worktree_path "$repo" "$slot") || return 1
     if [[ -d "$saved_path" ]]; then
-      saved_receipt=$(T_RESUME_OWNER_RECEIPT=1 python3 "$T_HOME/bin/t" __open-local-slot "$repo" "$slot" "$saved_path") || saved_rc=$?
+      saved_receipt=$(T_RESUME_OWNER_RECEIPT=1 _t_with_progress 'Finding saved conversations' python3 "$T_HOME/bin/t" __open-local-slot "$repo" "$slot" "$saved_path") || saved_rc=$?
       if (( saved_rc != 3 )); then
         _T_OPEN_FAILED_REPO=
         (( saved_rc == 0 )) || return $saved_rc

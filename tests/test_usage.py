@@ -358,10 +358,20 @@ def test_usage_read_progress_does_not_change_output(usage,monkeypatch,capsys):
     from contextlib import contextmanager
     calls=[]
     @contextmanager
-    def spinner(label):calls.append(label);yield
+    def spinner(label):
+        calls.append(label)
+        yield
+        calls.append('cleared')
     monkeypatch.setattr(usage,'snapshot',lambda:[])
+    def live_rows():
+        calls.append('live rows')
+        return []
+    assert usage.command(SimpleNamespace(usage_action='list',json=False),spinner,live_rows)==0
+    assert 'No recorded usage.' in capsys.readouterr().out
+    assert calls==['Reading recorded usage', 'live rows', 'cleared']
+    calls.clear()
     assert usage.command(SimpleNamespace(usage_action='list',json=True),spinner)==0
-    assert json.loads(capsys.readouterr().out)==[] and calls==['Reading recorded usage']
+    assert json.loads(capsys.readouterr().out)==[] and calls==[]
 
 
 def test_isolated_local_lead_history_and_launch_policy(usage):

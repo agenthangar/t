@@ -426,7 +426,12 @@ def run(cfg, args, api=None):
                 request['recipient'] = address(getattr(args, 'recipient', None) or local_self())
             if action == 'read':
                 request.update(message_id=args.message_id, attachment=getattr(args, 'attachment', None))
-            result = request_at(route, request, store)
+            if action == 'read':
+                result = request_at(route, request, store)
+            else:
+                label = 'Finding share targets' if action == 'targets' else 'Reading the share inbox'
+                with _spinner(label, machine=getattr(args, 'json', False)):
+                    result = request_at(route, request, store)
             if action == 'targets':
                 result = [dict(identity(row), host=host or 'local') for row in result]
         else:

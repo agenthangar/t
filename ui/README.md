@@ -1756,14 +1756,16 @@ attachment retains its terminal. This extends the existing read-only detail mode
 
 Run `python3 scripts/lint_progress.py` alongside CLI lint. CI requires every
 Python subprocess, network request, and sleep site to use `_spinner` or have a
-reviewed reason in `ui/progress-contract.json`. Interactive tools own their
-terminal, streamed installers provide their own output, and background/protocol
-workers remain quiet. The inventory also protects shared shell scanner and
-resume progress seams. Add coverage when introducing another slow shell phase.
+reviewed reason in `ui/progress-contract.json`. The inventory also protects
+foreground collection phases and shared shell scanners. Start one timer for
+the complete quiet phase so a batch of individually fast probes still shows
+progress. Check terminal eligibility before shell command substitution.
 
-For example, `t issue list`, `t session resume`, and `t system update --check`
-show a delayed wheel during quiet discovery in a terminal; their redirected
-output stays clean. Spinners clear before results, errors, or selection.
+For example, `t issue list --all`, `t mcp list`, and `t session resume` display
+the shared stderr spinner after 250 ms of quiet collection. Clear it before
+showing results, errors, warnings, or picker controls. Fast queries, redirected
+output, and JSON stay free of spinner frames and clear-line sequences.
+Interactive tools, streamed output, and background workers own their feedback.
 
 Interactive bare `t` optionally displays cached installed-tool advisories when
 `T_VULNERABILITY_CHECK=1`, then schedules a detached refresh. This informational
