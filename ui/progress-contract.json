@@ -243,6 +243,10 @@
       "kind": "background",
       "reason": "Spawns the detached recovery watcher without waiting."
     },
+    "libexec/t_data_migrations.py:queue:subprocess.Popen": {
+      "kind": "background",
+      "reason": "Successful setup starts the detached migration worker without waiting for history or cache publication."
+    },
     "libexec/t_recovery.py:_cursor_restart:time.sleep": {
       "kind": "protocol",
       "reason": "Recovery control request; diagnostics belong to the recovery UI."
@@ -838,6 +842,10 @@
     "bin/t:_resume_picker_observe:time.sleep": {
       "kind": "background",
       "reason": "The worker watches for refresh requests and observes bounded discovery without writing to the picker's terminal."
+    },
+    "bin/t:_resume_restore_marks:time.sleep": {
+      "kind": "background",
+      "reason": "The picker observer waits within the listener deadline for legacy fzf to publish its replacement rows before restoring marks."
     },
     "libexec/t_session_models.py:run:subprocess.call": {
       "kind": "passthrough",

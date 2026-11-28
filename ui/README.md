@@ -64,6 +64,11 @@ with the keyboard at normal and compact sizes.
 
 ## Explicit discovery wait and last closed resume
 
+Saved work status can fill in while the resume picker is open. Background
+backfill uses structured records on each upgraded host. Keep the query, filters,
+sort, focus and marks when work status changes. History without verified
+evidence keeps the unknown marker.
+
 `t session resume [REPO [SLOT]] --last [--wait]` resumes the unique most
 recently verified t close in scope, across all saved history regardless of age.
 `--all` widens scope. Missing, tied, invalidated or incomplete close evidence

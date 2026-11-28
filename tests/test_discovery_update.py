@@ -214,6 +214,7 @@ def test_old_client_links_only_upgrade_retires_previous_release(cache, tmp_path,
                               XDG_STATE_HOME=os.environ['XDG_STATE_HOME'],
                               XDG_CACHE_HOME=os.environ['XDG_CACHE_HOME'])
         assert outcome.returncode == 0, outcome.stderr
+        assert (Path(os.environ['XDG_STATE_HOME']) / 't/data-migrations/worker.lock').is_file()
         thread.join(2)
         assert not thread.is_alive()
         assert (home / 'bin/t').resolve() == new / 'bin/t'

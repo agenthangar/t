@@ -554,6 +554,7 @@ def test_nightr_install_review_cancel_uses_real_rail(apps, t_mod, monkeypatch, w
 
 @pytest.mark.parametrize('machine', [False, True])
 def test_nightr_status_public_route_is_static(apps, t_mod, monkeypatch, capsys, machine):
+    monkeypatch.setattr(apps["sys"], "platform", "darwin")
     patch(apps, monkeypatch, installed=lambda: '0.1.0',
           package=lambda *_: pytest.fail('status must not acquire packages'))
     monkeypatch.setattr(t_mod, '_nightr_module', lambda: apps)
