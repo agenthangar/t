@@ -901,5 +901,3 @@ _dev_worktree_sweep() {
   ( _dev_worktree_sweep_run >>"${XDG_STATE_HOME:-$HOME/.local/state}/t/dev-worktree-sweep.log" 2>&1 & )
 }
 add-zsh-hook precmd _dev_worktree_sweep
-
-# _tpaste_claude_ready <session> — return 0 once Claude is accepting input in

@@ -222,6 +222,19 @@ def test_completion_exposes_groups_and_group_actions(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
+def test_retired_icloud_paste_has_no_shell_handler_or_completion(tmp_path):
+    result = shell(tmp_path, '''
+        (( ! $+functions[_t_paste] && ! $+functions[_tpaste_claude_ready] )) || exit 1
+        _describe() { typeset -p "$4"; }
+        local -a words
+        words=(t session '') CURRENT=3; _t
+    ''')
+    assert result.returncode == 0, result.stderr
+    assert 'actions=( ' in result.stdout and 'view-plan' in result.stdout
+    assert 'paste' not in result.stdout.split()
+
+
+@pytest.mark.skipif(not shutil.which("zsh"), reason="zsh is required")
 def test_shell_dispatch_matches_python_command_registry(tmp_path, t_mod):
     # These actions are handled in the caller's shell or must reload it after
     # running the binary. Compare both public and compatibility spellings with

@@ -209,7 +209,7 @@ _t_resume() {
     repo=$(python3 "$T_HOME/bin/t" __resume-alias "$_T_RESUME_REPO_IDENTITY") || return $?
     [[ -n ${DEV_REPOS[$repo]:-} ]] || identity_scope=$repo
   fi
-  # Repo-aware defaults (mirrors t plan/paste): lone numeric arg is a SLOT of the
+  # Repo-aware defaults (mirrors t plan): lone numeric arg is a SLOT of the
   # cwd repo; bare `t resume` infers the repo too — and OUTSIDE any DEV_REPOS dir
   # it widens to EVERY worktree repo instead of erroring (the `t ls` unscoped
   # convention: no repo context → show everything; the picker grows a repo

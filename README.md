@@ -492,7 +492,7 @@ for a host's login shell.
 | `t remote resume [host] [repo] [slot] [--all]` | Choose a host and resume saved history discovered there |
 | `t remote kill [host] [repo] [slot|all] [-y|--yes]` | Close sessions on their discovered remote hosts; preserve saved conversations and worktrees |
 | `t move [repo] [slot] [-r] [--host <dest>]` | Alias for `t session move`; `t remote move` remains compatible with `--remote` |
-| `t session view-plan` / `t session paste` | View a Claude session plan or pass an attachment |
+| `t session view-plan` | View a Claude session plan |
 | `t repo list` / `t repo locate <repo>` / `t repo cd <repo>` | List names and paths, print a checkout path, or enter it in the shell |
 | `t repo add [path] [--alias NAME]` | Register an existing checkout; omit path to use the current checkout |
 | `t repo create` / `t repo clone <github-url> [alias]` | Create a repository or clone and register an existing one |
@@ -720,7 +720,7 @@ literal CLI `arguments`. For example:
 
 List returns structured session rows, history returns JSON, read dumps output,
 and cd returns the resolved directory. Terminal-dependent workflows (push, pop,
-move, interactive search/paste, and conditional lifecycle modes) return
+move, interactive search, and conditional lifecycle modes) return
 `terminal_required` with the exact command, without starting work or a picker.
 Codex Desktop integration has been removed. `t app`, `t session open-app`, and
 `--app` are no longer supported. Use CLI session open/resume and `t session move`.
@@ -1839,7 +1839,7 @@ checked in CI; optional dotfiles integrations are identified explicitly.
   surface                                                     ✱ claude                                   ⬡ codex                                                        ◆ cursor
   ----------------------------------------------------------  -----------------------------------------  -------------------------------------------------------------  -------------------------------------------------
   t agent install (login · update · reinstall)                ✓                                          ✓                                                              ✓
-  dev slots: t session open / list / close / read / paste     ✓                                          ✓ t session open --codex · DEV_AGENT                           ✗ no slot — t cursor list
+  dev slots: t session open / list / close / read             ✓                                          ✓ t session open --codex or DEV_AGENT                          ✗ no slot. Use t cursor list
   t session push / pop                                        ✓                                          ✓                                                              ✗ no slot
   t session resume (saved conversations)                      ✓                                          ✓ (rollouts and thread index)                                  → t cursor resume
   t session move / --from                                     ✓ (t)                                      ✓ (t)                                                          → t cursor send [id] --host / --from

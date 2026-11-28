@@ -1,9 +1,9 @@
 # functions below now forward to `t on`.)
 
 # t — Claude session manager: open/list/move tmux'd Claude sessions (gh-style)
-# The single front door (replacing the dev/tpush/tpop/tbeam/tread/tplan/tpaste/
+# The single front door (replacing the dev/tpush/tpop/tbeam/tread/tplan/
 # tfind/on family). This zsh function is the thin SHIM over the bin/t executable:
-#   • bin-native verbs (ls, read, plan, paste, kill, on, beam orchestration, and the
+#   • bin-native verbs (ls, read, plan, kill, on, beam orchestration, and the
 #     internal session-rows/land/kill-owner) run straight through via `command t`
 #     (the `command` builtin reaches ~/bin/t past this function, dodging the
 #     name collision — same trick the claude() wrapper uses).
@@ -39,9 +39,9 @@ t() {
       session|remote|issue|idea|repo|cursor|hosts|agentcore|workflow|runners|eval|config|profile|policy|agent|system)
         label+=" $1"
         case ${2:-} in
-          open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|paste|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
+          open|move|resume|list|ls|status|start|close|restart|push|pop|history|cd|read|view-plan|search|goal|locate|create|clone|add|show|edit|remove|delete|rm|default|run|invoke|stop|setup|onboard|local|workflow|init|apply|check|login|install|trust|integrate|update|diagnose|advisories) label+=" $2" ;;
         esac ;;
-      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app|on|setup|install|login|trust|update|doctor|help|share|ideate|checkout|new|instructions|permissions|config) label+=" $1" ;;
+      open|ls|list|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|find|app|on|setup|install|login|trust|update|doctor|help|share|ideate|checkout|new|instructions|permissions|config) label+=" $1" ;;
     esac
     if [[ $1 == runners && $2 == runs ]]; then
       label+=" runs"
@@ -303,7 +303,7 @@ _t_install() {
 
 # _t_cd — cd the CALLING shell into a dev slot's worktree (gh-grammar `t cd [repo] [slot]`).
 #   t cd <repo> <slot>   → that slot's worktree ($DEV_WORKTREE_ROOT/<basename>/<slot>)
-#   t cd <slot>          → that slot of the repo cwd is in (mirrors t read/paste)
+#   t cd <slot>          → that slot of the repo cwd is in (mirrors t read)
 #   t cd <repo>          → the repo's only worktree; several → fzf pick; none → the repo dir
 #   t cd                 → fzf-pick across every worktree on disk
 # Navigation only: it never creates a worktree (`t open` owns creation) and never
@@ -1000,7 +1000,7 @@ _t() {
   case $group in
     mcp) actions=(list ls status install uninstall) ;;
     remote) actions=(open move resume kill) ;;
-    session) actions=(open list ls close restart push pop resume cd move read view-plan paste search goal recovery) ;;
+    session) actions=(open list ls close restart push pop resume cd move read view-plan search goal recovery) ;;
     repo) actions=(list ls cd locate create clone add) ;;
     cursor) actions=(list ls resume send) ;;
     agentcore) actions=(invoke stop) ;;
@@ -1098,7 +1098,7 @@ _t() {
   # Old spellings remain usable once typed, but are not offered at top level.
   case $group in
     ls|list) action=list; group=session; (( first-- )) ;;
-    open|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|paste|find|app)
+    open|kill|restart|push|pop|resume|history|cd|beam|move|read|plan|find|app)
       action=$group; group=session; first=3 ;;
     new) group=repo; action=create; first=3 ;;
     checkout) group=repo; action=clone; first=3 ;;
@@ -1198,7 +1198,7 @@ _t() {
       else
         (( CURRENT == first )) && [[ ${words[CURRENT]} != -* ]] && _message 'chat id or unique prefix' || _values 'flag' --host --from -p --pick -a --attach -h --help
       fi ;;
-    session/open|session/close|session/read|session/view-plan|session/paste|session/move|session/resume|session/cd|session/pop)
+    session/open|session/close|session/read|session/view-plan|session/move|session/resume|session/cd|session/pop)
       if [[ ${words[CURRENT-1]} == --source ]]; then
         _values 'source' local remote all ${(k)REMOTE_HOSTS}
       elif [[ ${words[CURRENT-1]} == --repo ]]; then
@@ -1216,7 +1216,6 @@ _t() {
           close) flags+=(-y --yes -r --remote -w --wait) ;;
           read) flags+=(-d --dump -n --tail) ;;
           view-plan) flags+=(-a --all) ;;
-          paste) flags+=(-p --pick -n --newest) ;;
           move) flags+=(-w --wait -r --remote --host --from --here --fg -d --detach -p --pick -a --all -s --session) ;;
           resume) flags+=(-f --fg --cli -a --all -l --live -r --remote --days --host --last -w --wait) ;;
         esac

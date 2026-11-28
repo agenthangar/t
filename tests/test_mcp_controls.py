@@ -180,7 +180,7 @@ def test_goal_command_and_contract(t_mod, cfg, monkeypatch, capsys):
     assert 'session goal' in t_mod._group_help('session') or 'goal' in t_mod._group_help('session')
 
 
-@pytest.mark.parametrize('verb', ['push', 'pop', 'move', 'search', 'paste'])
+@pytest.mark.parametrize('verb', ['push', 'pop', 'move', 'search'])
 def test_terminal_modes_return_handoff_without_execution(controls, cfg, t_mod, monkeypatch, verb):
     monkeypatch.setattr(t_mod, '_t_version', lambda: 'test')
     monkeypatch.setattr(controls.subprocess, 'run', lambda *a, **kw: pytest.fail('terminal operation ran'))
@@ -209,7 +209,7 @@ def test_session_dispatch_lifecycle(controls, cfg, t_mod, monkeypatch, verb, arg
                                  {'command': 'list', 'arguments': ['--bogus']},
                                  {'command': 'open'}, {'command': 'open', 'arguments': ['api', 'all']},
                                  {'command': 'cd'}, {'command': 'read'}, {'command': 'view-plan'},
-                                 {'command': 'open-app'}])
+                                 {'command': 'open-app'}, {'command': 'paste'}])
 def test_session_dispatch_invalid_arguments(controls, cfg, t_mod, args):
     with pytest.raises(ValueError): controls.session_command(cfg, args, vars(t_mod))
 
