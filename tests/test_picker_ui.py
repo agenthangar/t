@@ -463,15 +463,15 @@ def test_resume_backfill_updates_open_picker_with_query_focus_and_marks(picker):
     start, wait, keys, finish = picker
     start(profile='public-resume-refresh', mode='resume', width=105, height=44, warm_history=True)
     wait('Second Task', absent=['Refreshing local'], focused='Second Task', timeout=45)
-    keys('-l', 'ask')
-    wait('> ask', focused='Second Task', timeout=20)
+    keys('-l', 'k')
+    wait('> k', focused='Second Task', timeout=20)
     keys('Tab')
     wait('2/2 (1)', focused='First Task', timeout=15)
     keys.hold_collector()
     keys.backfill_saved_work()
     keys.release_collector()
     screen = wait('✓   -    repo', ordered=('2/2 (1)', '✓   -    repo'), focused='First Task', timeout=30)
-    assert '> ask' in screen and '2/2 (1)' in screen
+    assert '> k' in screen and '2/2 (1)' in screen
     assert any('✓   -    repo' in line and 'First Task' in line for line in screen.splitlines())
     assert finish('Escape', status=130) == []
 
@@ -1134,7 +1134,7 @@ def test_resume_table_wheel_pans_header_and_rows_preserving_focus_marks(picker, 
     for _ in range(10): wheel(64)
     wait('[OPEN]', focused='[OPEN]')
     keys('-l', 'end-of-title')
-    screen = wait('1/1 (')
+    wait('1/1 ' if width <= 32 else '1/1 (')
     # The match is in the hidden right-hand part of the canonical row.
     wait('[OPEN]', focused='[OPEN]')
     selected = finish()

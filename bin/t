@@ -661,6 +661,10 @@ def _resume_picker_update(directory, picker, status, rebuild=None, *, preserve_m
         (snapshot / 'discovery-status').write_text(json.dumps(status))
         (snapshot / 'base').write_text(base)
         picker.deadline = time.monotonic() + 5
+        legacy = reload_rows and preserve_marks and os.environ.get('T_PICKER_CLEAR_MARKS')
+        if legacy:
+            picker.count = len((directory / 'all').read_text().splitlines()) + 1
+            before = picker.request()
         picker.request('execute-silent(T_PICKER_ADOPT=1 sh -c "$T_PICKER_REFRESH_CALLBACK"; '
                        'sh "$T_PICKER_TOGGLE" current && touch "$T_PICKER_VIEWS/observed/ready")')
         ready = snapshot / 'ready'
@@ -669,10 +673,8 @@ def _resume_picker_update(directory, picker, status, rebuild=None, *, preserve_m
                 raise TimeoutError('picker update timed out')
             time.sleep(.05)
         action = 'transform-header(cat "$T_PICKER_CURRENT_HEADER")'
-        legacy = reload_rows and preserve_marks and os.environ.get('T_PICKER_CLEAR_MARKS')
         if legacy:
             picker.count = len((directory / 'all').read_text().splitlines()) + 1
-            before = picker.request()
         if reload_rows:
             preserve = os.environ.get('T_PICKER_TRACK', '') + os.environ.get('T_PICKER_CLEAR_MARKS', '')
             action += '+' + preserve + 'reload-sync(cat "$T_PICKER_CURRENT")'
