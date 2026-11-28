@@ -356,12 +356,9 @@ _t_cd() {
   fi
   (( ${#wts} == 1 )) && { cd "${wts[1]}"; return }
   if [[ -t 0 && -t 1 ]] && command -v fzf >/dev/null 2>&1; then
-    local wt br line; local -a rows
-    for wt in "${wts[@]}"; do
-      br=$(git -C "$wt" branch --show-current 2>/dev/null)
-      rows+=("${wt}"$'\t'"${wt#$DEV_WORKTREE_ROOT/}"$'\t'"${br:-?}")
-    done
-    line=$(print -rl -- "${rows[@]}" \
+    local rows line
+    rows=$(_t_with_progress 'Reading worktree branches' _t_cd_worktree_rows "${wts[@]}")
+    line=$(print -r -- "$rows" \
              | _t_fzf_single jump 'Worktrees' --with-nth=2.. --delimiter='\t' --prompt='t cd > ') || return $?
     cd "${line%%$'\t'*}"; return
   fi
@@ -369,6 +366,14 @@ _t_cd() {
   print -rl -- "t cd: several worktrees — name one (t cd <repo> <slot>):" \
     "${short[@]/#/  }" >&2
   return 1
+}
+
+_t_cd_worktree_rows() {
+  local wt branch
+  for wt in "$@"; do
+    branch=$(git -C "$wt" branch --show-current 2>/dev/null)
+    printf '%s\t%s\t%s\n' "$wt" "${wt#$DEV_WORKTREE_ROOT/}" "${branch:-?}"
+  done
 }
 
 # _t_open — map gh-grammar `t open <repo> [slot] [--new|--fg|--remote] [--host H]`

@@ -2539,8 +2539,8 @@ class HistoryCommand:
             print('t resume: Session discovery is unavailable; saved conversations have not been checked.', file=sys.stderr)
             return 1
         owners = []
-        if not cached:
-            with self.api.get("_spinner", lambda *a, **kw: nullcontext())("Loading conversation history", machine=args.json):
+        with _spinner('Loading conversation history', machine=args.json):
+            if not cached:
                 self.discover(alias)
                 if args.refresh:
                     self.refresh(alias)
@@ -2548,16 +2548,18 @@ class HistoryCommand:
                     owners = self.owners()
                 except HistoryError:
                     owners = []
-        rows = self.records(alias, slot, owners)
+            rows = self.records(alias, slot, owners)
         tty = sys.stdin.isatty() and sys.stdout.isatty()
         if not slot and tty and not args.json:
             slot = self.choose_slot(rows, alias)
             if slot is None:
                 return 130
-            rows = self.records(alias, slot, owners)
+            with _spinner('Loading conversation history'):
+                rows = self.records(alias, slot, owners)
         if not cached:
-            self.branch_prs(rows, refresh=args.refresh)
-            self.pr_states(rows, refresh=args.refresh)
+            with _spinner('Checking conversation pull requests', machine=args.json):
+                self.branch_prs(rows, refresh=args.refresh)
+                self.pr_states(rows, refresh=args.refresh)
         for row in rows:
             row['display'] = history_display(row, alias)
         selected, total = page_rows(rows, '', args.limit, args.page)
@@ -2584,10 +2586,11 @@ class HistoryCommand:
                     self.api['_session_discovery']()['event'](['local', *self.cfg.hosts.values()])
                     self.api['_session_discovery']()['discover'](self.cfg)
                     continue
-                self.refresh(alias)
-                rows = self.records(alias, slot, owners)
-                self.branch_prs(rows, refresh=True)
-                self.pr_states(rows, refresh=True)
+                with _spinner('Refreshing conversation history'):
+                    self.refresh(alias)
+                    rows = self.records(alias, slot, owners)
+                    self.branch_prs(rows, refresh=True)
+                    self.pr_states(rows, refresh=True)
                 continue
             if not row:
                 return 130

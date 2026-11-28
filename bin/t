@@ -779,7 +779,6 @@ def cmd_ls(cfg, args):
         return 0
     messages = {'all': 'Checking local sessions and remote hosts', 'local': 'Checking local sessions',
                 'remote': 'Checking remote sessions'}
-    _progress(messages.get(source, 'Checking sessions on ' + source.removeprefix('host:')))
     command = "_dev_rows_all --details" if include_remote else "_dev_session_rows --details"
     if os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
         text = zsh_capture(command)
@@ -790,9 +789,11 @@ def cmd_ls(cfg, args):
         projection = dict(prefixed=include_remote, repo=repo, local_roots=roots)
         def usable(snapshot):
             return bool(cache['rows'](snapshot, **projection))
-        view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False), usable=usable,
-                                           fresh_local=True, local=not include_remote, roots=roots,
-                                           fields=['rows', 'scopes', 'catalog'] if scope else ['rows'])
+        label = messages.get(source, 'Checking sessions on ' + source.removeprefix('host:'))
+        with _spinner(label):
+            view, _ = cache['bounded_snapshot'](cfg, explicit=getattr(args, 'wait', False), usable=usable,
+                                               fresh_local=True, local=not include_remote, roots=roots,
+                                               fields=['rows', 'scopes', 'catalog'] if scope else ['rows'])
         cache['announce'](view)
         if not any(h.get('value') is not None for h in view.get('hosts', [])):
             return 1 if view.get('unavailable') else 0
@@ -4445,7 +4446,8 @@ def _workflow_mcp_menu(ui, policy, agent, repository=None):
         return changed
     def inspect():
         try:
-            return api['inventory'](agent, repository)
+            with _spinner('Reading MCP server configuration'):
+                return api['inventory'](agent, repository)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             ui.done('unavailable', str(exc))
             return []
@@ -4494,7 +4496,8 @@ def _config_mcp(ui, pending):
     focus = 0
     while True:
         try:
-            servers = api['inventory']()
+            with _spinner('Reading MCP server configuration'):
+                servers = api['inventory']()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             ui.done('unavailable', str(exc))
             servers = []
@@ -4593,7 +4596,8 @@ def _background_agents():
 def _config_background(ui, cfg):
     focus = 0
     background = _background_agents()
-    statuses = {key: background['status'](key) for key in background['NAMES']}
+    with _spinner('Checking background agents'):
+        statuses = {key: background['status'](key) for key in background['NAMES']}
     while True:
         values = {key: ' · '.join(statuses[key][:2]) for key in statuses}
         values['cleanup'] += f' · Every {cfg.cleanup_interval} min'
@@ -5495,8 +5499,11 @@ def _cmd_workflow_runs(cfg, args):
                     print(f"== {target} ==")
                 print(output, end="")
             return 0
-        if action in ("list", "status"):
-            result = helper["list_jobs"]() if action == "list" else helper["status"](args.run_id)
+        if action == "list":
+            with _spinner("Reading test run receipts", machine=getattr(args, "json", False)):
+                result = helper["list_jobs"]()
+        elif action == "status":
+            result = helper["status"](args.run_id)
         elif action == "artifacts":
             with _spinner("Collecting test artifacts", machine=False):
                 result = helper["artifacts"](args.run_id, target=args.runner_target, destination=args.output)
@@ -7821,6 +7828,7 @@ def _install_agent_executable(agent):
     return exe if os.path.isfile(exe) and os.access(exe, os.X_OK) else None
 
 
+@_spinner('Checking installed agents')
 def _install_probe(agents=INSTALL_AGENTS):
     """{agent: {bin, version, logged_in}} for this machine: `--version` and the status
     command per agent, ~0.3s in all. A binary only on the interactive PATH
@@ -8219,12 +8227,12 @@ def cmd_login(cfg, args):
         print("t login: --force requires named agents", file=sys.stderr)
         return 2
     headless = _install_headless(os.environ, args.headless)
-    probed = {}
-    for agent in dict.fromkeys(args.agents or INSTALL_AGENTS):
+    agents = dict.fromkeys(args.agents or INSTALL_AGENTS)
+    for agent in agents:
         if agent in args.ignore:
             print(f"{agent}: ignored for this invocation")
-            continue
-        probed[agent] = _login_probe(agent)
+    with _spinner('Checking agent login status'):
+        probed = {agent: _login_probe(agent) for agent in agents if agent not in args.ignore}
     items = _login_items(probed, time.time(), args.within_hours, args.force)
 
     def plan():
@@ -8277,7 +8285,8 @@ def cmd_login(cfg, args):
             failed = True
             continue
         # A successful child exit alone is not evidence of an authenticated account.
-        refreshed = _login_probe(agent)
+        with _spinner('Verifying agent login'):
+            refreshed = _login_probe(agent)
         if refreshed["state"] != "logged-in":
             print(f"{agent}: login exited successfully, but status is not logged in", file=sys.stderr)
             failed = True
@@ -12843,7 +12852,8 @@ def cmd_mcp(cfg, args):
         return 2
     if action == 'list':
         try:
-            rows = _mcp_policy()['inventory']()
+            with _spinner('Reading MCP server configuration', machine=getattr(args, 'json', False)):
+                rows = _mcp_policy()['inventory']()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             print('t mcp list: ' + str(exc), file=sys.stderr)
             return 1
@@ -12864,7 +12874,8 @@ def cmd_mcp(cfg, args):
         return 0
     if action == "status":
         helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_mcp_setup.py"))
-        states = helper["status"](HOME)
+        with _spinner('Checking MCP registration', machine=getattr(args, 'json', False)):
+            states = helper["status"](HOME)
         if getattr(args, "json", False):
             print(json.dumps({"server": "sessions", "scope": "local machine", "clients": states}))
         else:
@@ -12950,7 +12961,6 @@ def cmd_agentcore(cfg, args):
 
 
 def cmd_history(cfg, args):
-    _progress("Finding saved conversations", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_history.py"))
     snapshot = None
     view = None
@@ -12989,7 +12999,8 @@ def cmd_history(cfg, args):
 
 
 def cmd_issue(cfg, args):
-    _progress("Checking issues and session ownership", machine=getattr(args, "json", False))
+    if args.action != 'list':
+        _progress("Checking issues and session ownership", machine=getattr(args, "json", False))
     helper = runpy.run_path(os.path.join(_t_source_root(), "libexec", "t_issue.py"))
     return helper["run"](cfg, args, globals())
 
@@ -13663,6 +13674,7 @@ Run `t help issue <verb>` for flags and arguments.
     if group == "mcp":
         extra = ("\nSCOPE\n  List inspects configured MCP servers on this machine, including project settings from the current checkout.\n"
                  "  List and status are read-only; --json prints structured state. Status checks t session tools.\n"
+                 "  Slow inspection shows progress in a terminal. Redirected output stays static.\n"
                  "  Install preserves custom and disabled entries; uninstall removes only t-owned entries.\n"
                  "  Bare t mcp remains the stdio protocol server used by agent clients.\n"
                  "\nEXAMPLES\n  t mcp list\n  t mcp status --json\n  t mcp install\n")
@@ -16242,9 +16254,8 @@ def _main(argv):
     cfg = Config()
     if args.verb == 'agent' and args.resource == 'background':
         try:
-            with _spinner('Checking background agents' if args.action == 'status' else 'Managing background agents'):
-                return _background_agents()['command'](args.action, args.target, getattr(args, 'reinstall', False),
-                                                       cfg.cleanup_interval)
+            return _background_agents()['command'](args.action, args.target, getattr(args, 'reinstall', False),
+                                                   cfg.cleanup_interval)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             print(f't agent background: {error}', file=sys.stderr)
             return 1
