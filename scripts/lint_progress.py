@@ -11,7 +11,7 @@ BLOCKING = {'subprocess.run', 'subprocess.Popen', 'subprocess.call',
             'urllib.request.urlopen', 'time.sleep', 'select.select'}
 
 
-def sites(source):
+def sites(source, phase_calls=()):
     result = []
 
     def walk(node, scope='', protected=False):
@@ -23,8 +23,10 @@ def sites(source):
             protected = protected or any(isinstance(i.context_expr, ast.Call)
                                         and ast.unparse(i.context_expr.func) == '_spinner'
                                         for i in node.items)
-        if isinstance(node, ast.Call) and ast.unparse(node.func) in BLOCKING:
-            result.append((scope, ast.unparse(node.func), protected, node.lineno))
+        if isinstance(node, ast.Call):
+            call = ast.unparse(node.func)
+            if call in BLOCKING or (scope, call) in phase_calls:
+                result.append((scope, call, protected, node.lineno))
         for child in ast.iter_child_nodes(node):
             walk(child, scope, protected)
     walk(ast.parse(source))
@@ -34,11 +36,23 @@ def sites(source):
 def check(root=ROOT):
     contract = json.loads((root / 'ui/progress-contract.json').read_text())
     exceptions = contract['exceptions']
+    phases = {}
+    for path, scope, call in contract.get('phases', []):
+        phases.setdefault(path, set()).add((scope, call))
     seen = set()
+    seen_phases = set()
     errors = []
     for path in [root / 'bin/t', *sorted((root / 'libexec').glob('*.py'))]:
-        for scope, call, protected, line in sites(path.read_text()):
-            key = f'{path.relative_to(root)}:{scope}:{call}'
+        relative = path.relative_to(root).as_posix()
+        phase_calls = phases.get(relative, ())
+        for scope, call, protected, line in sites(path.read_text(), phase_calls):
+            key = f'{relative}:{scope}:{call}'
+            if (scope, call) in phase_calls:
+                seen_phases.add(key)
+                if not protected:
+                    errors.append(f'{key}:{line}: collection phase needs _spinner')
+            if call not in BLOCKING:
+                continue
             if protected:
                 if key in exceptions:
                     errors.append(f'{key}: remove obsolete progress exception')
@@ -49,6 +63,11 @@ def check(root=ROOT):
                 errors.append(f'{key}:{line}: blocking work needs _spinner or a reviewed progress exception')
     for key in exceptions.keys() - seen:
         errors.append(f'{key}: stale progress exception')
+    for path, phase_calls in phases.items():
+        for scope, call in sorted(phase_calls):
+            key = f'{path}:{scope}:{call}'
+            if key not in seen_phases:
+                errors.append(f'{key}: stale collection phase')
     for entry in contract['shell']:
         source = (root / entry['file']).read_text()
         for snippet in entry['required']:

@@ -38,7 +38,8 @@ def source_for(args, ui, core):
     if ui is None:
         raise ValueError('cannot identify the source conversation; run t share in a terminal '
                          'to choose it, or pass --from agent:<id>')
-    rows = core['local_targets']()
+    with core.get('_spinner', nullcontext)('Finding saved conversations'):
+        rows = core['local_targets']()
     if requested:
         rows = [row for row in rows if row['agent'] == requested]
     if not rows:

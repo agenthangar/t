@@ -38,7 +38,7 @@ def spinner(message, *, machine=False):
     """Animate only a quiet wait, never a picker, passthrough, or data stream."""
     enabled = (not machine and not getattr(_state.local, 'quiet', False) and sys.stdout.isatty() and sys.stderr.isatty()
                and os.environ.get("TERM") != "dumb"
-               and not {'--json', '--dump', '--statusline', '--quiet', '-q', '__mcp', '__share'} & set(sys.argv[1:]))
+               and not {'--json', '--dump', '--raw', '--statusline', '--quiet', '-q', '__mcp', '__share'} & set(sys.argv[1:]))
     if not enabled or not _state.lock.acquire(blocking=False):
         yield
         return
@@ -61,7 +61,9 @@ def spinner(message, *, machine=False):
     finally:
         stopped.set()
         worker.join()
-        _state.lock.release()
-        if painted.is_set():
-            stream.write("\r\033[2K")
-            stream.flush()
+        try:
+            if painted.is_set():
+                stream.write("\r\033[2K")
+                stream.flush()
+        finally:
+            _state.lock.release()

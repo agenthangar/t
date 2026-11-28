@@ -179,11 +179,14 @@ print_chat_list() {
   list_chats | python3 -c '
 import runpy, sys
 from pathlib import Path
-rows = [line.rstrip("\n").split("\t", 3) for line in sys.stdin if line.strip()]
+source = Path(sys.argv[1]).resolve().parent
+spinner = runpy.run_path(str(source.parent / "libexec/t_progress.py"))["spinner"]
+with spinner("Reading Cursor chats"):
+    rows = [line.rstrip("\n").split("\t", 3) for line in sys.stdin if line.strip()]
 if not rows:
     print("No cursor chats here (~/.cursor/chats is empty).")
     raise SystemExit(0)
-api = runpy.run_path(str(Path(sys.argv[1]).resolve().with_name("t")))
+api = runpy.run_path(str(source / "t"))
 print("\n".join(api["_table_lines"](("CHAT ID", "WORKSPACE", "LAST USED", "TITLE"), rows)))
 ' "$0"
 }
@@ -245,6 +248,11 @@ if (( do_ls )); then
     # host and resolves cursor-beam as its realpath sibling, so a mere `dots`
     # there suffices (a new bin symlink would need install.sh). zsh -lic for the
     # interactive PATH, same contract as the rest of the family.
+    # The foreground SSH client owns any login prompts. With a terminal, let
+    # the peer render its own discovery feedback and fit the report to it.
+    if [[ -t 0 && -t 1 && -t 2 && ${TERM:-dumb} != dumb ]]; then
+      exec ssh -t "$host" "zsh -lic 't cursor ls'"
+    fi
     exec ssh "$host" "zsh -lic 't cursor ls'"
   fi
   print_chat_list

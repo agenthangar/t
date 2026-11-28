@@ -1,5 +1,23 @@
 {
-  "description": "Quiet blocking operations use _spinner; reviewed terminal, protocol, and background exceptions remain explicit. New blocking sites fail CI until classified. Shell progress is enforced at shared scanner and resume seams.",
+  "description": "Quiet blocking operations and foreground collection phases use _spinner. Terminal, protocol, and background exceptions remain explicit. Shell progress is enforced at shared scanner and resume seams.",
+  "phases": [
+    ["bin/t", "_config_mcp", "api['inventory']"],
+    ["bin/t", "_workflow_mcp_menu.inspect", "api['inventory']"],
+    ["bin/t", "_config_background", "background['status']"],
+    ["bin/t", "_cmd_workflow_runs", "helper['list_jobs']"],
+    ["bin/t", "cmd_mcp", "_mcp_policy()['inventory']"],
+    ["bin/t", "cmd_mcp", "helper['status']"],
+    ["bin/t", "_install_probe", "_run"],
+    ["bin/t", "cmd_login", "_login_probe"],
+    ["libexec/t_background.py", "command", "status"],
+    ["libexec/t_eval_cli.py", "select_run", "m['list_runs']"],
+    ["libexec/t_eval_cli.py", "command", "m['list_runs']"],
+    ["libexec/t_history.py", "HistoryCommand.execute", "self.records"],
+    ["libexec/t_ideate.py", "list_ideas", "root.glob"],
+    ["libexec/t_issue.py", "IssueCommand.list_issues", "self.issues"],
+    ["libexec/t_recovery_picker.py", "command", "refresh"],
+    ["libexec/t_session_discovery.py", "bounded_snapshot", "discover"]
+  ],
   "exceptions": {
     "libexec/t_rnnr.py:install:subprocess.run": {
       "kind": "passthrough",
@@ -7,7 +25,7 @@
     },
     "libexec/t_background.py:run:subprocess.run": {
       "kind": "protocol",
-      "reason": "Bounded launchd probes back both the static status command and the settings snapshot. Only the public command owns progress."
+      "reason": "Bounded launchd probes back background operations. Foreground status, settings, and management callers own progress before rendering."
     },
     "libexec/t_ideate.py:launch:subprocess.run": {
       "kind": "passthrough",
@@ -339,11 +357,11 @@
     },
     "libexec/t_mcp_policy.py:_native_entries:subprocess.run": {
       "kind": "phase",
-      "reason": "Bounded local Codex configuration listing only; read-only inventory stays static, and a launch-policy cache miss already runs inside session preparation. It never connects MCP transports."
+      "reason": "The public list and configuration menus cover the full inventory under one spinner. A launch-policy cache miss runs inside session preparation. The probe never connects MCP transports."
     },
     "libexec/t_mcp_setup.py:status:subprocess.run": {
       "kind": "protocol",
-      "reason": "Read-only client configuration inspection supports JSON status and inline UI; bounded to ten seconds and never starts servers."
+      "reason": "The foreground status caller owns progress. Configuration inspection is bounded to ten seconds and never starts servers."
     },
     "libexec/t_history.py:HistoryCommand.resume_many:subprocess.call": {
       "kind": "passthrough",
@@ -854,6 +872,7 @@
     {
       "file": "zsh/sessions.zsh",
       "required": [
+        "_t_with_progress \"Reading session details\" python3 \"$T_HOME/bin/t\" __cache-rows",
         "_t_with_progress 'Checking local sessions' _dev_session_rows_impl",
         "_t_with_progress 'Checking sessions and remote hosts' _dev_rows_all_impl",
         "_t_with_progress 'Waiting for the previous agent to exit' _t_wait_for_exit_impl",
@@ -864,9 +883,22 @@
     {
       "file": "zsh/resume.zsh",
       "required": [
+        "_t_with_progress \"Reading session details\" _t_resume_history_candidates",
         "_t_with_progress \"Finding saved conversations\" _codex_candidate_snapshot",
         "_t_with_progress \"Loading conversation metadata\" _transcript_meta_batch",
         "_t_with_progress \"Finding saved conversations across hosts\" _t_resume_history_candidates"
+      ]
+    },
+    {
+      "file": "bin/cursor-beam",
+      "required": [
+        "with spinner(\"Reading Cursor chats\"):"
+      ]
+    },
+    {
+      "file": "zsh/shim.zsh",
+      "required": [
+        "_t_with_progress 'Reading worktree branches' _t_cd_worktree_rows"
       ]
     },
     {

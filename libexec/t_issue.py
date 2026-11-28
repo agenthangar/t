@@ -321,14 +321,15 @@ class IssueCommand:
         positional = getattr(args, 'repository', None)
         if positional and args.repo:
             raise IssueError('specify the repository once, positionally or with --repo')
-        identities, scope, errors = self.list_repositories(
-            positional or args.repo, getattr(args, 'all', False))
-        rows = []
-        for identity in identities:
-            try:
-                rows.extend(self.issues(identity, args.state))
-            except IssueError as error:
-                errors.append(f'{identity}: {error}')
+        with _spinner('Checking issues', machine=args.json):
+            identities, scope, errors = self.list_repositories(
+                positional or args.repo, getattr(args, 'all', False))
+            rows = []
+            for identity in identities:
+                try:
+                    rows.extend(self.issues(identity, args.state))
+                except IssueError as error:
+                    errors.append(f'{identity}: {error}')
         if args.json:
             print(json.dumps(rows))
         elif not identities and not errors:
