@@ -646,6 +646,8 @@ class _Memory:
         self.export_versions = {}
         self.inventory = None
         self.identity = None
+        self.migration_root = None
+        self.migration_revision = 0
         self.persist_artifact = lambda key: self.persist()
         self.collect, self.clock, self.persist = collect, clock, persist
         self.submit = submit or self._thread
@@ -1513,7 +1515,6 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         if memory.collect is _collect:
             memory.collect = lambda spec: _collect(spec, identity, self.workers)
         memory.identity = identity
-        memory.migration_revision = 0
         memory.migration_root = _migration_root(identity)
         memory.inventory = _LIVE['Inventory'](lambda status: _report('inventory', status, identity),
                                               identity[9], _context_env(identity))
@@ -1523,7 +1524,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
         # The durable receipt belongs to the migration worker. A stopped cache
         # can miss its notification, so compare it inside the service as well.
         with memory.lock:
-            if memory.loading:
+            if memory.loading or memory.migration_root is None:
                 return
             root = memory.migration_root
             with self.migration_lock:
@@ -1592,7 +1593,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
                 self.disk.register(identity, memory)
             if operation == 'catalog-changed':
                 memories = [entry for entry in self.memories.values()
-                            if _migration_root(entry.identity) == _migration_root(identity)]
+                            if entry.migration_root == memory.migration_root]
             else:
                 memories = []
         if memories:
