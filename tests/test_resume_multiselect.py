@@ -360,13 +360,13 @@ def test_resume_merged_badge_precedes_long_title_and_toggle_keeps_other_rows(zsh
              'print -r -- "$tx"$\'\\t\'"Long task title repeated many times to push suffix beyond the screen"$\'\\t\'github.com/org/api/pull/42; '
              'else print -r -- "$tx"$\'\\t\'"Task · #99 merged"$\'\\t\'; fi; done; }; '
              '_pr_state_flush() { :; }; '
-             'mkdir -p "$HOME/.cache/claude-sessions/pr"; '
-             'print -r -- MERGED > "$HOME/.cache/claude-sessions/pr/org#api#42"; '
-             'print -r -- OPEN > "$HOME/.cache/claude-sessions/pr/org#api#43"; '
-             'print -r -- "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd CONFLICT"'
-             ' > "$HOME/.cache/claude-sessions/pr/org#api#43.badge"; '
-             'print -r -- "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd 1"'
-             ' > "$HOME/.cache/claude-sessions/pr/org#api#43.preview"; ')
+             'typeset -g _PR_CACHE_LOADED=1; typeset -gA _PR_CACHE_TEXT _PR_CACHE_TIME; '
+             '_PR_CACHE_TEXT[$HOME/.cache/claude-sessions/pr/org#api#42]=MERGED; '
+             '_PR_CACHE_TEXT[$HOME/.cache/claude-sessions/pr/org#api#43]=OPEN; '
+             '_PR_CACHE_TEXT[$HOME/.cache/claude-sessions/pr/org#api#43.badge]="abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd CONFLICT"; '
+             '_PR_CACHE_TEXT[$HOME/.cache/claude-sessions/pr/org#api#43.preview]="abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd 1"; '
+             '_PR_CACHE_TIME[$HOME/.cache/claude-sessions/pr/org#api#43.badge]=$EPOCHSECONDS; '
+             '_PR_CACHE_TIME[$HOME/.cache/claude-sessions/pr/org#api#43.preview]=$EPOCHSECONDS; ')
     if aggregate:
         record = '\t'.join(['1800000000', 'api', '2', 'c2', str(zsh.home / 'code/.worktrees/api/2'),
                             'date', 'Associated open and merged PRs', 'local', 'claude', '-', 'org/api',

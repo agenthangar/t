@@ -437,6 +437,10 @@ _t_resume() {
   # which owns the pr/ cache (cache-only reads — NEVER a blocking gh call) and
   # collects stale refs into _PR_STALE for the one batched _pr_state_flush below.
   local opdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/opened"
+  local -A _OPENED_CACHE
+  local opened_dump
+  opened_dump=$(python3 "$T_HOME/libexec/t_cache_file.py" opened-dump unused)
+  eval "$opened_dump"
   local -A _PR_SPAWNED
   local _PR_WITH_BADGES=0
   [[ ( -t 0 && -t 1 ) || -n ${_T_RESUME_PICKER_SNAPSHOT:-} ]] && _PR_WITH_BADGES=1
@@ -563,10 +567,8 @@ _t_resume() {
           # conversation sorts — and --days-gates — as days old. Stamp newer →
           # the row is dated by the stamp and marked ↻.
           opf="$opdir/$(_dev_transcript_sid "$txf")"
-          if [[ -f $opf ]]; then
-            opep=$(zstat +mtime "$opf" 2>/dev/null || echo 0)
-            (( opep > ep )) && ep=$opep
-          fi
+          opep=${_OPENED_CACHE[${opf:t}]:-0}
+          (( opep > ep )) && ep=$opep
           if (( cutoff && ep < cutoff )); then
             (( skipped++ )); continue        # outside the --days window
           fi
@@ -1407,13 +1409,18 @@ _t_find() {
 _claude_sessions_semantic() {
   command -v fzf     >/dev/null 2>&1 || { echo "fzf not installed (brew install fzf)" >&2; return 1; }
   command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; return 1; }
-  local projects="$HOME/.claude/projects"
+  local projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
   [[ -d $projects ]] || { echo "No Claude sessions at $projects" >&2; return 1; }
   local query="$1"
   echo "↻ Asking Sonnet which session matches \"$query\"…  (-k to skip)" >&2
 
-  python3 - "$projects" "$query" <<'PY' | _t_fzf_single resume 'Claude sessions' --delimiter=$'\t' --with-nth=3 --no-hscroll \
+  python3 "$T_HOME/libexec/t_session_cache.py" provider semantic "$query" | _t_fzf_single resume 'Claude sessions' --delimiter=$'\t' --with-nth=3 --no-hscroll \
         --prompt="resume claude (sonnet: $query) > "
+}
+
+_claude_semantic_rows() {
+  local projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" query="$1"
+  T_CACHE_SOURCE="$T_HOME" python3 - "$projects" "$query" <<'PY'
 import json, os, sys, glob, datetime, subprocess, re, time
 root, query = sys.argv[1], sys.argv[2]
 STOP = {'of','the','a','an','to','on','in','for','and','is','it','with','at'}
@@ -1424,36 +1431,39 @@ cache_root = os.path.join(os.environ.get('XDG_CACHE_HOME')
                           or os.path.expanduser('~/.cache'), 'claude-sessions')
 opened_dir = os.path.join(cache_root, 'opened')
 def _opened(sid):
-    try: return os.path.getmtime(os.path.join(opened_dir, sid))
-    except OSError: return 0
+    return opened_evidence.get(sid, {}).get('checked', 0)
 # PR indicator — the compact twin of _claude_session_rows' (see its comments for
 # the policy: cache-only reads, detached gh refresh, terminal states forever).
 pr_dir = os.path.join(cache_root, 'pr')
+import runpy
+from pathlib import Path
+cache_source = os.environ.get('T_CACHE_SOURCE') or os.environ.get('T_HOME')
+cache_file = runpy.run_path(str(Path(cache_source) / 'libexec/t_cache_file.py'))
+opened_evidence = cache_file['request']('display-evidence', {'kind': 'opened', 'all': True}).get('values', {})
+
 pr_re = re.compile(r'github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)')
 stale = []
 def pr_state(ref):
     st, fresh = '', False
     try:
         fp = os.path.join(pr_dir, '#'.join(ref))
-        st = open(fp).read().strip()
-        fresh = time.time() - os.path.getmtime(fp) < 300
+        evidence = cache_file['record'](fp)
+        st = evidence.get('text', '').strip()
+        fresh = time.time() - evidence.get('checked', 0) < 300
     except OSError: pass
     if st not in ('MERGED', 'CLOSED') and not fresh:
         stale.append(ref)
     return st if st in ('MERGED', 'CLOSED', 'OPEN') else ''
 def pr_refresh():
-    if stale:
-        try: os.makedirs(pr_dir, exist_ok=True)
-        except OSError: return
+    if cache_file['request']('status').get('unavailable'):
+        return
     for owner, repo, num in stale[:8]:
         fp = os.path.join(pr_dir, f'{owner}#{repo}#{num}')
-        cmd = (f'st=$(gh pr view "https://github.com/{owner}/{repo}/pull/{num}"'
-               f' --json state --jq .state 2>/dev/null) || st="?"; '
-               f'printf %s "$st" > "{fp}.$$.tmp" && mv "{fp}.$$.tmp" "{fp}"')
         try:
-            subprocess.Popen(['/bin/sh', '-c', cmd], stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
+            subprocess.Popen([sys.executable, str(Path(cache_source) / 'libexec/t_cache_file.py'),
+                              'refresh', f'https://github.com/{owner}/{repo}/pull/{num}', fp],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError:
             break
 
@@ -1584,10 +1594,14 @@ PY
 # recently than written (the t-session-start opened/ stamp), and " · #N <state>"
 # tags a session whose transcript mentions a PR (cache-only state; see below).
 _claude_session_rows() {
+  if [[ ${T_DISCOVERY_COLLECTOR:-} != 1 ]]; then
+    python3 "$T_HOME/libexec/t_session_cache.py" provider keyword "${1:-}" "${2:-}"
+    return
+  fi
   # Diagnostics go to stderr: this function's stdout is captured by the caller's
   # $(...), so a stdout error would be swallowed silently instead of shown.
   command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; return 1; }
-  local projects="$HOME/.claude/projects"
+  local projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
   [[ -d $projects ]] || { echo "No Claude sessions at $projects" >&2; return 1; }
   local filter="${1:-}" query="${2:-}"
   # Worktree-aware scoping: a per-session worktree's recorded cwd lives under
@@ -1620,8 +1634,7 @@ cache_root = os.path.join(os.environ.get('XDG_CACHE_HOME')
                           or os.path.expanduser('~/.cache'), 'claude-sessions')
 opened_dir = os.path.join(cache_root, 'opened')
 def _opened(sid):
-    try: return os.path.getmtime(os.path.join(opened_dir, sid))
-    except OSError: return 0
+    return opened_evidence.get(sid, {}).get('checked', 0)
 # PR-in-session indicator: the LAST github.com …/pull/N URL in the transcript (a
 # `gh pr create` lands its URL in the tool output; last mention ≈ the PR the
 # session ended up on) tags the row " · #N <state>". State comes ONLY from the
@@ -1631,33 +1644,38 @@ def _opened(sid):
 # OPEN and lookup failures ('?') recheck after 5 min. Sibling of opened/ — the
 # pid-registry prune globs plain files only, so subdirs are never swept.
 pr_dir = os.path.join(cache_root, 'pr')
+import runpy
+from pathlib import Path
+cache_source = os.environ.get('T_CACHE_SOURCE') or os.environ.get('T_HOME')
+cache_file = runpy.run_path(str(Path(cache_source) / 'libexec/t_cache_file.py'))
+opened_evidence = cache_file['request']('display-evidence', {'kind': 'opened', 'all': True}).get('values', {})
+
 pr_re = re.compile(r'github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)')
 stale = []
 def pr_state(ref):
     st, fresh = '', False
     try:
         fp = os.path.join(pr_dir, '#'.join(ref))
-        st = open(fp).read().strip()
-        fresh = time.time() - os.path.getmtime(fp) < 300
+        evidence = cache_file['record'](fp)
+        st = evidence.get('text', '').strip()
+        fresh = time.time() - evidence.get('checked', 0) < 300
     except OSError: pass
     if st not in ('MERGED', 'CLOSED') and not fresh:
         stale.append(ref)
     return st if st in ('MERGED', 'CLOSED', 'OPEN') else ''
-def pr_refresh():                     # fire-and-forget; bounded so a first scan
-    if stale:
-        try: os.makedirs(pr_dir, exist_ok=True)
-        except OSError: return
-    for owner, repo, num in stale[:8]:  # over many PRs can't fork-bomb gh
+def pr_refresh():
+    if cache_file['request']('status').get('unavailable'):
+        return
+    for owner, repo, num in stale[:8]:
         fp = os.path.join(pr_dir, f'{owner}#{repo}#{num}')
-        cmd = (f'st=$(gh pr view "https://github.com/{owner}/{repo}/pull/{num}"'
-               f' --json state --jq .state 2>/dev/null) || st="?"; '
-               f'printf %s "$st" > "{fp}.$$.tmp" && mv "{fp}.$$.tmp" "{fp}"')
         try:
-            subprocess.Popen(['/bin/sh', '-c', cmd], stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
+            subprocess.Popen([sys.executable, str(Path(cache_source) / 'libexec/t_cache_file.py'),
+                              'refresh', f'https://github.com/{owner}/{repo}/pull/{num}', fp],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError:
             break
+
 def _in_scope(cwd):
     if not filt:
         return True

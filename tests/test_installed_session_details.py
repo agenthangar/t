@@ -76,6 +76,9 @@ def installed(lifecycle, tmp_path):
             return subprocess.run(args, env=env, cwd=repo, text=True, capture_output=True, timeout=timeout)
         def shell(command, timeout=30):
             return run(real_zsh, '-lic', command, timeout=timeout)
+        # The sandbox never bootstraps a job into the test user's login domain.
+        service = subprocess.Popen([sys.executable, str(source/'libexec/t_session_cache.py'), 'serve-managed'],
+                                   cwd=home, env=env)
         try:
             check = shell('t --version')
             assert str(source) in check.stdout, check.stdout + check.stderr
@@ -83,6 +86,8 @@ def installed(lifecycle, tmp_path):
                        binary=binary, source=source, zsh=real_zsh, release=release)
         finally:
             release.touch()
+            service.terminate()
+            service.wait(timeout=8)
             run('tmux', 'kill-server')
             for line in subprocess.check_output(['ps', '-axo', 'pid=,command='], text=True).splitlines():
                 fields = line.strip().split(None, 1)

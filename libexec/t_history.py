@@ -1048,7 +1048,7 @@ class HistoryCommand:
             return self.repository_proofs[identity]
         path = self.store.directory / 'repository-proofs.json'
         try:
-            saved = json.loads(path.read_text())
+            saved = _CACHE_REQUEST('artifact', {'key': str(path)}).get('value') or {}
             if not isinstance(saved, dict):
                 saved = {}
         except (OSError, ValueError):
@@ -1075,7 +1075,7 @@ class HistoryCommand:
                 if valid(candidate):
                     proof = candidate
                     saved[identity] = proof
-                    private_write(path, saved)
+                    _CACHE_REQUEST('artifact', {'key': str(path), 'value': saved})
             except (ValueError, TypeError, AttributeError):
                 pass
         self.repository_proofs[identity] = proof
@@ -1370,7 +1370,7 @@ class HistoryCommand:
             identity = self.canonical_identity(row['repo'])
             if row.get('sources') and (REPO_IDENTITY.fullmatch(identity) or self.repository_alias(identity)):
                 self.catalog_repositories.setdefault(identity, dict(repo=identity, alias=identity, path='', host='cached'))
-        private_write(self.store.directory / 'repository-catalog.json', self.catalog_repositories)
+        _CACHE_REQUEST('artifact', {'key': str(self.store.directory / 'repository-catalog.json'), 'value': self.catalog_repositories})
         return self.catalog_repositories
 
     def worktree_enabled(self, alias=None):
@@ -1739,13 +1739,12 @@ class HistoryCommand:
             # Resume's ordinary transcript rows use this shared legacy cache.
             # Reuse newer cached evidence for swept/remote history as well.
             legacy = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'claude-sessions/pr' / (repo.replace('/', '#') + '#' + str(number))
-            try:
-                if not found or legacy.stat().st_mtime > found[0]:
-                    state = legacy.read_text().strip()
-                    if state in ('MERGED', 'OPEN', 'CLOSED'):
-                        cached[(repo, number)] = dict(state=state)
-            except OSError:
-                pass
+            helper = runpy.run_path(str(Path(__file__).with_name('t_cache_file.py')))
+            evidence = helper['record'](legacy)
+            if not found or evidence.get('checked', 0) > found[0]:
+                state = evidence.get('text', '').strip()
+                if state in ('MERGED', 'OPEN', 'CLOSED'):
+                    cached[(repo, number)] = dict(state=state)
             if refresh:
                 pending.setdefault(repo, []).append(number)
         for repo, numbers in pending.items():

@@ -12,13 +12,11 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_jobs(commands, *, ready_socket=None):
+def run_jobs(commands):
     results = [None] * len(commands)
     running = {}
     env = {**os.environ, 'T_RESUME_BATCH': '1', 'T_DEV_CONTEXT': str(ROOT),
            'T_DEV_CONTEXT_OWNER': str(os.getpid())}
-    if ready_socket:
-        env['T_RESUME_READY_SOCKET'] = str(ready_socket)
     with tempfile.TemporaryDirectory(prefix='t-batch-output-') as name:
         directory = Path(name)
         streams = []
@@ -76,11 +74,10 @@ def resume_jobs(commands):
     if not commands or os.environ.get('T_DISCOVERY_COLLECTOR') == '1':
         return run_jobs(commands)
     cache = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
-    address = cache['_runtime']() / 'ready.sock'
     try:
-        return run_jobs(commands, ready_socket=address)
+        return run_jobs(commands)
     finally:
-        cache['_LIVE']['notify_ready'](address)
+        cache['request']('inventory-changed', deadline=time.monotonic() + .05)
 
 
 def prepare(requests, kind):

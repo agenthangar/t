@@ -42,8 +42,10 @@ final class SessionModel: ObservableObject {
             let snapshot = try await Task.detached(priority: .utility) {
                 try RnnrBackend.discover(executable: executable)
             }.value
-            rows = snapshot.detached
-            hasSnapshot = true
+            if snapshot.discoveryAvailable {
+                rows = snapshot.detached
+                hasSnapshot = true
+            }
             notice = snapshot.status
         } catch {
             notice = hasSnapshot

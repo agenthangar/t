@@ -268,7 +268,7 @@ _dev_pid_tree_claude_pid() {
 #   that host's codex indexes it.
 _transcript_meta_batch() {
   (( $# )) || return 0
-  python3 - "$(_codex_db)" "$@" <<'PY'
+  T_CACHE_SOURCE="$T_HOME" python3 - "$(_codex_db)" "$@" <<'PY'
 import hashlib, json, os, re, sqlite3, sys
 
 CACHE = os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache'),
@@ -278,24 +278,18 @@ SOFT = (ValueError, AttributeError, TypeError, KeyError)
 VERSION = 2  # Rescan old caches: arbitrary tool-output links were treated as PRs.
 
 
+import runpy
+from pathlib import Path
+_cache = runpy.run_path(str(Path(os.environ['T_CACHE_SOURCE']) / 'libexec/t_session_cache.py'))['request']
+
+
 def load(key):
-    try:
-        with open(os.path.join(CACHE, key)) as fh:
-            st = json.load(fh)
-        return st if isinstance(st, dict) else None
-    except (OSError, ValueError):
-        return None
+    value = _cache('artifact', {'key': os.path.join(CACHE, key)}).get('value')
+    return value if isinstance(value, dict) else None
 
 
 def save(key, st):
-    try:
-        os.makedirs(CACHE, exist_ok=True)
-        tmp = os.path.join(CACHE, '%s.%d.tmp' % (key, os.getpid()))
-        with open(tmp, 'w') as fh:
-            json.dump(st, fh)
-        os.replace(tmp, os.path.join(CACHE, key))
-    except OSError:
-        pass
+    _cache('artifact', {'key': os.path.join(CACHE, key), 'value': st})
 
 
 def codex_names(db, paths):
@@ -1813,8 +1807,11 @@ _dev_kill_no_pending_work() {
   slug=${origin%.git}; slug=${slug#*github.com:}; slug=${slug#*github.com/}
   [[ $slug == */* && $slug != *:* ]] || return 1
   cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr"
-  for file in "$cache/${slug//\//#}"\#*.head(N); do
-    [[ -f ${file%.head} && $(<"${file%.head}") == MERGED && $(<"$file") == "$head" ]] && return 0
+  _pr_cache_load
+  for file in ${(k)_PR_CACHE_TEXT}; do
+    [[ $file == "$cache/${slug//\//#}#"* ]] || continue
+    [[ $file == *.head ]] || continue
+    [[ $(_pr_cache_read "${file%.head}") == MERGED && $(_pr_cache_read "$file") == "$head" ]] && return 0
   done
   return 1
 }

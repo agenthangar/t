@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_local_details_use_scoped_scanner_and_preserve_matching_extras(monkeypatch):
     api = runpy.run_path(str(ROOT / 'libexec/t_session_discovery.py'))
-    hydrate = api['hydrate_local']
+    hydrate = api['_hydrate_local']
     namespace = hydrate.__globals__
     real_run_path = namespace['runpy'].run_path
     identity = dict(terminal='123/$1', cwd='/repo', state='detached', agent='codex', stamp='id')
@@ -115,3 +115,18 @@ def test_stale_sidecar_and_supplied_rollout_cannot_leak_metadata(tmp_path, monke
     right.unlink()
     result = module['enrich']([row], home, codex, lightweight=True)[0].split('\t')
     assert result[5:9] == ['-', 'codex', '-', '-']
+
+
+def test_public_hydration_uses_cache_api_and_retains_rows_when_stopped(monkeypatch):
+    api = runpy.run_path(str(ROOT / 'libexec/t_session_discovery.py'))
+    hydrate = api['hydrate_local']
+    calls = []
+    def request(operation, payload):
+        calls.append((operation, payload))
+        return {'unavailable': True, 'message': 'Session cache is stopped.'}
+    monkeypatch.setitem(hydrate.__globals__, 'request', request)
+    view = {'hosts': [{'host': 'local', 'value': {'rows': 'retained'}}]}
+    result = hydrate(SimpleNamespace(), view, ['/repo'], '1')
+    assert result['hosts'] == view['hosts']
+    assert result['unavailable'] and result['message'] == 'Session cache is stopped.'
+    assert calls == [('hydrate', {'view': view, 'roots': ['/repo'], 'slot': '1'})]

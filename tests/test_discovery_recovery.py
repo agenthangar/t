@@ -190,17 +190,13 @@ def test_incremental_catalog_tolerates_damaged_optional_sources(app, history, st
     assert str(valid) in app.catalog_paths
 
 
-def test_candidate_election_throttles_failed_starts_but_rearms_after_recovery(cache, monkeypatch):
-    starts = []
-    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: starts.append(a))
-    cache._private(cache._runtime())
-    (cache._runtime() / 'start.lock').write_text('partial marker')
-    cache._start_candidate()
-    cache._start_candidate()
-    assert len(starts) == 1
-    cache._start_candidate(ready=True)
-    cache._start_candidate()
-    assert len(starts) == 2
+def test_legacy_start_marker_does_not_autostart_or_block_clients(cache, monkeypatch):
+    marker = cache._runtime() / 'start.lock'
+    marker.write_text('legacy election marker')
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: pytest.fail('requested implicit start'))
+    for _ in range(3):
+        assert cache.request('discover')['unavailable']
+    assert marker.read_text() == 'legacy election marker'
 
 
 def test_unwritable_diagnostics_cannot_leave_a_refresh_stuck(engine, cache, monkeypatch):

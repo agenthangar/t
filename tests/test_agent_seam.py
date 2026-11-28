@@ -178,7 +178,8 @@ def test_hook_stamps_tmux_when_inside_a_pane(sandbox):
     assert r.returncode == 0
     assert pathlib.Path(env["TMUX_LOG"]).read_text().splitlines() == [
         "display-message -p -t %7 #{session_id}\t#{session_path}",
-        "set-environment -t $3 CLAUDE_RESUME_ID sid-9", "set-environment -t $3 DEV_AGENT claude"]
+        "set-environment -t $3 CLAUDE_RESUME_ID sid-9", "set-environment -t $3 DEV_AGENT claude",
+        "display-message -p -t %7 #{socket_path}"]
 
 
 def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tmp_path):
@@ -200,7 +201,8 @@ def test_hook_codex_by_ancestry_records_rollout_and_origin_beside_it(sandbox, tm
     assert not (home / ".claude").exists()                                # no claude project dir touched
     assert pathlib.Path(env["TMUX_LOG"]).read_text().splitlines() == [
         "display-message -p -t %7 #{session_id}\t#{session_path}",
-        "set-environment -t $3 CLAUDE_RESUME_ID thr_1", "set-environment -t $3 DEV_AGENT codex"]
+        "set-environment -t $3 CLAUDE_RESUME_ID thr_1", "set-environment -t $3 DEV_AGENT codex",
+        "display-message -p -t %7 #{socket_path}"]
 
 
 @pytest.mark.parametrize("pane,target,cwd", [
@@ -386,6 +388,62 @@ def zsh(tmp_path):
     call.log = log
     call.home = home
     return call
+
+
+@pytest.fixture(autouse=True)
+def managed_pr_cache(request):
+    if not request.node.name.startswith('test_zsh_pr_'):
+        yield
+        return
+    zsh = request.getfixturevalue('zsh')
+    env = {'HOME': str(zsh.home), 'XDG_CACHE_HOME': str(zsh.home / '.cache'),
+           'T_LOCAL_RC': str(zsh.home / '.zshrc.local'), 'PATH': os.environ['PATH'],
+           'TMUX_TMPDIR': os.environ.get('TMUX_TMPDIR', '/tmp')}
+    script = REPO_ROOT / 'libexec/t_session_cache.py'
+    process = subprocess.Popen([sys.executable, str(script), 'serve'], env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def api(operation, payload=None):
+        code = ('import runpy,json,sys; m=runpy.run_path(sys.argv[1]); '
+                'print(json.dumps(m["request"](sys.argv[2],json.loads(sys.argv[3]))))')
+        result = subprocess.run([sys.executable, '-c', code, str(script), operation,
+                                 json.dumps(payload or {})], env=env, capture_output=True,
+                                text=True, check=True)
+        return json.loads(result.stdout)
+    deadline = time.monotonic() + 8
+    while api('status').get('unavailable'):
+        assert process.poll() is None
+        assert time.monotonic() < deadline
+        time.sleep(.02)
+    class CachePath:
+        def __init__(self, path):
+            self.path = path
+        def __truediv__(self, value):
+            return CachePath(self.path / value)
+        def __str__(self):
+            return str(self.path)
+        def mkdir(self, **kwargs):
+            pass
+        def record(self):
+            return api('artifact', {'key': 'display-file:' + str(self.path)}).get('value') or {}
+        def write_text(self, text):
+            api('artifact', {'key': 'display-file:' + str(self.path),
+                             'value': {'text': text, 'checked': time.time()}})
+        def read_text(self):
+            return self.record().get('text', '')
+        def exists(self):
+            return bool(self.record())
+        def touch(self):
+            self.write_text('')
+        def age(self, seconds):
+            evidence = self.record()
+            evidence['checked'] = time.time() - seconds
+            api('artifact', {'key': 'display-file:' + str(self.path), 'value': evidence})
+    zsh.pr_cache = CachePath(zsh.home / '.cache/claude-sessions/pr')
+    try:
+        yield
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
 
 
 T_STUB = """#!/bin/sh
@@ -1271,7 +1329,7 @@ def test_zsh_pr_tag_says_when_work_continued_past_a_merge(zsh, tmp_path):
     subprocess.run(["git", "init", "-q", str(wt)], check=True)
     subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "pr head"], check=True)
     head = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     (prdir / "o#r#5").write_text("MERGED")
     url = "github.com/o/r/pull/5"
@@ -1312,7 +1370,7 @@ def test_zsh_pr_work_continued_recognizes_main_and_squashed_work(zsh, tmp_path):
     head = commit("base")
     git("update-ref", "refs/remotes/origin/main", head)
     git("checkout", "-qb", "slot")
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     hf = prdir / "o#r#5.head"
     hf.write_text(head)
@@ -1369,7 +1427,7 @@ def test_zsh_pr_work_continued_recognizes_main_and_squashed_work(zsh, tmp_path):
 
 
 def test_zsh_pr_tag_refreshes_later_merges_without_repeated_requests(zsh):
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     (prdir / "o#r#5").write_text("MERGED")
     (prdir / "o#r#5.head").write_text("old-head")
@@ -1380,7 +1438,7 @@ def test_zsh_pr_tag_refreshes_later_merges_without_repeated_requests(zsh):
     checked = prdir / "o#r.checked"
     checked.touch()
     assert zsh(snippet).stdout.strip() == ""
-    os.utime(checked, (time.time() - 301, time.time() - 301))
+    checked.age(301)
     assert zsh(snippet).stdout.strip() == "o/r#5"
 
 
@@ -1391,7 +1449,7 @@ def test_zsh_pr_refresh_records_the_merged_head(zsh, tmp_path):
     stub = tmp_path / "stubbin" / "gh"
     stub.write_text('#!/bin/sh\necho "5 MERGED abc123"\necho "6 OPEN def456"\n')
     stub.chmod(0o755)
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     prdir.mkdir(parents=True)
     (prdir / "o#r#5").write_text("MERGED")                # legacy: no .head
     zsh("_pr_state_refresh 'o/r#5' 'o/r#6'")
@@ -1460,13 +1518,13 @@ print -r -- "queued=${{#_PR_STALE}}" """)
     query, = queries.read_text().splitlines()
     assert all(f"pullRequest(number:{n})" in query for n in records)
     assert "pullRequest(number:11)" not in query
-    prdir = zsh.home / ".cache" / "claude-sessions" / "pr"
+    prdir = zsh.pr_cache
     assert (prdir / "o#r#5").read_text() == "OPEN"
     assert (prdir / "o#r#5.preview").read_text() == f"{heads[5]} 1"
     assert (prdir / "o#r#10.preview").read_text() == f"{heads[10]} ?"
     assert not (prdir / "o#r#11.preview").exists()
 
-    os.utime(prdir / "o#r#5.preview", (time.time() - 301, time.time() - 301))
+    (prdir / "o#r#5.preview").age(301)
     (prdir / "o#r#6.preview").write_text(f"{heads[5]} 1")
     retained = zsh("""typeset -a _PR_STALE; typeset -A _PR_SPAWNED; typeset _PR_WITH_BADGES=1
 for number in 5 6; do

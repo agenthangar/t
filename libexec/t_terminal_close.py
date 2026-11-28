@@ -905,12 +905,12 @@ def git_completed(workspace):
     match = re.fullmatch(r'(?:git@github\.com:|https://github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?', origin)
     if match:
         cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'claude-sessions/pr'
-        for file in cache.glob(match[1].replace('/', '#') + '#*.head'):
-            try:
-                if file.read_text().strip() == head and file.with_suffix('').read_text().strip() == 'MERGED':
+        helper = runpy.run_path(str(Path(__file__).with_name('t_cache_file.py')))
+        evidence = helper['files'](str(cache / (match[1].replace('/', '#') + '#')))
+        for name, record in evidence.items():
+            if name.endswith('.head') and record.get('text', '').strip() == head:
+                if evidence.get(name[:-5], {}).get('text', '').strip() == 'MERGED':
                     return True
-            except OSError:
-                continue
     return False
 
 

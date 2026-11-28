@@ -795,6 +795,27 @@ EOS
 # <age-seconds> is how long ago it was written, huge when there is no file.
 # Factored out of the render loop because it is a POLICY, not a mechanism: the
 # whole cost/staleness trade-off of the PR tag lives here and nowhere else.
+_pr_cache_load() {
+  [[ ${_PR_CACHE_LOADED:-} == 1 ]] && return ${_PR_CACHE_UNAVAILABLE:-0}
+  typeset -gA _PR_CACHE_TEXT _PR_CACHE_TIME
+  typeset -g _PR_CACHE_LOADED=1 _PR_CACHE_UNAVAILABLE=0
+  local dump
+  dump=$(python3 "$T_HOME/libexec/t_cache_file.py" dump "${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr/") || {
+    _PR_CACHE_UNAVAILABLE=1
+    return 1
+  }
+  eval "$dump"
+}
+_pr_cache_read() { _pr_cache_load; print -rn -- "${_PR_CACHE_TEXT[$1]:-}"; }
+_pr_cache_exists() { _pr_cache_load; (( ${+_PR_CACHE_TEXT[$1]} )); }
+_pr_cache_mtime() { _pr_cache_load; print -r -- "${_PR_CACHE_TIME[$1]:-0}"; }
+_pr_cache_write() {
+  _pr_cache_load || return 1
+  python3 "$T_HOME/libexec/t_cache_file.py" write "$1" "$2" || return
+  _PR_CACHE_TEXT[$1]=$2
+  _PR_CACHE_TIME[$1]=$EPOCHSECONDS
+}
+
 _pr_state_stale() {
   local st=$1; local -i age=$2
   # Preserve the terminal-state cache policy for bare state readers.
@@ -820,8 +841,8 @@ _pr_preview_refresh() {
   for num in "$@"; do
     (( ${#heads} < 12 )) || break
     f="$prdir/${slug//\//#}#$num"
-    [[ -f $f.badge ]] || continue
-    badge_info=$(<"$f.badge")
+    _pr_cache_exists "$f.badge" || continue
+    badge_info=$(_pr_cache_read "$f.badge")
     parts=(${=badge_info})
     [[ ${parts[1]:-} =~ '^[a-fA-F0-9]{40}([a-fA-F0-9]{24})?$' ]] || continue
     heads[$num]=$parts[1]
@@ -851,8 +872,7 @@ _pr_preview_refresh() {
   for num in ${(k)heads}; do
     f="$prdir/${slug//\//#}#$num.preview"
     result="${heads[$num]} ${statuses[$num]:-?}"
-    tmp="$f.$$.$RANDOM.tmp"
-    print -rn -- "$result" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null
+    _pr_cache_write "$f" "$result"
   done
 }
 
@@ -868,9 +888,10 @@ _pr_preview_refresh() {
 # references many ancient PRs cannot fork-bomb gh.
 _pr_state_refresh() {
   (( $# )) || return 0
+  _pr_cache_load || return 0
   command -v gh >/dev/null 2>&1 || return 1
   local prdir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-sessions/pr"
-  mkdir -p "$prdir" 2>/dev/null || return 1
+
   # Every declaration is hoisted out of the loops below: an assignmentless
   # `local x` re-run on an already-local x does not redeclare, it PRINTS
   # `x=value` (the _ok=claw junk-output bug documented on _t_resume).
@@ -904,9 +925,10 @@ _pr_state_refresh() {
       f="$prdir/${slug//\//#}#$num"
       # A MERGED entry is terminal only once its .head sidecar exists — entries
       # cached before the sidecar was introduced get it filled in once.
-      if [[ -f $f ]]; then
-        st=$(<$f)
-        [[ $st == CLOSED || ( $st == MERGED && -f $f.head ) ]] && continue
+      if _pr_cache_exists "$f"; then
+        st=$(_pr_cache_read "$f")
+        [[ $st == CLOSED ]] && continue
+        [[ $st == MERGED ]] && _pr_cache_exists "$f.head" && continue
       fi
       st=${got[$num]:-}; hd=${head[$num]:-}
       draft=${drafts[$num]:-}; mergeable=${conflicts[$num]:-}
@@ -923,8 +945,7 @@ _pr_state_refresh() {
       # check. A sidecar rather than a second field, so every reader of the state
       # file (the bin/t and tfind Python twins) keeps reading a bare state.
       if [[ $st == MERGED && -n $hd && $hd != (-|null) ]]; then
-        tmp="$f.head.$$.$RANDOM.tmp"
-        print -rn -- "$hd" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f.head" 2>/dev/null
+        _pr_cache_write "$f.head" "$hd"
       elif [[ $st == OPEN ]]; then
         label=OPEN
         if [[ $mergeable == CONFLICTING ]]; then
@@ -932,26 +953,24 @@ _pr_state_refresh() {
         elif [[ $draft == true ]]; then
           label=DRAFT
         fi
-        tmp="$f.badge.$$.$RANDOM.tmp"
-        print -rn -- "${hd:--} $label" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f.badge" 2>/dev/null
+        _pr_cache_write "$f.badge" "${hd:--} $label"
       fi
       # '?' records a lookup that FAILED, so _pr_state_stale can tell "never
       # asked" from "asked and could not tell".
-      tmp="$f.$$.$RANDOM.tmp"
-      print -rn -- "${st:-?}" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null
+      _pr_cache_write "$f" "${st:-?}"
     done
     if [[ ${_PR_WITH_BADGES:-} == 1 ]]; then
       requested=()
       refs=(${=want[$slug]})
       for num in ${(u)refs}; do
         f="$prdir/${slug//\//#}#$num"
-        [[ -f $f && $(<"$f") == OPEN ]] && requested+=("$num")
+        [[ $(_pr_cache_read "$f") == OPEN ]] && requested+=("$num")
       done
       (( ${#requested} )) && _pr_preview_refresh "$prdir" "$slug" "${requested[@]}"
     fi
     # Also rate-limit refreshes for a live slot whose last-mentioned PR is already
     # merged: later PRs can complete its work without appearing in its transcript.
-    touch "$prdir/${slug//\//#}.checked" 2>/dev/null
+    _pr_cache_write "$prdir/${slug//\//#}.checked" ""
   done
 }
 
@@ -998,17 +1017,17 @@ _pr_state_tag() {
   local prcf="$prdir/$prkey" prraw= prst= prlab= prmt checked metadata hd
   local -a parts
   local -i wip=0 refresh=0 have_badge=0 have_preview=0
-  if [[ -f $prcf ]]; then
-    prraw=$(<$prcf)
+  if _pr_cache_exists "$prcf"; then
+    prraw=$(_pr_cache_read "$prcf")
     [[ $prraw == MERGED || $prraw == CLOSED || $prraw == OPEN ]] && prst=$prraw
   fi
   prlab=${prst:+${(L)prst}}
   REPLY_PR_STATE=${prst:-UNKNOWN}
   REPLY_PR_BADGE=$REPLY_PR_STATE
-  if [[ ${_PR_WITH_BADGES:-} == 1 && $prst == OPEN && -f $prcf.badge ]]; then
-    checked=$(zstat +mtime "$prcf.badge" 2>/dev/null || echo 0)
+  if [[ ${_PR_WITH_BADGES:-} == 1 && $prst == OPEN ]] && _pr_cache_exists "$prcf.badge"; then
+    checked=$(_pr_cache_mtime "$prcf.badge")
     if ! _pr_state_stale OPEN $(( EPOCHSECONDS - checked )); then
-      metadata=$(<"$prcf.badge")
+      metadata=$(_pr_cache_read "$prcf.badge")
       parts=(${=metadata})
       if [[ ${parts[2]:-} == (OPEN|DRAFT|CONFLICT) ]]; then
         REPLY_PR_BADGE=$parts[2]
@@ -1016,10 +1035,10 @@ _pr_state_tag() {
         hd=${parts[1]:-}
         if [[ ! $hd =~ '^[a-fA-F0-9]{40}([a-fA-F0-9]{24})?$' ]]; then
           have_preview=1
-        elif [[ -f $prcf.preview ]]; then
-          checked=$(zstat +mtime "$prcf.preview" 2>/dev/null || echo 0)
+        elif _pr_cache_exists "$prcf.preview"; then
+          checked=$(_pr_cache_mtime "$prcf.preview")
           if ! _pr_state_stale OPEN $(( EPOCHSECONDS - checked )); then
-            metadata=$(<"$prcf.preview")
+            metadata=$(_pr_cache_read "$prcf.preview")
             parts=(${=metadata})
             if [[ ${parts[1]:-} == "$hd" && ${parts[2]:-} == (0|1|'?') ]]; then
               have_preview=1
@@ -1036,15 +1055,15 @@ _pr_state_tag() {
     wip=1
   fi
   if [[ -z ${_PR_SPAWNED[$prkey]:-} ]]; then
-    prmt=$(zstat +mtime "$prcf" 2>/dev/null || echo 0)
+    prmt=$(_pr_cache_mtime "$prcf")
     # a MERGED entry without its head sidecar predates it: fetch it once
     if _pr_state_stale "$prraw" $(( prmt ? EPOCHSECONDS - prmt : 999999999 )) ||
-       { [[ $prraw == MERGED && ! -f $prcf.head ]] && command -v gh >/dev/null 2>&1; }; then
+       { [[ $prraw == MERGED ]] && ! _pr_cache_exists "$prcf.head" && command -v gh >/dev/null 2>&1; }; then
       refresh=1
     elif [[ ${_PR_WITH_BADGES:-} == 1 && $prst == OPEN ]] && (( ! have_badge || ! have_preview )); then
       refresh=1
     elif (( wip )); then
-      checked=$(zstat +mtime "$prdir/${prkey%#*}.checked" 2>/dev/null || echo 0)
+      checked=$(_pr_cache_mtime "$prdir/${prkey%#*}.checked")
       _pr_state_stale OPEN $(( checked ? EPOCHSECONDS - checked : 999999999 )) && refresh=1
     fi
     if (( refresh )); then
@@ -1067,15 +1086,18 @@ _pr_work_continued() {
   [[ -e $wt/.git ]] || return 1
   dirty=$(git -C "$wt" status --porcelain 2>/dev/null) || return 1
   [[ -n $dirty ]] && return 0
-  [[ -f $hf ]] && head=$(<$hf)
+  head=$(_pr_cache_read "$hf")
   [[ -n $head ]] || return 1
   cur=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || return 1
   [[ $cur == $head ]] && return 1
   # The batched refresh already saves every merged head in this repo. A later PR
   # may have landed the slot's tip even though its transcript still names an old PR.
-  for f in "${hf%#*}"\#*.head(N); do
-    [[ -f ${f%.head} ]] || continue
-    [[ $(<"${f%.head}") == MERGED && $(<"$f") == $cur ]] && return 1
+  _pr_cache_load
+  for f in ${(k)_PR_CACHE_TEXT}; do
+    [[ $f == "${hf%#*}#"* ]] || continue
+    [[ $f == *.head ]] || continue
+    _pr_cache_exists "${f%.head}" || continue
+    [[ $(_pr_cache_read "${f%.head}") == MERGED && $(_pr_cache_read "$f") == $cur ]] && return 1
   done
   origin_base=$(_dev_origin_base "$wt")
   main=$(git -C "$wt" rev-parse --verify "refs/remotes/$origin_base" 2>/dev/null)
@@ -1104,6 +1126,7 @@ _pr_work_continued() {
 #   gh finished.
 _pr_state_flush() {
   (( ${#_PR_STALE} )) || return 0
+  _pr_cache_load || return 0
   _pr_state_refresh "${(@)_PR_STALE}" >/dev/null 2>&1 </dev/null &!
   _PR_STALE=()
 }

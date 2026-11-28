@@ -1563,9 +1563,9 @@ def test_index_dedupe_keeps_larger_copy(t_mod):
 
 # ─── mcp: enrichment ───────────────────────────────────────────────────────────
 
-def test_pr_info_reads_cache_only(t_mod, tmp_path):
-    (tmp_path / "o#r#12").write_text("MERGED")
-    (tmp_path / "o#r#13").write_text("weird")
+def test_pr_info_reads_cache_only(t_mod, tmp_path, isolate_discovery_artifacts):
+    isolate_discovery_artifacts["display-file:" + str(tmp_path / "o#r#12")] = {"text": "MERGED"}
+    isolate_discovery_artifacts["display-file:" + str(tmp_path / "o#r#13")] = {"text": "weird"}
     assert t_mod._pr_info("github.com/o/r/pull/12", str(tmp_path)) == {
         "url": "https://github.com/o/r/pull/12", "repo": "o/r", "number": 12, "state": "merged"}
     assert t_mod._pr_info("github.com/o/r/pull/13", str(tmp_path))["state"] == "?"
@@ -1574,9 +1574,8 @@ def test_pr_info_reads_cache_only(t_mod, tmp_path):
     assert t_mod._pr_info("not a url", str(tmp_path)) is None
 
 
-def test_opened_origin_activity(t_mod, tmp_path):
-    (tmp_path / "opened").mkdir()
-    (tmp_path / "opened" / "sid").write_text("")
+def test_opened_origin_activity(t_mod, tmp_path, monkeypatch):
+    monkeypatch.setattr(t_mod, "_session_discovery", lambda: {"request": lambda operation, payload: {"checked": 123 if payload["sid"] == "sid" else 0}})
     assert t_mod._opened_stamp("sid", str(tmp_path)) > 0
     assert t_mod._opened_stamp("nope", str(tmp_path)) == 0
     tx = tmp_path / "s.jsonl"
@@ -1632,13 +1631,13 @@ def test_session_row_reaped_worktree_and_defaults(t_mod, tmp_path, monkeypatch):
     assert row["pr"] is None and row["this_session"] is False
 
 
-def test_session_row_live_pr_origin_and_this(t_mod, tmp_path, monkeypatch):
+def test_session_row_live_pr_origin_and_this(t_mod, tmp_path, monkeypatch, isolate_discovery_artifacts):
     cfg = _mcp_cfg(t_mod, tmp_path, monkeypatch, worktree_root=str(tmp_path / "wt"))
     wt = tmp_path / "wt" / "financial-forecast" / "17"
     wt.mkdir(parents=True)
     cache = tmp_path / "cache"
     (cache / "pr").mkdir(parents=True)
-    (cache / "pr" / "o#r#5").write_text("OPEN")
+    isolate_discovery_artifacts["display-file:" + str(cache / "pr" / "o#r#5")] = {"text": "OPEN"}
     (cache / "opened").mkdir()
     tx = tmp_path / "s.jsonl"
     tx.write_text("")

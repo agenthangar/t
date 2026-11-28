@@ -321,7 +321,7 @@ close and complete discovery. Session open, close, resume, move and list accept
 `-w` (`--wait`) to wait for the selected refresh to complete or fail. Ctrl-C leaves the
 refresh running. Redirected waits stay silent and prompt-free.
 
-Saved Codex candidates are cached under `${XDG_CACHE_HOME:-~/.cache}/claude-sessions`.
+Saved Codex candidates use the managed session cache.
 Repeated `t resume` calls reuse unchanged metadata; each invocation checks for new,
 changed, removed, or replaced rollouts and index/WAL changes. One discovery snapshot
 serves every worktree in a resume scan. Other saved-conversation lookups reuse the
@@ -1975,8 +1975,12 @@ Use **t config → Nosleep** for the same settings editor, nearby-network select
 macOS discovery permission setup, and hotspot passwords. Its live dashboard shows
 the selected network's availability even when fallback is disabled.
 
-Session discovery is served from a shared in-memory cache with hourly expiry
-and asynchronous disk persistence. Session open, close, resume, move, list and
+Open **t config → Background agents → Session cache** to see the service PID,
+its disk writes in the past minute and login state. Start, stop or restart it
+there or with `t agent background start|stop|restart cache`. The macOS
+installation starts one service at login. On other hosts, start it explicitly.
+The CLI, worktrees, pickers and MCP share its in-memory discovery data.
+Only changed records are written to SQLite. Session open, close, resume, move, list and
 slot history wait up to 30 seconds when the requested scope is empty and refresh
 is pending; available scoped results and settled empty scans return immediately.
 Explicit `-w` (`--wait`) waits for one requested refresh through completion or

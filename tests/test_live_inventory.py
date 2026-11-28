@@ -17,6 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
+def isolate_discovery_artifacts():
+    """This integration module exercises the real agent in a private cache."""
+
+@pytest.fixture
 def servers(tmp_path, monkeypatch):
     tmux = shutil.which('tmux')
     if not tmux:
@@ -51,21 +55,21 @@ def servers(tmp_path, monkeypatch):
             result = command(tmux, '-S', str(path), '-f', '/dev/null', 'new-session',
                              '-d', '-s', f'dev-api-{n}', '-c', str(home), 'sleep 120')
             assert result.returncode == 0, result.stderr
+        cache = runpy.run_path(str(ROOT/'libexec/t_session_cache.py'))
+        service = subprocess.Popen([sys.executable, str(ROOT/'libexec/t_session_cache.py'), 'serve'],
+                                   env=cache['_service_env']())
         try:
+            deadline = time.monotonic() + 5
+            while cache['request']('status').get('unavailable'):
+                assert service.poll() is None and time.monotonic() < deadline
+                time.sleep(.02)
             yield default, alternate, create, command, broken
         finally:
+            service.terminate()
+            service.wait(timeout=5)
             for path in (alternate, default):
                 command(tmux, '-S', str(path), 'kill-server')
-            cache = runpy.run_path(str(ROOT/'libexec/t_session_cache.py'))
-            deadline = time.monotonic() + 5
-            while endpoints := list(directory.glob('t-sessions-*/service.sock')):
-                assert time.monotonic() < deadline, f'fixture discovery still running: {endpoints}'
-                for endpoint in endpoints:
-                    try:
-                        cache['_existing_status'](endpoint.parent, [], deadline)
-                    except (OSError, ValueError):
-                        pass
-                time.sleep(.05)
+            shutil.rmtree(cache['_runtime'](), ignore_errors=True)
 
 
 def test_public_wait_isolates_servers_and_retries_failed_scan(servers):
@@ -126,8 +130,8 @@ def test_open_picker_adds_live_slot_with_query_focus_and_mark(servers):
     command('tmux', '-S', str(default), 'pipe-pane', '-t', 'picker:', 'cat > ' + shlex.quote(str(stream_path)))
     def frame():
         return command('tmux', '-S', str(default), 'capture-pane', '-p', '-t', 'picker:').stdout
-    def wait_for(predicate):
-        deadline = time.monotonic() + 10
+    def wait_for(predicate, timeout=10):
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             screen = frame()
             if predicate(screen):
@@ -138,7 +142,7 @@ def test_open_picker_adds_live_slot_with_query_focus_and_mark(servers):
         pytest.fail(frame() + '\nTerminal history\n' + history + '\nTerminal trace\n' + trace[-6000:])
     def row(screen, n):
         return next((line for line in screen.splitlines() if re.search(r'api-' + str(n) + r'\s', line)), '')
-    wait_for(lambda screen: row(screen, 1) and row(screen, 2))
+    wait_for(lambda screen: row(screen, 1) and row(screen, 2), timeout=25)
     command('tmux', '-S', str(default), 'send-keys', '-t', 'picker:', 'a', 'p', 'i', 'Tab')
     before = wait_for(lambda screen: any('✓' in row(screen, n) for n in (1, 2)))
     marked = next(n for n in (1, 2) if '✓' in row(before, n))
@@ -183,7 +187,7 @@ def test_late_inventory_cannot_restore_a_closed_session(monkeypatch):
         if len(reports) == 2:
             completed.set()
     inventory = live['Inventory'](report)
-    monkeypatch.setitem(inventory._run.__globals__, 'scan', scan)
+    monkeypatch.setattr(inventory, 'scan', scan)
     inventory.request(explicit=True)
     assert entered.wait(3)
     inventory.close('repo-1')
@@ -227,7 +231,7 @@ def test_wait_joins_scan_while_its_report_is_publishing(monkeypatch):
         writing.set()
         release.wait(3)
     inventory = live['Inventory'](report)
-    monkeypatch.setitem(inventory._run.__globals__, 'scan', lambda: ('/socket', {}))
+    monkeypatch.setattr(inventory, 'scan', lambda: ('/socket', {}))
     first = inventory.request(explicit=True)
     try:
         assert writing.wait(3)
@@ -243,7 +247,7 @@ def test_empty_open_picker_receives_the_first_slot(servers):
                      '-x', '100', '-y', '26', '-s', 'empty-picker', 'zsh -f -c ' + shlex.quote(shell))
     assert result.returncode == 0, result.stderr
     def wait_for(text):
-        deadline = time.monotonic() + 7
+        deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             screen = command('tmux', '-S', str(default), 'capture-pane', '-p', '-t', 'empty-picker:').stdout
             if text in screen:

@@ -48,6 +48,14 @@ def discover(cfg, *, local=False, host=None, fields=('rows', 'resume'), deadline
 
 
 def hydrate_local(cfg, view, roots=None, slot=None):
+    with _spinner('Reading session details'):
+        result = request('hydrate', {'view': view, 'roots': roots, 'slot': slot})
+    if result.get('unavailable'):
+        return dict(view, unavailable=True, message=result.get('message'))
+    return result
+
+
+def _hydrate_local(cfg, view, roots=None, slot=None):
     """Read current local display details without waiting for the history worker.
 
     Call once on the final foreground snapshot. The private scanner validates
@@ -77,7 +85,7 @@ def hydrate_local(cfg, view, roots=None, slot=None):
             with _spinner('Reading session details'):
                 result = subprocess.run(['zsh', '-lic', command], capture_output=True,
                                         text=True, stdin=subprocess.DEVNULL, env=environment,
-                                        start_new_session=True, timeout=90)
+                                        timeout=90)
             if result.returncode:
                 raise ValueError(result.stderr.strip().splitlines()[-1] if result.stderr.strip()
                                  else 'local session details failed')
@@ -336,7 +344,8 @@ def resume_health(view):
             status = 'current'
         hosts.append(dict(host=host['host'], status=status, checked=host.get('checked'), observed=host.get('observed')))
     return dict(hosts=hosts, auth_hosts=auth_hosts,
-                unavailable=bool(view.get('unavailable') or view.get('wait_unavailable')))
+                unavailable=bool(view.get('unavailable') or view.get('wait_unavailable')),
+                **({'message': view['message']} if view.get('message') else {}))
 
 
 def announce(view):
@@ -345,7 +354,7 @@ def announce(view):
     if view.get('wait_unavailable'):
         print('t: Session discovery unavailable; showing the last available snapshot.', file=sys.stderr)
     if view.get('unavailable'):
-        print('t: Session discovery unavailable; retry shortly.', file=sys.stderr)
+        print('t: ' + view.get('message', 'Session cache unavailable. Open t config > Background agents > Session cache.'), file=sys.stderr)
     elif view.get('loading') or (not any(h.get('value') is not None for h in view.get('hosts', []))
                                  and any(h.get('refreshing') for h in view.get('hosts', []))):
         print('t: Session discovery is refreshing; run again shortly.', file=sys.stderr)
@@ -573,6 +582,10 @@ def collect(spec, api):
                 if sid not in known:
                     ctx['recs'].append(dict(sid=sid, cwd=info.get('cwd'), prompts=[], n_prompts=0,
                                             mtime=ctx['now'], _no_transcript=True))
+            opened = request('display-evidence', {'kind': 'opened',
+                             'sids': [rec.get('sid', '') for rec in ctx['recs'] if '_opened_checked' not in rec]}).get('values', {})
+            for rec in ctx['recs']:
+                rec.setdefault('_opened_checked', opened.get(rec.get('sid'), {}).get('checked', 0))
             # Resolve display sidecars once in the collector, not on each read.
             for rec in ctx['recs']:
                 if old_context.get('live', {}).get(rec.get('sid')) != ctx['live'].get(rec.get('sid')) or spec.get('reconcile'):

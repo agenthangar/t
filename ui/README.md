@@ -1302,7 +1302,8 @@ with `done` and editable prompts with `cooked_input`.
 
 ## Session information and history
 
-Session discovery uses one RAM-serving cache API for CLI and MCP. Inventory has
+Session discovery uses one managed cache agent per user and one API for the CLI,
+session pickers, MCP and the native session list. Worktrees use the installed agent. Inventory has
 a 24-hour reconciliation interval; expiry never clears successful snapshots.
 Activity and membership changes update incrementally. The daemon observes recently
 used hosts in the background and retains records across failures. Cold discovery
@@ -1928,18 +1929,21 @@ queue wait, owned model unloading and cloud-return recovery from main.
 
 ## Background agents
 
-`t config` groups **Finished session cleanup** and **Automatic recovery** under
-**Background agents**. Both rows show installation and live state for this host.
+`t config` groups **Finished session cleanup**, **Automatic recovery** and **Session cache** under
+**Background agents**. The rows show installation and live state for this host.
 The cleanup interval is 15 minutes by default. Enter whole minutes from 1 to 1,439
 or use **Use default**. Review and save applies the setting to future closures.
 
 `t agent background status [TARGET]` prints a static installation, runtime,
 effective login startup, and check interval table. Recovery shows `continuous`.
 Narrow terminals stack the values. Status never prompts or changes service state.
-On macOS, installation and lifecycle controls accept `cleanup`, `recovery`, or
+On macOS, installation and lifecycle controls accept `cache`, `cleanup`, `recovery`, or
 `all` as explicit targets:
 
 ```sh
+t agent background status cache
+t agent background stop cache
+t agent background start cache
 t agent background install cleanup
 t agent background install recovery --reinstall
 t agent background start cleanup
@@ -1951,6 +1955,14 @@ The login column checks the owned LaunchAgent, launch target, and OS disable
 override. Start and stop apply to the current login. Stop retains registration,
 settings and pending state. Reinstall repairs the selected registration and
 preserves a deliberate stop. The services are optional and belong to the current user.
+
+### Session cache
+
+Open **Session cache** to see its PID, bytes written in the past minute and login
+state. Select **Start**, **Stop** or **Restart**. The macOS installation registers
+one current-user login agent. A stopped service stays stopped for the current
+login when a view opens. On hosts without launchd, use
+`t agent background start cache` to start the process explicitly.
 
 ### Automatic recovery
 

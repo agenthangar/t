@@ -68,11 +68,10 @@ a new session. Ctrl-C returns 130 without cancelling shared work or resetting a
 host. Lists stay static and redirected waits never prompt. MCP and collectors
 remain immediate; ownership checks remain live and unaffected.
 
-A missing socket or service loss can start one elected replacement candidate per
-four-second handoff window. The lifetime lock still permits only one owner.
-Replacement restores persistence; an old daemon that loses its socket exits and
-removes only its own endpoint. Observer failure retains its last snapshot within
-the same bounded wait; it never starts a caller-controlled retry loop.
+If the service stops, views report its status and retain available rows. Manage
+it under **t config → Background agents → Session cache**. Clients connect
+to the existing endpoint. Opening a picker or refreshing an MCP view leaves
+a deliberately stopped service stopped.
 
 Before remote-inclusive open browsing, a known OS network denial or missing
 IPv4 and IPv6 routes returns an immediate error. Use `t open --local` to browse
@@ -97,7 +96,8 @@ waits for new demand. Attach activity observes recently used local contexts once
 Updated remote hosts used within the last hour retain background checks every
 thirty seconds from completion. Their polling stops after an hour without
 requests and resumes on use. Aliases share target failure state and workers.
-The daemon starts on demand without launchd, shell hooks or personal configuration.
+The macOS installer registers one per-user login agent. On other hosts,
+`t agent background start cache` explicitly starts the managed process.
 
 Attach events schedule a live-status observation without invalidating saved
 history. Lifecycle events retain inventory, mark affected hosts dirty and prevent
@@ -143,7 +143,7 @@ Complete collector errors are retained in private bounded logs under
 preserves the cause rather than truncating away the end of a traceback. Freshness
 provides the diagnostic path; logs must not be published with private context.
 
-## Persistence and development isolation
+## Persistence and shared ownership
 
 The service asynchronously persists restart snapshots to
 `$XDG_CACHE_HOME/t/discovery/cache.sqlite3`, defaulting to
@@ -164,15 +164,23 @@ changing observation times or cooldowns. Old empty or relative-path identities
 cannot prove configuration isolation and start cold. Detached workers pin the selected path
 before changing working directory.
 
-Development sources retain their own service and snapshot namespace. A cold Git
-worktree may seed from its canonical checkout's compatible persisted namespace,
-with matching user/agent-store/environment identity. Repository context remains
-part of each entry key. Canonical never imports from a development worktree, and
-no client selects another source's executable. Old worktrees must integrate the
-fix before they can run its new recovery behavior; installing main does not
-silently rewrite another session's branch. After an upgrade, an older daemon in
-a separate namespace can finish its existing one-hour polling lease and remain
-resident afterward.
+One endpoint and one lifetime lock belong to the user. All worktrees and the
+bundled native client speak the same versioned protocol to the installed
+service. Effective configuration, provider stores and tmux sockets scope the
+data. A worktree path alone does not create another namespace. The agent's
+single writer batches changes in transactions. Catalog members, index artifacts
+and health records can change independently. A successful read does not queue a
+checkpoint. SQLite retains compatible old snapshots for migration.
+
+All session discovery views and lifecycle publications call
+`request(operation, payload)` in `libexec/t_session_cache.py`. This covers
+session list, open, resume and move pickers, slot history, search, Cursor chat
+listing, share targets, MCP discovery, doctor and rnnr. Shell and Swift views
+use the installed CLI or a Python adapter for the same contract. PR evidence,
+display metadata and incremental index artifacts use that contract as well.
+The writer owns `cache.sqlite3`. Native transcripts, durable history and live
+PID/launch evidence have independent owners. Action-time checks still verify
+the current owner directly.
 
 ## Validation
 

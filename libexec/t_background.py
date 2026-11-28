@@ -9,12 +9,14 @@ import runpy
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_LABEL = 'com.agenthangar.t.cleanup'
-NAMES = {'cleanup': 'Finished session cleanup', 'recovery': 'Automatic recovery'}
+CACHE_LABEL = 'com.agenthangar.t.session-cache'
+NAMES = {'cache': 'Session cache', 'cleanup': 'Finished session cleanup', 'recovery': 'Automatic recovery'}
 
 
 def state():
@@ -25,10 +27,66 @@ def recovery():
     return runpy.run_path(str(ROOT / 'libexec/t_auto_recovery.py'))
 
 
+def cache_source():
+    # A command invoked in a linked development checkout still registers the
+    # installed code. A disposable standalone installation can own its own HOME.
+    if (ROOT / '.git').is_file():
+        primary = runpy.run_path(str(ROOT / 'libexec/t_dev.py'))['canonical'](ROOT)
+        if not primary:
+            raise ValueError('cannot locate the installed session cache')
+        return primary
+    return ROOT
+
+
+def cache_request(operation):
+    api = runpy.run_path(str(ROOT / 'libexec/t_session_cache.py'))
+    return api['request'](operation, {}, deadline=time.monotonic() + .5)
+
+
+def cache_details():
+    stats = cache_request('service-status')
+    if not stats.get('pid'):
+        return ''
+    amount = stats.get('bytes_written_last_minute')
+    return 'PID ' + str(stats['pid']) + (f', {amount:,} bytes written in the last minute'
+                                       if amount is not None else '')
+
+
+def cache_program():
+    path = cache_source() / 'libexec/t_session_cache.py'
+    if 'serve-managed' not in path.read_text():
+        raise ValueError('Update the installed t before registering the managed session cache')
+    return [sys.executable, str(path), 'serve-managed']
+
+
+def portable_cache(action):
+    """Explicit management on hosts without a login service manager."""
+    running = cache_request('service-status').get('pid')
+    if action in ('stop', 'restart') and running:
+        result = cache_request('stop-service')
+        if not result.get('stopping'):
+            raise ValueError('could not stop the session cache')
+        end = time.monotonic() + 8
+        while cache_request('service-status').get('pid') == running:
+            if time.monotonic() >= end:
+                raise ValueError('session cache is still stopping')
+            time.sleep(.05)
+        running = None
+    if action != 'stop' and not running:
+        child = subprocess.Popen(cache_program(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, cwd=str(Path.home()), start_new_session=True,
+                                 env={k: v for k, v in os.environ.items() if not k.startswith('COV_CORE_')})
+        end = time.monotonic() + 8
+        while not cache_request('service-status').get('pid'):
+            if child.poll() is not None or time.monotonic() >= end:
+                raise ValueError('session cache failed to start')
+            time.sleep(.05)
+
+
 def specification(agent):
-    if agent == 'cleanup':
-        path = Path.home() / 'Library/LaunchAgents' / (CLEANUP_LABEL + '.plist')
-        return CLEANUP_LABEL, path
+    if agent in ('cleanup', 'cache'):
+        label = CACHE_LABEL if agent == 'cache' else CLEANUP_LABEL
+        return label, Path.home() / 'Library/LaunchAgents' / (label + '.plist')
     api = recovery()
     return api['LABEL'], api['service_path']()
 
@@ -55,7 +113,11 @@ def read_service(agent):
     args = document.get('ProgramArguments')
     if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
         raise ValueError('unverified LaunchAgent command')
-    if agent == 'cleanup':
+    if agent == 'cache':
+        if (len(args) != 3 or not Path(args[0]).is_absolute() or not Path(args[1]).is_absolute()
+                or Path(args[1]).parts[-2:] != ('libexec', 't_session_cache.py') or args[2] != 'serve-managed'):
+            raise ValueError('unverified session cache LaunchAgent command')
+    elif agent == 'cleanup':
         if (len(args) != 3 or not Path(args[0]).is_absolute() or
                 not Path(args[1]).is_absolute() or args[2] != 'watch' or
                 Path(args[1]).parts[-2:] != ('libexec', 't_close_queue.py')):
@@ -98,6 +160,8 @@ def login_state(agent, document):
 
 def status(agent):
     if sys.platform != 'darwin':
+        if agent == 'cache':
+            return ('Available', 'Running' if cache_request('service-status').get('pid') else 'Stopped', 'Disabled')
         return ('Unavailable', 'Unavailable', 'Unavailable')
     try:
         document = read_service(agent)
@@ -169,7 +233,8 @@ def install(agent, previous, reinstall):
             'HOME', 'PATH', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
             'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'T_LOCAL_RC', 'TMPDIR') if key in os.environ}
         atomic_plist(path, dict(Label=label, RunAtLoad=True, KeepAlive=True, ThrottleInterval=30,
-                               ProgramArguments=[sys.executable, str(ROOT / 'libexec/t_close_queue.py'), 'watch'],
+                               ProgramArguments=cache_program() if agent == 'cache' else
+                               [sys.executable, str(ROOT / 'libexec/t_close_queue.py'), 'watch'],
                                EnvironmentVariables=env, WorkingDirectory=str(Path.home()), ExitTimeOut=60))
         try:
             if loaded:
@@ -209,12 +274,19 @@ def command(action, target, reinstall, interval):
         for agent in agents:
             installed, live, login = status(agent)
             cadence = f'Every {interval} min' if agent == 'cleanup' else 'continuous'
+            detail = cache_details() if agent == 'cache' and live == 'Running' else ''
             if compact:
                 print(NAMES[agent])
                 print(f'  {installed} · {live}')
                 print(f'  Starts at login: {login.lower()}  {cadence}')
             else:
                 print(f'{NAMES[agent]:<27} {installed:<14} {live:<12} {login:<15} {cadence}')
+            if detail:
+                print('  ' + detail)
+        return 0
+    if target == 'cache' and sys.platform != 'darwin':
+        with claim():
+            portable_cache(action)
         return 0
     if sys.platform != 'darwin':
         raise ValueError('background agent installation and controls require macOS')
@@ -240,6 +312,24 @@ def command(action, target, reinstall, interval):
                 print(f'{agent}: {error}', file=sys.stderr)
                 failed = True
     return int(failed)
+
+
+def upgrade_cache():
+    # A sandbox HOME is never a license to load a job into the development
+    # user's real launchd domain. Explicit controls use the selected host.
+    import pwd
+    if (sys.platform != 'darwin' or (ROOT / '.git').is_file() or
+            Path.home().resolve() != Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()):
+        return
+    worker = ROOT / 'libexec/t_session_cache.py'
+    with claim():
+        previous = read_service('cache')
+        if previous is None:
+            install('cache', None, False)
+        elif previous['ProgramArguments'] != cache_program() or (
+                launch_state('cache')[0] == 'Running' and
+                cache_request('service-status').get('build') != hashlib.sha256(worker.read_bytes()).hexdigest()):
+            install('cache', previous, True)
 
 
 def upgrade_cleanup():

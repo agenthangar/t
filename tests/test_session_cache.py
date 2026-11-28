@@ -6,6 +6,7 @@ from pathlib import Path
 import socket
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 
@@ -21,6 +22,7 @@ def cache(tmp_path, monkeypatch):
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     import tempfile
     directory = tempfile.TemporaryDirectory(prefix='t-cache-test-', dir='/tmp')
+    module._real_runtime = module._runtime
     monkeypatch.setattr(module, '_runtime', lambda: Path(directory.name))
     module._test_runtime = directory
     return module
@@ -60,7 +62,7 @@ def test_invalidation_detaches_without_cache_io_or_stale_live_rows(cache, monkey
 def test_invalidation_returns_while_cache_service_is_stalled(cache, monkeypatch):
     # Use the worker's real private namespace, derived from this fixture's HOME.
     monkeypatch.setenv('XDG_RUNTIME_DIR', '/tmp')
-    root = Path('/tmp') / ('t-sessions-' + str(os.getuid()) + '-' + cache._digest(cache._identity())[:16])
+    root = cache._real_runtime()
     cache._private(root)
     address = root / 'service.sock'
     received, release = threading.Event(), threading.Event()
@@ -326,31 +328,89 @@ def test_configuration_namespace_and_alias_dedup(engine):
     assert len(memory.entries) == 2
 
 
-def test_sqlite_restoration_and_asynchronous_persistence(cache, engine, tmp_path):
+def test_sqlite_restoration_and_asynchronous_persistence(cache, engine):
     memory, _, jobs, _ = engine
-    discover(memory); drain(jobs)
     disk = cache._Persistence(memory)
-    thread = threading.Thread(target=disk.run)
-    thread.start()
-    disk.wake.set()
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        try:
-            with sqlite3.connect(disk.database) as db:
-                row = db.execute('select payload from snapshots').fetchone()
-            if row: break
-        except sqlite3.Error: pass
-        time.sleep(.01)
-    else: pytest.fail('snapshot not persisted')
-    disk.stop.set(); disk.wake.set(); thread.join(3)
-    assert not thread.is_alive()
+    discover(memory)
+    drain(jobs)
+    disk.stop.set()
+    disk.run()
+    assert not memory.persistence_error
     assert disk.database.stat().st_mode & 0o777 == 0o600
-    saved = json.loads(row[0])
     restored = cache._Memory(clock=lambda: 10001, submit=lambda *args: pytest.fail('restored cache is fresh'))
-    restored.restore(saved)
-    # DB is gone after loading: every lookup still succeeds from RAM.
+    reader = cache._Persistence(restored)
+    reader.stop.set()
+    reader.run()
     disk.database.unlink()
     assert discover(restored)['hosts'][0]['value']['rows'].startswith('sid')
+
+
+def test_small_artifact_update_only_writes_its_record(cache):
+    import zlib
+    memory = cache._Memory()
+    disk = cache._Persistence(memory)
+    identity = list(cache._client_context())
+    identity[-1] += '-other'
+    other = cache._Memory()
+    disk.register(identity, other)
+    for engine in (memory, other):
+        engine.restore({})
+        engine.handle('artifact', {'key': 'large', 'value': 'x' * 100_000})
+        engine.handle('artifact', {'key': 'small', 'value': 1})
+    disk.stop.set()
+    disk.run()
+    with sqlite3.connect(disk.database) as db:
+        db.executescript("""
+            create table updates (namespace text, path text);
+            create trigger track_update after update on cache_records begin
+                insert into updates values(new.namespace, new.path);
+            end;
+        """)
+    other.handle('artifact', {'key': 'small', 'value': 2})
+    disk.run()
+    with sqlite3.connect(disk.database) as db:
+        updates = db.execute('select namespace,path from updates').fetchall()
+        assert [(ns, json.loads(path)) for ns, path in updates] == [(cache._digest(identity), ['artifacts', 'small'])]
+        row = db.execute('select payload from cache_records where namespace=? and path=?', updates[0]).fetchone()
+        assert json.loads(zlib.decompress(row[0])) == 2
+
+
+def test_one_catalog_change_keeps_other_conversation_fragments(cache, engine):
+    import zlib
+    memory, _, jobs, _ = engine
+    disk = cache._Persistence(memory)
+    records = [{'sid': str(i), 'title': 'retained ' + str(i)} for i in range(4)]
+    memory.collect = lambda spec: {'rows': '', 'catalog': {'conversations': list(records)}}
+    discover(memory)
+    drain(jobs)
+    disk.stop.set()
+    disk.run()
+    with sqlite3.connect(disk.database) as db:
+        assert db.execute('select count(*) from cache_fragments').fetchone()[0] == 4
+        db.executescript("""
+            create table edits (action text, payload blob);
+            create trigger inserted after insert on cache_fragments begin
+                insert into edits values('insert', new.payload);
+            end;
+            create trigger updated after update on cache_fragments begin
+                insert into edits values('update', new.payload);
+            end;
+            create trigger removed after delete on cache_fragments begin
+                insert into edits values('delete', old.payload);
+            end;
+        """)
+    records[1] = {'sid': '1', 'title': 'updated'}
+    records.append({'sid': '4', 'title': 'new'})
+    memory.handle('discover', {'hosts': [spec()], 'refresh': True})
+    drain(jobs)
+    disk.run()
+    with sqlite3.connect(disk.database) as db:
+        edits = sorted((action, json.loads(zlib.decompress(raw))['title'])
+                       for action, raw in db.execute('select action,payload from edits'))
+        assert edits == [('delete', 'retained 1'), ('insert', 'new'), ('insert', 'updated')]
+        saved = disk._load(db, disk.namespace, cache._client_context())
+        value = next(iter(saved['entries'].values()))['value']
+        assert value['catalog']['conversations'] == records
 
 
 def test_failed_persistence_does_not_block_ram(cache, engine, monkeypatch):
@@ -371,7 +431,8 @@ def test_socket_clients_share_memory(cache, engine):
     memory, _, jobs, _ = engine
     cache._private(cache._runtime())
     with cache._Server(str(cache._runtime() / 'service.sock'), cache._Handler) as server:
-        server.memory = memory
+        server.configure()
+        server.memories[tuple(cache._client_context())] = memory
         thread = threading.Thread(target=server.serve_forever); thread.start()
         try:
             assert cache.request('status')['protocol'] == 2
@@ -384,19 +445,15 @@ def test_socket_clients_share_memory(cache, engine):
             server.shutdown(); thread.join(2)
 
 
-def test_client_unavailable_is_bounded_no_scanner_fallback(cache, monkeypatch):
-    monkeypatch.setattr(cache, '_wire', lambda *a: (_ for _ in ()).throw(OSError()))
-    launches = []
-    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: launches.append((a, k)))
-    ticks = iter([0, .1, 5])
-    monkeypatch.setattr(cache.time, 'monotonic', lambda: next(ticks))
-    monkeypatch.setattr(cache.time, 'sleep', lambda _: None)
-    monkeypatch.setenv('COV_CORE_SOURCE', 'must-not-leak')
-    assert cache.request('discover')['unavailable']
-    assert len(launches) == 1
-    assert 'COV_CORE_SOURCE' not in launches[0][1]['env']
-    assert launches[0][1]['stdin'] == subprocess.DEVNULL
-
+@pytest.mark.parametrize('operation', ['discover', 'hydrate', 'live-view', 'inventory-changed', 'status',
+                                       'service-status', 'doctor', 'provider', 'event', 'activity',
+                                       'export', 'reset-host', 'catalog-changed', 'forget'])
+def test_client_unavailable_is_bounded_no_scanner_fallback(cache, monkeypatch, operation):
+    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: pytest.fail('client spawned a process'))
+    monkeypatch.setattr(cache.time, 'sleep', lambda *_: pytest.fail('client waited for startup'))
+    result = cache.request(operation)
+    assert result['unavailable'] and not result['loading'] and 'stopped' in result['message']
+    assert list(cache._runtime().iterdir()) == []
 
 def test_private_paths_and_collect_validation(cache, tmp_path, monkeypatch):
     unsafe = tmp_path / 'link'; unsafe.symlink_to(tmp_path, target_is_directory=True)
@@ -504,7 +561,7 @@ def test_cold_lifecycle_row_survives_restoration_and_restart(cache):
     assert discover(memory)['hosts'][0]['value']['rows'] == ''
 
 
-def test_service_upgrade_releases_socket_and_flushes(cache, monkeypatch):
+def test_revised_client_preserves_service_and_explicit_stop_flushes(cache, monkeypatch):
     signals = {}
     revision = cache._revision()
     monkeypatch.setattr(cache, '_revision', lambda: revision)
@@ -529,18 +586,48 @@ def test_service_upgrade_releases_socket_and_flushes(cache, monkeypatch):
         assert not contender.is_alive()
         cache._wire('artifact', {'key': 'restart', 'value': {'saved': True}})
         monkeypatch.setattr(cache, '_revision', lambda: ['new-source'])
-        with pytest.raises(ValueError, match='version changed'):
-            cache._wire('status', {})
+        assert cache._wire('status', {})['protocol'] == 2
+        signals[cache.signal.SIGTERM]()
         thread.join(3)
         assert not thread.is_alive()
         assert not (cache._runtime() / 'service.sock').exists()
         with sqlite3.connect(cache._database()) as db:
-            saved = json.loads(db.execute('select payload from snapshots').fetchone()[0])
+            disk = cache._Persistence(cache._Memory())
+            saved = disk._load(db, disk.namespace, cache._client_context())
         assert saved['artifacts']['restart'] == {'saved': True}
     finally:
         if thread.is_alive():
             signals[cache.signal.SIGTERM]()
             thread.join(3)
+
+
+def test_stop_terminates_worker_process_group_and_rejects_new_work(cache, tmp_path):
+    workers = cache._Workers()
+    child_ready = tmp_path / 'child.pid'
+    script = ("import pathlib,subprocess,sys,time; "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+              "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(30)")
+    result = []
+    def collect():
+        result.append(workers.run([sys.executable, '-c', script, str(child_ready)],
+                                  input='', env=cache._service_env(), timeout=10))
+    thread = threading.Thread(target=collect)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not child_ready.exists():
+            assert thread.is_alive() and time.monotonic() < deadline
+            time.sleep(.02)
+        workers.close()
+        # The grandchild inherited both pipe descriptors. communicate() can
+        # return only after the grandchild exits or closes its descriptors.
+        thread.join(2)
+        assert not thread.is_alive() and result[0].returncode < 0
+        with pytest.raises(OSError, match='stopping'):
+            workers.run([sys.executable, '-c', 'pass'], input='', env={}, timeout=1)
+    finally:
+        workers.close()
+        thread.join(3)
 
 
 def test_standalone_artifact_miss_never_spawns_service(cache, monkeypatch):
@@ -666,23 +753,21 @@ def test_restore_ignores_invalid_failure_metadata(cache):
 def test_invalid_disk_snapshot_is_rebuilt_from_ram(cache):
     memory = cache._Memory(submit=lambda *a: None)
     disk = cache._Persistence(memory)
-    db = disk._open()
-    try:
-        db.execute('insert into snapshots values (?,?,?)', (disk.namespace, cache.VERSION, '[]'))
-        db.commit()
-    finally:
-        db.close()
-    disk.stop.set(); disk.wake.set()
+    with disk._open() as db:
+        db.execute('insert into snapshots values (?,?,?)',
+                   (cache._digest(cache._identity()), cache.VERSION, '[]'))
+    disk.stop.set()
     disk.run()
-    assert not memory.loading and not memory.persistence_error
-    db = sqlite3.connect(disk.database)
-    try:
-        assert json.loads(db.execute('select payload from snapshots').fetchone()[0]) == memory.snapshot()
-    finally:
-        db.close()
+    assert not memory.loading
+    memory.handle('artifact', {'key': 'valid', 'value': True})
+    disk.run()
+    restored = cache._Memory()
+    reader = cache._Persistence(restored)
+    reader.stop.set()
+    reader.run()
+    assert restored.artifacts == {'valid': True} and not restored.persistence_error
     with pytest.raises(ValueError, match='invalid discovery snapshot'):
         memory.restore({'entries': []})
-
 
 @pytest.mark.parametrize('replacement', [False, True])
 def test_lost_socket_owner_exits_without_removing_replacement(cache, monkeypatch, replacement):
@@ -707,7 +792,8 @@ def test_lost_socket_owner_exits_without_removing_replacement(cache, monkeypatch
         assert not thread.is_alive(), 'orphaned listener must release its lifetime lock'
         if replacement: assert address.read_text() == 'replacement must survive old cleanup'
         with sqlite3.connect(cache._database()) as db:
-            saved = json.loads(db.execute('select payload from snapshots').fetchone()[0])
+            disk = cache._Persistence(cache._Memory())
+            saved = disk._load(db, disk.namespace, cache._client_context())
         assert saved['artifacts']['retained'] == {'saved': True}
     finally:
         if thread.is_alive():
@@ -715,53 +801,77 @@ def test_lost_socket_owner_exits_without_removing_replacement(cache, monkeypatch
             thread.join(3)
 
 
-def test_client_waits_for_owner_handoff_without_fork_storm(cache, monkeypatch):
-    from types import SimpleNamespace
-    elapsed, launches = [0.0], []
-    def wire(*args):
-        if elapsed[0] < 1.5: raise FileNotFoundError('old owner is flushing')
-        return {'protocol': 1}
-    monkeypatch.setattr(cache, '_wire', wire)
-    monkeypatch.setattr(cache, 'time', SimpleNamespace(monotonic=lambda: elapsed[0],
-        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)))
-    monkeypatch.setattr(cache.subprocess, 'Popen', lambda *a, **k: launches.append(a))
-    assert cache.request('status') == {'protocol': 1}
-    assert len(launches) == 1 and elapsed[0] < 4
+def test_distinct_checkouts_share_owner_and_isolate_tmux_namespaces(cache, monkeypatch, tmp_path):
+    with cache._Server(str(cache._runtime() / 'service.sock'), cache._Handler) as server:
+        server.configure()
+        writer = threading.Thread(target=server.disk.run)
+        server_thread = threading.Thread(target=server.serve_forever)
+        writer.start()
+        server_thread.start()
+        def ready():
+            deadline = time.monotonic() + 4
+            while cache._wire('status', {})['loading']:
+                assert time.monotonic() < deadline
+                time.sleep(.01)
+        try:
+            ready()
+            status = cache._wire('service-status', {})
+            endpoint = cache._real_runtime()
+            cache._wire('artifact', {'key': 'one', 'value': 'original'})
+            with monkeypatch.context() as env:
+                env.setattr(cache, 'SOURCE', tmp_path / 'worktree')
+                assert cache._real_runtime() == endpoint
+                assert cache._wire('artifact', {'key': 'one'})['value'] == 'original'
+                env.setenv('TMUX', '/tmp/synthetic-alternate-tmux,0,0')
+                assert cache._real_runtime() == endpoint
+                assert cache._wire('service-status', {})['pid'] == status['pid']
+                ready()
+                assert cache._wire('artifact', {'key': 'one'})['value'] is None
+                cache._wire('artifact', {'key': 'one', 'value': 'other'})
+            assert cache._wire('artifact', {'key': 'one'})['value'] == 'original'
+            assert len(server.memories) == 2
+        finally:
+            server.shutdown()
+            server_thread.join(3)
+            server.disk.stop.set()
+            server.disk.wake.set()
+            writer.join(3)
 
-
-def test_real_client_replaces_unlinked_daemon_and_retains_snapshot(tmp_path, monkeypatch):
+def test_socket_loss_requires_explicit_restart_and_retains_snapshot(tmp_path, monkeypatch):
     import shutil
     for key in ('HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'CODEX_HOME'):
         monkeypatch.setenv(key, str(tmp_path / key))
     module = load_script(REPO_ROOT / 'libexec/t_session_cache.py', 'cache_recovery_process_test')
+    address = module._runtime() / 'service.sock'
+    assert module.request('status')['unavailable']
     children = []
-    original = subprocess.Popen
-    def spawn(*args, **kwargs):
-        child = original(*args, **kwargs)
-        children.append(child)
-        return child
-    monkeypatch.setattr(module.subprocess, 'Popen', spawn)
-    def restored():
-        deadline = time.monotonic() + 4
-        while module._wire('status', {})['loading']:
-            assert time.monotonic() < deadline
+    def start():
+        process = subprocess.Popen([sys.executable, module.__file__, 'serve'], env=module._service_env())
+        children.append(process)
+        deadline = time.monotonic() + 5
+        while True:
+            status = module.request('status')
+            if not status.get('unavailable') and not status['loading']:
+                return process
+            assert process.poll() is None and time.monotonic() < deadline
             time.sleep(.02)
     try:
-        assert module.request('status')['protocol'] == 2
-        restored()
+        first = start()
         module._wire('artifact', {'key': 'retained', 'value': {'saved': True}})
-        (module._runtime() / 'service.sock').unlink()
-        assert module.request('status')['protocol'] == 2
-        restored()
-        assert len(children) == 2
-        assert children[0].wait(timeout=4) == 0
+        address.unlink()
+        assert module.request('status')['unavailable']
+        assert first.wait(timeout=5) == 0
+        for _ in range(3):
+            assert module.request('discover')['unavailable']
+            assert not address.exists()
+        start()
         assert module._wire('artifact', {'key': 'retained'})['value'] == {'saved': True}
     finally:
         for child in children:
-            if child.poll() is None: child.terminate()
+            if child.poll() is None:
+                child.terminate()
             child.wait(timeout=5)
         shutil.rmtree(module._runtime(), ignore_errors=True)
-
 
 @pytest.mark.parametrize('selection', ['default', 'legacy', 'bridge'])
 def test_identity_uses_effective_local_config(cache, monkeypatch, tmp_path, selection):

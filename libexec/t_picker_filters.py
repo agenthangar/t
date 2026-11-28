@@ -356,6 +356,15 @@ def pick_value(directory, name, records, current):
     return (values[int(result.stdout.split('\t', 1)[0])],)
 
 
+def write_changed(path, text):
+    try:
+        if path.read_text() == text:
+            return
+    except FileNotFoundError:
+        pass
+    path.write_text(text)
+
+
 def render(directory, profile, action, width, columns='', facet=None, identity=()):
     directory = Path(directory)
     if profile == 'recovery':
@@ -444,7 +453,7 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             values = [None] + sorted({record.get(action, 'unknown') for record in records.values()})
             filters[action] = values[(values.index(filters[action]) + 1) % len(values)]
     elif action == 'search' and os.environ.get('T_PICKER_PAN') == '1':
-        (directory / 'pan-query').write_text(facet or '')
+        write_changed((directory / 'pan-query'), facet or '')
     elif action != 'current':
         raise ValueError('unknown picker filter: ' + action)
     if mask > (2 if profile == 'open' else maximum):
@@ -465,23 +474,24 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
             sort = default_sort
         if sort_enabled:
             selected = sort_resume(selected, records, sort)
-        merged_file.write_text('1' if hide_merged else '0')
+        write_changed(merged_file, '1' if hide_merged else '0')
     if profile not in ('resume', 'list') and sort_enabled:
         selected = sort_resume(selected, records, sort)
-    sort_file.write_text(sort)
-    sort_enabled_file.write_text('1' if sort_enabled else '0')
+    write_changed(sort_file, sort)
+    write_changed(sort_enabled_file, '1' if sort_enabled else '0')
     total = sum(bool(row) for row in (directory / 'all').read_text().splitlines())
     hidden = total - len(selected)
     attached_results = profile == 'resume' and any(len(row.split('\t')) > 6 and
         row.split('\t')[6] != '-' for row in selected)
-    (directory / 'hidden-count').write_text(str(hidden))
+    write_changed((directory / 'hidden-count'), str(hidden))
     if os.environ.get('T_PICKER_PAN') == '1':
         from t_picker_viewport import search
         query_file = directory / 'pan-query'
         selected = search(selected, query_file.read_text() if query_file.exists() else '')
     if profile == 'resume':
         selected = mark_resume('\n'.join(selected), records).splitlines()
-    (directory / 'current').write_text(''.join(row + '\n' for row in selected))
+    if os.environ.get('T_PICKER_PAN') != '1':
+        write_changed((directory / 'current'), ''.join(row + '\n' for row in selected))
     status = []
     notice = directory / 'discovery-notice'
     color = os.environ.get('T_PICKER_COLOR') == '1'
@@ -524,14 +534,14 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
         selected, columns = project(directory, selected, table_columns, width - pad,
                                     fixed=RESUME_STATUS_WIDTH)
         columns = ' ' * pad + columns
-        (directory / 'current').write_text(''.join(row + '\n' for row in selected))
+        write_changed((directory / 'current'), ''.join(row + '\n' for row in selected))
     legend = ''
     if profile == 'open':
         legend = '● attached · ○ unattached · ✓ context · ↻ work in progress'
         if not selected:
             status.append('No matching sessions' + (' · Ctrl-N new' if os.environ.get('T_PICKER_NEW_SESSION') == '1' else ''))
         if os.environ.get('T_PICKER_NATIVE_FOOTER') == '1' and int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') > 14:
-            (directory / 'footer').write_text('\n'.join(pack(legend.split(' · '), width)) + '\n')
+            write_changed((directory / 'footer'), '\n'.join(pack(legend.split(' · '), width)) + '\n')
             legend = ''
         elif int(os.environ.get('T_PICKER_HEADER_HEIGHT') or '24') <= 14:
             legend = ''
@@ -541,12 +551,12 @@ def render(directory, profile, action, width, columns='', facet=None, identity=(
                       (directory / 'info-command').exists() and (directory / 'info-command').read_text() == '1',
                       attached_results, legend)
     prefix = '\n'.join(status) + '\n' if status and profile == 'list' else ''
-    (directory / 'current-header').write_text(prefix + controls)
-    enabled_file.write_text('1' if enabled else '0')
-    mask_file.write_text(str(mask))
-    state_file.write_text(json.dumps(filters))
+    write_changed((directory / 'current-header'), prefix + controls)
+    write_changed(enabled_file, '1' if enabled else '0')
+    write_changed(mask_file, str(mask))
+    write_changed(state_file, json.dumps(filters))
     if profile == 'resume':
-        expanded_file.write_text('1' if filters_expanded else '0')
+        write_changed(expanded_file, '1' if filters_expanded else '0')
 
 
 def resume_action_rows(width, compact, color, attached=False, platform=None):
@@ -622,7 +632,7 @@ def resume_health(health, width, color, refresh=False):
     pending = [host['host'] for host in hosts if host.get('status') == 'refreshing']
     warnings = []
     if health.get('unavailable'):
-        warnings.append('Discovery unavailable')
+        warnings.append(health.get('message') or 'Session cache unavailable. Open t config > Background agents > Session cache.')
     if health.get('cancelled'):
         warnings.append('Refresh cancelled')
     if health.get('failed'):
